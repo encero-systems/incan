@@ -378,14 +378,6 @@ impl<R: BinaryReader> ReaderChunks<R> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<R: BinaryReader> ReaderChunks<R> {
-    #[inline(never)]
-    pub fn __next__(
-        &mut self,
-    ) -> Result<Option<Vec<u8>>, IoError> {
-        self.__next__()
-    }
-}
 impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunks<R> {
     fn __iter__(&self) -> Self
     where
@@ -588,6 +580,12 @@ impl<R: BinaryReader + Clone> ReaderChunks<R> {
         &self,
     ) -> Self {
         <Self as FallibleIterator<Vec<u8>, IoError>>::__iter__(self)
+    }
+    #[inline(never)]
+    pub fn __next__(
+        &mut self,
+    ) -> Result<Option<Vec<u8>>, IoError> {
+        <Self as FallibleIterator<Vec<u8>, IoError>>::__next__(self)
     }
     #[inline(never)]
     pub fn map<

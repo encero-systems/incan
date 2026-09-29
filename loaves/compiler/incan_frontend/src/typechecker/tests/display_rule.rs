@@ -1,6 +1,6 @@
 //! The display rule shared by `print`/`println` arguments, `str(value)`, f-string `{value}` parts and `Display` bounds
 //! (#1725, #1748): structural values display their structure, a type displays through the `Display` it provides, and a
-//! value with no printed form is refused with `INCAN-T0103`.
+//! value with no printed form, a `None` value among them (#1561), is refused with `INCAN-T0103`.
 
 use super::*;
 
@@ -567,5 +567,82 @@ def main() -> None:
 "#,
     )
     .map_err(|errors| format!("exact-width numerics must satisfy Display, got: {errors:?}"))?;
+    Ok(())
+}
+
+/// A value of type `None` has no printed form (#1561): the result of a function that returns `None`, and the side of a
+/// `Result` that an `Ok(...)` or `Err(...)` leaves open where the enclosing function returns no `Result`, bound to a
+/// local or returned by the closure of `or_else` or `and_then`. Inside a function that returns a `Result`, that side
+/// has the function's side and displays.
+#[test]
+fn none_values_and_open_result_sides_are_refused_in_display_positions_issue1561()
+-> Result<(), Box<dyn std::error::Error>> {
+    let refused = printed_form_refusals(
+        r#"
+def nothing() -> None:
+    return
+
+def main() -> None:
+    x = nothing()
+    println(x)
+    text = str(x)
+    println(f"{x}")
+    e: Result[int, str] = Err("abc")
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    g: Result[int, str] = Ok(3)
+    match g.and_then((v) => Err("no")):
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    bound = Ok(2)
+    match bound:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+"#,
+    )?;
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "'println' cannot print the None value 'x'",
+            "'str' cannot convert the None value 'x' to text",
+            "f-string cannot interpolate the None value 'x'",
+            "'println' cannot print the None value 'm'",
+            "'println' cannot print the None value 'v'",
+            "'println' cannot print the None value 'm'",
+        ],
+        "one refusal per displayed None value, in source order"
+    );
+    assert!(
+        refused[3].1.iter().any(|hint| hint.contains("annotate the Result")),
+        "a None value's remedy names the annotation that types an open side, got: {:?}",
+        refused[3].1
+    );
+    check_str(
+        r#"
+def recover(e: Result[int, str]) -> Result[int, str]:
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    bound = Ok(2)
+    match bound:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    return Ok(0)
+
+def main() -> None:
+    e: Result[int, str] = Err("abc")
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(_) => println("never")
+    println(r)
+"#,
+    )
+    .map_err(|errors| {
+        format!("a Result side the enclosing function types, or one never read, must pass: {errors:?}")
+    })?;
     Ok(())
 }

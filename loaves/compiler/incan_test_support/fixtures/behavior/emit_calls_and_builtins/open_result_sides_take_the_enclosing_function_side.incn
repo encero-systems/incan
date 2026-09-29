@@ -1,0 +1,32 @@
+# behavior: an open side of an or_else result or a bound Ok takes the enclosing function's Result side and prints there, and elsewhere runs when it is never read
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::open_result_sides_build_with_the_type_the_checker_gives_them_issue1561
+# expect-stdout:
+#   1
+#   2
+#   0
+#   3
+#   4
+#   Ok(4)
+
+def recover(e: Result[int, str]) -> Result[int, str]:
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    x = Ok(2)
+    match x:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    return Ok(0)
+
+
+def main() -> None:
+    println(recover(Err("x")).unwrap_or(9))
+    e: Result[int, str] = Err("abc")
+    r = e.or_else((m) => Ok(len(m)))
+    match r:
+        Ok(v) => println(v)
+        Err(_) => println("never")
+    x = Ok(4)
+    println(x.unwrap_or(0))
+    println(x)

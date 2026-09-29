@@ -3490,7 +3490,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/iterator_adopters.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of types adopting Iterator[T], under the trait's own name or an import alias, calling the iterator adapters and terminals on themselves (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of types adopting Iterator[T], under the trait's own name, an import alias or its module, calling the iterator adapters and terminals and their own __next__ (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3498,6 +3498,10 @@
         "iterator_adopters_reach_the_protocol_adapters_and_terminals_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/iterator_adopters_reach_the_protocol_methods.incn",
           "notes": "Runs adapters and terminals on model, generic model, class and aliased adopters of Iterator[T]; the fixture prints each result."
+        },
+        "iterator_adopters_spelled_through_their_module_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/iterator_adopters_spelled_through_their_module.incn",
+          "notes": "Runs adapters, terminals and __next__ on a model, a class and a generic model adopting Iterator[T] through its module or a module alias; the fixture prints each result."
         }
       },
       "twin": ""
@@ -3728,6 +3732,28 @@
         "private_import_beside_a_public_reexport_binds_the_projection_publicly_issue1750": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/facade_reexports_an_alias_without_its_target",
           "notes": "Asserts the emitted `use` lines (the projection bound publicly, with no private binding beside it); dies with the emitter (#654). The behavior is carried by the named fixture's `private_then_public` facade (#1750)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/result_method_receivers.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of Result receivers read again after a method call, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "open_result_sides_build_with_the_type_the_checker_gives_them_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/open_result_sides_take_the_enclosing_function_side.incn",
+          "notes": "Reads the open side of an or_else result and a bound Ok inside a Result function and leaves it unread elsewhere; the fixture prints each result."
+        },
+        "result_observer_closures_take_the_payload_they_observe_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/result_observer_closures_take_their_payload.incn",
+          "notes": "Runs inspect and inspect_err closures over str, float and model payloads; the fixture prints each observation."
+        },
+        "result_receivers_stay_usable_after_a_method_call_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/result_methods_leave_their_receiver_usable.incn",
+          "notes": "Reuses a Result local, parameter, field and generic value after map, and_then, inspect and unwrap_or; the fixture prints each result."
         }
       },
       "twin": ""

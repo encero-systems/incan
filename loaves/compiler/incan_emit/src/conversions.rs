@@ -890,7 +890,7 @@ fn field_access_reads_from_self_receiver(expr: &IrExpr) -> bool {
 /// borrowed/shared parents still need owned materialization at storage and return sinks, and so does a field the
 /// typechecker resolved through a transparent wrapper: the owner may be at its last use, but Rust reaches the field
 /// through the wrapper's `Deref`, and a move out of a dereference is E0507 whatever the owner's access says.
-fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
+pub(crate) fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
     match &expr.kind {
         IrExprKind::Field { object, .. } => !matches!(
             &object.kind,

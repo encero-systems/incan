@@ -258,6 +258,64 @@ impl AstLowering {
             .map(Some)
     }
 
+    /// Record the dunder projections an inherent impl offers, so no trait impl emits a second wrapper for one unless it
+    /// takes it over (see [`Self::takes_over_inherent_dunder_projection`]).
+    fn offer_inherent_dunder_projections(&mut self, projections: &[IrMethodProjection]) {
+        for projection in projections {
+            self.emitted_inherent_method_identities
+                .insert(projection.identity.clone());
+            self.inherent_dunder_projection_identities
+                .insert(projection.identity.clone());
+        }
+    }
+
+    /// Whether the trait impl being lowered takes over the inherent projection `identity` of its dunder slot `slot`
+    /// (#1561).
+    ///
+    /// An inherent projection calls the dunder by method syntax, which reaches the trait impl's body only while the
+    /// trait is in scope under its own name: `from std.derives import collection` then `with collection.Iterator[int]`
+    /// leaves `__next__` out of scope. The trait impl's projection calls the slot through the trait's path instead.
+    /// The dunders the backend implements outside any trait impl (`__eq__` as `PartialEq`, `__str__` as `Display`,
+    /// and the reflection hooks) keep their inherent projection, and a projection is taken over once.
+    fn takes_over_inherent_dunder_projection(
+        &self,
+        slot: &str,
+        identity: &incan_semantics_core::CanonicalSymbolId,
+    ) -> bool {
+        let backend_owned = matches!(
+            magic_methods::from_str(slot),
+            Some(
+                MagicMethodId::Eq
+                    | MagicMethodId::Str
+                    | MagicMethodId::ClassName
+                    | MagicMethodId::Fields
+                    | MagicMethodId::FieldValue
+                    | MagicMethodId::FieldItems
+            )
+        );
+        !backend_owned
+            && self.inherent_dunder_projection_identities.contains(identity)
+            && !self.trait_owned_dunder_projection_identities.contains(identity)
+    }
+
+    /// Withdraw from each inherent impl the dunder projections a trait impl took over (#1561).
+    pub(in crate::lower) fn withdraw_trait_owned_dunder_projections(&self, declarations: &mut [IrDecl]) {
+        if self.trait_owned_dunder_projection_identities.is_empty() {
+            return;
+        }
+        for declaration in declarations {
+            if let IrDeclKind::Impl(impl_block) = &mut declaration.kind
+                && impl_block.trait_name.is_none()
+            {
+                impl_block.method_projections.retain(|projection| {
+                    !self
+                        .trait_owned_dunder_projection_identities
+                        .contains(&projection.identity)
+                });
+            }
+        }
+    }
+
     /// Pair Rust trait slots with exact method identities without reconstructing either from a spelling.
     #[allow(clippy::too_many_arguments)] // Keeps each checked trait and owner axis explicit.
     fn trait_method_projections(
@@ -311,6 +369,11 @@ impl AstLowering {
                         continue;
                     };
                     if !self.emitted_inherent_method_identities.contains(&identity) {
+                        candidate = Some(identity);
+                        break;
+                    }
+                    if self.takes_over_inherent_dunder_projection(&method.name, &identity) {
+                        self.trait_owned_dunder_projection_identities.insert(identity.clone());
                         candidate = Some(identity);
                         break;
                     }
@@ -626,11 +689,7 @@ impl AstLowering {
                 .into_iter()
                 .flatten()
                 .collect();
-            self.emitted_inherent_method_identities.extend(
-                method_projections
-                    .iter()
-                    .map(|projection: &IrMethodProjection| projection.identity.clone()),
-            );
+            self.offer_inherent_dunder_projections(&method_projections);
             let mut lowered_methods = Vec::new();
             for method in inherent_methods {
                 lowered_methods.extend(self.lower_decorated_or_plain_methods(
@@ -2069,11 +2128,7 @@ impl AstLowering {
                 .into_iter()
                 .flatten()
                 .collect();
-            self.emitted_inherent_method_identities.extend(
-                method_projections
-                    .iter()
-                    .map(|projection: &IrMethodProjection| projection.identity.clone()),
-            );
+            self.offer_inherent_dunder_projections(&method_projections);
             let mut lowered_methods = Vec::new();
             for method in inherent_methods {
                 lowered_methods.extend(self.lower_decorated_or_plain_methods(
@@ -2145,11 +2200,7 @@ impl AstLowering {
             .into_iter()
             .flatten()
             .collect();
-        self.emitted_inherent_method_identities.extend(
-            method_projections
-                .iter()
-                .map(|projection: &IrMethodProjection| projection.identity.clone()),
-        );
+        self.offer_inherent_dunder_projections(&method_projections);
         let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_decorated_or_plain_methods(type_name, m, Some(&type_param_names)))

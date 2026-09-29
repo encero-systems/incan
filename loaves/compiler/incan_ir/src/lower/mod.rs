@@ -250,6 +250,13 @@ pub struct AstLowering {
     /// Captures remain non-consuming because a closure can run repeatedly. Parameters are freshly owned by each
     /// invocation, but nested non-linear contexts inside the closure must still suppress syntactic last-use moves.
     pub closure_param_scopes: Vec<(usize, HashSet<String>)>,
+    /// The payload type each closure literal passed as the observer of a `Result`'s `inspect` or `inspect_err`
+    /// observes, keyed by the closure's span, while the call's arguments are lowered.
+    ///
+    /// The observer is called in place on the payload the `Result` keeps (a borrow of a non-`Copy` payload, a copy of
+    /// a `Copy` one), so its parameter takes that shape and spells its type: Rust cannot infer it for a closure
+    /// that is called where it is written (#1561).
+    pub result_observer_closure_payloads: HashMap<(usize, usize), IrType>,
     /// Names bound by the patterns of the `for` loops enclosing the statement being lowered, innermost last.
     ///
     /// A loop binding's Rust shape is the emitter's iteration plan rather than the binding's source type: a list of
@@ -314,6 +321,15 @@ pub struct AstLowering {
     /// Trait ABI slots are lowered separately. Keeping the exact identities here prevents that later pass from
     /// emitting a second recoverable wrapper for a declaration whose inherent projection already exists.
     pub emitted_inherent_method_identities: HashSet<CanonicalSymbolId>,
+    /// Identities of the dunder methods whose recoverable projection an inherent impl in this lowering pass offered.
+    ///
+    /// Such a projection calls its slot by method syntax, which reaches the body only when the trait the adopter
+    /// implements it for is in scope under its name. The trait impl that implements the slot takes the projection
+    /// over and spells the call through the trait's path, whatever spelling the adoption used (#1561).
+    pub inherent_dunder_projection_identities: HashSet<CanonicalSymbolId>,
+    /// Identities of the inherent dunder projections a trait impl took over, withdrawn from their inherent impl once
+    /// the module is lowered.
+    pub trait_owned_dunder_projection_identities: HashSet<CanonicalSymbolId>,
     /// Exact source-member identities paired with the nominal owner that receives their emitted projection.
     pub emitted_member_projections: Vec<(String, String, CanonicalSymbolId)>,
     /// Compiler-generated forwarding methods created for source method-partial bindings.
@@ -793,6 +809,7 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             closure_param_scopes: Vec::new(),
+            result_observer_closure_payloads: HashMap::new(),
             loop_pattern_bindings: Vec::new(),
             owned_loop_binding_scopes: Vec::new(),
             return_operand: None,
@@ -813,6 +830,8 @@ impl AstLowering {
             rusttype_interop_edges: HashMap::new(),
             type_method_rebindings: HashMap::new(),
             emitted_inherent_method_identities: HashSet::new(),
+            inherent_dunder_projection_identities: HashSet::new(),
+            trait_owned_dunder_projection_identities: HashSet::new(),
             emitted_member_projections: Vec::new(),
             generated_method_partial_wrappers: HashSet::new(),
             local_generated_method_partial_wrappers: HashSet::new(),
@@ -3573,6 +3592,7 @@ impl AstLowering {
             }
         }
         Self::bind_reexported_projections(&mut ir_program.declarations);
+        self.withdraw_trait_owned_dunder_projections(&mut ir_program.declarations);
         // Propagate serde derives from structs to their field types (enums). This allows users to only annotate the
         // top-level model with @derive(json) and have it automatically apply to nested user-defined enums.
         Self::propagate_serde_derives(&mut ir_program);

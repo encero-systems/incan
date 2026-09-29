@@ -2319,7 +2319,16 @@ impl AstLowering {
                     self.lower_expr_spanned(o)?
                 };
                 let receiver = grouped_index_method_receiver(receiver);
-                let mut args_ir = self.lower_call_args(args)?;
+                let observer_closure = self.result_observer_closure_payload(expr_span, &receiver, m, args);
+                if let Some((closure_span, payload)) = &observer_closure {
+                    self.result_observer_closure_payloads
+                        .insert(*closure_span, payload.clone());
+                }
+                let lowered_args = self.lower_call_args(args);
+                if let Some((closure_span, _)) = &observer_closure {
+                    self.result_observer_closure_payloads.remove(closure_span);
+                }
+                let mut args_ir = lowered_args?;
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
                 let resolved_method_name = self.resolve_method_rebinding(&receiver.ty, m);
                 let method_name = numerics::integer_helper_from_str(&resolved_method_name)
@@ -2976,7 +2985,7 @@ impl AstLowering {
                             .map(|display| IrType::RustDisplay(display.clone()))
                             .collect::<Vec<_>>()
                     });
-                let param_pairs: Vec<(String, IrType)> = params
+                let mut param_pairs: Vec<(String, IrType)> = params
                     .iter()
                     .enumerate()
                     .map(|(idx, p)| {
@@ -2988,6 +2997,20 @@ impl AstLowering {
                         (p.node.name.clone(), ty)
                     })
                     .collect();
+                // A `Result` observer's parameter is the payload it observes in place: a borrow of a non-`Copy`
+                // payload, a copy of a `Copy` one (#1561).
+                let observed_payload = self
+                    .result_observer_closure_payloads
+                    .get(&(expr_span.start, expr_span.end))
+                    .filter(|_| param_pairs.len() == 1)
+                    .cloned();
+                if let (Some(payload), Some((_, param_ty))) = (&observed_payload, param_pairs.first_mut()) {
+                    *param_ty = if payload.is_copy() {
+                        payload.clone()
+                    } else {
+                        IrType::Ref(Box::new(payload.clone()))
+                    };
+                }
                 let mut closure_read_counts = HashMap::new();
                 self.count_expr_ident_reads(&body.node, &mut closure_read_counts);
                 let parameter_names = param_pairs
@@ -3047,10 +3070,11 @@ impl AstLowering {
                 let body_ir = body_ir_result?;
                 let ret_ty = body_ir.ty.clone();
                 let param_tys: Vec<IrType> = param_pairs.iter().map(|(_, t)| t.clone()).collect();
-                let annotate_param_types = self
-                    .type_info
-                    .as_ref()
-                    .is_some_and(|info| info.is_source_callable_closure(expr_span));
+                let annotate_param_types = observed_payload.is_some()
+                    || self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| info.is_source_callable_closure(expr_span));
                 let closure = TypedExpr::new(
                     IrExprKind::Closure {
                         params: param_pairs,

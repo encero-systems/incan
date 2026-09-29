@@ -41,10 +41,11 @@ use incan_lang::lang::{magic_methods, trait_bounds::rust as tb};
 
 use crate::emit::IrEmitter;
 
+use crate::conversions::Conversion as OwnershipPlan;
 use crate::ownership::{
     RegularMethodArgumentContext, ValueUseSite, collection_element_type, dict_entry_types, list_constructor_item_type,
-    list_index_assignment_element_type, plan_list_constructor_source, regular_method_argument_use_site,
-    value_use_requires_clone_bound, value_use_site_target_ty,
+    list_index_assignment_element_type, plan_consumed_receiver, plan_list_constructor_source,
+    regular_method_argument_use_site, value_use_requires_clone_bound, value_use_site_target_ty,
 };
 use incan_ir::IrProgram;
 use incan_ir::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
@@ -1423,6 +1424,11 @@ fn collect_backend_clone_bounds_in_expr(
                 clone_context,
                 clone_params,
             );
+            // A `Result` method consumes its receiver; the copy planned for a receiver that stays usable demands the
+            // same bound here (#1561).
+            if matches!(kind, MethodKind::Result(_)) && plan_consumed_receiver(receiver) == OwnershipPlan::Clone {
+                add_backend_clone_bounds_for_cloned_expr(receiver, type_param_names, self_clone_params, clone_params);
+            }
             // Storing into a builtin collection is an owned-element sink. Mirror the sites collection-method
             // emission uses so a clone planned for `items.append(item)` demands the same bound here (#1489).
             let element_sites: Vec<(usize, Option<&IrType>)> = match kind {

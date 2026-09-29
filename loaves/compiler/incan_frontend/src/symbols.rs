@@ -1375,6 +1375,23 @@ impl SymbolTable {
         None
     }
 
+    /// Return the declared return type of the innermost enclosing function or method that declares one.
+    ///
+    /// A closure's scope declares no return type, so this looks past closures to the declaration whose body holds
+    /// them, where [`Self::current_return_type`] stops at the closure.
+    pub fn enclosing_declared_return_type(&self) -> Option<&ResolvedType> {
+        let mut scope_idx = self.current_scope;
+        loop {
+            let scope = &self.scopes[scope_idx];
+            if matches!(scope.kind, ScopeKind::Function | ScopeKind::Method { .. })
+                && let Some(return_type) = scope.return_type.as_ref()
+            {
+                return Some(return_type);
+            }
+            scope_idx = scope.parent?;
+        }
+    }
+
     /// Set the return type for the current function scope
     pub fn set_return_type(&mut self, ty: ResolvedType) {
         self.scopes[self.current_scope].return_type = Some(ty);

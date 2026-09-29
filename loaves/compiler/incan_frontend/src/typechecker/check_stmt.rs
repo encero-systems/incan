@@ -971,7 +971,7 @@ impl TypeChecker {
             }
             if trait_typed_local { value_ty } else { ann_ty }
         } else {
-            value_ty
+            self.settle_open_constructor_side(&assign.value, value_ty)
         };
 
         self.record_assignment_binding_type(span, ty.clone());

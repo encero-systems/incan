@@ -257,3 +257,47 @@ fn capturing_closures_passed_to_result_combinators_are_accepted_issue1561() {
         assert_check_ok(&source);
     }
 }
+
+/// The side of an `or_else` or `and_then` result that the closure's `Ok(...)` or `Err(...)` leaves open, and the side a
+/// bound `Ok(...)` or `Err(...)` leaves open, is `None` where the enclosing function returns no `Result` and nothing
+/// else types it: a later use that needs another type is refused. An expected type at the call, an annotation and the
+/// enclosing function's `Result` return type each type that side instead (#1561).
+#[test]
+fn open_result_sides_are_none_where_nothing_else_types_them_issue1561() {
+    assert_refused(
+        r#"
+def show(r: Result[int, str]) -> None:
+    println(r.unwrap_or(0))
+
+def main() -> None:
+    e: Result[int, str] = Err("abc")
+    r = e.or_else((m) => Ok(1))
+    show(r)
+    x = Ok(2)
+    y: Result[int, str] = x
+"#,
+        &[
+            "Argument 'r' of 'show' has type mismatch: expected 'Result[int, str]', found 'Result[int, Unit]'",
+            "Assignment to 'y' has type mismatch: expected 'Result[int, str]', found 'Result[int, Unit]'",
+        ],
+    );
+    assert_check_ok(
+        r#"
+def show(r: Result[int, str]) -> None:
+    println(r.unwrap_or(0))
+
+def keep(e: Result[int, str]) -> Result[int, str]:
+    r = e.or_else((m) => Ok(1))
+    x = Ok(2)
+    show(x)
+    return r
+
+def main() -> None:
+    e: Result[int, str] = Err("abc")
+    show(e.or_else((m) => Ok(1)))
+    annotated: Result[int, str] = e.or_else((m) => Ok(1))
+    show(annotated)
+    show(keep(e))
+"#,
+    );
+}

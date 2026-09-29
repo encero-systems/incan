@@ -79,8 +79,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "df914c76b258525585058d2bc4df773368c5d78da6a141f3efd568e7469580e4",
-      "lines": 1607
+      "sha256": "961d0bc24f9554b77a1ca3b189477ddbc7d84ae6c8b053c4206e8d3d47a5e224",
+      "lines": 1618
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
@@ -592,6 +592,21 @@
       "behavior_evidence": "incan_emit tests::closure_parameter_inference::closures_typed_by_their_context_build_and_run_issue1561; behavior fixture emit_calls_and_builtins/closure_parameters_from_their_context.incn",
       "semantic_owner": "lowering of the RFC 006 generator filter call (the predicate is a callable value applied to each item)",
       "retirement_condition": "the Rust-source backend is deleted (#654); generator filters run through the shared iteration protocol"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "result_receivers_stay_usable_after_a_method_call_issue1561 (incan_emit src/tests/result_method_receivers.rs) and the behavior fixture ownership_parameters_and_receivers/result_methods_leave_their_receiver_usable.incn",
+      "semantic_owner": "the ownership planner consumed-receiver plan (ownership::plan_consumed_receiver); Body IR use facts",
+      "retirement_condition": "the Rust-source backend is deleted (#654); Body IR plans the receiver copy from the same use facts and the Result method call site stops applying it"
     }
   ]
 }

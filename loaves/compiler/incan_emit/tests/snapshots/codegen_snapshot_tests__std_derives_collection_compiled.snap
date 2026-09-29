@@ -319,12 +319,6 @@ impl<T: Clone> ListIterator<T> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone> ListIterator<T> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<T> {
-        self.__next__()
-    }
-}
 impl<T: Clone> Iterator<T> for ListIterator<T> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Return the next list item, or `None` after the final index.\n        ";
@@ -338,6 +332,12 @@ impl<T: Clone> Iterator<T> for ListIterator<T> {
             .clone();
         self.index = self.index + 1;
         return Some(item);
+    }
+}
+impl<T: Clone> ListIterator<T> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<T> {
+        <Self as Iterator<T>>::__next__(self)
     }
 }
 /// Lazy state for `FallibleIterator.map()`.
@@ -545,18 +545,6 @@ impl<
     }
 }
 impl<
-    T,
-    E,
-    Source: FallibleIterator<T, E>,
-    Output,
-    StoredMapFn: Clone + Callable1<T, Output>,
-> MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Result<Option<Output>, E> {
-        self.__next__()
-    }
-}
-impl<
     T: Clone,
     E: Clone,
     Source: FallibleIterator<T, E> + Clone,
@@ -750,6 +738,10 @@ impl<
     #[inline(never)]
     pub fn __iter__(&self) -> Self {
         <Self as FallibleIterator<Output, E>>::__iter__(self)
+    }
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Result<Option<Output>, E> {
+        <Self as FallibleIterator<Output, E>>::__next__(self)
     }
     #[inline(never)]
     pub fn map<U: Clone, MapFn: Clone + Callable1<Output, U>>(
@@ -1005,17 +997,6 @@ impl<
 }
 impl<
     T: Clone,
-    E,
-    Source: FallibleIterator<T, E>,
-    StoredPredicate: Clone + Callable1<T, bool>,
-> FilterFallibleIterator<T, E, Source, StoredPredicate> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Result<Option<T>, E> {
-        self.__next__()
-    }
-}
-impl<
-    T: Clone,
     E: Clone,
     Source: FallibleIterator<T, E> + Clone,
     StoredPredicate: Clone + Callable1<T, bool>,
@@ -1190,6 +1171,10 @@ impl<
     #[inline(never)]
     pub fn __iter__(&self) -> Self {
         <Self as FallibleIterator<T, E>>::__iter__(self)
+    }
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Result<Option<T>, E> {
+        <Self as FallibleIterator<T, E>>::__next__(self)
     }
     #[inline(never)]
     pub fn map<U: Clone, MapFn: Clone + Callable1<T, U>>(
@@ -1486,18 +1471,6 @@ impl<
 }
 impl<
     T: Clone,
-    E,
-    Source: FallibleIterator<T, E>,
-    Output: Clone,
-    StoredExpand: Clone + Callable1<T, Vec<Output>>,
-> FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Result<Option<Output>, E> {
-        self.__next__()
-    }
-}
-impl<
-    T: Clone,
     E: Clone,
     Source: FallibleIterator<T, E> + Clone,
     Output: Clone,
@@ -1698,6 +1671,10 @@ impl<
     #[inline(never)]
     pub fn __iter__(&self) -> Self {
         <Self as FallibleIterator<Output, E>>::__iter__(self)
+    }
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Result<Option<Output>, E> {
+        <Self as FallibleIterator<Output, E>>::__next__(self)
     }
     #[inline(never)]
     pub fn map<U: Clone, MapFn: Clone + Callable1<Output, U>>(
@@ -1925,12 +1902,6 @@ impl<T, E, Source: FallibleIterator<T, E>> TakeFallibleIterator<T, E, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T, E, Source: FallibleIterator<T, E>> TakeFallibleIterator<T, E, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Result<Option<T>, E> {
-        self.__next__()
-    }
-}
 impl<T: Clone, E: Clone, Source: FallibleIterator<T, E> + Clone> FallibleIterator<T, E>
 for TakeFallibleIterator<T, E, Source> {
     fn __iter__(&self) -> Self
@@ -2092,6 +2063,10 @@ impl<
     #[inline(never)]
     pub fn __iter__(&self) -> Self {
         <Self as FallibleIterator<T, E>>::__iter__(self)
+    }
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Result<Option<T>, E> {
+        <Self as FallibleIterator<T, E>>::__next__(self)
     }
     #[inline(never)]
     pub fn map<U: Clone, MapFn: Clone + Callable1<T, U>>(
@@ -2326,17 +2301,6 @@ impl<
 }
 impl<
     T: Clone,
-    E,
-    Source: FallibleIterator<T, E>,
-    StoredObserver: Clone + Callable1<T, ()>,
-> InspectFallibleIterator<T, E, Source, StoredObserver> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Result<Option<T>, E> {
-        self.__next__()
-    }
-}
-impl<
-    T: Clone,
     E: Clone,
     Source: FallibleIterator<T, E> + Clone,
     StoredObserver: Clone + Callable1<T, ()>,
@@ -2505,6 +2469,10 @@ impl<
     #[inline(never)]
     pub fn __iter__(&self) -> Self {
         <Self as FallibleIterator<T, E>>::__iter__(self)
+    }
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Result<Option<T>, E> {
+        <Self as FallibleIterator<T, E>>::__next__(self)
     }
     #[inline(never)]
     pub fn map<U: Clone, MapFn: Clone + Callable1<T, U>>(
@@ -2771,18 +2739,6 @@ impl<
     }
 }
 impl<
-    T,
-    E,
-    Source: FallibleIterator<T, E>,
-    MappedError,
-    StoredErrorMap: Clone + Callable1<E, MappedError>,
-> MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Result<Option<T>, MappedError> {
-        self.__next__()
-    }
-}
-impl<
     T: Clone,
     E: Clone,
     Source: FallibleIterator<T, E> + Clone,
@@ -2977,6 +2933,10 @@ impl<
     #[inline(never)]
     pub fn __iter__(&self) -> Self {
         <Self as FallibleIterator<T, MappedError>>::__iter__(self)
+    }
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Result<Option<T>, MappedError> {
+        <Self as FallibleIterator<T, MappedError>>::__next__(self)
     }
     #[inline(never)]
     pub fn map<U: Clone, MapFn: Clone + Callable1<T, U>>(
@@ -3232,17 +3192,6 @@ impl<
     }
 }
 impl<
-    T,
-    E: Clone,
-    Source: FallibleIterator<T, E>,
-    StoredErrorObserver: Clone + Callable1<E, ()>,
-> InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Result<Option<T>, E> {
-        self.__next__()
-    }
-}
-impl<
     T: Clone,
     E: Clone,
     Source: FallibleIterator<T, E> + Clone,
@@ -3424,6 +3373,10 @@ impl<
         <Self as FallibleIterator<T, E>>::__iter__(self)
     }
     #[inline(never)]
+    pub fn __next__(&mut self) -> Result<Option<T>, E> {
+        <Self as FallibleIterator<T, E>>::__next__(self)
+    }
+    #[inline(never)]
     pub fn map<U: Clone, MapFn: Clone + Callable1<T, U>>(
         &self,
         f: MapFn,
@@ -3595,12 +3548,6 @@ impl<T, Source: Iterator<T>, U> MapIterator<T, Source, U> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T, Source: Iterator<T>, U> MapIterator<T, Source, U> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<U> {
-        self.__next__()
-    }
-}
 impl<T, Source: Iterator<T>, U> Iterator<U> for MapIterator<T, Source, U> {
     fn __next__(&mut self) -> Option<U> {
         let _ = "\n        Pull one source item and return its mapped value.\n        ";
@@ -3613,6 +3560,12 @@ impl<T, Source: Iterator<T>, U> Iterator<U> for MapIterator<T, Source, U> {
                 return None::<_>;
             }
         };
+    }
+}
+impl<T, Source: Iterator<T>, U> MapIterator<T, Source, U> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<U> {
+        <Self as Iterator<U>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.filter()`.
@@ -3717,12 +3670,6 @@ impl<T: Clone, Source: Iterator<T>> FilterIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> FilterIterator<T, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<T> {
-        self.__next__()
-    }
-}
 impl<T: Clone, Source: Iterator<T>> Iterator<T> for FilterIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Return the next source item accepted by the predicate.\n        ";
@@ -3739,6 +3686,12 @@ impl<T: Clone, Source: Iterator<T>> Iterator<T> for FilterIterator<T, Source> {
                 }
             };
         }
+    }
+}
+impl<T: Clone, Source: Iterator<T>> FilterIterator<T, Source> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<T> {
+        <Self as Iterator<T>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.flat_map()`.
@@ -3922,17 +3875,6 @@ impl<
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<
-    T: Clone,
-    Source: Iterator<T>,
-    U,
-    Nested: Iterator<U>,
-> FlatMapIterator<T, Source, U, Nested> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<U> {
-        self.__next__()
-    }
-}
 impl<T: Clone, Source: Iterator<T>, U, Nested: Iterator<U>> Iterator<U>
 for FlatMapIterator<T, Source, U, Nested> {
     fn __next__(&mut self) -> Option<U> {
@@ -3963,6 +3905,17 @@ for FlatMapIterator<T, Source, U, Nested> {
                 }
             };
         }
+    }
+}
+impl<
+    T: Clone,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> FlatMapIterator<T, Source, U, Nested> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<U> {
+        <Self as Iterator<U>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.take()`.
@@ -4082,12 +4035,6 @@ impl<T, Source: Iterator<T>> TakeIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T, Source: Iterator<T>> TakeIterator<T, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<T> {
-        self.__next__()
-    }
-}
 impl<T, Source: Iterator<T>> Iterator<T> for TakeIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Yield one item while the remaining count is positive.\n        ";
@@ -4103,6 +4050,12 @@ impl<T, Source: Iterator<T>> Iterator<T> for TakeIterator<T, Source> {
                 return None::<_>;
             }
         };
+    }
+}
+impl<T, Source: Iterator<T>> TakeIterator<T, Source> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<T> {
+        <Self as Iterator<T>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.skip()`.
@@ -4221,12 +4174,6 @@ impl<T, Source: Iterator<T>> SkipIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T, Source: Iterator<T>> SkipIterator<T, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<T> {
-        self.__next__()
-    }
-}
 impl<T, Source: Iterator<T>> Iterator<T> for SkipIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Discard source items until the remaining skip count reaches zero.\n        ";
@@ -4241,6 +4188,12 @@ impl<T, Source: Iterator<T>> Iterator<T> for SkipIterator<T, Source> {
             };
         }
         return self.source.__next__();
+    }
+}
+impl<T, Source: Iterator<T>> SkipIterator<T, Source> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<T> {
+        <Self as Iterator<T>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.chain()`.
@@ -4387,12 +4340,6 @@ impl<T, First: Iterator<T>, Second: Iterator<T>> ChainIterator<T, First, Second>
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T, First: Iterator<T>, Second: Iterator<T>> ChainIterator<T, First, Second> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<T> {
-        self.__next__()
-    }
-}
 impl<T, First: Iterator<T>, Second: Iterator<T>> Iterator<T>
 for ChainIterator<T, First, Second> {
     fn __next__(&mut self) -> Option<T> {
@@ -4408,6 +4355,12 @@ for ChainIterator<T, First, Second> {
             };
         }
         return self.second.__next__();
+    }
+}
+impl<T, First: Iterator<T>, Second: Iterator<T>> ChainIterator<T, First, Second> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<T> {
+        <Self as Iterator<T>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.enumerate()`.
@@ -4525,12 +4478,6 @@ impl<T, Source: Iterator<T>> EnumerateIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T, Source: Iterator<T>> EnumerateIterator<T, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<(i64, T)> {
-        self.__next__()
-    }
-}
 impl<T, Source: Iterator<T>> Iterator<(i64, T)> for EnumerateIterator<T, Source> {
     fn __next__(&mut self) -> Option<(i64, T)> {
         let _ = "\n        Return the current index with the next source item.\n        ";
@@ -4544,6 +4491,12 @@ impl<T, Source: Iterator<T>> Iterator<(i64, T)> for EnumerateIterator<T, Source>
                 return None::<_>;
             }
         };
+    }
+}
+impl<T, Source: Iterator<T>> EnumerateIterator<T, Source> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<(i64, T)> {
+        <Self as Iterator<(i64, T)>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.zip()`.
@@ -4701,12 +4654,6 @@ impl<T, Left: Iterator<T>, U, Right: Iterator<U>> ZipIterator<T, Left, U, Right>
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T, Left: Iterator<T>, U, Right: Iterator<U>> ZipIterator<T, Left, U, Right> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<(T, U)> {
-        self.__next__()
-    }
-}
 impl<T, Left: Iterator<T>, U, Right: Iterator<U>> Iterator<(T, U)>
 for ZipIterator<T, Left, U, Right> {
     fn __next__(&mut self) -> Option<(T, U)> {
@@ -4726,6 +4673,12 @@ for ZipIterator<T, Left, U, Right> {
                 return None::<_>;
             }
         };
+    }
+}
+impl<T, Left: Iterator<T>, U, Right: Iterator<U>> ZipIterator<T, Left, U, Right> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<(T, U)> {
+        <Self as Iterator<(T, U)>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.take_while()`.
@@ -4850,12 +4803,6 @@ impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<T> {
-        self.__next__()
-    }
-}
 impl<T: Clone, Source: Iterator<T>> Iterator<T> for TakeWhileIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Yield source items until the predicate rejects one.\n        ";
@@ -4876,6 +4823,12 @@ impl<T: Clone, Source: Iterator<T>> Iterator<T> for TakeWhileIterator<T, Source>
                 return None::<_>;
             }
         };
+    }
+}
+impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<T> {
+        <Self as Iterator<T>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.skip_while()`.
@@ -4998,12 +4951,6 @@ impl<T: Clone, Source: Iterator<T>> SkipWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> SkipWhileIterator<T, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<T> {
-        self.__next__()
-    }
-}
 impl<T: Clone, Source: Iterator<T>> Iterator<T> for SkipWhileIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Discard source items until the predicate rejects one, then yield normally.\n        ";
@@ -5022,6 +4969,12 @@ impl<T: Clone, Source: Iterator<T>> Iterator<T> for SkipWhileIterator<T, Source>
             };
         }
         return self.source.__next__();
+    }
+}
+impl<T: Clone, Source: Iterator<T>> SkipWhileIterator<T, Source> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<T> {
+        <Self as Iterator<T>>::__next__(self)
     }
 }
 /// Lazy state for `Iterator.batch()`.
@@ -5148,12 +5101,6 @@ impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
-    #[inline(never)]
-    pub fn __next__(&mut self) -> Option<Vec<T>> {
-        self.__next__()
-    }
-}
 impl<T: Clone, Source: Iterator<T>> Iterator<Vec<T>> for BatchIterator<T, Source> {
     fn __next__(&mut self) -> Option<Vec<T>> {
         let _ = "\n        Build and return the next non-empty batch.\n        ";
@@ -5173,5 +5120,11 @@ impl<T: Clone, Source: Iterator<T>> Iterator<Vec<T>> for BatchIterator<T, Source
             };
         }
         return Some(items);
+    }
+}
+impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
+    #[inline(never)]
+    pub fn __next__(&mut self) -> Option<Vec<T>> {
+        <Self as Iterator<Vec<T>>>::__next__(self)
     }
 }

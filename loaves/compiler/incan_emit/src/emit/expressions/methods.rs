@@ -9,8 +9,8 @@ use quote::{format_ident, quote};
 use super::super::{EmitError, IrEmitter};
 use crate::ownership::{
     ArgumentPassingPlan, AssociatedFunctionArgumentContext, RegularMethodArgumentContext, ValueUseSite,
-    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_read_by_ref_receiver,
-    regular_method_argument_use_site,
+    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_consumed_receiver,
+    plan_read_by_ref_receiver, regular_method_argument_use_site,
 };
 use crate::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
 use incan_ir::FunctionSignature;
@@ -970,6 +970,17 @@ impl<'a> IrEmitter<'a> {
             } else {
                 quote! { (#receiver) }
             }
+        } else if matches!(kind, MethodKind::Result(_)) {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `r.map(f)` then `r.and_then(g)` on one `Result` local moved `r` into the
+            //   first call (E0382): every Rust `Result` method takes its receiver by value.
+            // - Behavior evidence: `result_receivers_stay_usable_after_a_method_call_issue1561` and the behavior
+            //   fixture `result_methods_leave_their_receiver_usable`.
+            // - Semantic owner: the ownership planner's consumed-receiver plan (`plan_consumed_receiver`); this site
+            //   only applies it.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR plans the receiver copy from
+            //   the same use facts.
+            plan_consumed_receiver(receiver).apply(self.emit_expr(receiver)?)
         } else {
             self.emit_expr(receiver)?
         };

@@ -5,11 +5,11 @@
 //! `Option` or `Result` displays its structure (lowering hands `print` and `str` the same rendering an f-string part
 //! lowers to); a model, class, enum or newtype displays through `Display`, which it provides by a `__str__` method, by
 //! its variants' values when it is an enum that declares them, by `@derive(Display)` (RFC 000), which displays the
-//! value as its `{value:?}` structure, or by `message()` when it adopts `Error`. A value with none of those has no
-//! printed form, so the checker refuses it in every position with `INCAN-T0103` instead of leaving the build to fail on
-//! it. Inside a structural value every element displays as its `{value:?}` structure, and a generator, a function and
-//! `bytes` have none there either, so a structure holding one is refused alike. A `Display` bound asks the same of a
-//! type argument, except that a structural value has no `Display` of its own.
+//! value as its `{value:?}` structure, or by `message()` when it adopts `Error`. A value with none of those, and a
+//! value of type `None`, has no printed form, so the checker refuses it in every position with `INCAN-T0103` instead of
+//! leaving the build to fail on it. Inside a structural value every element displays as its `{value:?}` structure, and
+//! a generator, a function and `bytes` have none there either, so a structure holding one is refused alike. A `Display`
+//! bound asks the same of a type argument, except that a structural value has no `Display` of its own.
 
 use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
@@ -164,6 +164,8 @@ impl TypeChecker {
             ResolvedType::Function(..) => Some(UnprintableValue::Function),
             ResolvedType::Bytes => Some(UnprintableValue::Bytes),
             _ if is_frozen_bytes(ty) => Some(UnprintableValue::Bytes),
+            // `None` as a type has no text of its own (#1561).
+            ResolvedType::Unit => Some(UnprintableValue::NoneValue),
             ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _)
                 if self.nominal_provides_display(type_name) == Some(false) =>
             {

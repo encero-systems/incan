@@ -26,6 +26,7 @@ mod power_grouping_emission;
 mod reads_and_iterator_surface;
 mod record_pattern_emission;
 mod reexported_projections;
+mod result_method_receivers;
 mod rust_2024_keyword_identifiers;
 mod slice_hooks;
 mod static_reads_and_frozen_strings;

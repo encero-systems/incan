@@ -14,7 +14,7 @@ use quote::{format_ident, quote};
 
 use crate::conversions::{
     Conversion as OwnershipPlan, ConversionContext, determine_conversion, determine_conversion_for_incan_call,
-    incan_mutable_param_passed_as_rust_mut_ref, is_owned_string_type,
+    field_read_needs_owned_materialization, incan_mutable_param_passed_as_rust_mut_ref, is_owned_string_type,
 };
 use crate::reference_shape::expr_has_rust_reference_shape;
 use incan_ir::decl::FunctionParam;
@@ -752,6 +752,61 @@ impl ReadByRefReceiverPlan {
             Self::BorrowOwned => quote! { &mut #tokens },
             Self::ReborrowThroughDeref => quote! { &mut *#tokens },
         }
+    }
+}
+
+/// Plan the receiver of a builtin method whose Rust implementation takes its receiver by value: every `Result` method
+/// (`map`, `and_then`, `or_else`, `inspect`, `unwrap_or`, ...) (#1561).
+///
+/// Such a call consumes its receiver, while a `Result` is a value that stays usable after the call reads it, as the
+/// `std.result` helper form taking it as an argument does. A local the program reads again later, or a field, is
+/// therefore copied into the call, and a local at its last use moves into it. A `Copy` result needs no copy, and one
+/// whose types are not all known to be `Clone` (a Rust type, an unknown type) keeps its move, as a `match` over it
+/// does.
+#[must_use]
+pub fn plan_consumed_receiver(receiver: &IrExpr) -> OwnershipPlan {
+    if receiver.ty.is_copy() || !value_type_is_known_clone(&receiver.ty) {
+        return OwnershipPlan::None;
+    }
+    match &receiver.kind {
+        IrExprKind::Var {
+            access: VarAccess::Move,
+            ..
+        } => OwnershipPlan::None,
+        IrExprKind::Var {
+            ref_kind: VarRefKind::Value,
+            ..
+        } => OwnershipPlan::Clone,
+        IrExprKind::Field { .. } if field_read_needs_owned_materialization(receiver) => OwnershipPlan::Clone,
+        _ => OwnershipPlan::None,
+    }
+}
+
+/// Whether every type a value of `ty` holds is an Incan value type, all of which are `Clone`, or a type parameter,
+/// whose `Clone` bound clone-bound inference adds for a backend copy.
+fn value_type_is_known_clone(ty: &IrType) -> bool {
+    match ty {
+        IrType::Unit
+        | IrType::Bool
+        | IrType::Int
+        | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
+        | IrType::String
+        | IrType::Bytes
+        | IrType::StaticStr
+        | IrType::StaticBytes
+        | IrType::FrozenStr
+        | IrType::FrozenBytes
+        | IrType::Generic(_) => true,
+        IrType::List(inner) | IrType::Set(inner) | IrType::Option(inner) => value_type_is_known_clone(inner),
+        IrType::Dict(key, value) | IrType::Result(key, value) => {
+            value_type_is_known_clone(key) && value_type_is_known_clone(value)
+        }
+        IrType::Tuple(items) => items.iter().all(value_type_is_known_clone),
+        IrType::Struct(name) | IrType::Enum(name) => !name.contains("::"),
+        IrType::NamedGeneric(name, args) => !name.contains("::") && args.iter().all(value_type_is_known_clone),
+        _ => false,
     }
 }
 

@@ -620,6 +620,116 @@ impl TypeChecker {
         }
     }
 
+    /// Give the side of an `and_then` or `or_else` call's result that its closure's `Ok(...)` or `Err(...)` leaves open
+    /// the type that constructor is built with (#1561).
+    ///
+    /// The closure `(m) => Ok(1)` of `or_else` gives its result no error type, and one of `and_then` that returns only
+    /// `Err(...)` no success type, unless the receiver or the call's expected `Result` type fixes that side. The
+    /// constructor is then built with the side the enclosing function's `Result` return type has, or with `None` when
+    /// that function returns no `Result`, as an `Ok(...)` or `Err(...)` bound to a local is (see
+    /// [`Self::settle_open_constructor_side`]). The call's result says so, so a later use of that side is checked
+    /// against the type it is built with. A callback that is not a closure literal returning such a constructor is left
+    /// as it is.
+    fn settle_open_callback_result_side(
+        &self,
+        method: ResultMethodId,
+        args: &[CallArg],
+        result: ResolvedType,
+    ) -> ResolvedType {
+        let (open_side, unspelled_by) = match method {
+            ResultMethodId::AndThen => (0, ConstructorId::Err),
+            ResultMethodId::OrElse => (1, ConstructorId::Ok),
+            _ => return result,
+        };
+        let Some(CallArg::Positional(callback)) = args.first() else {
+            return result;
+        };
+        let Expr::Closure(_, body) = &callback.node else {
+            return result;
+        };
+        if self.returned_result_constructor(body) != Some(unspelled_by) {
+            return result;
+        }
+        self.settle_result_side(result, open_side)
+    }
+
+    /// Give the side an `Ok(...)` or `Err(...)` bound to a new local leaves open the type that constructor is built
+    /// with (#1561).
+    ///
+    /// `x = Ok(1)` gives `x` no error type unless the enclosing function's `Result` return type gives the constructor
+    /// one; the constructor is then built with `None` there, so the binding's type says so and a later use of that side
+    /// is checked against `None`. Any other value, and a side something fixed, is left as it is.
+    pub(in crate::typechecker) fn settle_open_constructor_side(
+        &self,
+        value: &Spanned<Expr>,
+        ty: ResolvedType,
+    ) -> ResolvedType {
+        match self.returned_result_constructor(value) {
+            Some(ConstructorId::Ok) => self.settle_result_side(ty, 1),
+            Some(ConstructorId::Err) => self.settle_result_side(ty, 0),
+            _ => ty,
+        }
+    }
+
+    /// Fill side `side` (0 for success, 1 for error) of the `Result` type `ty` when it is open, with the type an open
+    /// constructor side is built with: that side of the enclosing function's `Result` return type, or `None` when the
+    /// function returns no `Result`.
+    fn settle_result_side(&self, ty: ResolvedType, side: usize) -> ResolvedType {
+        match ty {
+            ResolvedType::Generic(name, mut sides)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+                    && sides.len() == 2
+                    && matches!(sides[side], ResolvedType::Unknown) =>
+            {
+                sides[side] = match self.symbols.enclosing_declared_return_type() {
+                    Some(ResolvedType::Generic(returned, returned_sides))
+                        if collection_type_id(returned.as_str()) == Some(CollectionTypeId::Result)
+                            && returned_sides.len() == 2 =>
+                    {
+                        returned_sides[side].clone()
+                    }
+                    _ => ResolvedType::Unit,
+                };
+                ResolvedType::Generic(name, sides)
+            }
+            other => other,
+        }
+    }
+
+    /// Return the `Ok` or `Err` constructor `expr` produces: a call of it, in parentheses, or as the value of an `if`
+    /// with an `else` (the first branch that produces one), as lowering finds the constructor a closure returns.
+    fn returned_result_constructor(&self, expr: &Spanned<Expr>) -> Option<ConstructorId> {
+        match &expr.node {
+            Expr::Paren(inner) => self.returned_result_constructor(inner),
+            Expr::Call(callee, type_args, call_args) if type_args.is_empty() && call_args.len() == 1 => {
+                let Expr::Ident(name) = &callee.node else {
+                    return None;
+                };
+                self.result_constructor_named(name)
+            }
+            Expr::Constructor(name, call_args) if call_args.len() == 1 => self.result_constructor_named(name),
+            Expr::If(if_expr) => {
+                let else_body = if_expr.else_body.as_ref()?;
+                let branch_value = |body: &[Spanned<Statement>]| match body.last().map(|stmt| &stmt.node) {
+                    Some(Statement::Expr(value)) => self.returned_result_constructor(value),
+                    _ => None,
+                };
+                branch_value(&if_expr.then_body).or_else(|| branch_value(else_body))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `Ok` or `Err` constructor `name` spells, unless a binding of the program shadows it.
+    fn result_constructor_named(&self, name: &str) -> Option<ConstructorId> {
+        match constructors::from_str(name)? {
+            constructor @ (ConstructorId::Ok | ConstructorId::Err) if !self.has_non_builtin_call_root_binding(name) => {
+                Some(constructor)
+            }
+            _ => None,
+        }
+    }
+
     /// Typecheck one RFC 070 `Result[T, E]` combinator method call.
     fn check_result_combinator_method(
         &mut self,
@@ -656,24 +766,28 @@ impl TypeChecker {
             result_methods::ResultMethodId::AndThen => {
                 let expected = ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty.clone()]);
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&expected), span);
-                let ResolvedType::Generic(name, args) = ret else {
-                    return ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty]);
+                let result = match ret {
+                    ResolvedType::Generic(name, sides)
+                        if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && sides.len() == 2 =>
+                    {
+                        ResolvedType::Generic(name, sides)
+                    }
+                    _ => ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty]),
                 };
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 {
-                    return ResolvedType::Generic(name, args);
-                }
-                ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty])
+                self.settle_open_callback_result_side(method_id, args, result)
             }
             result_methods::ResultMethodId::OrElse => {
                 let expected = ResolvedType::Generic("Result".to_string(), vec![ok_ty.clone(), ResolvedType::Unknown]);
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&expected), span);
-                let ResolvedType::Generic(name, args) = ret else {
-                    return ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown]);
+                let result = match ret {
+                    ResolvedType::Generic(name, sides)
+                        if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && sides.len() == 2 =>
+                    {
+                        ResolvedType::Generic(name, sides)
+                    }
+                    _ => ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown]),
                 };
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 {
-                    return ResolvedType::Generic(name, args);
-                }
-                ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown])
+                self.settle_open_callback_result_side(method_id, args, result)
             }
             result_methods::ResultMethodId::Inspect => {
                 self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&ResolvedType::Unit), span);

@@ -192,6 +192,7 @@ Refused in every display position (`INCAN-T0103`):
 - a `Generator`;
 - a function;
 - `bytes`, `FrozenBytes`;
+- a value of type `None`;
 - a `model`, `class`, `enum` or `newtype` value whose type provides no `Display` by a row above: it has no `__str__`, takes no `Display` from a Rust derive macro, is not an enum that declares values, does not derive `Display`, and does not adopt `Error`;
 - a tuple, list, dict, set, frozen collection, `Option` or `Result` that holds a `Generator`, a function, `bytes` or `FrozenBytes` at any depth;
 - a value of a type parameter that has no bound on `Display`, on `Error`, or on a trait that declares `__str__`.

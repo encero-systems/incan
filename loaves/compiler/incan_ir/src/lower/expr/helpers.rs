@@ -1,6 +1,6 @@
 //! Small helper utilities for expression lowering: pow exponent classification, literal extraction, the no-argument
-//! `count()` on a list, the `flat_map` callback that expands into a nested iterator, and the `Ok(...)` or `Err(...)`
-//! a `Result` combinator's closure returns.
+//! `count()` on a list, the `flat_map` callback that expands into a nested iterator, the `Ok(...)` or `Err(...)` a
+//! `Result` combinator's closure returns, and the closure a `Result` observer is called with.
 
 use super::super::super::expr::{
     BuiltinFn, IrCallArg, IrCallArgKind, IrExprKind, IrGeneratorClause, IteratorMethodKind, MethodKind, Pattern,
@@ -13,7 +13,7 @@ use crate::TypedExpr;
 use incan_frontend::ast::{self, Spanned};
 use incan_lang::PowExponentKind;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
-use incan_lang::lang::surface::result_methods::ResultMethodId;
+use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 
@@ -224,6 +224,46 @@ impl AstLowering {
             }
             _ => {}
         }
+    }
+
+    /// Return the closure literal a `Result`'s `inspect` or `inspect_err` call passes as its observer, keyed by the
+    /// closure's span, with the payload type it observes (#1561).
+    ///
+    /// `None` for a call the checker dispatched to a declared method, a receiver that is not a `Result` with a known
+    /// observed side, and an observer that is not a one-parameter closure literal.
+    pub(in crate::lower) fn result_observer_closure_payload(
+        &self,
+        call_span: ast::Span,
+        receiver: &TypedExpr,
+        method: &str,
+        args: &[ast::CallArg],
+    ) -> Option<((usize, usize), IrType)> {
+        if self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_method_call(call_span))
+            .is_some()
+        {
+            return None;
+        }
+        let IrType::Result(ok, err) = &receiver.ty else {
+            return None;
+        };
+        let payload = match result_methods::from_str(method)? {
+            ResultMethodId::Inspect => ok,
+            ResultMethodId::InspectErr => err,
+            _ => return None,
+        };
+        if matches!(payload.as_ref(), IrType::Unknown) {
+            return None;
+        }
+        let [ast::CallArg::Positional(callback)] = args else {
+            return None;
+        };
+        let ast::Expr::Closure(params, _) = &callback.node else {
+            return None;
+        };
+        (params.len() == 1).then(|| ((callback.span.start, callback.span.end), payload.as_ref().clone()))
     }
 
     /// Give the `Ok(...)` or `Err(...)` that `expr` produces, directly, as a block's value or as both branches of an

@@ -3251,6 +3251,9 @@ pub enum UnprintableValue<'a> {
     Function,
     /// A `bytes` value, which has no text of its own.
     Bytes,
+    /// A value of type `None`, such as the result of a function that returns `None` or the side of a `Result` that
+    /// nothing gives another type.
+    NoneValue,
     /// A model, class, enum or newtype value whose type provides no `Display`.
     Nominal {
         /// The type as the checker names it.
@@ -3269,6 +3272,7 @@ impl UnprintableValue<'_> {
             Self::Generator => "generator".to_string(),
             Self::Function => "function".to_string(),
             Self::Bytes => "bytes value".to_string(),
+            Self::NoneValue => "None value".to_string(),
             Self::Nominal { type_name } => match name {
                 Some(_) => format!("{type_name} value"),
                 None => return format!("a value of type '{type_name}'"),
@@ -3317,6 +3321,9 @@ pub fn value_has_no_printed_form(
         UnprintableValue::Function => "Call it and display the result".to_string(),
         UnprintableValue::Bytes => {
             "Decode it to text first with decode(), or display its length with len(...)".to_string()
+        }
+        UnprintableValue::NoneValue => {
+            "Display a value of another type; a Result side that nothing else types is None, so annotate the Result's type to give that side one".to_string()
         }
         UnprintableValue::Nominal { type_name } => {
             // Spell the structure form with the operand's own name; any other expression gets the format spec alone,
