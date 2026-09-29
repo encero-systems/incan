@@ -39,6 +39,7 @@ use incan_lang::lang::surface::{
     frozen_set_methods, iterator_methods, list_methods, result_methods, set_methods,
 };
 use incan_lang::lang::text_codecs::{self, DecodeErrorsPolicy};
+use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, IntegerHelperOperation, NumericFamily};
@@ -7216,10 +7217,11 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        // RFC 023: Method calls on generic type variables are permissive.
-        //
-        // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
-        // At the Incan typechecker level we allow the call and return the same type variable.
+        // RFC 023: the Rust backend infers the bound a method call on a type parameter needs only for `.clone()`
+        // (`T: Clone`), which returns the parameter. Inside the declaration that introduces the parameter, its bounds
+        // are all it has, so any other method no bound declares is refused. A bound whose trait the checker cannot see
+        // (a Rust trait, an unresolved name) may declare it, and the result's type is then unknown rather than the
+        // parameter's. A placeholder of no enclosing declaration stays permissive.
         if self.is_generic_placeholder_type(&base_ty) {
             if let Some(ret) = self.generic_reflection_magic_method_return_type(method) {
                 if let Some(id) = magic_methods::from_str(method) {
@@ -7231,6 +7233,17 @@ impl TypeChecker {
                 }
                 self.validate_reflection_magic_call(method, type_args, args, span);
                 return ret;
+            }
+            if let Some(type_param) = self.rigid_type_param_name(&base_ty)
+                && method != trait_bounds::rust::CLONE_METHOD
+            {
+                if self.active_type_param_bounds_are_visible(type_param)
+                    && !self.active_type_param_bound_declares_member(type_param, method)
+                {
+                    self.errors
+                        .push(errors::type_parameter_method_not_declared(type_param, method, span));
+                }
+                return ResolvedType::Unknown;
             }
             return base_ty.clone();
         }

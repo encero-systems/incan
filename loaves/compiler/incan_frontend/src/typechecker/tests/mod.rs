@@ -76,6 +76,7 @@ mod fields_and_members;
 mod for_item_taking;
 mod forward_declared_types;
 mod frozen_collection_reads;
+mod generic_call_type_arguments;
 mod generic_model_bounds;
 mod generics_and_type_tokens;
 mod imports_and_stdlib_modules;

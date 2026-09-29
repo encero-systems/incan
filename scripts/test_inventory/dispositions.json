@@ -3457,6 +3457,28 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/generic_call_arguments.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of generic calls whose type arguments come from their arguments: a type parameter's value where its bound names the expected trait, arguments binding one type parameter to numeric types that widen to one, and bounded type arguments the call settles or the expected type fixes (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "arguments_binding_one_type_parameter_build_with_the_type_they_widen_to_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/arguments_binding_one_type_parameter_widen_to_one_type.incn",
+          "notes": "Passes an i8 and an int, and an f32 and a float literal, for one type parameter of a function, a generic method and a generic model's constructor, in both orders; the fixture prints each result."
+        },
+        "bounded_type_arguments_the_call_settles_or_expects_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/bounded_type_arguments_the_call_settles_or_expects.incn",
+          "notes": "Calls Display-bounded generics whose type argument an Err settles inside a Result function, an explicit type argument fixes, or an annotated binding fixes; the fixture prints each result."
+        },
+        "type_parameter_values_build_where_a_bound_makes_them_the_expected_type_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/type_parameter_values_where_a_bound_makes_them_the_expected_type.incn",
+          "notes": "Passes a bounded type parameter's value to a trait-typed parameter, clones it, returns it as an Option and passes it to a callee's type parameter; the fixture prints each result."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs": {
       "disposition": "retire",
       "notes": "bound inference of the Rust-source backend over lowered programs: the bounds a generic caller receives from the source methods it calls (#1779, #1280). Retires with the backend under #654; each test is twinned by a program that runs only when the caller carries the bound.",
@@ -6489,6 +6511,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/frozen_collection_reads.rs": {
       "disposition": "keep",
       "notes": "typechecker tests of the reads a `const` frozen collection answers (membership, `FrozenSet.contains`, `FrozenList` indexing, #1757); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/generic_call_type_arguments.rs": {
+      "disposition": "keep",
+      "notes": "typechecker tests of a type parameter's values and methods inside its declaration and of the type arguments a generic call's arguments bind or leave open (#1561); typechecker only, no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

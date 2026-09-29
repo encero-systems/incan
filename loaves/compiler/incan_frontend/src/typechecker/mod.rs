@@ -8697,6 +8697,66 @@ impl TypeChecker {
         }
     }
 
+    /// Whether a value of the enclosing declaration's type parameter `type_param` (of type `actual`, the parameter
+    /// itself) can be used where `expected` is required (#1561).
+    ///
+    /// Inside its declaration a type parameter is one type the declaration does not choose, so a value of it is not a
+    /// value of a concrete type: `return x` from `def f[T](x: T) -> int` is refused, as the generated Rust refuses it.
+    /// A bound makes it a value of a trait the bound implies (`T with Shape` where a `Shape` is expected). A
+    /// `CallableN` bound does not make it a function value, since an adopting model meets the bound too; a bound on
+    /// a trait the checker cannot see (a Rust `Fn` marker) may, and is left to the Rust compiler. A union takes the
+    /// value when one member does, an `Option` when its payload does, and a borrow when the borrowed type does. A
+    /// destination still to be inferred (a callee's type parameter, a placeholder of no enclosing declaration),
+    /// `Self`, a Rust type and a name the checker does not know are left to the checks that own them.
+    fn rigid_type_param_value_fits(&self, type_param: &str, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match expected {
+            ResolvedType::Named(name) if name == type_param => true,
+            ResolvedType::Unknown
+            | ResolvedType::Never
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::SelfType
+            | ResolvedType::RustPath(_) => true,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.types_compatible(actual, inner),
+            ResolvedType::Generic(name, members) if name == UNION_TYPE_NAME => {
+                members.iter().any(|member| self.types_compatible(actual, member))
+            }
+            _ if expected.is_option() => expected
+                .option_inner_type()
+                .is_some_and(|inner| self.types_compatible(actual, inner)),
+            ResolvedType::Function(..) => !self.active_type_param_bounds_are_visible(type_param),
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                if self.is_generic_placeholder_type(expected) {
+                    return true;
+                }
+                if self.lookup_semantic_trait_info(name).is_some() {
+                    return self.active_type_param_implies_trait_type(type_param, expected);
+                }
+                self.lookup_semantic_type_info(name).is_none() && collection_type_id(name.as_str()).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the bounds of the enclosing declaration's type parameter `type_param` imply the trait `trait_ty` names
+    /// (`Shape`, or `Iterable[int]` with its type arguments), so a value of the parameter is a value of that trait.
+    fn active_type_param_implies_trait_type(&self, type_param: &str, trait_ty: &ResolvedType) -> bool {
+        let (name, type_args) = match trait_ty {
+            ResolvedType::Named(name) => (name, Vec::new()),
+            ResolvedType::Generic(name, args) => (name, args.clone()),
+            _ => return false,
+        };
+        let required = TypeBoundInfo {
+            name: name.clone(),
+            source_name: None,
+            type_args,
+            module_path: None,
+            implementation_type_params: Vec::new(),
+            inferred: false,
+        };
+        self.active_type_param_satisfies_bound_info(type_param, &required, &HashMap::new())
+    }
+
     /// Return whether `actual` can be used where `expected` is required, with a recursion cap for pathological unions.
     pub fn types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
         const MAX_TYPE_COMPATIBILITY_DEPTH: usize = 512;
@@ -8760,6 +8820,9 @@ impl TypeChecker {
                 self.value_is_rigid_type_param(actual, type_param)
             }
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
+            (actual, expected) if let Some(type_param) = self.rigid_type_param_name(actual) => {
+                self.rigid_type_param_value_fits(type_param, actual, expected)
+            }
             (actual, _) if self.is_generic_placeholder_type(actual) => true,
             (_, expected) if self.is_generic_placeholder_type(expected) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,

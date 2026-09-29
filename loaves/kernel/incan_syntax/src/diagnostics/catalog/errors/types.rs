@@ -3579,6 +3579,58 @@ pub fn hash_method_through_hash_bound(type_param: &str, span: Span) -> CompileEr
     )
 }
 
+/// Refuse a call argument that binds a type parameter of the callee to a type another argument's binding does not
+/// unify with (#1561).
+///
+/// `bound` is the type the call binds the parameter to and `found` the type this argument binds it to: in
+/// `take(1, "s")` for `def take[T](x: T, y: T)`, `"s"` binds `T` to `str` and the `1` binds it to `int`.
+pub fn conflicting_type_argument_bindings(
+    callee: &str,
+    type_param: &str,
+    bound: &str,
+    found: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(format!("Type mismatch: expected '{bound}', found '{found}'"), span)
+        .with_expected_actual(bound, found)
+        .with_note(format!(
+            "Another argument of '{callee}' binds type parameter '{type_param}' to '{bound}', and '{type_param}' is one type in a call"
+        ))
+        .with_hint(format!(
+            "Pass arguments of one type for '{type_param}', or write the type argument: {callee}[...](...)"
+        ))
+}
+
+/// Refuse a call that leaves a type parameter with a declared bound open: no argument, and no expected type, fixes
+/// it (#1561).
+pub fn bounded_type_param_left_open(callee: &str, type_param: &str, bound: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot infer type parameter '{type_param}' of '{callee}': no argument fixes it, and its bound '{bound}' needs a type"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Write the type argument, as in `{callee}[...](...)`, pass an argument whose type fixes '{type_param}', or bind the result to an annotated name"
+    ))
+}
+
+/// Refuse a method call on a value of a type parameter whose bounds declare no method of that name (#1561).
+///
+/// Inside the declaration that introduces it, a type parameter has the methods its bounds' traits declare, and
+/// `.clone()`, which the generated Rust bounds by `Clone`. Any other method has nothing to call for a type argument
+/// that lacks it, so the generated Rust refuses it.
+pub fn type_parameter_method_not_declared(type_param: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Type parameter '{type_param}' has no method '{method}(...)': no bound of '{type_param}' declares it"),
+        span,
+    )
+    .with_hint(format!(
+        "Bound '{type_param}' by a trait that declares '{method}' (`{type_param} with Trait`), or declare the value \
+         with a concrete type"
+    ))
+}
+
 /// Refuse an adopter that relies on a default method of a trait another compiled package declares (#1561).
 ///
 /// A package's manifest publishes its traits' method signatures, and its generated crate declares each trait method

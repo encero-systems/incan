@@ -1,0 +1,9 @@
+# behavior: a call whose arguments bind one type parameter to an int and a str is refused, since the type parameter is one type in a call
+# expect-diagnostic: INCAN-T0001
+
+def take[T](x: T, y: T) -> int:
+    return 1
+
+
+def main() -> None:
+    println(take(1, "s"))

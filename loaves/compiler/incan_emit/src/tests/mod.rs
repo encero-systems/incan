@@ -12,6 +12,7 @@ mod dict_value_places;
 mod emitted_spellings;
 mod expected_literal_emission;
 mod generated_programs;
+mod generic_call_arguments;
 mod generic_caller_bounds;
 mod inherited_method_dispatch;
 mod iterator_adopters;
