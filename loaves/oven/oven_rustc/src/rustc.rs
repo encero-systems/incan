@@ -1646,7 +1646,7 @@ impl OvenRustcArtifactManifest {
             }
         }
         let mut registry_source_identities = BTreeMap::new();
-        let mut registry_package_sources = BTreeSet::new();
+        let mut registry_package_sources = BTreeMap::new();
         for package in &self.registry_sources {
             if package.package.trim().is_empty() || package.version.trim().is_empty() {
                 return Err(OvenRustcError::InvalidInput {
@@ -1708,30 +1708,40 @@ impl OvenRustcArtifactManifest {
                     ),
                 });
             }
-            let key = (
+            // A package version from one registry has one source record. Compare the complete source before naming
+            // the refusal: the same source declared again is a repeat, while a differing checksum, staged root or
+            // tree digest is a second source identity.
+            let package_key = (
                 package.package.as_str(),
                 package.version.as_str(),
                 package.source.registry.as_str(),
-                package.source.checksum.as_str(),
             );
-            if !registry_package_sources.insert((key.0, key.1, key.2)) {
-                return Err(OvenRustcError::InvalidInput {
-                    field: "artifact manifest registry sources",
-                    message: format!(
-                        "declares more than one source identity for registry package `{}` version `{}`",
-                        package.package, package.version
-                    ),
-                });
-            }
-            if registry_source_identities.insert(key, package).is_some() {
-                return Err(OvenRustcError::InvalidInput {
-                    field: "artifact manifest registry sources",
-                    message: format!(
+            if let Some(declared) = registry_package_sources.insert(package_key, &package.source) {
+                let message = if *declared == package.source {
+                    format!(
                         "declares registry source `{}` version `{}` more than once",
                         package.package, package.version
-                    ),
+                    )
+                } else {
+                    format!(
+                        "declares more than one source identity for registry package `{}` version `{}`",
+                        package.package, package.version
+                    )
+                };
+                return Err(OvenRustcError::InvalidInput {
+                    field: "artifact manifest registry sources",
+                    message,
                 });
             }
+            registry_source_identities.insert(
+                (
+                    package.package.as_str(),
+                    package.version.as_str(),
+                    package.source.registry.as_str(),
+                    package.source.checksum.as_str(),
+                ),
+                package,
+            );
         }
         let mut package_versions = BTreeSet::new();
         for leaf in &self.registry_leaves {
@@ -10286,6 +10296,84 @@ fi
             vocab_auxiliary_targets: Vec::new(),
             supporting_artifacts: Vec::new(),
         }
+    }
+
+    /// A repeated registry source record is a duplicate declaration, and only a differing source is a second identity.
+    ///
+    /// The manifest names each registry package version from one registry once. Declaring the same record twice is
+    /// refused as a repeat, while the same package version whose checksum, source root, or tree digest differs is
+    /// refused as a second source identity.
+    #[test]
+    fn manifest_distinguishes_a_repeated_registry_source_from_a_second_source_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let source = OvenRustcRegistrySourcePackage {
+            package: "segmentation".to_string(),
+            version: "1.12.0".to_string(),
+            features: Vec::new(),
+            source: OvenRustcRegistrySource {
+                registry: "registry+https://github.com/rust-lang/crates.io-index".to_string(),
+                checksum: "segmentation-checksum".to_string(),
+                relative_root: "registry-sources/segmentation".to_string(),
+                digest: digest_bytes(b"segmentation source"),
+            },
+        };
+        let manifest = |registry_sources: Vec<OvenRustcRegistrySourcePackage>| OvenRustcArtifactManifest {
+            registry_sources,
+            supporting_artifacts: vec![
+                OvenRustcSupportingArtifact {
+                    relative_path: "registry-sources/segmentation/Cargo.toml".to_string(),
+                    digest: digest_bytes(b"segmentation manifest"),
+                },
+                OvenRustcSupportingArtifact {
+                    relative_path: "registry-sources/segmentation-other/Cargo.toml".to_string(),
+                    digest: digest_bytes(b"other segmentation manifest"),
+                },
+            ],
+            ..empty_manifest(&receipt)
+        };
+        let refusal = |registry_sources| -> Result<String, Box<dyn std::error::Error>> {
+            let plan = manifest(registry_sources);
+            Ok(plan
+                .validate_shape(&plan.intent)
+                .err()
+                .ok_or("the manifest must refuse the registry source declarations")?
+                .to_string())
+        };
+
+        let single = manifest(vec![source.clone()]);
+        single.validate_shape(&single.intent)?;
+
+        let repeated = refusal(vec![source.clone(), source.clone()])?;
+        assert!(
+            repeated.contains("declares registry source `segmentation` version `1.12.0` more than once"),
+            "{repeated}"
+        );
+        let mut featured = source.clone();
+        featured.features = vec!["std".to_string()];
+        let repeated_with_features = refusal(vec![source.clone(), featured])?;
+        assert!(
+            repeated_with_features.contains("more than once"),
+            "{repeated_with_features}"
+        );
+
+        let mut other_checksum = source.clone();
+        other_checksum.source.checksum = "other-segmentation-checksum".to_string();
+        let mut other_root = source.clone();
+        other_root.source.relative_root = "registry-sources/segmentation-other".to_string();
+        let mut other_digest = source.clone();
+        other_digest.source.digest = digest_bytes(b"other segmentation source");
+        for conflicting in [other_checksum, other_root, other_digest] {
+            let conflict = refusal(vec![source.clone(), conflicting])?;
+            assert!(
+                conflict.contains(
+                    "declares more than one source identity for registry package `segmentation` version `1.12.0`"
+                ),
+                "{conflict}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
