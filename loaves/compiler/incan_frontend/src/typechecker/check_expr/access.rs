@@ -1197,18 +1197,26 @@ impl TypeChecker {
         Some(Self::iterator_callback_ty(params, ret))
     }
 
-    /// Return whether an RFC 088 method keeps its callback in the lazy iterator it returns: `map`, `filter`,
-    /// `flat_map`, `take_while` and `skip_while` of an iterator, which hold it as a function pointer, except a
-    /// generator's own `map` and `filter` (RFC 006).
-    fn iterator_adapter_stores_its_callback(&self, base_ty: &ResolvedType, method: &str) -> bool {
+    /// Describe the function-typed slot an RFC 088 method of an iterator gives its callback, when it refuses a
+    /// closure that captures local values, or `None` when the receiver is not an iterator or the method takes no
+    /// callback.
+    ///
+    /// Each callback is a parameter of a standard-library method, which the functions reference gives a named function
+    /// or a closure that captures nothing (#1561): `map`, `filter`, `flat_map`, `take_while` and `skip_while` of an
+    /// iterator, a generator's own `map` and `filter` (RFC 006) included, keep it in the lazy iterator they return, and
+    /// a terminal takes it as its parameter.
+    fn iterator_callback_slot(&self, base_ty: &ResolvedType, method: &str) -> Option<String> {
         use iterator_methods::IteratorMethodId as M;
-        let generator = matches!(base_ty, ResolvedType::Generic(name, _) if Self::is_generator_name(name));
-        let stored = match iterator_methods::from_str(method) {
-            Some(M::Map | M::Filter) => !generator,
-            Some(M::FlatMap | M::TakeWhile | M::SkipWhile) => true,
-            _ => false,
-        };
-        stored && self.iterator_protocol_element_type(base_ty).is_some()
+        self.iterator_protocol_element_type(base_ty)?;
+        match iterator_methods::from_str(method)? {
+            M::Map | M::Filter | M::FlatMap | M::TakeWhile | M::SkipWhile => {
+                Some(format!("stored by the iterator adapter '{method}'"))
+            }
+            M::Any | M::All | M::Find | M::Fold | M::Reduce | M::ForEach => {
+                Some(format!("passed to the standard-library method '{method}'"))
+            }
+            _ => None,
+        }
     }
 
     /// Build a resolved callable type from parameter and return types for adapter diagnostics.
@@ -1344,6 +1352,16 @@ impl TypeChecker {
             && matches!(method_id, M::Map | M::Filter | M::Take | M::Collect)
         {
             return None;
+        }
+        // A list, set, frozen collection or `Iterable[T]` provides `iter()`; the adapters and terminals are methods of
+        // the `Iterator[T]` it returns (RFC 088), so `items.map(f)` is refused where `items.iter().map(f)` is meant.
+        if !matches!(method_id, M::Iter) && self.iterator_protocol_element_type(base_ty).is_none() {
+            self.errors.push(errors::iterator_method_on_an_iterable(
+                &base_ty.to_string(),
+                method,
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
         }
 
         match method_id {
@@ -5975,8 +5993,7 @@ impl TypeChecker {
             };
             arg_types.push(arg_ty);
         }
-        if self.iterator_adapter_stores_its_callback(&base_ty, method) {
-            let slot = format!("stored by the iterator adapter '{method}'");
+        if let Some(slot) = self.iterator_callback_slot(&base_ty, method) {
             for arg in args {
                 let (CallArg::Positional(arg_expr)
                 | CallArg::Named(_, arg_expr)
@@ -5995,7 +6012,9 @@ impl TypeChecker {
             return ret;
         }
         if let Some(ret) = self.resolve_iterator_protocol_method_call(&base_ty, method, args, &arg_types, span) {
-            self.mark_direct_iterator_binding_consumed(base, method, span);
+            if self.iterator_protocol_element_type(&base_ty).is_some() {
+                self.mark_direct_iterator_binding_consumed(base, method, span);
+            }
             return ret;
         }
 
@@ -6047,8 +6066,25 @@ impl TypeChecker {
         if let Some(ret) = self.check_integer_overflow_helper(&base_ty, method, type_args, args, &arg_types, span) {
             return ret;
         }
-        // Trait default methods typecheck against `Self`, so be permissive here too.
+        // In a trait's own method, a method that the trait or a supertrait of it declares, called on a `Self` value,
+        // has that declaration's signature (#1561). Any other method called on `Self` is left open, as is every one in
+        // the standard library's own source, whose trait defaults its own lowering rules expand.
         if matches!(base_ty, ResolvedType::SelfType) {
+            if !self.checks_standard_library_source()
+                && let Some(trait_name) = self.current_trait_name.clone()
+                && let Some(method_info) = self.trait_method_info_resolved(&trait_name, method, span)
+            {
+                return self.check_generic_method_call(
+                    method,
+                    method_info,
+                    type_args,
+                    args,
+                    &arg_types,
+                    span,
+                    &base_ty,
+                    expected_return_ty,
+                );
+            }
             return ResolvedType::Unknown;
         }
 

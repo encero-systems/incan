@@ -1,6 +1,7 @@
 //! A closure's parameter types come from the function type its context gives it (#1561): the element type of an
 //! RFC 088 iterator adapter or terminal, a fold's accumulator, and a generic parameter's function type once the other
-//! arguments fix its type parameters. A capturing closure is refused where a lazy adapter stores it.
+//! arguments fix its type parameters. A capturing closure is refused where a lazy adapter stores it and as the
+//! callback of any other standard-library function or method.
 
 use super::*;
 
@@ -107,8 +108,8 @@ def main() -> None:
 }
 
 /// `map`, `filter`, `flat_map`, `take_while` and `skip_while` keep their callback in the lazy iterator they return, as
-/// a function pointer, so a closure that captures local values, or a local holding one, is refused there. A terminal
-/// that only calls its callback, and a generator's own `map` and `filter`, take one.
+/// a function pointer, so a closure that captures local values, or a local holding one, is refused there. A closure
+/// that captures nothing and a named function are taken.
 #[test]
 fn capturing_closures_stored_by_iterator_adapters_are_refused_issue1561() {
     for adapter in [
@@ -136,20 +137,101 @@ def main() -> None:
     );
     assert_check_ok(
         r#"
+def small(x: int) -> bool:
+    return x < 2
+
+def main() -> None:
+    items = [1, 2, 3]
+    doubled = items.iter().map((x) => x * 2).collect()
+    kept = items.iter().filter(small).collect()
+    println(doubled)
+    println(kept)
+"#,
+    );
+}
+
+/// A callback of an iterator terminal or of a generator's own `map` and `filter`, and a function-typed parameter of a
+/// function the standard-library source declares, are parameters of a library function, which holds a named function
+/// or a closure that captures nothing, so a closure that captures local values, or a local holding one, is refused
+/// there; a function of this module that only calls its parameter takes one (#1561).
+#[test]
+fn capturing_closures_passed_to_standard_library_callbacks_are_refused_issue1561() {
+    for (call, method) in [
+        ("items.iter().any((x) => x == n)", "any"),
+        ("items.iter().all((x) => x > n)", "all"),
+        ("items.iter().find((x) => x > n)", "find"),
+        ("items.iter().fold(0, (acc, x) => acc + x * n)", "fold"),
+        ("items.iter().reduce(0, (acc, x) => acc + x * n)", "reduce"),
+        ("items.iter().for_each((x) => println(x + n))", "for_each"),
+    ] {
+        let source = format!("def main() -> None:\n    n = 2\n    items = [1, 2, 3]\n    kept = {call}\n");
+        assert_refused(
+            &source,
+            &[&format!(
+                "A closure that captures local values cannot be passed to the standard-library method '{method}'"
+            )],
+        );
+    }
+    for (call, method) in [
+        ("numbers().map((x) => x * n).collect()", "map"),
+        ("numbers().filter((x) => x < n).collect()", "filter"),
+    ] {
+        let source = format!(
+            "def numbers() -> Generator[int]:\n    yield 1\n    yield 2\n\n\
+             def main() -> None:\n    n = 2\n    kept = {call}\n"
+        );
+        assert_refused(
+            &source,
+            &[&format!(
+                "A closure that captures local values cannot be stored by the iterator adapter '{method}'"
+            )],
+        );
+    }
+    assert_refused(
+        r#"
+def main() -> None:
+    n = 2
+    items = [1, 2, 3]
+    at_least = (x) => x >= n
+    println(items.iter().any(at_least))
+"#,
+        &[
+            "'at_least', which holds a closure that captures local values, cannot be passed to the standard-library method 'any'",
+        ],
+    );
+    assert_refused(
+        r#"
+from std.testing import assert_raises
+
+def check(text: str) -> None:
+    int(text)
+
+def main() -> None:
+    text = "x"
+    assert_raises[ValueError](() => check(text))
+"#,
+        &["A closure that captures local values cannot be passed to the parameter 'block' of 'assert_raises'"],
+    );
+    assert_check_ok(
+        r#"
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
 def numbers() -> Generator[int]:
     yield 1
     yield 2
 
+def is_odd(x: int) -> bool:
+    return x % 2 == 1
+
 def main() -> None:
     n = 2
     items = [1, 2, 3]
-    println(items.iter().any((x) => x == n))
-    println(items.iter().fold(0, (acc, x) => acc + x * n))
-    println(items.iter().find((x) => x > n))
-    doubled = numbers().map((x) => x * n).collect()
-    kept = numbers().filter((x) => x < n).collect()
-    println(doubled)
-    println(kept)
+    println(apply((x) => x + n, 1))
+    println(items.iter().any(is_odd))
+    println(items.iter().fold(0, (acc, x) => acc + x))
+    println(numbers().map((x) => x * 2).collect())
+    println(numbers().filter(is_odd).collect())
 "#,
     );
 }

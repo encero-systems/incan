@@ -27,7 +27,7 @@ A type supports a protocol's syntax by defining the protocol's hook methods; ado
     - `Iterator[T]`
     - `Sum[T]`
 
-`Iterable[T]` and `Iterator[T]` provide `iter(self) -> Iterator[T]`. `Iterator[T]` provides these lazy adapters as default methods:
+`Iterable[T]` and `Iterator[T]` provide `iter(self) -> Iterator[T]`. `Iterator[T]` provides these lazy adapters as default methods, and the terminals below; a `list`, `set`, frozen collection or `Iterable[T]` value provides neither, so `items.map(f)` is refused (`INCAN-T0001`) and `items.iter().map(f)` is the call. A list's own `count()` is a `list` method.
 
 | Method | Result | Notes |
 | ------ | ------ | ----- |

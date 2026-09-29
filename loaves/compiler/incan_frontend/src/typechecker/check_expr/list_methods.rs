@@ -22,8 +22,8 @@ impl TypeChecker {
     /// Returns `None` for every receiver other than a list and every method other than `count` and `index`; the
     /// ordinary method resolution handles those. For `count` and `index` on a list:
     ///
-    /// - no argument, when an iterator terminal of that name exists: the terminal, typed by the iterator surface and
-    ///   without consuming the list;
+    /// - no argument, when an iterator terminal of that name exists (`count`): the list's number of items, as the
+    ///   terminal would count them, without consuming the list;
     /// - one value argument: the list method, whose value must be compatible with the list's element type;
     /// - anything else: refused with [`errors::list_method_argument_count`], and typed as the list method's `int` so
     ///   checking continues.
@@ -50,7 +50,7 @@ impl TypeChecker {
         self.refuse_non_positional_builtin_args(&callee, args);
 
         if args.is_empty() && iterator_form {
-            return self.resolve_iterator_protocol_method_call(base_ty, method, args, arg_types, span);
+            return Some(ResolvedType::Int);
         }
         if args.len() == value_arity {
             let element_ty = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);

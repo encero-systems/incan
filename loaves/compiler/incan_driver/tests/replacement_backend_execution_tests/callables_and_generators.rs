@@ -604,13 +604,13 @@ def main() -> int:
 }
 
 /// Map and filter adapters retain an unpolled source and invoke local closures through the same callable-frame
-/// binder used by ordinary local calls.
+/// binder used by ordinary local calls. A generator's adapter holds a closure that captures nothing, so the local
+/// closures read no outer local (#1561).
 #[test]
 fn replacement_executes_lazy_generator_adapters_with_local_callbacks() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
-  offset = 1
-  increment: (int) -> int = (value) => value + offset
+  increment: (int) -> int = (value) => value + 1
   accepted: (int) -> bool = (value) => value > 2
   values = (value for value in range(1, 5)).map(increment).filter(accepted).collect()
   return values[0] * 10 + values[1]

@@ -1244,3 +1244,55 @@ trait Countable:
         .collect::<Vec<_>>();
     assert_eq!(refused, vec!["Method 'bump' assigns to 'self.count' but takes 'self'"]);
 }
+
+/// In a trait's own default method, a method the trait or a supertrait declares, called on `self` or on another `Self`
+/// value, has its declared signature: its result is a `str` that `+ "!"`, `len` and `upper()` accept, a generic
+/// trait's method returns the trait's type parameter, and an operation its result does not provide is refused (#1561).
+#[test]
+fn trait_default_calls_on_self_take_the_declared_signature_issue1561() -> Result<(), String> {
+    check_str(
+        r#"
+trait Named:
+    def name(self) -> str: ...
+
+trait Tag with Named:
+    def tag(self) -> str: ...
+
+    def loud(self) -> str:
+        return self.tag() + "!"
+
+    def size(self) -> int:
+        return len(self.tag()) + len(self.name())
+
+    def greet(self, other: Self) -> str:
+        return "hi " + other.name().upper()
+
+trait Holder[T]:
+    def get(self) -> T: ...
+
+    def pair(self) -> list[T]:
+        return [self.get(), self.get()]
+"#,
+    )
+    .map_err(|errors| format!("expected the trait defaults to check, got: {:?}", messages(&errors)))?;
+    let errors = check_str(
+        r#"
+trait Tag:
+    def tag(self) -> str: ...
+
+    def bad(self) -> str:
+        return self.tag() + 1
+"#,
+    )
+    .err()
+    .ok_or("a str plus an int in a trait default must be refused")?;
+    if errors.iter().any(|error| error.message.contains("str + int")) {
+        return Ok(());
+    }
+    Err(format!("expected the str + int refusal, got: {:?}", messages(&errors)))
+}
+
+/// Return the messages of `errors`.
+fn messages(errors: &[CompileError]) -> Vec<&str> {
+    errors.iter().map(|error| error.message.as_str()).collect()
+}

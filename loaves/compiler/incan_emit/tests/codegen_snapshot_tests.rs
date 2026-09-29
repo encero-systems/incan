@@ -2759,7 +2759,7 @@ pub def consume[R with BinaryReader](reader: R) -> Result[None, str]:
 #[test]
 fn test_fallible_iterator_adapter_chain_codegen() {
     let source = r#"
-trait FallibleStream[T, E]:
+trait FallibleStream[T with Clone, E]:
   def __next__(mut self) -> Result[Option[T], E]: ...
 
   def map[U with Clone](self, f: (T) -> U) -> FallibleStream[U, E]:
@@ -2796,7 +2796,7 @@ model NumberStream with FallibleStream[int, str]:
     self.index += 1
     return Ok(Some(item))
 
-model MappedStream[T, E, Source with FallibleStream[T, E], Output] with FallibleStream[Output, E]:
+model MappedStream[T with Clone, E, Source with FallibleStream[T, E], Output with Clone] with FallibleStream[Output, E]:
   source: Source
   f: (T) -> Output
   error_marker: Option[E] = None
@@ -2809,7 +2809,7 @@ model MappedStream[T, E, Source with FallibleStream[T, E], Output] with Fallible
       Ok(None) => return Ok(None)
       Err(error) => return Err(error)
 
-model ErrorMappedStream[T, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
+model ErrorMappedStream[T with Clone, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
   source: Source
   f: (E) -> MappedError
   item_marker: Option[T] = None

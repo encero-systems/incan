@@ -1167,10 +1167,10 @@ impl TypeChecker {
         }
 
         for (supertrait_name, supertrait_args) in &trait_info.supertraits {
-            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+            let Some(supertrait_info) = self.supertrait_info_for_methods(supertrait_name.as_str()) else {
                 continue;
             };
-            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            let instantiated = self.instantiate_trait_info(&supertrait_info, supertrait_args);
             self.collect_instantiated_trait_method_entries(
                 supertrait_name,
                 &instantiated,
@@ -1179,6 +1179,40 @@ impl TypeChecker {
                 seen,
                 out,
             );
+        }
+    }
+
+    /// Return the declaration a supertrait name gives method lookup: its visible or semantic declaration, or, when
+    /// that is missing or a compiler stub without methods, the builtin trait's standard-library source declaration
+    /// once [`Self::load_builtin_supertrait_sources`] has loaded it. An adopter of `Ord` that imports only `Ord`
+    /// reaches the `__ne__` default of its `Eq` supertrait this way (#1561).
+    fn supertrait_info_for_methods(&self, name: &str) -> Option<TraitInfo> {
+        let semantic = self.lookup_semantic_trait_info(name);
+        if semantic.is_some_and(|info| !info.methods.is_empty()) {
+            return semantic.cloned();
+        }
+        stdlib::trait_method_module_segments(name)
+            .and_then(|segments| self.stdlib_cache.loaded_trait(&segments, name).cloned())
+            .or_else(|| semantic.cloned())
+    }
+
+    /// Load the standard-library source declaration of each builtin trait among `supertraits` and their own
+    /// supertraits, so [`Self::supertrait_info_for_methods`] can read it.
+    fn load_builtin_supertrait_sources(&mut self, supertraits: &[(String, Vec<ResolvedType>)]) {
+        let mut pending = supertraits.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        while let Some(name) = pending.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            if let Some(segments) = stdlib::trait_method_module_segments(&name)
+                && let Some(info) = self.stdlib_cache.lookup_trait(&segments, &name)
+            {
+                pending.extend(info.supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
+            }
+            if let Some(info) = self.lookup_semantic_trait_info(&name) {
+                pending.extend(info.supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
+            }
         }
     }
 
@@ -1257,8 +1291,10 @@ impl TypeChecker {
         {
             entries.push((adopted_trait.to_string(), info.clone()));
         }
-        for (supertrait_name, supertrait_args) in self.semantic_supertrait_closure(adopted_trait) {
-            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+        let closure = self.semantic_supertrait_closure(adopted_trait);
+        self.load_builtin_supertrait_sources(&closure);
+        for (supertrait_name, supertrait_args) in closure {
+            let Some(supertrait_info) = self.supertrait_info_for_methods(supertrait_name.as_str()) else {
                 continue;
             };
             let Some(info) = supertrait_info.methods.get(method) else {
@@ -1362,6 +1398,7 @@ impl TypeChecker {
                 stdlib::trait_method_module_segments(&adoption.name)
                     .and_then(|module_path| self.stdlib_cache.lookup_trait(&module_path, &adoption.name))
             })?;
+        self.load_builtin_supertrait_sources(&root.supertraits);
         let instantiated = if adoption.type_args.is_empty() {
             root
         } else {

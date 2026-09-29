@@ -3169,12 +3169,17 @@ impl TypeChecker {
     /// Return the declaring module and name of the trait `trait_name` binds when it and the type `type_name` come from
     /// the same compiled package, in the package's own module paths, which its types' adoptions record.
     ///
-    /// A consumer binds the trait under its own spelling (`Picker as Chooser`, or a package alias `pub Chooser =
-    /// Picker`) and under the package's public namespace, while the package's types recorded their adoptions in
-    /// the package's modules (#1561).
+    /// A consumer binds the trait under its own spelling (`Picker as Chooser`, a package alias `pub Chooser =
+    /// Picker`, or `t.Picker` through `import pub::pickers as t`) and under the package's public namespace, while the
+    /// package's types recorded their adoptions in the package's modules (#1561). A type the consumer reaches through
+    /// the package's namespace rather than an import of its own (`t.Label(...)`) is named by its public spelling.
     fn package_trait_identity_of_type(&self, type_name: &str, trait_name: &str) -> Option<(Vec<String>, String)> {
         let package_of = |name: &str| {
-            let identity = self.symbols.identity_of(self.symbols.lookup(name)?)?;
+            let identity = self
+                .symbols
+                .lookup(name)
+                .and_then(|id| self.symbols.identity_of(id))
+                .or_else(|| self.public_library_type_identities.get(name)?.canonical.as_ref())?;
             match &identity.origin {
                 SymbolOrigin::Package { library, module_path } => {
                     Some((identity, library.clone(), module_path.clone()))

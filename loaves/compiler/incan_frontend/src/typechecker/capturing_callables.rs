@@ -445,13 +445,14 @@ impl TypeChecker {
         }
     }
 
-    /// Check the arguments of a call of a function or method, `identity`, of this project, against its declared
-    /// parameters `params`: an argument for a function-typed parameter that is a capturing callable is accepted when
-    /// the parameter holds any callable of its type, and refused otherwise. A local bound to a capturing callable is
-    /// passed by reference, so the local stays usable after the call.
+    /// Check the arguments of a call of a function or method, `identity`, declared in the project or in a library,
+    /// against its declared parameters `params`: an argument for a function-typed parameter that is a capturing
+    /// callable is accepted when the parameter holds any callable of its type, and refused otherwise. A local bound
+    /// to a capturing callable is passed by reference, so the local stays usable after the call.
     ///
-    /// A callee of the standard library, or one no identity names, is left as it is: its function-typed parameters
-    /// are not spelled by this module.
+    /// Only a function or method of this module holds one; a function-typed parameter of the standard library or of
+    /// another package refuses it (#1561). A Rust callee, whose parameters its Rust signature types, and one no
+    /// identity names are left as they are.
     pub(super) fn check_capturing_call_arguments(
         &mut self,
         identity: Option<&CanonicalSymbolId>,
@@ -462,12 +463,7 @@ impl TypeChecker {
         let Some(identity) = identity else {
             return;
         };
-        let project_callable = match &identity.origin {
-            SymbolOrigin::Module(path) => path.first().is_none_or(|root| root != "std"),
-            SymbolOrigin::Package { .. } => true,
-            SymbolOrigin::RustCrate(_) | SymbolOrigin::Builtin => false,
-        };
-        if !project_callable {
+        if matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
             return;
         }
         let admitted = self.capturing_callables.admitting_params.get(identity).cloned();

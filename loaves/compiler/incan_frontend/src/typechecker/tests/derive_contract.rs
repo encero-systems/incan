@@ -726,6 +726,59 @@ def main() -> None:
     )
 }
 
+/// An `Ord` adopter that imports only `Ord` reaches the `__ne__` default of its `Eq` supertrait, as a `bool`, under the
+/// trait's own and its module-qualified spelling (#1561).
+#[test]
+fn ne_reaches_the_eq_supertrait_default_of_an_ord_only_adopter_issue1561() -> TestResult {
+    accepted(
+        r#"
+from std.derives.comparison import Ord
+from std.derives import comparison
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+model Qualified with comparison.Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+def main() -> None:
+    differs: bool = Ordered(v=1).__ne__(Ordered(v=2))
+    same: bool = Qualified(v=1).__ne__(Qualified(v=1))
+    println(differs and not same)
+"#,
+    )?;
+    let errors = refused(
+        r#"
+from std.derives.comparison import Ord
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+def main() -> None:
+    count: int = Ordered(v=1).__ne__(Ordered(v=2))
+"#,
+    )?;
+    assert_refusal(&errors, &["int", "bool"])
+}
+
 /// A newtype is `Copy` without a derive when its underlying type is a builtin `Copy` value (a number, `bool`, or a
 /// tuple, `Option` or `Result` of those); over another newtype or a model that derives `Copy` it is `Copy` only by
 /// deriving it.

@@ -3743,12 +3743,9 @@ impl<T: Clone, Source: Iterator<T>> Iterator<T> for FilterIterator<T, Source> {
 }
 /// Lazy state for `Iterator.flat_map()`.
 ///
-/// `current` holds the nested iterator of the latest expansion, as its only
-/// item, while that iterator may still yield, and is empty otherwise. Each
-/// request polls the nested iterator for one item, so an expansion is never
-/// collected ahead of the consumer and is advanced no further than the items
-/// requested. The next source item is expanded only once the nested iterator
-/// is exhausted.
+/// `current` holds the nested iterator of the latest expansion while that iterator may still yield. Each request polls
+/// the nested iterator for one item, so an expansion is never collected ahead of the consumer and is advanced no
+/// further than the items requested. The next source item is expanded only once the nested iterator is exhausted.
 ///
 /// The marker field preserves the item type in generated metadata and is
 /// never inspected while polling.
@@ -3756,7 +3753,7 @@ impl<T: Clone, Source: Iterator<T>> Iterator<T> for FilterIterator<T, Source> {
 pub struct FlatMapIterator<T, Source: Iterator<T>, U, Nested: Iterator<U>> {
     pub source: Source,
     pub f: fn(T) -> Nested,
-    pub current: Vec<Nested>,
+    pub current: Option<Nested>,
     pub marker: Option<U>,
 }
 impl<
@@ -3827,8 +3824,8 @@ for FlatMapIterator<T, Source, U, Nested> {
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("current"),
-                type_name: incan_std_core::frozen::FrozenStr::new("list[Nested]"),
-                has_default: false,
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[Nested]"),
+                has_default: true,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
             incan_std_core::reflection::FieldInfo {
@@ -3854,35 +3851,31 @@ impl<
     pub fn __next__(&mut self) -> Option<U> {
         let _ = "\n        Return the next item of the open nested iterator, expanding source items until one yields.\n        ";
         loop {
-            if ::std::convert::identity(self.current.len() as i64) > 0 {
-                let mut nested = incan_std_core::collections::__private::list_pop(
-                    &mut self.current,
-                );
-                let _ = match nested.__next__() {
-                    Some(item) => {
-                        return self._keep_open(nested, item);
-                    }
-                    None => {
-                        let _ = ();
-                    }
-                };
-            }
+            let _ = match self.current.as_mut() {
+                Some(nested) => {
+                    let _ = match nested.__next__() {
+                        Some(item) => {
+                            return Some(item);
+                        }
+                        None => {
+                            self.current = None::<_>;
+                        }
+                    };
+                }
+                None => {
+                    let _ = ();
+                }
+            };
             let _ = match self.source.__next__() {
                 Some(item) => {
                     let f = self.f.clone();
-                    let _ = self.current.push(f(item.clone()));
+                    self.current = Some(f(item.clone()));
                 }
                 None => {
                     return None::<_>;
                 }
             };
         }
-    }
-    /// Keep `iterator` as the open nested iterator and return `item`, the item it just yielded.
-    pub fn _keep_open(&mut self, iterator: Nested, item: U) -> Option<U> {
-        let _ = "\n        Keep `iterator` as the open nested iterator and return `item`, the item it just yielded.\n        ";
-        self.current = vec![iterator];
-        return Some(item);
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -3912,8 +3905,8 @@ impl<
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("current"),
-                type_name: incan_std_core::frozen::FrozenStr::new("list[Nested]"),
-                has_default: false,
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[Nested]"),
+                has_default: true,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
             incan_std_core::reflection::FieldInfo {
@@ -3945,23 +3938,25 @@ for FlatMapIterator<T, Source, U, Nested> {
     fn __next__(&mut self) -> Option<U> {
         let _ = "\n        Return the next item of the open nested iterator, expanding source items until one yields.\n        ";
         loop {
-            if ::std::convert::identity(self.current.len() as i64) > 0 {
-                let mut nested = incan_std_core::collections::__private::list_pop(
-                    &mut self.current,
-                );
-                let _ = match nested.__next__() {
-                    Some(item) => {
-                        return self._keep_open(nested, item);
-                    }
-                    None => {
-                        let _ = ();
-                    }
-                };
-            }
+            let _ = match self.current.as_mut() {
+                Some(nested) => {
+                    let _ = match nested.__next__() {
+                        Some(item) => {
+                            return Some(item);
+                        }
+                        None => {
+                            self.current = None::<_>;
+                        }
+                    };
+                }
+                None => {
+                    let _ = ();
+                }
+            };
             let _ = match self.source.__next__() {
                 Some(item) => {
                     let f = self.f.clone();
-                    let _ = self.current.push(f(item.clone()));
+                    self.current = Some(f(item.clone()));
                 }
                 None => {
                     return None::<_>;

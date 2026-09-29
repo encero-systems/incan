@@ -1,8 +1,9 @@
 //! Types that adopt `std.derives.comparison.Eq` or `Ord` and define their dunders build and compare (#1561): each
 //! comparison operator, `sorted(values)`, a set element with `@derive(Hash)` and the `T with Eq` and `T with Ord`
 //! bounds reach the type's own `__eq__` and `__lt__`, and the defaults `Ord` supplies for the rest, or the type's own
-//! override of one. A dunder called through a builtin bound is the operation it defines, and a trait default passes
-//! `self` to a method that takes its own type by value.
+//! override of one. A dunder called through a builtin bound is the operation it defines, `__ne__` reaches the `Eq`
+//! default of an adopter that imports only `Ord`, a trait default passes `self` to a method that takes its own type by
+//! value, and a trait default's call of a method its trait declares has the declared result.
 
 use super::generated_programs::run_with_stdlib;
 
@@ -275,5 +276,127 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(stdout, "true\n0\ntrue\n3\ntrue\ntrue\ntrue\n2\ntrue\n");
+    Ok(())
+}
+
+/// An `Ord` adopter that imports only `Ord`, spelled as imported or through its module, and an enum adopter reach the
+/// `__ne__` default of the `Eq` supertrait, which is `not __eq__`; so does a type parameter bounded by `Ord` (#1561).
+#[test]
+fn ne_reaches_the_eq_default_of_an_ord_only_adopter_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+from std.derives.comparison import Ord
+from std.derives import comparison
+
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+model Qualified with comparison.Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+enum Level with Ord:
+    Low
+    High
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+
+def differ[T with Ord](a: T, b: T) -> bool:
+    return a.__ne__(b)
+
+
+def main() -> None:
+    println(Ordered(v=1).__ne__(Ordered(v=2)))
+    println(Ordered(v=1).__ne__(Ordered(v=1)))
+    println(Qualified(v=1).__ne__(Qualified(v=1)))
+    println(Level.Low.__ne__(Level.High))
+    println(differ(Ordered(v=3), Ordered(v=3)))
+"#,
+    )?;
+    assert_eq!(stdout, "true\nfalse\nfalse\ntrue\nfalse\n");
+    Ok(())
+}
+
+/// A trait's default method that calls a method the trait or its supertrait declares, on `self` or on another `Self`
+/// value, uses its declared result: `self.tag() + "!"`, `len(self.tag())`, a method chained on the result, and a
+/// generic trait's method returning its type parameter build and run (#1561).
+#[test]
+fn trait_default_calls_on_self_take_the_declared_signature_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+trait Named:
+    def name(self) -> str: ...
+
+
+trait Tag with Named:
+    def tag(self) -> str: ...
+
+    def loud(self) -> str:
+        return self.tag() + "!"
+
+    def size(self) -> int:
+        return len(self.tag()) + len(self.name())
+
+    def greet(self, other: Self) -> str:
+        return "hi " + other.name().upper()
+
+
+trait Holder[T]:
+    def get(self) -> T: ...
+
+    def pair(self) -> list[T]:
+        return [self.get(), self.get()]
+
+
+model Label with Tag:
+    text: str
+
+    def name(self) -> str:
+        return "label"
+
+    def tag(self) -> str:
+        return self.text
+
+
+model Box with Holder[int]:
+    value: int
+
+    def get(self) -> int:
+        return self.value
+
+
+def main() -> None:
+    label = Label(text="x")
+    println(label.loud())
+    println(label.size())
+    println(label.greet(Label(text="y")))
+    println(Box(value=4).pair())
+"#,
+    )?;
+    assert_eq!(stdout, "x!\n6\nhi LABEL\n[4, 4]\n");
     Ok(())
 }

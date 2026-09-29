@@ -3592,3 +3592,15 @@ pub fn package_trait_default_not_available(
         "A compiled package publishes the signatures of its traits' methods, not their default bodies, so a type in another package defines each method the trait gives a default",
     )
 }
+
+/// Refuse an RFC 088 iterator adapter or terminal called on a value that is iterable but is not an iterator (#1561).
+///
+/// A list, set, frozen collection or `Iterable[T]` provides `iter()`; the adapters and terminals are methods of the
+/// `Iterator[T]` that `iter()` returns, and the collection has no method of their name.
+pub fn iterator_method_on_an_iterable(type_name: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Type '{type_name}' has no method '{method}(...)'"), span)
+        .with_hint(format!("Call it on the value's iterator: `.iter().{method}(...)`"))
+        .with_note(format!(
+            "'{method}' is a method of 'Iterator[T]'; a collection or 'Iterable[T]' value provides 'iter()', which returns its iterator"
+        ))
+}

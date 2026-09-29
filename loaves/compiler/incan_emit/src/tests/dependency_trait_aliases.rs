@@ -1,7 +1,8 @@
 //! A `pub::` dependency's trait under another spelling (#1561): imported under an alias (`Tag as Tagged`) or exported
 //! under one (`pub Tagging = Tag`), the trait is the dependency's own, so the dependency's adopters meet a bound on it
-//! and a consumer's type adopts it with its own methods. A default method of the trait reaches no adopter in another
-//! package, so an adopter that relies on one is refused.
+//! and a consumer's type adopts it with its own methods; so it is when the consumer names it through a module binding
+//! (`t.Tag`). A default method of the trait reaches no adopter in another package, so an adopter that relies on one is
+//! refused.
 
 use super::generated_programs::{generate_consumer, run_with_dependency};
 
@@ -66,6 +67,53 @@ model Yours with Tagging:
 def main() -> None:
     println(shout(Label(name="dep")))
     println(name_of(Label(name="dep")))
+    println(shout(Mine(id=1)))
+    println(name_of(Yours(id=2)))
+"#;
+    assert_eq!(run_with_dependency("tags", TAGS, consumer)?, "dep!\ndep\nMINE\nyours\n");
+    Ok(())
+}
+
+/// The dependency's trait named through a module binding (`import pub::tags as t`, then `t.Tag` and the package alias
+/// `t.Tagging`) is the dependency's own trait: the dependency's `Label`, reached as `t.Label`, meets a bound on either
+/// spelling, and a consumer's model adopts it under either with its own methods (#1561).
+#[test]
+fn dependency_trait_through_a_module_binding_bounds_and_adopts_issue1561() -> TestResult {
+    let consumer = r#"
+import pub::tags as t
+
+
+def shout[T with t.Tag](value: T) -> str:
+    return value.loud()
+
+
+def name_of[T with t.Tagging](value: T) -> str:
+    return value.tag()
+
+
+model Mine with t.Tag:
+    id: int
+
+    def tag(self) -> str:
+        return "mine"
+
+    def loud(self) -> str:
+        return "MINE"
+
+
+model Yours with t.Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "yours"
+
+    def loud(self) -> str:
+        return "YOURS"
+
+
+def main() -> None:
+    println(shout(t.Label(name="dep")))
+    println(name_of(t.Label(name="dep")))
     println(shout(Mine(id=1)))
     println(name_of(Yours(id=2)))
 "#;

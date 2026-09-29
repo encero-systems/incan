@@ -32,11 +32,10 @@ def main() -> None:
     println(items.iter().filter((x) => x % 2 == 1).collect())
     println(items.iter().take_while((x) => x * 2 < 5).collect())
     println(names.iter().any((name) => len(name.strip()) > 2))
-    n = 10
-    println(items.iter().fold(0, (acc, x) => acc + x * n))
+    println(items.iter().fold(0, (acc, x) => acc + x * 10))
     println(apply_twice((x) => x + 1, 3))
     println(apply_twice((text) => text.upper(), "a"))
-    println(numbers().map((x) => x * n).collect())
+    println(numbers().map((x) => x * 10).collect())
     println(numbers().filter((x) => x % 2 == 1).collect())
 "#,
     )?;
