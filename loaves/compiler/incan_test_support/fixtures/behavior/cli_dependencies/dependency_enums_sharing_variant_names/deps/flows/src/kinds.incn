@@ -1,0 +1,16 @@
+@derive(Clone, Eq)
+pub enum Phase(str):
+    Enter = "entering"
+    Leave = "leaving"
+
+
+@derive(Clone)
+pub enum Route:
+    Enter(str, int)
+    Leave
+
+
+pub def route_label(route: Route) -> str:
+    match route:
+        Route.Enter(name, gate) => return f"{name} at gate {gate}"
+        Route.Leave => return "gone"
