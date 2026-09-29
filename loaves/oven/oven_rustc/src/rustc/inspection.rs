@@ -84,8 +84,20 @@ pub struct OvenProjectInspectionRootDependency {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenProjectInspectionTestDependencyEnvelope {
     pub constituent_index: usize,
+    /// Provider-owned closure constituents composed with the project-owned dependency delta for generated tests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_constituents: Vec<OvenProjectInspectionTestProviderConstituent>,
     pub dependency_surface_digest: String,
     pub dependency_roots: BTreeMap<String, OvenProjectInspectionTestDependencyRoot>,
+}
+
+/// One checked public-provider constituent retained by a project's generated-test dependency envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenProjectInspectionTestProviderConstituent {
+    /// Consumer manifest key used for deterministic composition diagnostics.
+    pub dependency_key: String,
+    /// Exact immutable constituent that carries this provider's compiled Rust closure.
+    pub constituent_index: usize,
 }
 
 /// Exact per-root evidence admitted by the generated native-test dependency envelope.
@@ -1227,6 +1239,7 @@ mod selected_rust_facet_graph_tests {
         };
         authority.test_dependency_envelope = Some(OvenProjectInspectionTestDependencyEnvelope {
             constituent_index: 0,
+            provider_constituents: Vec::new(),
             dependency_surface_digest: selected_graph_sha256(b"fixture test dependency surface"),
             dependency_roots: BTreeMap::from([(
                 alias.to_string(),

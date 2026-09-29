@@ -12,6 +12,7 @@ use crate::build::caller_owned::{
     deduplicate_caller_owned_libraries_prefer_extern, first_unselected_private_provider_edge,
     load_receipted_public_provider_dependency,
 };
+use crate::build::oven_project::select_oven_direct_rustc_plan;
 use crate::build::plan_selection::{registry_leaf_authority_for_plan_selection, select_published_project_plan};
 use crate::build::provider_compilation::{
     caller_owned_library_dependencies_for_compilation,
@@ -356,7 +357,7 @@ pub struct CallerOwnedProviderRegistryClosure {
 }
 
 impl CallerOwnedProviderRegistryClosure {
-    /// Join the consumer's own authority with every collected provider authority into one lookup surface.
+    /// Join every provider authority ahead of the consumer's own authority into one lookup surface.
     ///
     /// Joining decides only what is *discoverable*; safety against a genuinely diverging shared package is decided
     /// beforehand by [`caller_owned_provider_registry_conflict`] and per-lookup by `select_sealed_registry_leaf`'s
@@ -366,7 +367,7 @@ impl CallerOwnedProviderRegistryClosure {
             return consumer;
         }
         Some(OvenRegistryLeafAuthority::aggregate(
-            consumer.into_iter().chain(self.provider_authorities.iter().cloned()),
+            self.provider_authorities.iter().cloned().chain(consumer),
         ))
     }
 }
@@ -382,6 +383,29 @@ pub fn collect_caller_owned_provider_registry_leaf_authority(
     store: &OvenStore,
     provider_plan: &ProviderPlan,
     profile: &str,
+) -> CliResult<CallerOwnedProviderRegistryClosure> {
+    collect_caller_owned_provider_registry_leaf_authority_with_toolchain_fallback(store, provider_plan, profile, false)
+}
+
+/// Collect provider registry authority for test re-materialization, including compiler-Loaf-backed providers.
+///
+/// Normal bake conflict detection intentionally compares only provider-owned stored deltas. Generated tests also
+/// have to re-materialize a provider whose entire Rust dependency closure came from the installed release Loaf, so
+/// that path may resolve the provider receipt through the normal toolchain selector as a fallback.
+pub fn collect_test_provider_registry_leaf_authority(
+    store: &OvenStore,
+    provider_plan: &ProviderPlan,
+    profile: &str,
+) -> CliResult<CallerOwnedProviderRegistryClosure> {
+    collect_caller_owned_provider_registry_leaf_authority_with_toolchain_fallback(store, provider_plan, profile, true)
+}
+
+/// Walk one provider graph while preserving whether compiler-Loaf fallback is allowed at each node.
+fn collect_caller_owned_provider_registry_leaf_authority_with_toolchain_fallback(
+    store: &OvenStore,
+    provider_plan: &ProviderPlan,
+    profile: &str,
+    allow_toolchain_fallback: bool,
 ) -> CliResult<CallerOwnedProviderRegistryClosure> {
     let mut closure = CallerOwnedProviderRegistryClosure::default();
     let mut visiting = BTreeSet::new();
@@ -410,6 +434,7 @@ pub fn collect_caller_owned_provider_registry_leaf_authority(
             profile,
             &mut closure,
             &mut visiting,
+            allow_toolchain_fallback,
         )?;
     }
     closure.dependency_search_paths.sort();
@@ -428,6 +453,7 @@ fn collect_caller_owned_provider_registry_leaf_authority_graph(
     profile: &str,
     closure: &mut CallerOwnedProviderRegistryClosure,
     visiting: &mut BTreeSet<PathBuf>,
+    allow_toolchain_fallback: bool,
 ) -> CliResult<()> {
     let canonical_root = fs::canonicalize(&artifact.crate_root).map_err(|error| {
         CliError::failure(format!(
@@ -459,10 +485,11 @@ fn collect_caller_owned_provider_registry_leaf_authority_graph(
                 profile,
                 closure,
                 visiting,
+                allow_toolchain_fallback,
             )?;
         }
         if let Some((provider_authority, provider_search_paths)) =
-            caller_owned_provider_registry_leaf_authority(store, artifact, profile)?
+            caller_owned_provider_registry_leaf_authority(store, artifact, profile, allow_toolchain_fallback)?
         {
             closure.provider_authorities.push(provider_authority);
             closure.dependency_search_paths.extend(provider_search_paths);
@@ -488,6 +515,7 @@ fn caller_owned_provider_registry_leaf_authority(
     store: &OvenStore,
     artifact: &LibraryArtifactMetadata,
     profile: &str,
+    allow_toolchain_fallback: bool,
 ) -> CliResult<Option<(OvenRegistryLeafAuthority, Vec<PathBuf>)>> {
     let Some(project_root) = dependency_project_root(&artifact.crate_root) else {
         return Ok(None);
@@ -495,13 +523,23 @@ fn caller_owned_provider_registry_leaf_authority(
     let Some(receipt) = read_verified_caller_owned_provider_receipt(&project_root, profile) else {
         return Ok(None);
     };
-    let Some(selection) = select_published_project_plan(store, &receipt, OvenToolchainMaterialization::Reused)? else {
+    let selection = if let Some(selection) =
+        select_published_project_plan(store, &receipt, OvenToolchainMaterialization::Reused)?
+    {
+        selection.plan_selection
+    } else if allow_toolchain_fallback {
+        let dependencies = caller_owned_library_rust_dependencies(artifact)?;
+        let Some(selection) = select_oven_direct_rustc_plan(store, &receipt, &dependencies)? else {
+            return Ok(None);
+        };
+        selection
+    } else {
         return Ok(None);
     };
-    let Some(authority) = registry_leaf_authority_for_plan_selection(&selection.plan_selection)? else {
+    let Some(authority) = registry_leaf_authority_for_plan_selection(&selection)? else {
         return Ok(None);
     };
-    let search_paths = selection.plan_selection.artifact_plan().dependency_search_paths.clone();
+    let search_paths = selection.artifact_plan().dependency_search_paths.clone();
     Ok(Some((authority, search_paths)))
 }
 

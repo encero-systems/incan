@@ -285,21 +285,10 @@ fn extend_requirements_with_selected_sdk_providers(
         )?;
         for requirement in &linked_backend_requirements {
             if let BackendImplementationRequirement::CargoDependency { dependency } = requirement {
-                let dependency_spec = provider_cargo_dependency_spec(dependency);
-                if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }) {
-                    merge_sdk_path_dependency(
-                        &mut requirements.sdk_path_dependencies,
-                        dependency_spec.clone(),
-                        format!("compiled provider `{}` toolchain dependency", provider.identity.name),
-                    )?;
-                }
-                if stdlib::facets::is_facet(&dependency_spec.crate_name) {
-                    requirements.stdlib_facets.push(dependency_spec.crate_name.clone());
-                }
-                merge_requirement_dependency(
-                    &mut requirements.dependencies,
-                    dependency_spec,
-                    format!("compiled provider `{}` implementation facet", provider.identity.name),
+                link_backend_cargo_dependency(
+                    requirements,
+                    dependency,
+                    &format!("compiled provider `{}`", provider.identity.name),
                 )?;
             }
         }
@@ -322,6 +311,7 @@ fn extend_requirements_with_selected_sdk_providers(
             dependency.features.dedup();
         }
     }
+    extend_requirements_with_source_stdlib_namespaces(requirements, provider_plan)?;
     requirements
         .sdk_dependency_rebindings
         .extend_from_slice(provider_plan.sdk_dependency_rebindings());
@@ -333,6 +323,145 @@ fn extend_requirements_with_selected_sdk_providers(
     requirements.stdlib_facets.sort();
     requirements.stdlib_facets.dedup();
     Ok(())
+}
+
+/// Link what each standard-library namespace compiled from source needs, as its SDK component would have.
+///
+/// A consumer without an active provider for a `std` namespace root, such as one on a fresh home with no SDK
+/// inventory, mounts that namespace's modules from source under `__incan_std` and compiles them into its own crate.
+/// That code calls the namespace's runtime facet (`incan_std_testing::fail_t`, say) and the crates its lowering
+/// reaches, which a compiled component would have brought through its implementation facet. Each such root links
+/// the dependencies [`stdlib_namespace_cargo_dependencies`] names, the list the component records, through the same
+/// path as a provider facet, so the two routes declare one dependency set: the lock, the test dependency envelope, a
+/// test batch and a build see the same edges.
+///
+/// The crate also links every other facet the collector found its modules reaching, a mounted module's
+/// `rust.module("incan_std_<facet>")` or a `from rust::incan_std_<facet>::... import` among them, whose component no
+/// active provider supplies: no compiled component brings that facet into the program either. An SDK provider build
+/// derives its own namespaces' crates in [`crate::requirements::collect_project_requirements`] instead.
+fn extend_requirements_with_source_stdlib_namespaces(
+    requirements: &mut ProjectRequirements,
+    provider_plan: &ProviderPlan,
+) -> ProviderResult<()> {
+    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
+        return Ok(());
+    }
+    for root in provider_plan.source_std_namespace_roots() {
+        let Some(namespace) = stdlib::find_namespace(&root) else {
+            continue;
+        };
+        for dependency in stdlib_namespace_cargo_dependencies(namespace) {
+            link_backend_cargo_dependency(
+                requirements,
+                &dependency,
+                &format!("standard-library namespace `std.{root}` compiled from source"),
+            )?;
+        }
+    }
+
+    // ---- Facets the program reaches whose component no active provider supplies ----
+    let supplied = provider_plan
+        .active_sdk_records()
+        .filter_map(|provider| match &provider.provenance {
+            crate::ProviderProvenance::Sdk { component_id, .. } => stdlib::facets::for_component(component_id),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let unsupplied = requirements
+        .stdlib_facets
+        .iter()
+        .filter(|facet| facet.as_str() != stdlib::facets::CORE && !supplied.contains(facet.as_str()))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for facet in unsupplied {
+        link_backend_cargo_dependency(
+            requirements,
+            &stdlib_facet_cargo_dependency(&facet),
+            &format!("standard-library runtime `{facet}`"),
+        )?;
+    }
+    Ok(())
+}
+
+/// Link one backend Cargo dependency into the generated crate's requirements.
+///
+/// A toolchain crate also joins the SDK path catalog, and a standard-library runtime facet joins the linked facets, so
+/// every consumer of the requirements (manifest generation, the lock, receipts) reads the edge the same way whichever
+/// route declared it. `origin` names the declaring provider or namespace in a conflict diagnostic.
+fn link_backend_cargo_dependency(
+    requirements: &mut ProjectRequirements,
+    dependency: &ProviderCargoDependency,
+    origin: &str,
+) -> ProviderResult<()> {
+    let dependency_spec = provider_cargo_dependency_spec(dependency);
+    if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }) {
+        merge_sdk_path_dependency(
+            &mut requirements.sdk_path_dependencies,
+            dependency_spec.clone(),
+            format!("{origin} toolchain dependency"),
+        )?;
+    }
+    if stdlib::facets::is_facet(&dependency_spec.crate_name) {
+        requirements.stdlib_facets.push(dependency_spec.crate_name.clone());
+    }
+    merge_requirement_dependency(
+        &mut requirements.dependencies,
+        dependency_spec,
+        format!("{origin} implementation facet"),
+    )
+}
+
+/// The Cargo dependencies one standard-library namespace's generated code links.
+///
+/// The list is the namespace's runtime facet, when it has one, as a toolchain crate, then the namespace's extra
+/// crates from the registry. An SDK component records it as the implementation facet of each namespace root it
+/// claims, and a consumer that compiles the namespace from source links the same list, so both routes name the same
+/// crates with the same coordinates.
+pub fn stdlib_namespace_cargo_dependencies(namespace: &stdlib::StdlibNamespace) -> Vec<ProviderCargoDependency> {
+    namespace
+        .facet
+        .map(stdlib_facet_cargo_dependency)
+        .into_iter()
+        .chain(namespace.extra_crate_deps.iter().map(|dependency| {
+            ProviderCargoDependency {
+                crate_name: dependency.crate_name.to_string(),
+                package: stdlib::extra_crate_package_alias(dependency.crate_name).map(str::to_string),
+                version: match dependency.source {
+                    stdlib::StdlibExtraCrateSource::Version(version) => Some(version.to_string()),
+                    stdlib::StdlibExtraCrateSource::Path(_) => None,
+                },
+                features: dependency
+                    .features
+                    .iter()
+                    .map(|feature| (*feature).to_string())
+                    .collect(),
+                default_features: true,
+                source: match dependency.source {
+                    stdlib::StdlibExtraCrateSource::Version(_) => ProviderCargoDependencySource::Registry,
+                    stdlib::StdlibExtraCrateSource::Path(relative_path) => ProviderCargoDependencySource::Toolchain {
+                        relative_path: relative_path.to_string(),
+                    },
+                },
+            }
+        }))
+        .collect()
+}
+
+/// The Cargo dependency on one standard-library runtime facet.
+///
+/// A facet is a toolchain dependency like any other support crate: a program links it from the toolchain it compiles
+/// with, never from a path inside an artifact.
+fn stdlib_facet_cargo_dependency(facet: &str) -> ProviderCargoDependency {
+    ProviderCargoDependency {
+        crate_name: facet.to_string(),
+        package: None,
+        version: None,
+        features: BTreeSet::new(),
+        default_features: true,
+        source: ProviderCargoDependencySource::Toolchain {
+            relative_path: Path::new("crates").join(facet).to_string_lossy().into_owned(),
+        },
+    }
 }
 
 /// Sort and de-duplicate physical SDK projections independently of module-group traversal order.
@@ -1002,6 +1131,185 @@ import std.traits
                 .any(|spec| spec.crate_name == "regex"),
             "a program that spells the namespace links the facet's registry crate"
         );
+        Ok(())
+    }
+
+    /// #1561: a consumer with no SDK inventory compiles each `std` namespace it uses from source under `__incan_std`,
+    /// and that code calls the namespace's runtime facet (`incan_std_testing::fail_t` for `std.testing`) and the extra
+    /// crates the namespace reaches. The consumer's requirements declare those crates as dependencies exactly as a
+    /// consumer of the compiled component does through its implementation facet, so a test dependency envelope or a
+    /// test batch built from the dependencies links them.
+    #[test]
+    fn a_namespace_compiled_from_source_links_what_its_component_would_link_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::provider::ImplementationFacet;
+
+        let used = provider_used_module_paths(&[parsed_module_for_test(
+            "from std.testing import assert_eq\nfrom std.collections import Deque\nfrom std.io import BytesIO\nfrom std.async import sleep\n",
+        )?]);
+        let roots = ["async", "collections", "io", "testing"];
+
+        // ---- The source route: no provider supplies any used namespace ----
+        let source_plan = ProviderPlan::new(Default::default(), Vec::new(), used.iter().cloned())?;
+        assert_eq!(
+            source_plan.source_std_namespace_roots(),
+            ["async", "collections", "io", "prelude", "testing"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+        );
+        let mut source = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut source, &source_plan)?;
+
+        // ---- The provider route: one compiled component claims the same namespaces ----
+        let workspace = tempfile::tempdir()?;
+        let artifact = workspace.path().join("stdlib-component");
+        let mut claims = BTreeSet::from([vec!["std".to_string(), "prelude".to_string()]]);
+        let mut implementation_facets = Vec::new();
+        for root in roots {
+            claims.insert(vec!["std".to_string(), root.to_string()]);
+            let namespace = stdlib::find_namespace(root).ok_or("the registry names each namespace")?;
+            implementation_facets.push(ImplementationFacet {
+                id: format!("rust_{root}"),
+                required_modules: BTreeSet::from([vec![root.to_string()]]),
+                required_features: BTreeSet::new(),
+                backend_requirements: stdlib_namespace_cargo_dependencies(namespace)
+                    .into_iter()
+                    .map(|dependency| BackendImplementationRequirement::CargoDependency { dependency })
+                    .collect(),
+            });
+        }
+        let record = crate::ProviderRecord {
+            identity: crate::ProviderIdentity {
+                name: "incan_stdlib_component".to_string(),
+                version: "0.6.0".to_string(),
+                digest: "sha256:issue1561-component".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: crate::ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.6.0".to_string(),
+                component_id: "stdlib-component".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::NamespaceAuthority::SdkReserved,
+            namespace_claims: claims,
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_component", "0.6.0"))),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root(
+                "incan_stdlib_component",
+                "incan_stdlib_component",
+                &artifact,
+            )),
+            implementation_facets,
+        };
+        let provider_plan = ProviderPlan::new(Default::default(), vec![record], used)?;
+        assert!(
+            provider_plan.source_std_namespace_roots().is_empty(),
+            "a namespace an active component supplies is not compiled from source"
+        );
+        let mut compiled = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut compiled, &provider_plan)?;
+
+        // ---- Both routes link the same runtime crates ----
+        let linked = |requirements: &ProjectRequirements| {
+            let mut dependencies = requirements
+                .dependencies
+                .iter()
+                .filter(|dependency| dependency.crate_name != "incan_stdlib_component")
+                .cloned()
+                .collect::<Vec<_>>();
+            dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+            dependencies
+        };
+        assert_eq!(linked(&source), linked(&compiled));
+        assert_eq!(source.stdlib_facets, compiled.stdlib_facets);
+        assert_eq!(
+            source.stdlib_facets,
+            [stdlib::facets::ASYNC, stdlib::facets::DATA, stdlib::facets::TESTING]
+        );
+        let testing = source
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.crate_name == stdlib::facets::TESTING)
+            .ok_or("the testing facet is a dependency of a program that mounts std.testing")?;
+        assert_eq!(
+            testing.source,
+            DependencySource::Path {
+                path: oven_model::toolchain_layout::resolve_toolchain_crate_path(stdlib::facets::TESTING),
+            }
+        );
+        assert!(
+            source
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.crate_name == "byteorder"
+                    && matches!(dependency.source, DependencySource::Registry)),
+            "std.io's extra crate is linked: {:?}",
+            source.dependencies
+        );
+        assert!(
+            source
+                .sdk_path_dependencies
+                .iter()
+                .any(|dependency| dependency.crate_name == stdlib::facets::TESTING),
+            "a toolchain facet joins the SDK path catalog as it does for a compiled component"
+        );
+        Ok(())
+    }
+
+    /// #1561: a facet the program's own Rust reaches, as `from rust::incan_std_web import ...` does, is linked as a
+    /// dependency when no active component supplies it, and left to the component when one does.
+    #[test]
+    fn a_facet_the_program_reaches_is_linked_unless_an_active_component_supplies_it_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test("from rust::incan_std_web import Response\n")?;
+        let collected = crate::requirements::collect_project_requirements(
+            std::slice::from_ref(&module),
+            &incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
+        )?;
+        assert_eq!(collected.stdlib_facets, [stdlib::facets::WEB]);
+        let links_web = |requirements: &ProjectRequirements| {
+            requirements
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.crate_name == stdlib::facets::WEB)
+        };
+
+        let source_plan = ProviderPlan::new(Default::default(), Vec::new(), provider_used_module_paths(&[module]))?;
+        let mut source = collected.clone();
+        extend_requirements_with_provider_plan(&mut source, &source_plan)?;
+        assert!(links_web(&source), "{:?}", source.dependencies);
+
+        let workspace = tempfile::tempdir()?;
+        let record = crate::ProviderRecord {
+            identity: crate::ProviderIdentity {
+                name: "incan_stdlib_web".to_string(),
+                version: "0.6.0".to_string(),
+                digest: "sha256:issue1561-web".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: crate::ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.6.0".to_string(),
+                component_id: "stdlib-web".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "web".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_web", "0.6.0"))),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root(
+                "incan_stdlib_web",
+                "incan_stdlib_web",
+                &workspace.path().join("stdlib-web"),
+            )),
+            implementation_facets: Vec::new(),
+        };
+        let supplied_plan = ProviderPlan::new(Default::default(), vec![record], std::iter::empty())?;
+        let mut supplied = collected;
+        extend_requirements_with_provider_plan(&mut supplied, &supplied_plan)?;
+        assert!(!links_web(&supplied), "{:?}", supplied.dependencies);
         Ok(())
     }
 

@@ -2688,26 +2688,39 @@ fn run_file_tests_batch_oven(
             &artifact_plan,
         );
 
-    let registry_authority = plan_selection.registry_leaf_authority();
+    let mut registry_authority = plan_selection.registry_leaf_authority();
     let selected_path_authority =
         incan_driver::build::plan_authority::compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
 
     if incan_driver::build::caller_owned::has_caller_owned_project_libraries(&provider_plan)
         && !plan_selection.uses_packaged_provider_closure()
     {
-        let re_materialized = match incan_driver::build::plan_authority::rematerialize_caller_owned_libraries(
+        let provider_closure = match incan_driver::build::plan_authority::collect_test_provider_registry_leaf_authority(
+            &command_context.store,
             &provider_plan,
             "debug",
-            plan_selection.artifacts(),
-            plan_selection.output_guard_root(),
-            plan_selection.artifact_plan(),
-            &rustc,
-            &generated_root,
-            registry_authority.as_ref(),
         ) {
-            Ok(libraries) => libraries,
+            Ok(closure) => closure,
             Err(error) => return failure(error.message),
         };
+        let provider_dependency_search_paths = provider_closure.dependency_search_paths.clone();
+        registry_authority = provider_closure.merged_authority(registry_authority);
+        let re_materialized =
+            match incan_driver::build::plan_authority::rematerialize_caller_owned_libraries_with_authority_context(
+                &provider_plan,
+                "debug",
+                plan_selection.artifacts(),
+                plan_selection.output_guard_root(),
+                plan_selection.artifact_plan(),
+                &rustc,
+                &generated_root,
+                registry_authority.as_ref(),
+                &provider_dependency_search_paths,
+                None,
+            ) {
+                Ok(libraries) => libraries,
+                Err(error) => return failure(error.message),
+            };
         if let Err(error) = incan_driver::build::plan_authority::replace_caller_owned_package_libraries(
             &mut caller_owned_libraries,
             re_materialized,

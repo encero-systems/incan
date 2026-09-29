@@ -89,14 +89,14 @@ pub fn bake_oven_project(
         // The conflict decision must cover every selection path -- including an imported packaged-provider closure,
         // whose composed link carries the SDK base's and the provider's own copies of any shared package exactly
         // like a re-materialized one does.
-        if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
+        if let Some((package, pinned_by, divergence)) = caller_owned_provider_registry_conflict(
             registry_authority.as_ref(),
             &closure,
             prepared.plan_selection.artifact_plan(),
         )? {
             return Err(oven_native_closure_refusal(
                 &prepared.crate_name,
-                &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
+                &provider_registry_conflict_reason(&package, pinned_by.as_deref(), divergence.as_deref()),
             ));
         }
         if !prepared.plan_selection.uses_packaged_provider_closure() {
@@ -211,14 +211,14 @@ pub fn bake_oven_library(
         // The rejection previously ran on every selection path, so the resolvable case never reached the machinery
         // that resolves it.
         if selected.plan_selection.uses_packaged_provider_closure() {
-            if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
+            if let Some((package, pinned_by, divergence)) = caller_owned_provider_registry_conflict(
                 registry_authority.as_ref(),
                 &closure,
                 selected.plan_selection.artifact_plan(),
             )? {
                 return Err(oven_native_closure_refusal(
                     &oven.crate_name,
-                    &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
+                    &provider_registry_conflict_reason(&package, pinned_by.as_deref(), divergence.as_deref()),
                 ));
             }
         } else {
@@ -1023,7 +1023,7 @@ mod tests {
             .map(|error| error.to_string())
             .unwrap_or_default();
         assert!(refusal.contains("Oven refuses to build `app`"), "{refusal}");
-        assert!(refusal.contains("#1241"), "{refusal}");
+        assert!(refusal.contains("semantically different compiled units"), "{refusal}");
         assert!(refusal.contains("colliding StableCrateId"), "{refusal}");
     }
 
