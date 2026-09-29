@@ -202,15 +202,59 @@ impl OvenRegistryLeafAuthority {
                     && !registry_units_are_compatible(&entry.leaf, &candidate.leaf)
                     && !registry_units_are_byte_equivalent(&entry.leaf, &candidate.leaf)
                 {
-                    return Some((
-                        entry.leaf.package.clone(),
-                        candidate.artifact_root.clone(),
-                        registry_unit_divergence(&entry.leaf, &candidate.leaf),
-                    ));
+                    let mut divergence = registry_unit_divergence(&entry.leaf, &candidate.leaf);
+                    let shared = self.other_diverging_shared_packages(other, &entry.leaf.package);
+                    if !shared.is_empty() {
+                        divergence.push_str(&format!(
+                            "; the two closures also carry these packages at different units: {}",
+                            shared.join(", ")
+                        ));
+                    }
+                    return Some((entry.leaf.package.clone(), candidate.artifact_root.clone(), divergence));
                 }
             }
         }
         None
+    }
+
+    /// Name every package other than `except` that this authority and `other` both carry at different units: another
+    /// version, or the same version at an incompatible unit with its two feature sets.
+    ///
+    /// A leaf's selected-unit identity binds its dependency graph, so two units of one package that record the same
+    /// facts differ through a dependency; this names the dependency to unify (`libc 0.2.189 features ["std"] vs
+    /// ["extra_traits", "std"]`) rather than only the package that exposed the split.
+    fn other_diverging_shared_packages(&self, other: &Self, except: &str) -> Vec<String> {
+        let mut named = Vec::new();
+        for entry in &self.entries {
+            if entry.leaf.package == except {
+                continue;
+            }
+            for candidate in &other.entries {
+                if entry.leaf.package != candidate.leaf.package || entry.leaf.domain != candidate.leaf.domain {
+                    continue;
+                }
+                let description = if entry.leaf.version != candidate.leaf.version {
+                    format!(
+                        "{} {} vs {}",
+                        entry.leaf.package, entry.leaf.version, candidate.leaf.version
+                    )
+                } else if !registry_units_are_compatible(&entry.leaf, &candidate.leaf)
+                    && !registry_units_are_byte_equivalent(&entry.leaf, &candidate.leaf)
+                {
+                    format!(
+                        "{} {} features {:?} vs {:?}",
+                        entry.leaf.package, entry.leaf.version, entry.leaf.features, candidate.leaf.features
+                    )
+                } else {
+                    continue;
+                };
+                if !named.contains(&description) {
+                    named.push(description);
+                }
+            }
+        }
+        named.sort();
+        named
     }
 
     /// Return whether `path` is this authority's selected representative of the same portable unit as `leaf`.
