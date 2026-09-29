@@ -7606,6 +7606,20 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/dependency_field_element_types.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": "",
+      "tests": {
+        "dependency_field_element_types_the_consumer_never_imports_are_spelled_from_the_dependency_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_model_built_with_empty_fields_of_unimported_types",
+          "notes": "The fixture bakes a provider whose model holds identifiers in a list, a dict and an option and runs a consumer that builds it with empty collections and `None` without importing them."
+        }
+      }
+    },
     "loaves/compiler/incan_ir/src/lower/tests/derive_contract_lowering.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, derive lists and trait impls). Retire with `incan_ir` (#654); the behavior each test pins is carried by the named fixture.",

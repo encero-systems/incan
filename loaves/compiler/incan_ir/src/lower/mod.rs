@@ -4793,6 +4793,7 @@ mod tests {
     mod default_named_items;
     mod default_owner_paths;
     mod dependency_call_arguments;
+    mod dependency_field_element_types;
     mod derive_contract_lowering;
     mod derive_vocabulary_imports;
     mod display_operands;
