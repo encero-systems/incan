@@ -1,7 +1,8 @@
 //! Closures that capture local values in function-typed slots (#1561): a new local, a parameter its function only
 //! calls, and the one `return` of a function hold one; any other function-typed slot refuses it with `INCAN-T0001`,
 //! while a named function and a closure that captures nothing are accepted everywhere. The standard library's own
-//! source, an SDK component compiled from its source included, is left as its own lowering spells it.
+//! source, an SDK component compiled from its source and a module a consumer checks from source under `__incan_std`
+//! included, is left as its own lowering spells it.
 
 use super::*;
 
@@ -182,4 +183,29 @@ fn sdk_provider_bootstrap_checks_its_modules_as_standard_library_source_issue156
         "outside an SDK bootstrap the module is a project module: {messages:?}"
     );
     Ok(())
+}
+
+/// #1561: a consumer with no SDK inventory, such as one on a fresh home, checks each standard-library module it imports
+/// from source under the generated `__incan_std` namespace (`__incan_std.derives.collection`). That is the standard
+/// library's own source as well, so `Iterator.flat_map`'s capturing adapter closure and the unbounded items
+/// `Iterator.collect` and `FallibleIterator.collect` append check there as they do under `std`.
+#[test]
+fn a_module_under_the_generated_stdlib_namespace_checks_as_standard_library_source_issue1561() -> Result<(), String> {
+    let collection = parse_stdlib_core_module("derives/collection.incn")?;
+    let callable = parse_stdlib_core_module("traits/callable.incn")?;
+    let namespace = incan_lang::lang::stdlib::INCAN_STD_NAMESPACE;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec![
+        namespace.to_string(),
+        "derives".to_string(),
+        "collection".to_string(),
+    ]));
+    let callable_module = format!("{namespace}_traits_callable");
+    checker.register_dependency_module_path_segments(
+        &callable_module,
+        vec![namespace.to_string(), "traits".to_string(), "callable".to_string()],
+    );
+    checker
+        .check_with_imports(&collection, &[(callable_module.as_str(), &callable)])
+        .map_err(|errors| format!("the standard library's source under `{namespace}` should check: {errors:?}"))
 }

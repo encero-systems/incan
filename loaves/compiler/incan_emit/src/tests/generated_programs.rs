@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+use incan_frontend::ast::Program;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
 use oven_model::compiler_suite_env;
@@ -94,10 +95,16 @@ pub(super) fn run_project_module_with_stdlib(source: &str) -> BuildResult<String
     checker
         .check_with_imports(&program, &[])
         .map_err(|errors| format!("check failed: {errors:?}"))?;
+    run_checked_with_stdlib(&program, &checker)
+}
+
+/// Generate `program` from the facts `checker` recorded checking it, mount the stdlib modules it reaches, build it,
+/// run it and return its standard output.
+pub(super) fn run_checked_with_stdlib(program: &Program, checker: &TypeChecker) -> BuildResult<String> {
     let mut codegen = IrCodegen::new();
     codegen.set_stdlib_cache(checker.stdlib_cache.clone());
     codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
-    let generated = codegen.try_generate(&program)?;
+    let generated = codegen.try_generate(program)?;
     let directory = tempfile::tempdir()?;
     let built = build_program(directory.path(), &with_stdlib_modules(generated)?, &[])?;
     run(&built)

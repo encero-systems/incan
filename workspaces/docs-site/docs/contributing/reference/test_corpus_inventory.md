@@ -12,15 +12,15 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3524 | 243 | 8 |
+| keep | 3527 | 243 | 8 |
 | re-point | 515 | 86 | 1018 |
-| retire | 1471 | 146 | 0 |
+| retire | 1472 | 147 | 0 |
 | unaffected | 1462 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6972** | **609** | **1031** |
+| **Total** | **6976** | **610** | **1031** |
 
-- Retire-class tests: 1471, of which twinned 999, dies 294, open 178 (neither yet).
-- Retire-class files with open rows: 31 (a file whose retire tests are all twinned or recorded `dies` is done).
+- Retire-class tests: 1472, of which twinned 999, dies 294, open 179 (neither yet).
+- Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
 - Files whose test region exceeds the split threshold of 1500 lines: 13, of which 0 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
@@ -121,7 +121,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (748 tests in 107 files: keep 365, re-point 137, retire 102, unaffected 144)
+### `loaves/compiler/incan_driver` (749 tests in 107 files: keep 366, re-point 137, retire 102, unaffected 144)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -175,7 +175,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/project.rs` | 9 | 407 | 105 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/replacement_compatibility.rs` | 12 | 3938 | 310 | keep | - | - | - | #1561 | replacement 12, formatter 10 | replacement compatibility inventory collector and validator. |
 | `loaves/compiler/incan_driver/src/rust_inspect_workspace.rs` | 19 | 1885 | 867 | unaffected | - | - | - | #1561 | codegen 5, text 1, run 9, checker 1 | generated rust-inspect Cargo workspace that feeds the checker with Rust metadata; not the Rust backend. |
-| `loaves/compiler/incan_driver/src/session.rs` | 5 | 1014 | 274 | keep | - | - | - | #1561 | checker 5, parser 2 | CompilationSession analysis (provider plan reuse, feature projection). |
+| `loaves/compiler/incan_driver/src/session.rs` | 6 | 1148 | 408 | keep | - | - | - | #1561 | checker 6, parser 2 | CompilationSession analysis (provider plan reuse, feature projection). |
 | `loaves/compiler/incan_driver/src/shadow_support.rs` | 2 | 252 | 28 | re-point | - | - | - | #1561 | checker 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/src/testing/discovery.rs` | 33 | 1973 | 829 | keep | - | - | - | #1561 | checker 32, parser 32 | test discovery through the parser. |
 | `loaves/compiler/incan_driver/src/testing/module_graph.rs` | 3 | 412 | 128 | keep | - | - | - | #1561 | checker 1, parser 3 | test-runner module graph through the parser. |
@@ -285,7 +285,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 |---|---|---|---|---|---|
 | `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement | generated-text hit is a diagnostic string |
 
-### `loaves/compiler/incan_emit` (1117 tests in 95 files: keep 100, retire 1015, unaffected 2)
+### `loaves/compiler/incan_emit` (1118 tests in 96 files: keep 100, retire 1016, unaffected 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -350,6 +350,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/tests/reexported_projections.rs` | 5 | 301 | 301 | retire (retire 5) | 5/5 | 0 | - | #1561 | codegen 5 | lowering through emission end to end. |
 | `loaves/compiler/incan_emit/src/tests/result_method_receivers.rs` | 6 | 274 | 274 | retire (retire 6) | 6/6 | 0 | - | #1561 | - | builds and runs the generated Rust of Result and Option receivers read again after a method call, unwrap_or defaults, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open in bindings, closures, comprehensions and collection literals (#1561); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/tests/rust_2024_keyword_identifiers.rs` | 2 | 70 | 70 | retire (retire 2) | 2/2 | 0 | - | #1561 | codegen 2 | generated-Rust identifiers spelled like a Rust 2024 reserved word (`gen`) are raw identifiers; each program is compiled by rustc (#1561). |
+| `loaves/compiler/incan_emit/src/tests/rust_trait_unknown_receivers.rs` | 1 | 111 | 111 | retire (retire 1) | 0/1 | 0 | - | #1561 | checker 1, parser 1 | builds and runs the generated Rust of trait-qualified `Read.by_ref` calls on a receiver of unknown type with `std::io::Read` inspected: a bounded read through a RefCell guard and an adapter over the reader it returns (#1561); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/tests/slice_hooks.rs` | 1 | 58 | 58 | retire (retire 1) | 1/1 | 0 | - | #1561 | codegen 1, parser 1 | builds and runs the generated Rust of slice syntax on a type that defines `__getslice__`, on a generic type too, and of `list` and `str` slices written with `::` (#1561); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs` | 8 | 526 | 526 | retire (retire 8) | 8/8 | 0 | - | #1561 | codegen 7, parser 7, legacy_ir 1 | generated Rust for static collection reads and const string destinations, lowering through emission end to end. |
 | `loaves/compiler/incan_emit/src/tests/trait_default_module_items.rs` | 1 | 62 | 62 | retire | 1/1 | 0 | - | #1561 | codegen 1 | defaults of a trait declared in another module of the program, expanded into an adopter and built and run by rustc; retires with the Rust-source backend (#654). |
@@ -1201,6 +1202,12 @@ Per-test overrides in `loaves/compiler/incan_emit/src/tests/rust_2024_keyword_id
 | `gen_named_function_parameter_and_field_build_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/gen_named_function_field_and_module` | - | codegen | Compiles a function, parameter, keyword argument, field and closure-captured local named `gen` with rustc; the named fixture runs each of them. |
 | `gen_named_module_builds_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/gen_named_function_field_and_module` | - | codegen | Compiles a module named `gen` reached by `from gen import ...` and `import gen`; the named fixture imports and calls it both ways. |
 
+Per-test overrides in `loaves/compiler/incan_emit/src/tests/rust_trait_unknown_receivers.rs`:
+
+| Test | Disposition | Twin | Dies | Lanes | Notes |
+|---|---|---|---|---|---|
+| `bounded_reads_through_an_untyped_guard_build_with_read_inspected_issue1561` | retire | - | - | checker, parser | open (harness-deps): the assertion is that `Read.by_ref(cursor).take(size).read_to_end(out)` and `BufReader.new(Read.by_ref(cursor))` over the guard `borrow_mut()` returns build and read 4, 2 and 3 bytes with `std::io::Read` inspected, as without metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_read_by_ref_through_a_field_guard.incn` carries the `Buffer` class and prints the three lengths. A `rust::` program; waits for a Cargo-free bake under the compiler suite. |
+
 Per-test overrides in `loaves/compiler/incan_emit/src/tests/slice_hooks.rs`:
 
 | Test | Disposition | Twin | Dies | Lanes | Notes |
@@ -1795,7 +1802,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2067 tests in 112 files: keep 2067)
+### `loaves/compiler/incan_frontend` (2069 tests in 112 files: keep 2069)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1851,7 +1858,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/typechecker/tests/capability_requirements.rs` | 19 | 962 | 962 | keep | - | - | - | #1561 | checker 19, parser 3 | typechecker refusals of types lacking a capability the program needs (#1754 automatic derives, #1758 set elements and dict keys, #1772 a function value passed as a task); no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs` | 21 | 986 | 986 | keep | - | - | - | #1561 | checker 20, parser 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/closure_parameter_context.rs` | 7 | 367 | 367 | keep | - | - | - | #1561 | checker 5 | typechecker only: a closure's parameter types come from the function type its context gives it (an iterator adapter's or terminal's element, a fold's accumulator, a generic parameter once the other arguments fix it), operations its parameters' types lack are refused, and a capturing closure stored by a lazy iterator adapter is refused with `INCAN-T0001` (#1561); no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/closures_in_function_types.rs` | 3 | 186 | 186 | keep | - | - | - | #1561 | checker 2, parser 1 | typechecker only: a closure that captures local values is accepted as a new local, as an argument for a function-typed parameter its function only calls and as the one return of a function, and refused with `INCAN-T0001` in every other function-typed slot (#1561); no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/closures_in_function_types.rs` | 4 | 212 | 212 | keep | - | - | - | #1561 | checker 3, parser 2 | typechecker only: a closure that captures local values is accepted as a new local, as an argument for a function-typed parameter its function only calls and as the one return of a function, and refused with `INCAN-T0001` in every other function-typed slot (#1561); no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/collections_strings_and_bytes.rs` | 57 | 1473 | 1473 | keep | - | - | - | #1561 | checker 51, parser 4 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/derive_contract.rs` | 25 | 852 | 852 | keep | - | - | - | #1561 | checker 25 | typechecker refusals and acceptances of the derive contract (#1822 set elements through the Hash derive only, #1870 automatic and implied derives, #1871 derive requirements and dunder signatures, #1872 a dunder beside its matching derive, #1881 sorted() element order, #1882 static-method receivers); no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/dict_get_and_frozen_payloads.rs` | 12 | 674 | 674 | keep | - | - | - | #1561 | checker 11, parser 2 | checker facts for a dict's `get` result (the stored value, `copied`/`cloned` refused) and a `Some` payload's string instantiation (#1793, #1794); typechecker only, no emit/driver dependency. |
@@ -1889,7 +1896,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_metadata_and_methods.rs` | 27 | 1301 | 1301 | keep | - | - | - | #1561 | checker 23, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_supertraits.rs` | 7 | 164 | 164 | keep | - | - | - | #1561 | checker 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_import_candidates.rs` | 6 | 155 | 155 | keep | - | - | - | #1561 | checker 6, parser 6 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_qualified_calls.rs` | 9 | 325 | 325 | keep | - | - | - | #1561 | checker 8, parser 7 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_qualified_calls.rs` | 10 | 379 | 379 | keep | - | - | - | #1561 | checker 9, parser 8 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/stated_contract_checks.rs` | 10 | 449 | 449 | keep | - | - | - | #1561 | checker 10, parser 4 | typechecker contracts the reference states: namespace prelude imports, `import python`, `import M::X` visibility, pattern arity, positional `str` method arguments, writes through read-only bindings, escaping C text views, JSON members with no JSON form and `{value:?}` over values with no Debug form; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs` | 77 | 1451 | 1451 | keep | - | - | - | #1561 | checker 74, parser 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_default_const_paths.rs` | 1 | 36 | 36 | keep | - | - | - | #1561 | - | typechecker stdlib loader facts: the canonical path of each const a stdlib parameter default names (#1771); no emit/driver dependency. |
