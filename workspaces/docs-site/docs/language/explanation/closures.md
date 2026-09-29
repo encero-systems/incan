@@ -34,7 +34,7 @@ transform = double             # store in a variable
 ops: list[(int) -> int] = [double, (x) => x + 1]   # mix named functions and closures
 ```
 
-Both forms are interchangeable wherever a function type is expected, as long as the closure captures nothing. A closure that reads a local of the function around it carries that value with it, so it has a type of its own: a new local, a parameter its function only calls and a function's one `return` hold it, and a list or a field does not ([Closures that capture local values](../reference/functions.md#closures-that-capture-local-values)). Use a direct reference when the function already exists; use a closure for short inline logic.
+Both forms are interchangeable wherever a function type is expected, as long as the closure captures nothing. A closure that reads a local of the function around it carries that value with it, so it has a type of its own. It fits where it is called, such as the callback of a `Result` combinator or a parameter its function only calls, and where a slot keeps that type, such as a new local or a function's one `return`. A slot that holds a plain function pointer has no room for the captured values, so it refuses the closure ([Closures that capture local values](../reference/functions.md#closures-that-capture-local-values)). Use a direct reference when the function already exists; use a closure for short inline logic.
 
 ## When to use closures
 

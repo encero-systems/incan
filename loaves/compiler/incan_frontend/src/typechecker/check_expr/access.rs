@@ -586,6 +586,40 @@ impl TypeChecker {
         ret
     }
 
+    /// Return the result type the RFC 070 combinator `method` of a `Result[ok, err]` gives its callback, as far as the
+    /// receiver and the call's expected type `expected` fix it (#1561).
+    ///
+    /// `and_then`'s callback returns `Result[U, err]` and `or_else`'s `Result[ok, F]`, where `U` and `F` are the
+    /// call's expected `Result[U, F]` when it has one and open otherwise, so an `Ok(...)` or `Err(...)` the callback
+    /// returns has the side it does not spell. `map`'s and `map_err`'s callbacks return their own result, and an
+    /// observer's result needs no context, so theirs is left open.
+    fn result_callback_expected_output(
+        method: ResultMethodId,
+        ok: &ResolvedType,
+        err: &ResolvedType,
+        expected: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let (expected_ok, expected_err) = match expected {
+            Some(ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 =>
+            {
+                (args[0].clone(), args[1].clone())
+            }
+            _ => (ResolvedType::Unknown, ResolvedType::Unknown),
+        };
+        let result = |ok, err| ResolvedType::Generic("Result".to_string(), vec![ok, err]);
+        match method {
+            ResultMethodId::AndThen => result(expected_ok, err.clone()),
+            ResultMethodId::OrElse => result(ok.clone(), expected_err),
+            ResultMethodId::Map
+            | ResultMethodId::MapErr
+            | ResultMethodId::Inspect
+            | ResultMethodId::InspectErr
+            | ResultMethodId::Unwrap
+            | ResultMethodId::UnwrapOr => ResolvedType::Unknown,
+        }
+    }
+
     /// Typecheck one RFC 070 `Result[T, E]` combinator method call.
     fn check_result_combinator_method(
         &mut self,
@@ -5904,11 +5938,11 @@ impl TypeChecker {
                 None
             }
         });
-        let result_callback_input = match (&base_ty, result_methods::from_str(method)) {
+        let result_callback = match (&base_ty, result_methods::from_str(method)) {
             (ResolvedType::Generic(name, type_args), Some(method_id))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && type_args.len() == 2 =>
             {
-                match method_id {
+                let input = match method_id {
                     ResultMethodId::Map | ResultMethodId::AndThen | ResultMethodId::Inspect => {
                         Some(type_args[0].clone())
                     }
@@ -5916,7 +5950,16 @@ impl TypeChecker {
                         Some(type_args[1].clone())
                     }
                     _ => None,
-                }
+                };
+                input.map(|input| {
+                    let output = Self::result_callback_expected_output(
+                        method_id,
+                        &type_args[0],
+                        &type_args[1],
+                        expected_return_ty,
+                    );
+                    (input, output)
+                })
             }
             _ => None,
         };
@@ -5964,12 +6007,12 @@ impl TypeChecker {
                     self.check_expr(arg_expr);
                     self.errors.truncate(diagnostics_before);
                     ResolvedType::Unknown
-                } else if let Some(input_ty) = result_callback_input.as_ref()
+                } else if let Some((input_ty, output_ty)) = result_callback.as_ref()
                     && is_closure
                 {
                     let expected = ResolvedType::Function(
                         vec![CallableParam::positional(input_ty.clone())],
-                        Box::new(ResolvedType::Unknown),
+                        Box::new(output_ty.clone()),
                     );
                     self.check_expr_with_expected(arg_expr, Some(&expected))
                 } else if is_closure

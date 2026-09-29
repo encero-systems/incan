@@ -1633,7 +1633,15 @@ impl AstLowering {
             let mut trait_methods = trait_decl.methods;
             trait_methods.retain(|method| !self.trait_method_refines_supertrait_slot(trait_name, &method.node.name));
             let mut refined_default_projections = Vec::new();
-            if trait_name == core_traits::as_str(TraitId::Iterator) {
+            // The standard library's `Iterator` trait declares only `__next__` for an adopter to implement, under any
+            // spelling of it (`It` for `Iterator as It`, `collection.Iterator`); its other methods are the iterator
+            // protocol's own (#1561).
+            let adopts_stdlib_iterator = trait_name == core_traits::as_str(TraitId::Iterator)
+                || (trait_source_name.as_deref() == Some(core_traits::as_str(TraitId::Iterator))
+                    && trait_module_path
+                        .as_deref()
+                        .is_some_and(|path| path == [incan_lang::lang::stdlib::STDLIB_ROOT, "derives", "collection"]));
+            if adopts_stdlib_iterator {
                 trait_methods.retain(|method| method.node.name == magic_methods::as_str(MagicMethodId::Next));
             }
 

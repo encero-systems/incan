@@ -1,5 +1,6 @@
 //! Small helper utilities for expression lowering: pow exponent classification, literal extraction, the no-argument
-//! `count()` on a list, and the `flat_map` callback that expands into a nested iterator.
+//! `count()` on a list, the `flat_map` callback that expands into a nested iterator, and the `Ok(...)` or `Err(...)`
+//! a `Result` combinator's closure returns.
 
 use super::super::super::expr::{
     BuiltinFn, IrCallArg, IrCallArgKind, IrExprKind, IrGeneratorClause, IteratorMethodKind, MethodKind, Pattern,
@@ -11,6 +12,8 @@ use super::frozen_reads::owned_frozen_iteration_source;
 use crate::TypedExpr;
 use incan_frontend::ast::{self, Spanned};
 use incan_lang::PowExponentKind;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 
@@ -173,5 +176,96 @@ impl AstLowering {
                 vec![item_ty],
             ),
         )
+    }
+
+    /// Spell each `Ok(...)` or `Err(...)` that the closure `callback` of the `Result` combinator `method` returns with
+    /// both of its type arguments, when the closure's checked result leaves a side of it open (#1561).
+    ///
+    /// Rust types a closure's result from its body alone, so the `Ok(1)` of `e.or_else((m) => Ok(1))` names no error
+    /// type and the call fails to build (E0282). The closure's checked result gives each side the checker fixed, from
+    /// the call's context included; the receiver fixes `or_else`'s success type and `and_then`'s error type; a side
+    /// nothing fixes is `None` (`()`), the type an open side of a bound `Ok(...)` or `Err(...)` takes. A closure whose
+    /// result is known, and one that returns anything else, is left as it is.
+    pub(in crate::lower) fn pin_result_combinator_callback(
+        callback: &mut TypedExpr,
+        method: ResultMethodId,
+        receiver_ty: &IrType,
+    ) {
+        match &mut callback.kind {
+            IrExprKind::Block { value: Some(value), .. } => {
+                Self::pin_result_combinator_callback(value, method, receiver_ty);
+                callback.ty = value.ty.clone();
+            }
+            IrExprKind::Closure { body, .. } => {
+                let IrType::Function { ret, .. } = &mut callback.ty else {
+                    return;
+                };
+                let IrType::Result(ok, err) = ret.as_mut() else {
+                    return;
+                };
+                if !matches!(**ok, IrType::Unknown) && !matches!(**err, IrType::Unknown) {
+                    return;
+                }
+                let mut receiver_ty = receiver_ty;
+                while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+                    receiver_ty = inner.as_ref();
+                }
+                if let IrType::Result(receiver_ok, receiver_err) = receiver_ty {
+                    if method == ResultMethodId::OrElse && matches!(**ok, IrType::Unknown) {
+                        *ok = receiver_ok.clone();
+                    }
+                    if method == ResultMethodId::AndThen && matches!(**err, IrType::Unknown) {
+                        *err = receiver_err.clone();
+                    }
+                }
+                if let Some(pinned) = Self::pin_returned_result_constructor(body, &**ok, &**err) {
+                    **ret = pinned;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Give the `Ok(...)` or `Err(...)` that `expr` produces, directly, as a block's value or as both branches of an
+    /// `if`, the type arguments `ok` and `err`, with an open side other than the constructor's own payload as `None`,
+    /// and return the result type it then has. `None` when `expr` produces no such constructor call.
+    fn pin_returned_result_constructor(expr: &mut TypedExpr, ok: &IrType, err: &IrType) -> Option<IrType> {
+        let unit_when_open = |ty: &IrType| match ty {
+            IrType::Unknown => IrType::Unit,
+            ty => ty.clone(),
+        };
+        let pinned = match &mut expr.kind {
+            IrExprKind::Call {
+                func,
+                type_args,
+                args,
+                canonical_path: None,
+                ..
+            } if type_args.is_empty() && args.len() == 1 => {
+                let IrExprKind::Var { name, .. } = &func.kind else {
+                    return None;
+                };
+                let (ok, err) = match constructors::from_str(name)? {
+                    ConstructorId::Ok => (ok.clone(), unit_when_open(err)),
+                    ConstructorId::Err => (unit_when_open(ok), err.clone()),
+                    _ => return None,
+                };
+                *type_args = vec![ok.clone(), err.clone()];
+                IrType::Result(Box::new(ok), Box::new(err))
+            }
+            IrExprKind::Block { value: Some(value), .. } => Self::pin_returned_result_constructor(value, ok, err)?,
+            IrExprKind::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                let then_ty = Self::pin_returned_result_constructor(then_branch, ok, err);
+                let else_ty = Self::pin_returned_result_constructor(else_branch, ok, err);
+                then_ty.or(else_ty)?
+            }
+            _ => return None,
+        };
+        expr.ty = pinned.clone();
+        Some(pinned)
     }
 }

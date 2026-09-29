@@ -1,7 +1,8 @@
 //! A closure's parameter types come from the function type its context gives it (#1561): the element type of an
 //! RFC 088 iterator adapter or terminal, a fold's accumulator, and a generic parameter's function type once the other
 //! arguments fix its type parameters. A capturing closure is refused where a lazy adapter stores it and as the
-//! callback of any other standard-library function or method.
+//! callback of other standard-library functions and methods, and accepted by a `Result` combinator, which only calls
+//! it.
 
 use super::*;
 
@@ -234,4 +235,25 @@ def main() -> None:
     println(numbers().filter(is_odd).collect())
 "#,
     );
+}
+
+/// A closure that captures local values is accepted as the callback of each `Result` combinator (`map`, `map_err`,
+/// `and_then`, `or_else`, `inspect`, `inspect_err`), which calls it before it returns and keeps no function pointer
+/// (#1561).
+#[test]
+fn capturing_closures_passed_to_result_combinators_are_accepted_issue1561() {
+    for statement in [
+        "println(passed.map((x) => x + n).unwrap_or(0))",
+        "println(failed.map_err((m) => m + suffix).unwrap_or(0))",
+        "println(passed.and_then((x) => Ok(x * n)).unwrap_or(0))",
+        "println(failed.or_else((m) => Ok(len(m) + n)).unwrap_or(0))",
+        "println(passed.inspect((x) => println(x + n)).unwrap_or(0))",
+        "println(failed.inspect_err((m) => println(len(m) + n)).unwrap_or(0))",
+    ] {
+        let source = format!(
+            "def main() -> None:\n    n = 2\n    suffix = \"!\"\n    \
+             passed: Result[int, str] = Ok(1)\n    failed: Result[int, str] = Err(\"x\")\n    {statement}\n"
+        );
+        assert_check_ok(&source);
+    }
 }

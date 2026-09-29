@@ -1,8 +1,8 @@
 //! A `pub::` dependency's trait under another spelling (#1561): imported under an alias (`Tag as Tagged`) or exported
 //! under one (`pub Tagging = Tag`), the trait is the dependency's own, so the dependency's adopters meet a bound on it
 //! and a consumer's type adopts it with its own methods; so it is when the consumer names it through a module binding
-//! (`t.Tag`). A default method of the trait reaches no adopter in another package, so an adopter that relies on one is
-//! refused.
+//! (`t.Tag`), and a consumer's type adopting it under one spelling meets a bound on another. A default method of the
+//! trait reaches no adopter in another package, so an adopter that relies on one is refused.
 
 use super::generated_programs::{generate_consumer, run_with_dependency};
 
@@ -118,6 +118,84 @@ def main() -> None:
     println(name_of(Yours(id=2)))
 "#;
     assert_eq!(run_with_dependency("tags", TAGS, consumer)?, "dep!\ndep\nMINE\nyours\n");
+    Ok(())
+}
+
+/// A consumer's type that adopts the dependency's trait under one spelling meets a bound that names it under another:
+/// the import alias `Tagged`, the dependency's alias `Tagging`, the trait itself and its module-bound `t.Tag` are one
+/// trait (#1561).
+#[test]
+fn consumer_adopter_meets_a_bound_on_another_spelling_of_the_dependency_trait_issue1561() -> TestResult {
+    let consumer = r#"
+import pub::tags as t
+from pub::tags import Tag, Tagging
+from pub::tags import Tag as Tagged
+
+
+def name_of[T with Tagging](value: T) -> str:
+    return value.tag()
+
+
+def shout[T with Tagged](value: T) -> str:
+    return value.loud()
+
+
+def quiet[T with t.Tag](value: T) -> str:
+    return value.tag()
+
+
+model Mine with Tagged:
+    id: int
+
+    def tag(self) -> str:
+        return "mine"
+
+    def loud(self) -> str:
+        return "MINE"
+
+
+model Yours with Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "yours"
+
+    def loud(self) -> str:
+        return "YOURS"
+
+
+model Ours with t.Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "ours"
+
+    def loud(self) -> str:
+        return "OURS"
+
+
+model Theirs with Tag:
+    id: int
+
+    def tag(self) -> str:
+        return "theirs"
+
+    def loud(self) -> str:
+        return "THEIRS"
+
+
+def main() -> None:
+    println(name_of(Mine(id=1)))
+    println(shout(Yours(id=2)))
+    println(quiet(Mine(id=1)))
+    println(shout(Ours(id=3)))
+    println(name_of(Theirs(id=4)))
+    println(quiet(Theirs(id=4)))
+"#;
+    assert_eq!(
+        run_with_dependency("tags", TAGS, consumer)?,
+        "mine\nYOURS\nmine\nOURS\ntheirs\ntheirs\n"
+    );
     Ok(())
 }
 

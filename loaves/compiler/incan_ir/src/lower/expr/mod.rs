@@ -1324,6 +1324,22 @@ impl AstLowering {
         Ok(lowered)
     }
 
+    /// Return whether the checker dispatched a method call to the standard library's `Iterator[T]` trait, under any
+    /// spelling of it (`Iterator`, an import alias, `collection.Iterator`).
+    ///
+    /// The generated `Iterator` trait declares only `__next__` and `sum`; its RFC 088 adapters and terminals are the
+    /// iterator protocol's own methods, which an adopter reaches as an `Iterator[T]` value reaches them (#1561).
+    fn dispatches_to_stdlib_iterator(&self, dispatch: Option<&IrMethodDispatch>) -> bool {
+        let Some(IrMethodDispatch::Trait(dispatch) | IrMethodDispatch::SourceProjection(dispatch)) = dispatch else {
+            return false;
+        };
+        let (resolved_module_path, declaration_name) = self.canonical_trait_identity(&dispatch.trait_source_name);
+        let module_path = dispatch.trait_module_path.clone().or(resolved_module_path);
+        let declaration_name = declaration_name.unwrap_or_else(|| trait_declaration_name(dispatch).to_string());
+        module_path.is_some_and(|path| path == [stdlib::STDLIB_ROOT, "derives", "collection"])
+            && declaration_name == builtin_traits::as_str(TraitId::Iterator)
+    }
+
     /// Return whether a concrete receiver type explicitly adopts the Incan `Iterator` protocol.
     fn receiver_adopts_iterator_protocol(&self, ty: &IrType) -> bool {
         let mut ty = ty;
@@ -2394,24 +2410,29 @@ impl AstLowering {
                         },
                         expr_ty,
                     )
-                } else if let Some(kind) = dispatch
-                    .is_none()
-                    .then(|| {
-                        MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
-                            if self.receiver_adopts_iterator_protocol(&receiver.ty) {
-                                MethodKind::for_iterator_method_name(&method_name)
-                            } else if matches!(
-                                MethodKind::for_result_method_name(&method_name),
-                                Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
-                            ) {
-                                MethodKind::for_result_method_name(&method_name)
-                            } else {
-                                None
-                            }
+                } else if let Some(kind) = if self.dispatches_to_stdlib_iterator(dispatch.as_ref()) {
+                    // An adopter of the standard library's `Iterator[T]` reaches the iterator protocol's adapters and
+                    // terminals, which no generated trait method provides (#1561).
+                    MethodKind::for_iterator_method_name(&method_name)
+                } else {
+                    dispatch
+                        .is_none()
+                        .then(|| {
+                            MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
+                                if self.receiver_adopts_iterator_protocol(&receiver.ty) {
+                                    MethodKind::for_iterator_method_name(&method_name)
+                                } else if matches!(
+                                    MethodKind::for_result_method_name(&method_name),
+                                    Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
+                                ) {
+                                    MethodKind::for_result_method_name(&method_name)
+                                } else {
+                                    None
+                                }
+                            })
                         })
-                    })
-                    .flatten()
-                {
+                        .flatten()
+                } {
                     if kind == MethodKind::Collection(CollectionMethodKind::Count) && args_ir.is_empty() {
                         (Self::lower_list_item_count(receiver), expr_ty)
                     } else {
@@ -2433,6 +2454,13 @@ impl AstLowering {
                                     arg
                                 })
                                 .collect()
+                        } else if let MethodKind::Result(method) = kind {
+                            // A `Result` combinator's closure returns its `Ok(...)` or `Err(...)` with both types.
+                            let mut args_ir = args_ir;
+                            if let Some(callback) = args_ir.first_mut() {
+                                Self::pin_result_combinator_callback(&mut callback.expr, method, &receiver.ty);
+                            }
+                            args_ir
                         } else {
                             args_ir
                         };

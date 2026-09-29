@@ -14,6 +14,7 @@ mod expected_literal_emission;
 mod generated_programs;
 mod generic_caller_bounds;
 mod inherited_method_dispatch;
+mod iterator_adopters;
 mod lowering_through_emission;
 mod mut_marker_publication;
 mod mut_ownership_regressions;

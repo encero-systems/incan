@@ -1,7 +1,8 @@
 //! Closures that capture local values build where the checker holds them (#1561): as a new local, as an argument for
-//! a function-typed parameter its function only calls (`impl Fn(A) -> R`), and as the one returned value of a
-//! function (`impl Fn(A) -> R`). A local bound to one is passed to such a parameter by reference, so it stays
-//! usable. A named function and a closure that captures nothing keep building in a function-pointer slot.
+//! a function-typed parameter its function only calls (`impl Fn(A) -> R`), as the one returned value of a function
+//! (`impl Fn(A) -> R`), and as the callback of a `Result` combinator, which only calls it. A local bound to one is
+//! passed to such a parameter by reference, so it stays usable. A named function and a closure that captures nothing
+//! keep building in a function-pointer slot.
 
 use incan_frontend::{lexer, parser};
 
@@ -141,5 +142,36 @@ def main() -> None:
     )?;
     let output = run_generated_program(&rust)?;
     assert_eq!(output, "xann!\nyann?\n<bob.\n[1, 2]\nhi you!\nhi me?\n");
+    Ok(())
+}
+
+/// A closure that captures local values builds and runs as the callback of each `Result` combinator, which calls it
+/// before it returns (#1561).
+#[test]
+fn capturing_closures_build_as_result_combinator_callbacks_issue1561() -> TestResult {
+    let stdout = super::generated_programs::run_with_stdlib(
+        r#"
+def passed() -> Result[int, str]:
+    return Ok(5)
+
+
+def failed() -> Result[int, str]:
+    return Err("x")
+
+
+def main() -> None:
+    n = 2
+    suffix = "!"
+    println(passed().map((x) => x + n).unwrap_or(0))
+    println(passed().and_then((x) => Ok(x * n)).unwrap_or(0))
+    println(failed().or_else((m) => Ok(len(m) + n)).unwrap_or(0))
+    passed().inspect((x) => println(x * n))
+    failed().inspect_err((m) => println(len(m) + n))
+    match failed().map_err((m) => m + suffix):
+        Ok(_) => println("ok")
+        Err(message) => println(message)
+"#,
+    )?;
+    assert_eq!(stdout, "7\n10\n3\n10\n3\nx!\n");
     Ok(())
 }

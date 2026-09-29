@@ -3147,11 +3147,15 @@
     },
     "loaves/compiler/incan_emit/src/tests/capturing_closures.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of closures that capture local values where the checker holds them: a new local, an argument for a function-typed parameter its function only calls, the one return of a function or method, and a local partial of a method of a value (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of closures that capture local values where the checker holds them: a new local, an argument for a function-typed parameter its function only calls, the one return of a function or method, a local partial of a method of a value, and the callback of a Result combinator (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "tests": {
+        "capturing_closures_build_as_result_combinator_callbacks_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_as_result_combinator_callbacks.incn",
+          "notes": "Runs a capturing closure as the callback of each Result combinator; the fixture prints each result."
+        },
         "capturing_closures_build_where_their_own_type_is_kept_issue1561": {
           "notes": "Runs a capturing closure as an annotated local called and passed twice, as an argument for a function and a method that only call their parameter, and returned from a function and a method; the fixture prints each result.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
@@ -3164,7 +3168,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/closure_parameter_inference.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of closures typed by their context: iterator adapters and terminals, a fold, a generic function's parameter, and a generator's own map and filter (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of closures typed by their context: iterator adapters and terminals, a fold, a generic function's parameter, a generator's own map and filter, and the Ok(...) or Err(...) a Result combinator's closure returns (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3172,6 +3176,10 @@
         "closures_typed_by_their_context_build_and_run_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/closure_parameters_from_their_context.incn",
           "notes": "Runs each closure form and prints its result; the fixture prints the same lines."
+        },
+        "result_combinator_closures_return_constructors_typed_by_the_call_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/result_combinator_closures_return_constructors.incn",
+          "notes": "Runs or_else and and_then closures returning Ok(...) or Err(...) with and without a context type; the fixture prints each result."
         }
       },
       "twin": ""
@@ -3261,7 +3269,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs": {
       "disposition": "retire",
-      "notes": "builds and runs a consumer of a `pub::` dependency whose trait it reaches under an alias or through a module binding, and checks the refusal of an adopter relying on the dependency trait's default (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs a consumer of a `pub::` dependency whose trait it reaches under an alias or through a module binding, adopts under one spelling and bounds under another, and checks the refusal of an adopter relying on the dependency trait's default (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3269,6 +3277,10 @@
         "adopter_relying_on_a_dependency_trait_default_is_refused_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_adopter_relying_on_a_dependency_trait_default",
           "notes": "The fixture's consumer adopts the dependency trait without its default method and is refused with INCAN-T0001."
+        },
+        "consumer_adopter_meets_a_bound_on_another_spelling_of_the_dependency_trait_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_trait_adopted_and_bound_under_different_spellings",
+          "notes": "Consumer models adopting the dependency trait under one spelling meet bounds on another; the fixture prints each call."
         },
         "dependency_trait_through_a_module_binding_bounds_and_adopts_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_trait_through_a_module_binding",
@@ -3327,7 +3339,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/emitted_spellings.rs": {
       "disposition": "retire",
-      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads and an explicit channel element type; generated Rust dies with #654.",
+      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads an explicit channel element type and the future of an async function called through a module binding; generated Rust dies with #654.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3476,6 +3488,20 @@
       "tests": {},
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/subtrait_default_and_class_override.incn"
     },
+    "loaves/compiler/incan_emit/src/tests/iterator_adopters.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of types adopting Iterator[T], under the trait's own name or an import alias, calling the iterator adapters and terminals on themselves (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "iterator_adopters_reach_the_protocol_adapters_and_terminals_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/iterator_adopters_reach_the_protocol_methods.incn",
+          "notes": "Runs adapters and terminals on model, generic model, class and aliased adopters of Iterator[T]; the fixture prints each result."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs": {
       "disposition": "retire",
       "notes": "lowering through emission end to end.",
@@ -3598,7 +3624,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs": {
       "disposition": "retire",
-      "notes": "compiles the Rust text emission gives a local partial of a model, class or newtype constructor and top-level presets of negative numbers, tuple and set literals and a newtype constructor; generated Rust dies with #654.",
+      "notes": "compiles the Rust text emission gives a local partial of a model, class or newtype constructor, of a generic function or constructor, and of another module's function, and top-level presets of negative numbers, tuple and set literals and a newtype constructor; generated Rust dies with #654.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

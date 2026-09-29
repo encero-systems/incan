@@ -1,0 +1,95 @@
+# behavior: a model, a generic model and a class adopting Iterator[T], and a model adopting it under an import alias, run the iterator adapters and terminals on themselves as an Iterator[T] value does
+# retires: loaves/compiler/incan_emit/src/tests/iterator_adopters.rs::iterator_adopters_reach_the_protocol_adapters_and_terminals_issue1561
+# expect-stdout:
+#   true
+#   false
+#   Some(4)
+#   15
+#   45
+#   5
+#   [2, 4, 6, 8, 10]
+#   [4, 5]
+#   [1, 2]
+#   [4, 5]
+#   [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
+#   true
+#   12
+#   15
+#   ["a", "a"]
+#   6
+#   [3, 2, 1]
+#   Some(2)
+#   [4, 8, 12]
+
+from std.derives.collection import Iterator
+from std.derives.collection import Iterator as Stream
+
+
+model Count with Iterator[int]:
+    n: int
+
+    def __next__(mut self) -> Option[int]:
+        if self.n >= 5:
+            return None
+        self.n += 1
+        return Some(self.n)
+
+
+model Repeat[T with Clone] with Iterator[T]:
+    value: T
+    left: int
+
+    def __next__(mut self) -> Option[T]:
+        if self.left <= 0:
+            return None
+        self.left -= 1
+        return Some(self.value.clone())
+
+
+class Countdown with Iterator[int]:
+    n: int
+
+    def __next__(mut self) -> Option[int]:
+        if self.n <= 0:
+            return None
+        self.n -= 1
+        return Some(self.n + 1)
+
+
+model Evens with Stream[int]:
+    n: int
+
+    def __next__(mut self) -> Option[int]:
+        if self.n >= 6:
+            return None
+        self.n += 2
+        return Some(self.n)
+
+
+def is_big(x: int) -> bool:
+    return x > 3
+
+
+def double(x: int) -> int:
+    return x * 2
+
+
+def main() -> None:
+    println(Count(n=0).any(is_big))
+    println(Count(n=0).all(is_big))
+    println(Count(n=0).find(is_big))
+    println(Count(n=0).fold(0, (acc, x) => acc + x))
+    println(Count(n=0).reduce(0, (acc, x) => acc + x * 3))
+    println(Count(n=0).count())
+    println(Count(n=0).map(double).collect())
+    println(Count(n=0).filter(is_big).collect())
+    println(Count(n=0).take(2).collect())
+    println(Count(n=0).skip(3).collect())
+    println(Count(n=0).enumerate().collect())
+    println(Count(n=0).any((x) => x > 3))
+    Count(n=3).for_each((x) => println(x * 3))
+    println(Repeat(value="a", left=2).collect())
+    println(Repeat(value=2, left=3).fold(0, (acc, x) => acc + x))
+    println(Countdown(n=3).collect())
+    println(Countdown(n=3).find((x) => x < 3))
+    println(Evens(n=0).map(double).collect())

@@ -3136,6 +3136,12 @@ impl TypeChecker {
         // declaring module called the trait (`json.Serialize` through its own import, #1887).
         let bound_identity = self.resolve_bound_trait_path(trait_name);
         let package_trait = self.package_trait_identity_of_type(type_name, trait_name);
+        // A `pub::` package trait is one declaration under every spelling a consumer gives it (an import alias, a
+        // package alias export, a module binding), so an adoption and a bound that name it under different spellings
+        // meet through the package's checked identity of each (#1561).
+        let bound_package_trait = bound_identity
+            .as_ref()
+            .and_then(|(module_path, name)| self.package_trait_declaration(module_path, name));
         for t in adopted {
             if self.trait_name_matches(&t.name, trait_name)
                 || t.source_name
@@ -3145,6 +3151,9 @@ impl TypeChecker {
                 || package_trait
                     .as_ref()
                     .is_some_and(|(module_path, name)| adoption_names_declaration(t, module_path, name))
+                || bound_package_trait
+                    .as_ref()
+                    .is_some_and(|bound| self.adopted_package_trait(t).as_ref() == Some(bound))
             {
                 return true;
             }
@@ -3191,6 +3200,43 @@ impl TypeChecker {
         let (_, type_library, _) = package_of(type_name)?;
         (trait_identity.kind == SemanticSourceTargetKind::Trait && trait_library == type_library)
             .then(|| (trait_module, trait_identity.declaration_name.clone()))
+    }
+
+    /// Return the checked identity of the trait `name` names in the `pub::` package module `module_path`
+    /// (`["pub", library, ...]`), as the package's identity graph publishes it: an alias export (`pub Tagging = Tag`)
+    /// has the identity of the trait it names. `None` for any other module or member.
+    fn package_trait_declaration(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
+        let [root, library, rest @ ..] = module_path else {
+            return None;
+        };
+        if root != "pub" {
+            return None;
+        }
+        let crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. } =
+            self.provider_plan.library_manifest_index().get(library)?
+        else {
+            return None;
+        };
+        let public_path = std::iter::once(manifest.name.clone())
+            .chain(rest.iter().cloned())
+            .chain(std::iter::once(name.to_string()))
+            .collect::<Vec<_>>();
+        manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_path(&public_path)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+    }
+
+    /// Return the checked identity of the `pub::` package trait an adoption names, from the package module and the
+    /// source name it recorded where the adopting type was declared.
+    fn adopted_package_trait(&self, adoption: &TypeBoundInfo) -> Option<CanonicalSymbolId> {
+        let module_path = adoption.module_path.as_deref()?;
+        let name = adoption
+            .source_name
+            .as_deref()
+            .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
+        self.package_trait_declaration(module_path, name)
     }
 
     /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries and the automatic `Clone` of a `model`,

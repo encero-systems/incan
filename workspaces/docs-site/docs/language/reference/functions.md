@@ -71,18 +71,21 @@ def main() -> None:
 
 ### Closures that capture local values
 
-A closure that reads a local of an enclosing function, a parameter or `self`, captures it; a local partial holds its presets. Such a callable, a *capturing callable*, is held by these function-typed slots:
+A closure that reads a local of an enclosing function, a parameter or `self`, captures it; a local partial holds its presets. Such a callable, a *capturing callable*, has a type of its own. It is accepted where it is called and where a slot keeps that type; a slot that holds a plain function pointer, which carries no captured values, refuses it with `INCAN-T0001`. A named function and a closure that captures nothing are accepted in every function-typed slot.
+
+These slots call a capturing callable or keep its type:
 
 | Slot | Contract |
 | --- | --- |
 | A new local binding | Accepted, annotated with a function type or not. The local is not reassigned afterwards. |
 | The callee of a call | Accepted. |
 | An argument for a parameter of function type | Accepted when the parameter is declared without `mut` and is not `*args`, and the function or method that declares it only calls it, outside any closure or generator expression, and qualifies (below). |
+| The callback of a `Result` combinator | Accepted: `map`, `map_err`, `and_then`, `or_else`, `inspect` and `inspect_err` call it before they return. |
 | A `return` value | Accepted when the function or method has one `return`, whose value is a closure that reads a parameter or a local of the function and not `self`, or a local partial, and qualifies (below). |
 
 A function qualifies when it is declared in the same module, is neither `pub`, `async`, generic, decorated nor a generator, and is not used as a decorator; its name is only called, never read as a value. A method qualifies when it is declared in a model, class, newtype or enum of the same module, takes `self` or `mut self`, is neither `async`, generic, decorated, overloaded nor a generator, and implements no method of a trait the type adopts; no member read without a call spells its name in the module, and its class neither extends nor is extended by another class.
 
-Every other function-typed slot refuses a capturing callable with `INCAN-T0001`: an element of a list, set, dict or tuple, a yielded value, an argument of a construction or of `Some`, `Ok` and `Err`, a preset of a local partial, the value of an `if` branch or a `match` arm, an assignment to an existing name, field or element, an assignment to a local that holds one, a parameter of a callable value, and a parameter or return of any other function declared in the project or in a library. A named function and a closure that captures nothing are accepted in every function-typed slot.
+A function-typed slot that holds a plain function pointer refuses a capturing callable with `INCAN-T0001`, and so does an assignment to a local that holds one.
 
 ```incan
 def apply(f: (int) -> int, x: int) -> int:
@@ -98,6 +101,8 @@ def main() -> None:
     n = 5
     g: (int) -> int = (x) => x + n      # accepted
     apply(g, 1)                         # accepted
+    r: Result[int, str] = Ok(1)
+    s = r.map((x) => x + n)             # accepted: map calls it
     keep((x) => x + n)                  # refused: keep stores its parameter (INCAN-T0001)
     fs: list[(int) -> int] = [g]        # refused: a list element (INCAN-T0001)
 ```
