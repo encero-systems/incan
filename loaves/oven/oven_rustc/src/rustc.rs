@@ -4983,12 +4983,12 @@ mod tests {
         OvenProjectInspectionAuthorityPayload, OvenProjectInspectionAuthorityRef, OvenProjectInspectionConstituent,
         OvenProjectInspectionRootDependency, OvenProjectInspectionSource, OvenProjectInspectionSourceOwner,
         OvenProjectInspectionTestDependencyEnvelope, OvenProjectInspectionTestDependencyRoot,
-        OvenRegistryLeafAuthority, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
-        OvenRustcAuxiliaryTarget, OvenRustcError, OvenRustcRegistryLeaf, OvenRustcRegistrySource,
-        OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedPathRustcAuthority,
-        OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
-        OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, apply_oven_profile,
-        attach_caller_owned_rustc_libraries, bake_direct_rustc_test, bake_stored_direct_rustc_run,
+        OvenProjectInspectionTestProviderConstituent, OvenRegistryLeafAuthority, OvenRustcArtifactExtern,
+        OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTarget, OvenRustcError,
+        OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
+        OvenSelectedPathRustcAuthority, OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest,
+        OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest,
+        apply_oven_profile, attach_caller_owned_rustc_libraries, bake_direct_rustc_test, bake_stored_direct_rustc_run,
         bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
         bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test,
         combined_process_output, is_host_native_unix_target, load_project_inspection_authority,
@@ -7240,6 +7240,14 @@ fi
             portable_consumer.first_diverging_shared_package_pin(&incompatible_features),
             Some(("cpufeatures".to_string(), PathBuf::from("/provider"))),
             "a feature or unit-identity difference remains fail-closed"
+        );
+        let divergence = portable_consumer
+            .first_diverging_shared_package_pin_detail(&incompatible_features)
+            .map(|(_, _, divergence)| divergence)
+            .unwrap_or_default();
+        assert!(
+            divergence.contains("the provider's unit sha256:different-unit") && divergence.contains("features"),
+            "the refusal detail names both units and the facts that differ: {divergence}"
         );
     }
 
