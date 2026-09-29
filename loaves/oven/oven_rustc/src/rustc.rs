@@ -729,7 +729,7 @@ pub fn rerooted_artifact_staging_source(relative_path: &str) -> Option<String> {
 /// A split-metadata rlib (Rust 1.98+) and its sidecar are one compilation: whenever cohort composition moves one of
 /// them, the partner must move with it, or the stranded half becomes a metadata-only or metadata-less candidate that
 /// rustc selects and then rejects.
-fn metadata_sidecar_pair_path(relative_path: &str) -> Option<String> {
+pub(crate) fn metadata_sidecar_pair_path(relative_path: &str) -> Option<String> {
     if let Some(stem) = relative_path.strip_suffix(".rlib") {
         return Some(format!("{stem}.rmeta"));
     }
@@ -1341,6 +1341,45 @@ pub fn validate_project_inspection_authority_payload(
                 field: "project inspection test dependency envelope",
                 message: "must name a debug-profile dependency constituent".to_string(),
             });
+        }
+        let mut role_indices = vec![envelope.constituent_index];
+        let mut provider_keys = BTreeSet::new();
+        for provider in &envelope.provider_constituents {
+            if provider.dependency_key.trim().is_empty() || !provider_keys.insert(provider.dependency_key.as_str()) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider constituent keys must be non-empty and unique".to_string(),
+                });
+            }
+            if role_indices.contains(&provider.constituent_index) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "must not repeat a role-bearing constituent".to_string(),
+                });
+            }
+            let Some(OvenProjectInspectionConstituent::Stored {
+                artifact_kind,
+                receipt: provider_receipt,
+                base_loaf_identity,
+                ..
+            }) = payload.constituents.get(provider.constituent_index)
+            else {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider role must name one exact stored direct-Rustc constituent".to_string(),
+                });
+            };
+            let valid_shape = matches!(
+                (artifact_kind, base_loaf_identity),
+                (OvenArtifactKind::DirectRustcPlan, None) | (OvenArtifactKind::ProjectPayload, Some(_))
+            );
+            if !valid_shape || provider_receipt.intent != receipt.intent {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider role has a different kind, base, or build intent".to_string(),
+                });
+            }
+            role_indices.push(provider.constituent_index);
         }
         for (alias, root) in &envelope.dependency_roots {
             validate_rust_identifier(alias)?;
@@ -4853,9 +4892,8 @@ impl OvenSelectedPathRustcAuthority {
     /// `--extern` would expose Rustc to two physical copies of one StableCrateId. The caller has already validated
     /// the package, version, features, and digest against the sealed catalog; this method merely reuses the same
     /// metadata-bearing artifact name in one of the selected plan's verified dependency directories. Cargo can emit
-    /// byte-distinct rlibs for the same compilation identity when separate publishers retain different non-semantic
-    /// payload details; the sealed leaf resolver uses the same filename criterion when choosing equivalent catalog
-    /// copies.
+    /// byte-distinct rlibs for one portable unit when separate publishers retain staging-sensitive payload details;
+    /// the sealed leaf resolver first proves equivalence from the RFC 124 selected-unit identity.
     fn matching_sealed_registry_artifact(&self, sealed_artifact: &Path) -> Option<PathBuf> {
         let filename = sealed_artifact.file_name()?;
         let mut matches = self
@@ -5505,7 +5543,7 @@ fi
         artifacts.registry_leaves = vec![OvenRustcRegistryLeaf {
             domain: Default::default(),
             crate_kind: Default::default(),
-            selected_unit_identity: None,
+            selected_unit_identity: Some("sha256:fixture-portable-unit".to_string()),
             package: "serde_fixture".to_string(),
             version: "1.2.3".to_string(),
             crate_name: "serde_fixture".to_string(),
@@ -7071,28 +7109,30 @@ fi
 
     #[test]
     fn first_diverging_shared_package_reports_a_same_version_byte_distinct_overlap() {
-        let leaf = |package: &str, version: &str, digest: &str| OvenRustcRegistryLeaf {
-            domain: Default::default(),
-            crate_kind: Default::default(),
-            selected_unit_identity: None,
-            package: package.to_string(),
-            version: version.to_string(),
-            crate_name: package.replace('-', "_"),
-            features: Vec::new(),
-            source: fixture_registry_source(),
-            artifact: OvenRustcArtifactExtern {
+        let leaf = |package: &str, version: &str, digest: &str, identity: Option<&str>, features: &[&str]| {
+            OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: identity.map(str::to_string),
+                package: package.to_string(),
+                version: version.to_string(),
                 crate_name: package.replace('-', "_"),
-                relative_path: format!("lib{package}.rlib"),
-                digest: digest.to_string(),
-            },
+                features: features.iter().map(|feature| (*feature).to_string()).collect(),
+                source: fixture_registry_source(),
+                artifact: OvenRustcArtifactExtern {
+                    crate_name: package.replace('-', "_"),
+                    relative_path: format!("lib{package}.rlib"),
+                    digest: digest.to_string(),
+                },
+            }
         };
         let consumer = OvenRegistryLeafAuthority::new(
             PathBuf::from("/consumer"),
-            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio")],
+            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio", None, &[])],
         );
         let provider = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("tokio", "1.52.3", "sha256:provider-tokio")],
+            vec![leaf("tokio", "1.52.3", "sha256:provider-tokio", None, &[])],
         );
         assert_eq!(
             consumer.first_diverging_shared_package_pin(&provider),
@@ -7103,7 +7143,7 @@ fi
 
         let identical = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio")],
+            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio", None, &[])],
         );
         assert_eq!(
             consumer.first_diverging_shared_package_pin(&identical),
@@ -7113,19 +7153,61 @@ fi
 
         let different_version = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("tokio", "1.51.0", "sha256:provider-tokio")],
+            vec![leaf("tokio", "1.51.0", "sha256:provider-tokio", None, &[])],
         );
         assert_eq!(
             consumer.first_diverging_shared_package_pin(&different_version),
             None,
-            "distinct versions are ordinary Cargo semver coexistence, not a divergence"
+            "distinct versions are ordinary Cargo semver coexistence, not one diverging shared unit"
         );
 
         let unrelated = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("datafusion", "53.1.0", "sha256:provider-datafusion")],
+            vec![leaf("datafusion", "53.1.0", "sha256:provider-datafusion", None, &[])],
         );
         assert_eq!(consumer.first_diverging_shared_package_pin(&unrelated), None);
+
+        let portable_consumer = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/consumer"),
+            vec![leaf(
+                "cpufeatures",
+                "0.2.17",
+                "sha256:consumer-cpufeatures",
+                Some("sha256:portable-unit"),
+                &["default"],
+            )],
+        );
+        let portable_provider = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/provider"),
+            vec![leaf(
+                "cpufeatures",
+                "0.2.17",
+                "sha256:provider-cpufeatures",
+                Some("sha256:portable-unit"),
+                &["default"],
+            )],
+        );
+        assert_eq!(
+            portable_consumer.first_diverging_shared_package_pin(&portable_provider),
+            None,
+            "one portable unit identity reconciles publisher-local payload differences"
+        );
+
+        let incompatible_features = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/provider"),
+            vec![leaf(
+                "cpufeatures",
+                "0.2.17",
+                "sha256:provider-cpufeatures",
+                Some("sha256:different-unit"),
+                &["default", "std"],
+            )],
+        );
+        assert_eq!(
+            portable_consumer.first_diverging_shared_package_pin(&incompatible_features),
+            Some(("cpufeatures".to_string(), PathBuf::from("/provider"))),
+            "a feature or unit-identity difference remains fail-closed"
+        );
     }
 
     #[test]
@@ -7145,7 +7227,7 @@ fi
         let leaf = |digest| OvenRustcRegistryLeaf {
             domain: Default::default(),
             crate_kind: Default::default(),
-            selected_unit_identity: None,
+            selected_unit_identity: Some("sha256:portable-fixture-unit".to_string()),
             package: "fixture-registry".to_string(),
             version: "1.0.0".to_string(),
             crate_name: "fixture_registry".to_string(),
@@ -7172,11 +7254,7 @@ fi
         };
 
         let selected = resolve_sealed_registry_leaf(&dependency, Some(&authority), "debug")?;
-        let expected = [fs::canonicalize(first_artifact)?, fs::canonicalize(second_artifact)?]
-            .into_iter()
-            .min()
-            .ok_or("expected registry artifact")?;
-        assert_eq!(selected, expected);
+        assert_eq!(selected, fs::canonicalize(first_artifact)?);
         Ok(())
     }
 
@@ -10469,6 +10547,7 @@ fi
         });
         payload.test_dependency_envelope = Some(OvenProjectInspectionTestDependencyEnvelope {
             constituent_index: 1,
+            provider_constituents: Vec::new(),
             dependency_surface_digest: digest_bytes(b"normal+dev dependency surface"),
             dependency_roots: BTreeMap::from([(
                 "serde_json".to_string(),
@@ -10494,6 +10573,34 @@ fi
             &[missing],
             &oven_store::NoProviderHooks,
         )?);
+
+        payload.constituents.push(OvenProjectInspectionConstituent::Stored {
+            identity: "sha256:test-provider-direct-plan".to_string(),
+            artifact_kind: OvenArtifactKind::DirectRustcPlan,
+            receipt: debug_receipt.clone(),
+            base_loaf_identity: None,
+        });
+        payload
+            .test_dependency_envelope
+            .as_mut()
+            .ok_or("test dependency role disappeared")?
+            .provider_constituents
+            .push(OvenProjectInspectionTestProviderConstituent {
+                dependency_key: "provider_fixture".to_string(),
+                constituent_index: 2,
+            });
+        validate_project_inspection_authority_payload(&payload)?;
+        let mut repeated_role = payload.clone();
+        repeated_role
+            .test_dependency_envelope
+            .as_mut()
+            .ok_or("test dependency role disappeared")?
+            .provider_constituents[0]
+            .constituent_index = 1;
+        let Err(error) = validate_project_inspection_authority_payload(&repeated_role) else {
+            return Err("authority accepted one constituent in two test dependency roles".into());
+        };
+        assert!(error.to_string().contains("must not repeat a role-bearing constituent"));
 
         let mut direct_plan_payload = payload.clone();
         direct_plan_payload.constituents[1] = OvenProjectInspectionConstituent::Stored {
