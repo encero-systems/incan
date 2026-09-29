@@ -3186,7 +3186,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/comparison_adopters.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of Eq and Ord adopters that define their dunders, dunder calls through builtin bounds, __ne__ through the Eq supertrait of an Ord-only adopter, and trait defaults calling methods on self (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of Eq and Ord adopters that define their dunders, dunder calls through builtin bounds, __ne__ through the Eq supertrait of an Ord-only adopter, and trait defaults calling methods on self, and the dunders of adopters of every spelling and of unimported builtin bounds in a project module (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3194,6 +3194,10 @@
         "comparison_adopters_of_every_kind_and_spelling_build_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_trait_adopters_of_every_kind.incn",
           "notes": "Compares and sorts enum, newtype, class and generic adopters under an imported, aliased and module-qualified Ord, and a user trait declaring __eq__; the fixture prints each result."
+        },
+        "comparison_dunders_through_every_spelling_build_in_a_project_module_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_dunders_through_every_spelling.incn",
+          "notes": "Checks the program as a project module and calls the dunders of Eq and Ord adopters named through an alias or their module, and of type parameters bounded by unimported Display, Eq and Ord; the fixture prints each result."
         },
         "dunders_through_builtin_bounds_are_their_operations_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/dunders_through_builtin_bounds.incn",
@@ -7125,6 +7129,10 @@
         "a_dispatched_call_to_another_packages_method_is_not_projected": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/stdlib_trait_dispatch_across_package.incn",
           "notes": "The projection-suppression decision dies with the crate; the fixture is the case the test names, typed `BinaryRead`/`BinaryWrite` calls on a stdlib `BytesIO`, each width reaching the stdlib's own implementation. A standalone bake of a `std.io` program reaches for Rust inspection; `incan check` accepts the fixture, and the same `std.io` surface runs under the compiler suite in the `snapshots_*` areas."
+        },
+        "a_local_adopters_ord_default_keeps_its_projection_under_an_sdk_identity_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_dunders_through_every_spelling.incn",
+          "notes": "The projection decision dies with the crate; the fixture runs against the compiled SDK and calls the defaults Ord supplies on local adopters, whose checked identities are the SDK provider's."
         },
         "a_package_projects_its_own_inherent_method_while_building_itself": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/package_inherent_methods_issue1174",

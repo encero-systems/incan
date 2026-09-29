@@ -514,6 +514,10 @@ impl TypeChecker {
     }
 
     /// Resolve module ownership from the active SDK catalog, retaining only explicit compiler-owned legacy surfaces.
+    ///
+    /// A namespace whose modules the catalog claims is known although it has no module of its own (`std.derives`), as
+    /// the stdlib registry knows it when no catalog is active: `from std.derives import comparison` imports a
+    /// submodule, and any other item imported from it is refused as not exported.
     fn is_known_stdlib_module(&self, module: &[String]) -> bool {
         match self.provider_plan.resolve_module(module) {
             ProviderModuleResolution::Active(_)
@@ -522,6 +526,7 @@ impl TypeChecker {
             ProviderModuleResolution::Unknown if self.provider_plan.has_sdk_catalog() => {
                 is_typechecker_only_stdlib(module)
                     || (self.provider_plan.bootstrap_owns_sdk_module(module) && stdlib::is_known_stdlib_module(module))
+                    || (module.len() > 1 && self.provider_plan.catalogs_modules_below(module))
             }
             ProviderModuleResolution::Unknown => stdlib::is_known_stdlib_module(module),
         }

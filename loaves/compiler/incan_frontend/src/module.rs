@@ -81,6 +81,11 @@ pub fn declaration_package_identity(package_identity: Option<&str>, module_path:
 /// `base_dir` is the directory of `program`'s source file. `source_root` is optional but should be supplied by CLI and
 /// test-runner flows that already resolved the project source root; when it is absent, manifest/layout discovery is
 /// used as a fallback for crate-root imports and source-root fallback behavior.
+///
+/// `from std.<namespace> import <item>, ...` depends on each item that is a stdlib submodule, and on the namespace's
+/// own module only when some item is not a submodule. An import of submodules alone reads nothing from the namespace's
+/// own module, and a namespace such as `std.derives` has none: `from std.derives import comparison` names
+/// `std.derives.comparison` only.
 pub fn resolve_program_source_imports(
     program: &Program,
     base_dir: &Path,
@@ -94,7 +99,12 @@ pub fn resolve_program_source_imports(
             let Declaration::Import(import) = &decl.node else {
                 return Vec::new();
             };
-            let mut resolved = vec![ResolvedProgramSourceImport {
+            let StdlibNamespaceItems {
+                submodules,
+                only_submodules,
+            } = stdlib_namespace_items(import);
+            // The module the import names, unless it names only submodules of a stdlib namespace.
+            let named_module = (!only_submodules).then(|| ResolvedProgramSourceImport {
                 span: decl.span,
                 resolution: resolve_source_module_import_from_source_file(
                     base_dir,
@@ -102,33 +112,58 @@ pub fn resolve_program_source_imports(
                     current_source_file,
                     import,
                 ),
-            }];
-
-            if let ImportKind::From { module, items } = &import.kind
-                && module.parent_levels == 0
-                && !module.is_absolute
-                && module
-                    .segments
-                    .first()
-                    .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
-            {
-                for item in items {
-                    let mut item_module_path = module.segments.clone();
-                    item_module_path.push(item.name.clone());
-                    if stdlib::is_known_stdlib_module(&item_module_path) {
-                        resolved.push(ResolvedProgramSourceImport {
-                            span: decl.span,
-                            resolution: SourceModuleImportResolution::Stdlib {
-                                module_path: item_module_path,
-                            },
-                        });
-                    }
-                }
-            }
-
-            resolved
+            });
+            named_module
+                .into_iter()
+                .chain(submodules.into_iter().map(|module_path| ResolvedProgramSourceImport {
+                    span: decl.span,
+                    resolution: SourceModuleImportResolution::Stdlib { module_path },
+                }))
+                .collect()
         })
         .collect()
+}
+
+/// The items of one import that are stdlib submodules of the namespace it imports from.
+struct StdlibNamespaceItems {
+    /// The module path of each item of `from std.<namespace> import ...` that is a submodule of that namespace, in
+    /// item order; empty for any other import.
+    submodules: Vec<Vec<String>>,
+    /// Whether the import names submodules and nothing else, so it does not depend on the namespace's own module.
+    only_submodules: bool,
+}
+
+/// Classify the items of a `from std.<namespace> import ...` declaration as that namespace's submodules or members.
+fn stdlib_namespace_items(import: &ImportDecl) -> StdlibNamespaceItems {
+    let ImportKind::From { module, items } = &import.kind else {
+        return StdlibNamespaceItems {
+            submodules: Vec::new(),
+            only_submodules: false,
+        };
+    };
+    if module.parent_levels != 0
+        || module.is_absolute
+        || module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
+    {
+        return StdlibNamespaceItems {
+            submodules: Vec::new(),
+            only_submodules: false,
+        };
+    }
+    let submodules = items
+        .iter()
+        .map(|item| {
+            let mut item_module_path = module.segments.clone();
+            item_module_path.push(item.name.clone());
+            item_module_path
+        })
+        .filter(|item_module_path| stdlib::is_known_stdlib_module(item_module_path))
+        .collect::<Vec<_>>();
+    let only_submodules = !submodules.is_empty() && submodules.len() == items.len();
+    StdlibNamespaceItems {
+        submodules,
+        only_submodules,
+    }
 }
 
 /// Resolve one import declaration into local source, stdlib source, or external/non-source classification.
@@ -956,6 +991,54 @@ source-root = "library"
                 module_path: vec!["std".to_string(), "testing".to_string()]
             }
         );
+    }
+
+    /// Resolve every import of `source`, parsed as a program at `src/main.incn`, to the stdlib module paths it depends
+    /// on.
+    fn stdlib_dependencies_of(source: &str) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("fixture should lex: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("fixture should parse: {errors:?}"))?;
+        Ok(resolve_program_source_imports(&program, Path::new("src"), None)
+            .into_iter()
+            .filter_map(|resolved| match resolved.resolution {
+                SourceModuleImportResolution::Stdlib { module_path } => Some(module_path),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// A `from std.<namespace> import ...` of submodules alone depends on those submodules and not on the namespace's
+    /// own module, which `std.derives` does not have; an import that also names a member depends on the namespace's
+    /// module too (#1561).
+    #[test]
+    fn stdlib_namespace_import_of_submodules_depends_on_the_submodules_only_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = |segments: &[&str]| {
+            segments
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            stdlib_dependencies_of("from std.derives import comparison\n")?,
+            vec![path(&["std", "derives", "comparison"])]
+        );
+        assert_eq!(
+            stdlib_dependencies_of("from std.derives import comparison, copying\n")?,
+            vec![
+                path(&["std", "derives", "comparison"]),
+                path(&["std", "derives", "copying"])
+            ]
+        );
+        assert_eq!(
+            stdlib_dependencies_of("from std.async import time, spawn\n")?,
+            vec![path(&["std", "async"]), path(&["std", "async", "time"])]
+        );
+        assert_eq!(
+            stdlib_dependencies_of("from std.derives.comparison import Ord\n")?,
+            vec![path(&["std", "derives", "comparison"])]
+        );
+        Ok(())
     }
 
     #[test]

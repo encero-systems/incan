@@ -928,6 +928,12 @@ impl TypeChecker {
     }
 
     /// Return the source module that owns a trait bound, including direct imports and module-qualified spellings.
+    ///
+    /// A trait the name reaches through no import is declared in the current module, unless it is a builtin trait: the
+    /// compiler's root-scope stub for `Display` or `Eq` is declared in no module of this compilation, so a bound on it
+    /// has no owning module here and its methods resolve through the builtin's standard-library declaration, as they
+    /// do for a module checked without a module path. Giving it the current module left `value.__str__()` through
+    /// `T with Display` without a dispatch in every project module (#1561).
     pub fn trait_bound_module_path(&self, name: &str) -> Option<Vec<String>> {
         if let Some(path) = self.import_binding_path(name) {
             return path
@@ -942,8 +948,16 @@ impl TypeChecker {
         if let Some(target) = self.source_import_targets.get(name) {
             return Some(target.module_path.clone());
         }
-        let symbol = self.lookup_symbol(name)?;
+        let symbol_id = self.symbols.lookup(name)?;
+        let symbol = self.symbols.get(symbol_id)?;
         if !matches!(&symbol.kind, SymbolKind::Trait(_)) {
+            return None;
+        }
+        if self
+            .symbols
+            .identity_of(symbol_id)
+            .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin)
+        {
             return None;
         }
         self.current_module_path.clone()

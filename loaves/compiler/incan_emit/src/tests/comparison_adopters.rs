@@ -5,7 +5,7 @@
 //! default of an adopter that imports only `Ord`, a trait default passes `self` to a method that takes its own type by
 //! value, and a trait default's call of a method its trait declares has the declared result.
 
-use super::generated_programs::run_with_stdlib;
+use super::generated_programs::{run_project_module_with_stdlib, run_with_stdlib};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -136,6 +136,107 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(stdout, "true\ntrue\ntrue\ntrue\ntrue\n3\nPoint { x: 1 }\n");
+    Ok(())
+}
+
+/// In a module checked under its module path, as every module of a project build is, the dunders an `Eq` or `Ord`
+/// adopter gets from the trait are callable under every spelling of the trait (an import alias, its module) and every
+/// kind of adopter, and a bound on a builtin trait the module never imports is the builtin: `value.__str__()` through
+/// `T with Display` is the display text and the comparison dunders through `T with Eq` and `T with Ord` are the
+/// operators. The adopter of `comparison.Ord` had no projection of the defaults it calls, and the builtin bound took
+/// the checked module as the trait's owner, so the call recorded no dispatch; both failed E0599 in rustc.
+#[test]
+fn comparison_dunders_through_every_spelling_build_in_a_project_module_issue1561() -> TestResult {
+    let stdout = run_project_module_with_stdlib(
+        r#"
+from std.derives import comparison
+from std.derives.comparison import Ord as Ordered
+
+
+model Aliased with Ordered:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+model Qualified with comparison.Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+enum Level with Ordered:
+    Low
+    High
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+
+type Rank = newtype int with comparison.Ord:
+    def __eq__(self, other: Self) -> bool:
+        return self.0 == other.0
+
+    def __lt__(self, other: Self) -> bool:
+        return self.0 < other.0
+
+
+class Account with comparison.Eq:
+    pub id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.id == other.id
+
+
+@derive(Display)
+model Point:
+    x: int
+
+
+def text[T with Display](value: T) -> str:
+    return value.__str__()
+
+
+def differ[T with Eq](a: T, b: T) -> bool:
+    return a.__ne__(b)
+
+
+def less[T with Ord](a: T, b: T) -> bool:
+    return a.__lt__(b)
+
+
+def main() -> None:
+    println(Aliased(v=2).__ge__(Aliased(v=1)))
+    println(Qualified(v=2).__le__(Qualified(v=1)))
+    println(Level.High.__gt__(Level.Low))
+    println(Rank(1).__ge__(Rank(2)))
+    println(Account(id=1).__ne__(Account(id=2)))
+    println(text(3))
+    println(text(Point(x=1)))
+    println(differ(1, 2))
+    println(less("a", "b"))
+"#,
+    )?;
+    assert_eq!(
+        stdout,
+        "true\nfalse\ntrue\nfalse\ntrue\n3\nPoint { x: 1 }\ntrue\ntrue\n"
+    );
     Ok(())
 }
 

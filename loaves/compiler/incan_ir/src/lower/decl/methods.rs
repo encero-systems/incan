@@ -223,17 +223,30 @@ impl AstLowering {
         if self.is_generated_method_partial_wrapper(trait_name, method) {
             return Ok(None);
         }
-        let visible_key = (trait_name.to_string(), method.node.name.clone());
+        if let Some(identity) = self.checked_trait_method_identity(trait_name, &method.node.name) {
+            return Ok(Some(identity));
+        }
+        self.required_member_identity(trait_name, &method.node.name, method.span)
+            .map(Some)
+    }
+
+    /// Return the member identity the checker recorded for `method_name` of the trait an adoption spells `trait_name`,
+    /// keyed by that spelling or by the trait's declaring module and name.
+    fn checked_trait_method_identity(
+        &self,
+        trait_name: &str,
+        method_name: &str,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        let visible_key = (trait_name.to_string(), method_name.to_string());
         let (canonical_module_path, canonical_source_name) = self.canonical_trait_identity(trait_name);
         let canonical_key = match (canonical_module_path, canonical_source_name) {
             (Some(module_path), Some(source_name)) => Some((
                 format!("{}.{}", module_path.join("."), source_name),
-                method.node.name.clone(),
+                method_name.to_string(),
             )),
             _ => None,
         };
-        if let Some(identity) = self
-            .type_info
+        self.type_info
             .as_ref()
             .and_then(|info| {
                 info.traits.method_identities.get(&visible_key).or_else(|| {
@@ -251,11 +264,6 @@ impl AstLowering {
                     )
             })
             .cloned()
-        {
-            return Ok(Some(identity));
-        }
-        self.required_member_identity(trait_name, &method.node.name, method.span)
-            .map(Some)
     }
 
     /// Record the dunder projections an inherent impl offers, so no trait impl emits a second wrapper for one unless it
@@ -1628,8 +1636,10 @@ impl AstLowering {
             // not be present in `self.trait_decls` for this module. Typechecker already validates trait
             // conformance, so lowering should stay permissive and emit an impl block from the methods we do
             // have instead of hard-failing.
-            // A builtin supertrait's declaration comes from the standard library's source, as an imported one does.
-            let (trait_decl, imported_decl, builtin_supertrait) = match self.trait_decls.get(trait_name).cloned() {
+            //
+            // A builtin trait no import seeded, a supertrait the module never imported or a trait it names through its
+            // module, takes its declaration from the standard library's source, as an imported one does.
+            let (trait_decl, imported_decl, builtin_source_decl) = match self.trait_decls.get(trait_name).cloned() {
                 Some(trait_decl) => (
                     Some(trait_decl),
                     self.imported_trait_decls.get(trait_name).copied().unwrap_or(false),
@@ -1846,9 +1856,25 @@ impl AstLowering {
                 });
             }
 
-            // The defaults of a builtin supertrait the module never imported have no checked member identity here,
-            // so they get no inherent projection; a call reaches them through the trait (`!=` for `__ne__`).
-            let default_sources: &[Spanned<ast::MethodDecl>] = if builtin_supertrait { &[] } else { &trait_methods };
+            // A builtin trait whose declaration comes from the standard-library source projects the defaults the
+            // checker recorded a member identity for: those of a trait the adopter names through its module
+            // (`with comparison.Ord`), which a call such as `x.__ge__(y)` reaches through that projection (#1561).
+            // The defaults of a builtin supertrait the module never imported have no checked member identity here, so
+            // they get no inherent projection; a call reaches them through the trait (`!=` for `__ne__`).
+            let checked_builtin_defaults;
+            let default_sources: &[Spanned<ast::MethodDecl>] = if builtin_source_decl {
+                checked_builtin_defaults = trait_methods
+                    .iter()
+                    .filter(|method| {
+                        self.checked_trait_method_identity(trait_name, &method.node.name)
+                            .is_some()
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                &checked_builtin_defaults
+            } else {
+                &trait_methods
+            };
             let mut method_projections = self.trait_method_projections(
                 &methods,
                 impl_methods,

@@ -68,6 +68,43 @@ fn namespace_prelude_imports_resolve_through_the_namespace_module_issue1561() ->
     Ok(())
 }
 
+/// #1561: `std.derives` has no module of its own, and an SDK catalog claims only the modules below it, as the compiled
+/// SDK does. `from std.derives import comparison` imports the submodule, whose trait an adopter names through it,
+/// with the catalog as with none; an item of `std.derives` that is not a submodule is refused as not exported in both,
+/// not as an unknown module.
+#[test]
+fn stdlib_namespace_without_a_module_of_its_own_imports_its_submodules_issue1561() {
+    let modules: &[&[&str]] = &[&["derives", "comparison"], &["derives", "copying"]];
+    let adopter = "from std.derives import comparison\n\n\nmodel Qualified with comparison.Ord:\n    v: int\n\n    def __eq__(self, other: Self) -> bool:\n        return self.v == other.v\n\n    def __lt__(self, other: Self) -> bool:\n        return self.v < other.v\n\n\ndef main() -> None:\n    println(Qualified(v=1) < Qualified(v=2))\n";
+    let accepted = check_with_sdk_modules(adopter, modules);
+    assert!(
+        accepted.is_empty(),
+        "a submodule imported from std.derives must check against the SDK catalog, got {:?}",
+        messages(&accepted)
+    );
+    assert_check_ok(adopter);
+
+    let refused = check_with_sdk_modules("from std.derives import Eq\n", modules);
+    assert!(
+        refused.iter().any(|error| error
+            .message
+            .contains("Cannot import `Eq` from stdlib module `std.derives`: it is not exported by that module"))
+            && !refused
+                .iter()
+                .any(|error| error.message.contains("Unknown stdlib module")),
+        "a non-submodule item of std.derives must be refused as not exported, got {:?}",
+        messages(&refused)
+    );
+    let refused_without_catalog = check_str_err("from std.derives import Eq\n", "std.derives has no members");
+    assert!(
+        refused_without_catalog.iter().any(|error| error
+            .message
+            .contains("Cannot import `Eq` from stdlib module `std.derives`: it is not exported by that module")),
+        "without a catalog a non-submodule item of std.derives must be refused as not exported, got {:?}",
+        messages(&refused_without_catalog)
+    );
+}
+
 /// #1561: `import python "pkg"` names nothing the compiler provides, so the check refuses it instead of binding a name
 /// the build cannot resolve.
 #[test]

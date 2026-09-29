@@ -1010,6 +1010,17 @@ impl ProviderPlan {
             .any(|provider| matches!(provider.authority, NamespaceAuthority::SdkReserved))
     }
 
+    /// Return whether some provider claims a module strictly below `namespace`.
+    ///
+    /// Such a namespace is a package of the catalog even when no provider claims a module at the namespace itself:
+    /// `std.derives` has no module of its own, and its modules are `std.derives.comparison` and its siblings.
+    pub fn catalogs_modules_below(&self, namespace: &[String]) -> bool {
+        self.module_catalog
+            .range(namespace.to_vec()..)
+            .take_while(|(module, _)| module.starts_with(namespace))
+            .any(|(module, _)| module.len() > namespace.len())
+    }
+
     /// Iterate over enabled and available provider records.
     pub fn active_records(&self) -> impl Iterator<Item = &ProviderRecord> {
         self.records

@@ -298,9 +298,9 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
-        if !(can_use_source_method_projection(receiver, dispatch.as_ref())
-            || self.receiver_adopts_the_builtin_source_trait(receiver, dispatch.as_ref()))
-            || self.method_belongs_to_an_imported_type(identity)
+        let adopts_builtin_source_trait = self.receiver_adopts_the_builtin_source_trait(receiver, dispatch.as_ref());
+        if !(can_use_source_method_projection(receiver, dispatch.as_ref()) || adopts_builtin_source_trait)
+            || (!adopts_builtin_source_trait && self.method_belongs_to_an_imported_type(identity))
             || !self.receiver_adopts_the_dispatched_trait(receiver, dispatch.as_ref())
         {
             return (source_method.to_string(), dispatch);
@@ -325,7 +325,15 @@ impl AstLowering {
     /// adopts the builtin's stdlib source trait (`model Score with Ord`) rather than deriving it.
     ///
     /// Such a call names a dunder of the source trait's impl (`__ge__`), which the Rust trait has no slot for, so it
-    /// reaches the adopter's recoverable projection as a call of any other adopted trait's method does (#1561).
+    /// reaches the adopter's recoverable projection as a call of any other adopted trait's method does (#1561). The
+    /// projection is emitted beside the adopter's impl in this compilation, every expanded default included, so it is
+    /// the target even when the checked identity of a default it reaches is the compiled SDK provider's
+    /// (`incan_stdlib_core`'s `Ord.__ge__`): declining it left `score.__ge__(other)` to the Rust trait, which has no
+    /// such method.
+    ///
+    /// The trait is compared by the declaration each spelling names, so an adopter that names it through an import
+    /// alias (`with Ordered` after `from std.derives.comparison import Ord as Ordered`) or its module (`with
+    /// comparison.Ord`) is one too.
     fn receiver_adopts_the_builtin_source_trait(
         &self,
         receiver: &TypedExpr,
@@ -334,8 +342,10 @@ impl AstLowering {
         let Some(IrMethodDispatch::Trait(trait_dispatch)) = dispatch else {
             return false;
         };
-        let trait_name = trait_declaration_name(trait_dispatch);
-        if !matches!(builtin_traits::from_str(trait_name), Some(TraitId::Eq | TraitId::Ord)) {
+        let Some(trait_name) = self.canonical_trait_identity(&trait_dispatch.trait_source_name).1 else {
+            return false;
+        };
+        if !matches!(builtin_traits::from_str(&trait_name), Some(TraitId::Eq | TraitId::Ord)) {
             return false;
         }
         let mut receiver_ty = &receiver.ty;
@@ -346,9 +356,11 @@ impl AstLowering {
         else {
             return false;
         };
-        self.adopted_traits_by_type
-            .get(type_name)
-            .is_some_and(|adopted| adopted.contains(trait_name))
+        self.adopted_traits_by_type.get(type_name).is_some_and(|adopted| {
+            adopted
+                .iter()
+                .any(|spelled| self.canonical_trait_identity(spelled).1.as_deref() == Some(trait_name.as_str()))
+        })
     }
 
     /// Whether a trait-dispatched call reaches a trait the receiver's own type adopts.
@@ -3876,6 +3888,45 @@ mod tests {
             lowering.method_belongs_to_an_imported_type(recorded_method_identity(&lowering, call_span)),
             "a dependency's method has no wrapper here, dispatched or not"
         );
+    }
+
+    /// A dunder of the builtin `Ord` source trait, called on a local adopter, reaches the projection emitted beside the
+    /// adopter's impl even when the checked identity of the default it reaches is the compiled SDK provider's (#1561).
+    ///
+    /// Against the compiled SDK, `Score(points=2).__ge__(other)` resolves to `incan_stdlib_core`'s `Ord.__ge__`, a
+    /// package identity. The adopter's impl, every expanded default included, is lowered in this compilation, so its
+    /// projection is nameable; declining it left the call to Rust's `Ord`, which has no `__ge__` (E0599). A type that
+    /// does not adopt the trait here keeps the source spelling.
+    #[test]
+    fn a_local_adopters_ord_default_keeps_its_projection_under_an_sdk_identity_issue1561() {
+        let identity = incan_semantics_core::CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::Member,
+            origin: incan_semantics_core::SymbolOrigin::Package {
+                library: "incan_stdlib_core".to_string(),
+                module_path: vec!["derives".to_string(), "comparison".to_string()],
+            },
+            declaration_name: "__ge__".to_string(),
+            kind: incan_semantics_core::SemanticSourceTargetKind::Method,
+            scope_discriminant: None,
+            declaration_span: incan_semantics_core::HirSourceSpan::new(2044, 2141),
+        };
+        let mut lowering = AstLowering::new_with_type_info(incan_frontend::typechecker::TypeCheckInfo::default());
+        lowering.adopted_traits_by_type.insert(
+            "Score".to_string(),
+            std::collections::HashSet::from(["Ord".to_string()]),
+        );
+        let ord = builtin_traits::as_str(TraitId::Ord);
+
+        let adopter = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Score".to_string()));
+        let (method, dispatch) =
+            lowering.project_method_target_for_identity(Some(&identity), "__ge__", &adopter, Some(trait_dispatch(ord)));
+        assert_eq!(method, AstLowering::emitted_source_identity_name(&identity, false));
+        assert!(matches!(dispatch, Some(IrMethodDispatch::SourceProjection(_))));
+
+        let other = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Other".to_string()));
+        let (method, _) =
+            lowering.project_method_target_for_identity(Some(&identity), "__ge__", &other, Some(trait_dispatch(ord)));
+        assert_eq!(method, "__ge__");
     }
 
     #[test]

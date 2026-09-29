@@ -1,10 +1,13 @@
 //! Build generated programs with rustc and run them: a program alone, with the standard-library source modules its
-//! generated Rust reaches through `crate::__incan_std`, and a consumer with the `pub::` dependency it imports.
+//! generated Rust reaches through `crate::__incan_std` (checked with no module path, or as a project's module), and a
+//! consumer with the `pub::` dependency it imports.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
 use oven_model::compiler_suite_env;
 
@@ -76,6 +79,28 @@ pub(super) fn run_with_stdlib(source: &str) -> BuildResult<String> {
     let directory = tempfile::tempdir()?;
     let program = build_program(directory.path(), &with_stdlib_modules(generate(source)?)?, &[])?;
     run(&program)
+}
+
+/// Check `source` as the project module `main`, as a project build checks each of its modules under its module path,
+/// generate it from those checked facts, mount the stdlib modules it reaches, build it, run it and return its
+/// standard output.
+///
+/// [`run_with_stdlib`] checks a program that has no module path, which a project build never does.
+pub(super) fn run_project_module_with_stdlib(source: &str) -> BuildResult<String> {
+    let tokens = lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".to_string()]));
+    checker
+        .check_with_imports(&program, &[])
+        .map_err(|errors| format!("check failed: {errors:?}"))?;
+    let mut codegen = IrCodegen::new();
+    codegen.set_stdlib_cache(checker.stdlib_cache.clone());
+    codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+    let generated = codegen.try_generate(&program)?;
+    let directory = tempfile::tempdir()?;
+    let built = build_program(directory.path(), &with_stdlib_modules(generated)?, &[])?;
+    run(&built)
 }
 
 /// Generate a consumer against the dependency `name` published from `provider`, or return the check's refusal.

@@ -227,6 +227,7 @@ from pub::codecs.encoding import encode                        # refused: base64
 - `from std import name` binds the standard-library module `std.name`. A name that is not a standard-library module is refused.
 - `import std.fs` and every other bare `std...` path name the Incan standard library; the Rust standard library is `rust::std`.
 - `std.NAMESPACE.prelude` names the module `std.NAMESPACE`: `from std.async.prelude import spawn` imports what `from std.async import spawn` does. `std.prelude` is a module of its own.
+- `from std.NAMESPACE import name` binds the module `std.NAMESPACE.name` when that is a standard-library module, and otherwise the member `name` of `std.NAMESPACE`. `std.derives` has no members: `from std.derives import comparison` imports the module `std.derives.comparison`, and any other name imported from `std.derives` is refused.
 - An unknown `std.*` module is refused.
 
 ```incan
@@ -234,6 +235,8 @@ from std import toml                   # accepted
 from std import math as arithmetic     # accepted
 from std import Debug                  # refused: Debug is not a standard-library module
 from std.derives.string import Debug   # accepted
+from std.derives import comparison     # accepted: the module std.derives.comparison
+from std.derives import Eq             # refused: std.derives has no members
 ```
 
 The standard-library modules are listed in the [language reference](language.md#standard-library-namespaces).
