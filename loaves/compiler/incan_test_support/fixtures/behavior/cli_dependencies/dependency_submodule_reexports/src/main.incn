@@ -1,0 +1,54 @@
+# behavior: a dependency whose root-level and nested modules re-export another module's declarations spelled from the package root (`crate.inner`), through two modules and under a new name, for a function, a model, an enum and a const, builds, and its consumer uses each name through every module that publishes it (#1561)
+# expect-stdout:
+#   hi root
+#   hi middle
+#   hi inner
+#   hi outer
+#   hi renamed
+#   hi relabel
+#   hi relay
+#   warm 3 root text
+#   cool 3 middle text
+
+from pub::greetings import wave, Greeting, Tone, LOUDNESS
+from pub::greetings.middle import (
+    greet as middle_greet,
+    Greeting as MiddleGreeting,
+    Tone as MiddleTone,
+    LOUDNESS as MIDDLE_LOUDNESS,
+)
+from pub::greetings.inner import greet as inner_greet
+from pub::greetings.outer import greet as outer_greet
+from pub::greetings.renamed import salute
+from pub::greetings.relabel import wave as relabel_wave
+from pub::greetings.nested.relay import relay
+
+
+def tone_name(tone: Tone) -> str:
+    match tone:
+        case Tone.Warm:
+            return "warm"
+        case Tone.Cool:
+            return "cool"
+
+
+def middle_tone_name(tone: MiddleTone) -> str:
+    match tone:
+        case MiddleTone.Warm:
+            return "warm"
+        case MiddleTone.Cool:
+            return "cool"
+
+
+def main() -> None:
+    println(wave("root"))
+    println(middle_greet("middle"))
+    println(inner_greet("inner"))
+    println(outer_greet("outer"))
+    println(salute("renamed"))
+    println(relabel_wave("relabel"))
+    println(relay("relay"))
+    greeting = Greeting(text="root text")
+    println(f"{tone_name(Tone.Warm)} {LOUDNESS} {greeting.text}")
+    middle_greeting = MiddleGreeting(text="middle text")
+    println(f"{middle_tone_name(MiddleTone.Cool)} {MIDDLE_LOUDNESS} {middle_greeting.text}")

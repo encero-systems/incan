@@ -379,11 +379,23 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::build::rust_extern::collect_rust_extern_contexts;
+    use crate::modules::{imported_module_deps_for_with_index, module_key_index, register_module_path_segments};
+    use incan_frontend::api_metadata::{
+        ApiAlias, ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
+        CheckedApiPackageIdentity, collect_checked_api_metadata, materialize_api_alias_projections,
+        materialize_checked_api_public_namespaces,
+    };
     use incan_frontend::library_exports::{
         CheckedExportIdentity, CheckedExportKind, CheckedNamedExport, checked_exports_by_name,
         collect_checked_public_exports,
     };
+    use incan_frontend::library_manifest::{LibraryManifest, LibraryManifestError};
+    use incan_frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
+    use incan_frontend::module::declaration_package_identity;
     use incan_frontend::symbols::ResolvedType;
+    use incan_frontend::typechecker::TypeChecker;
     use incan_frontend::{ParsedModule, lexer, parser};
     use oven_model::manifest::ProjectManifest;
 
@@ -927,6 +939,307 @@ mod tests {
         assert!(resolved.iter().any(|export| export.name == "DataSet"));
         assert!(resolved.iter().any(|export| export.name == "filter_ds"));
 
+        Ok(())
+    }
+
+    /// Check every source module of a library and assemble its manifest the way a library build does: each module's
+    /// checked exports and checked API, the package-root exports the entrypoint resolves, the public module
+    /// namespaces, and the identity graph joined from them. `sources` maps paths under `src/` to their text;
+    /// `lib.incn` is the entrypoint, which library collection names `main` and orders last.
+    fn published_library_manifest(
+        package: &str,
+        sources: &[(&str, &str)],
+    ) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+        let mut modules = Vec::new();
+        for (relative, source) in sources {
+            let stem = relative
+                .strip_suffix(".incn")
+                .ok_or_else(|| format!("source `{relative}` is not an .incn file"))?;
+            let path_segments = if stem == "lib" {
+                vec!["main".to_string()]
+            } else {
+                stem.split('/').map(str::to_string).collect::<Vec<_>>()
+            };
+            let file_path = PathBuf::from(format!("{package}/src/{relative}"));
+            let tokens = lexer::lex(source).map_err(|errors| format!("`{relative}` lex errors: {errors:?}"))?;
+            let ast = parser::parse_with_module_path(&tokens, file_path.to_str())
+                .map_err(|errors| format!("`{relative}` parse errors: {errors:?}"))?;
+            modules.push(ParsedModule {
+                name: path_segments.join("_"),
+                path_segments,
+                file_path,
+                source: (*source).to_string(),
+                ast,
+            });
+        }
+        modules.sort_by_key(|module| module.path_segments == ["main"]);
+        let lib_module = modules.last().ok_or("the library has no entrypoint module")?;
+        let module_idx_by_key = module_key_index(&modules);
+        let mut checked_exports_by_module = HashMap::new();
+        let mut checked_exports_by_source_module = Vec::new();
+        let mut api_modules = Vec::new();
+        for (idx, module) in modules.iter().enumerate() {
+            let dependencies = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
+            let mut checker = TypeChecker::new();
+            checker
+                .set_current_package_identity(declaration_package_identity(Some(package), Some(&module.path_segments)));
+            checker.set_current_module_path(Some(module.path_segments.clone()));
+            register_module_path_segments(&mut checker, &modules);
+            checker
+                .check_with_imports(&module.ast, &dependencies)
+                .map_err(|errors| format!("module `{}` should check: {errors:?}", module.path_segments.join(".")))?;
+            let exports = collect_checked_public_exports(&module.ast, &checker);
+            api_modules.push(collect_checked_api_metadata(
+                &module.ast,
+                &checker,
+                module.path_segments.clone(),
+            ));
+            checked_exports_by_source_module.push((module.path_segments.clone(), exports.clone()));
+            checked_exports_by_module.insert(module_key(&module.path_segments), checked_exports_by_name(exports));
+        }
+        materialize_api_alias_projections(&mut api_modules);
+        let selected = LibraryReexportResolver::new(&checked_exports_by_module)
+            .resolve(lib_module)
+            .map_err(|errors| format!("the entrypoint's exports should resolve: {errors:?}"))?;
+        let mut manifest = LibraryManifest::from_checked_exports(package, "0.1.0", &selected);
+        let mut api = CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: Some(CheckedApiPackageIdentity {
+                name: package.to_string(),
+                version: Some("0.1.0".to_string()),
+            }),
+            modules: api_modules,
+            public_namespaces: Vec::new(),
+        };
+        materialize_checked_api_public_namespaces(&mut api)?;
+        manifest.contract_metadata.identity_graph.extend_checked_api_exports(
+            package,
+            &api,
+            &checked_exports_by_source_module,
+        )?;
+        manifest.contract_metadata.api = Some(api);
+        Ok(manifest)
+    }
+
+    /// Encode `manifest` as a library build writes it, decode it again, and check `consumer` against the decoded
+    /// manifest as a dependency named `package`.
+    fn encode_and_consume(
+        package: &str,
+        manifest: &LibraryManifest,
+        consumer: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let encoded = manifest
+            .to_json_string()
+            .map_err(|error| format!("`{package}` should encode: {error}"))?;
+        let decoded = LibraryManifest::from_json_str(&encoded)?;
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            package.to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(decoded),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    package,
+                    package,
+                    std::env::temp_dir().join(format!("incan_test_{package}_artifacts/target/lib")),
+                ),
+            },
+        )]));
+        let tokens = lexer::lex(consumer).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_library_manifest_index(index);
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("the consumer of `{package}` should check: {errors:?}"))?;
+        Ok(())
+    }
+
+    /// A non-root module that re-exports another module's declarations is published with its namespace: the manifest
+    /// encodes a re-export spelled from the package root (`crate.inner`, also from a nested module) or as a root-level
+    /// sibling (`inner`), through a chain of two modules, under an `as` alias, and for a function, a model, an enum and
+    /// a const, and a consumer imports each name through every module that publishes it.
+    #[test]
+    fn submodule_reexports_publish_their_namespace_in_the_manifest_issue1561() -> Result<(), Box<dyn std::error::Error>>
+    {
+        const INNER: &str = "pub def greet(name: str) -> str:\n    return f\"hi {name}\"\n\n\npub model Greeting:\n    pub text: str\n\n\npub enum Tone:\n    Warm\n    Cool\n\n\npub const LOUDNESS: int = 3\n";
+        const GREET_THREE: &str = "\n\ndef run_all() -> str:\n    first = greet(\"a\")\n    second = second_greet(\"b\")\n    third = third_greet(\"c\")\n    return f\"{first} {second} {third}\"\n";
+        let projects: [(&str, &[(&str, &str)], String); 7] = [
+            (
+                "reexport_repro",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import (\n    greet,\n)\n"),
+                    ("lib.incn", "pub from middle import (\n    greet,\n)\n"),
+                ],
+                format!(
+                    "from pub::reexport_repro import greet\nfrom pub::reexport_repro.middle import greet as second_greet\nfrom pub::reexport_repro.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "root_spelling_beside_middle",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import (\n    greet,\n)\n"),
+                    ("lib.incn", "pub from crate.inner import (\n    greet,\n)\n"),
+                ],
+                format!(
+                    "from pub::root_spelling_beside_middle import greet\nfrom pub::root_spelling_beside_middle.middle import greet as second_greet\nfrom pub::root_spelling_beside_middle.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "two_module_chain",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import greet\n"),
+                    ("outer.incn", "pub from crate.middle import greet\n"),
+                    ("lib.incn", "pub from outer import greet\n"),
+                ],
+                format!(
+                    "from pub::two_module_chain import greet\nfrom pub::two_module_chain.outer import greet as second_greet\nfrom pub::two_module_chain.middle import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "renamed_reexports",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import greet as salute\n"),
+                    ("outer.incn", "pub from crate.middle import salute as wave\n"),
+                    ("lib.incn", "pub from outer import wave as greet\n"),
+                ],
+                format!(
+                    "from pub::renamed_reexports import greet\nfrom pub::renamed_reexports.outer import wave as second_greet\nfrom pub::renamed_reexports.middle import salute as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "sibling_spelling",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from inner import greet\n"),
+                    ("lib.incn", "pub from middle import greet\n"),
+                ],
+                format!(
+                    "from pub::sibling_spelling import greet\nfrom pub::sibling_spelling.middle import greet as second_greet\nfrom pub::sibling_spelling.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "nominal_reexports",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import Greeting, Tone, LOUDNESS\n"),
+                    ("lib.incn", "pub from middle import Greeting, Tone, LOUDNESS\n"),
+                ],
+                "from pub::nominal_reexports import Greeting, Tone, LOUDNESS\nfrom pub::nominal_reexports.middle import Greeting as MiddleGreeting, Tone as MiddleTone, LOUDNESS as MIDDLE_LOUDNESS\n\n\ndef tone_weight(tone: Tone) -> int:\n    match tone:\n        case Tone.Warm:\n            return 1\n        case Tone.Cool:\n            return 2\n\n\ndef middle_tone_weight(tone: MiddleTone) -> int:\n    match tone:\n        case MiddleTone.Warm:\n            return 1\n        case MiddleTone.Cool:\n            return 2\n\n\ndef run_all() -> int:\n    first = Greeting(text=\"a\")\n    second = MiddleGreeting(text=\"bc\")\n    weight = tone_weight(Tone.Warm) + middle_tone_weight(MiddleTone.Cool)\n    return LOUDNESS + MIDDLE_LOUDNESS + len(first.text) + len(second.text) + weight\n".to_string(),
+            ),
+            (
+                "nested_root_spelling",
+                &[
+                    ("pkg/inner.incn", INNER),
+                    ("pkg/middle.incn", "pub from crate.pkg.inner import greet\n"),
+                    ("lib.incn", "pub from pkg.middle import greet\n"),
+                ],
+                format!(
+                    "from pub::nested_root_spelling import greet\nfrom pub::nested_root_spelling.pkg.middle import greet as second_greet\nfrom pub::nested_root_spelling.pkg.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+        ];
+        let failures = projects
+            .iter()
+            .filter_map(|(package, sources, consumer)| {
+                published_library_manifest(package, sources)
+                    .and_then(|manifest| encode_and_consume(package, &manifest, consumer))
+                    .err()
+                    .map(|error| format!("{package}: {error}"))
+            })
+            .collect::<Vec<_>>();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n").into())
+        }
+    }
+
+    /// The checked API alias `module` declares under `name`, for tests that tamper with one.
+    fn declared_alias<'a>(manifest: &'a mut LibraryManifest, module: &str, name: &str) -> Option<&'a mut ApiAlias> {
+        manifest
+            .contract_metadata
+            .api
+            .as_mut()?
+            .modules
+            .iter_mut()
+            .find(|candidate| candidate.module_path == [module.to_string()])?
+            .declarations
+            .iter_mut()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Alias(alias) if alias.name == name => Some(alias),
+                _ => None,
+            })
+    }
+
+    /// Require `manifest` to be refused for an identity-graph entry the checked API does not back.
+    fn refused_as_unbacked(manifest: &LibraryManifest, case: &str) -> Result<(), Box<dyn std::error::Error>> {
+        match manifest.to_json_string() {
+            Err(LibraryManifestError::Invalid(message))
+                if message.contains("is not backed by a checked API namespace declaration") =>
+            {
+                Ok(())
+            }
+            other => Err(format!("{case} should be refused as unbacked, got {other:?}").into()),
+        }
+    }
+
+    /// Resolving a namespace alias's spelling does not accept an identity-graph entry the checked API does not back: an
+    /// entry no namespace member publishes, an alias whose projection names another declaration or the same-named
+    /// declaration of another module, and an alias whose target names a module the package does not have are each
+    /// refused.
+    #[test]
+    fn submodule_reexport_manifest_still_refuses_unbacked_entries_issue1561() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let manifest = published_library_manifest(
+            "reexport_repro",
+            &[
+                (
+                    "inner.incn",
+                    "pub def greet(name: str) -> str:\n    return f\"hi {name}\"\n",
+                ),
+                ("middle.incn", "pub from crate.inner import greet\n"),
+                ("lib.incn", "pub from middle import greet\n"),
+            ],
+        )?;
+        manifest.to_json_string()?;
+
+        let mut unpublished = manifest.clone();
+        let mut entry = unpublished
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|entry| entry.public_path == ["reexport_repro", "middle", "greet"].map(str::to_string))
+            .cloned()
+            .ok_or("missing the `middle.greet` identity")?;
+        entry.public_name = "fabricated".to_string();
+        entry.public_path = ["reexport_repro", "middle", "fabricated"].map(str::to_string).to_vec();
+        unpublished.contract_metadata.identity_graph.exports.push(entry);
+        refused_as_unbacked(&unpublished, "an entry no namespace member publishes")?;
+
+        for (source_path, case) in [
+            (&["inner", "not_greet"][..], "an alias projecting another declaration"),
+            (
+                &["elsewhere", "inner", "greet"][..],
+                "an alias projecting the same-named declaration of another module",
+            ),
+        ] {
+            let mut wrong_projection = manifest.clone();
+            declared_alias(&mut wrong_projection, "middle", "greet")
+                .and_then(|alias| alias.projected_function.as_mut())
+                .ok_or("missing the `middle.greet` projection")?
+                .source_path = source_path.iter().map(|segment| (*segment).to_string()).collect();
+            refused_as_unbacked(&wrong_projection, case)?;
+        }
+
+        let mut missing_module = manifest;
+        declared_alias(&mut missing_module, "middle", "greet")
+            .ok_or("missing the `middle.greet` alias")?
+            .target_path = ["crate", "elsewhere", "greet"].map(str::to_string).to_vec();
+        refused_as_unbacked(&missing_module, "an alias targeting a module the package does not have")?;
         Ok(())
     }
 }
