@@ -2532,18 +2532,33 @@ pub fn project_inspection_test_dependency_envelope_supports_dependencies(
     dependencies: &[DependencySpec],
     provider_hooks: &dyn oven_store::OvenProviderHooks,
 ) -> Result<bool, OvenRustcError> {
+    project_inspection_test_dependency_envelope_mismatch(payload, dependencies, provider_hooks)
+        .map(|mismatch| mismatch.is_none())
+}
+
+/// Name the first requested test dependency the sealed test envelope does not support, and why, or `None` when the
+/// envelope supports every one of them.
+///
+/// This is the refusal detail behind [`project_inspection_test_dependency_envelope_supports_dependencies`]: an alias
+/// requested twice, an alias the envelope has no root for, a root of another source kind, or a root whose sealed
+/// dependency digest differs from the requested dependency's current digest, with both digests.
+pub fn project_inspection_test_dependency_envelope_mismatch(
+    payload: &OvenProjectInspectionAuthorityPayload,
+    dependencies: &[DependencySpec],
+    provider_hooks: &dyn oven_store::OvenProviderHooks,
+) -> Result<Option<String>, OvenRustcError> {
     validate_project_inspection_authority_payload(payload)?;
     let Some(envelope) = payload.test_dependency_envelope.as_ref() else {
-        return Ok(false);
+        return Ok(Some("the authority has no test dependency envelope".to_string()));
     };
     let mut aliases = BTreeSet::new();
     for dependency in dependencies {
         let alias = dependency.crate_name.replace('-', "_");
         if !aliases.insert(alias.clone()) {
-            return Ok(false);
+            return Ok(Some(format!("`{alias}` is requested more than once")));
         }
         let Some(root) = envelope.dependency_roots.get(&alias) else {
-            return Ok(false);
+            return Ok(Some(format!("`{alias}` has no sealed root")));
         };
         let actual =
             oven_store::digest_dependency_specs(std::slice::from_ref(dependency), provider_hooks).map_err(|error| {
@@ -2566,11 +2581,28 @@ pub fn project_inspection_test_dependency_envelope_supports_dependencies(
                 matches!(dependency.source, DependencySource::Git { .. }),
             ),
         };
-        if !source_matches || actual != *expected {
-            return Ok(false);
+        if !source_matches {
+            return Ok(Some(format!(
+                "`{alias}` is sealed from another source kind than the requested {}",
+                dependency_source_kind(&dependency.source)
+            )));
+        }
+        if actual != *expected {
+            return Ok(Some(format!(
+                "`{alias}` was sealed with dependency digest {expected}, but the requested dependency now digests to {actual}"
+            )));
         }
     }
-    Ok(true)
+    Ok(None)
+}
+
+/// Name a dependency's source kind for a refusal detail.
+fn dependency_source_kind(source: &DependencySource) -> &'static str {
+    match source {
+        DependencySource::Registry => "registry dependency",
+        DependencySource::Path { .. } => "path dependency",
+        DependencySource::Git { .. } => "git dependency",
+    }
 }
 
 /// Check whether one sealed registry-source catalog covers every selected direct registry dependency.
@@ -4923,6 +4955,7 @@ mod tests {
         combined_process_output, is_host_native_unix_target, load_project_inspection_authority,
         materialize_declared_rust_libraries, materialize_declared_rust_libraries_with_selected_path_authority,
         project_inspection_authority_supports_dependencies, project_inspection_constituent_matches_receipt,
+        project_inspection_test_dependency_envelope_mismatch,
         project_inspection_test_dependency_envelope_supports_dependencies, resolve_sealed_registry_leaf,
         run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target,
         select_direct_rustc_plan_identity, validate_project_extension_payload_against_base,
@@ -10530,9 +10563,14 @@ fi
         missing.crate_name = "missing_alias".to_string();
         assert!(!project_inspection_test_dependency_envelope_supports_dependencies(
             &payload,
-            &[missing],
+            std::slice::from_ref(&missing),
             &oven_store::NoProviderHooks,
         )?);
+        assert_eq!(
+            project_inspection_test_dependency_envelope_mismatch(&payload, &[missing], &oven_store::NoProviderHooks)?
+                .as_deref(),
+            Some("`missing_alias` has no sealed root")
+        );
 
         let mut direct_plan_payload = payload.clone();
         direct_plan_payload.constituents[1] = OvenProjectInspectionConstituent::Stored {
@@ -10601,6 +10639,16 @@ fi
                 &oven_store::NoProviderHooks,
             )?,
             "an unmatched persisted Cargo path root must not be reported as supported"
+        );
+        let mismatch = project_inspection_test_dependency_envelope_mismatch(
+            &payload,
+            std::slice::from_ref(&path_dependency),
+            &oven_store::NoProviderHooks,
+        )?
+        .ok_or("an unmatched persisted Cargo path root reported no mismatch")?;
+        assert!(
+            mismatch.starts_with("`dev_fixture` was sealed with dependency digest sha256:legacy-path-envelope, but"),
+            "the refusal names the alias and both digests: {mismatch}"
         );
 
         payload

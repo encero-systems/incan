@@ -21,7 +21,7 @@ use oven_rustc::rustc::OvenLoadedProjectInspectionAuthority;
 use oven_rustc::rustc::OvenProjectInspectionConstituent;
 use oven_rustc::rustc::OvenProjectInspectionSourceOwner;
 use oven_rustc::rustc::project_inspection_authority_supports_dependencies;
-use oven_rustc::rustc::project_inspection_test_dependency_envelope_supports_dependencies;
+use oven_rustc::rustc::project_inspection_test_dependency_envelope_mismatch;
 use oven_rustc::rustc::validate_project_extension_payload_against_base;
 
 /// Resolve one exact project authority and all named constituents once for the complete test command.
@@ -262,7 +262,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
         if !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted) {
             return Err(project_inspection_selection_mismatch("this test dependency subset"));
         }
-        if !project_inspection_test_dependency_envelope_supports_dependencies(
+        if let Some(mismatch) = project_inspection_test_dependency_envelope_mismatch(
             &self.authority.payload,
             &promoted,
             incan_oven_facet::provider_hooks().as_ref(),
@@ -282,7 +282,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(CliError::failure(format!(
-                "Oven Alpha project inspection authority has a missing, stale, or incompatible test dependency root (sealed aliases: [{expected}]; requested aliases: [{actual}]); rerun `incan oven bake --project .`"
+                "Oven Alpha project inspection authority has a missing, stale, or incompatible test dependency root: {mismatch} (sealed aliases: [{expected}]; requested aliases: [{actual}]); rerun `incan oven bake --project .`"
             )));
         }
         self.test_dependency_plan.as_ref().map(Some).ok_or_else(|| {
