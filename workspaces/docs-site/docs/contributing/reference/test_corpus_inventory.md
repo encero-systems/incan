@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3537 | 245 | 8 |
+| keep | 3538 | 245 | 8 |
 | re-point | 515 | 86 | 1037 |
 | retire | 1487 | 151 | 0 |
 | unaffected | 1462 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7001** | **616** | **1050** |
+| **Total** | **7002** | **616** | **1050** |
 
 - Retire-class tests: 1487, of which twinned 1014, dies 294, open 179 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1838,7 +1838,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2079 tests in 114 files: keep 2079)
+### `loaves/compiler/incan_frontend` (2080 tests in 114 files: keep 2080)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1910,7 +1910,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/typechecker/tests/generic_call_type_arguments.rs` | 3 | 330 | 330 | keep | - | - | - | #1561 | checker 3, parser 1 | typechecker tests of a type parameter's values and methods inside its declaration and of the type arguments a generic call's arguments bind or leave open (#1561); typechecker only, no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/generic_model_bounds.rs` | 10 | 400 | 400 | keep | - | - | - | #1561 | checker 10, parser 3 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/generics_and_type_tokens.rs` | 44 | 1382 | 1382 | keep | - | - | - | #1561 | checker 29, parser 10 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/imports_and_stdlib_modules.rs` | 45 | 1209 | 1209 | keep | - | - | - | #1561 | checker 34, parser 7 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/imports_and_stdlib_modules.rs` | 46 | 1284 | 1284 | keep | - | - | - | #1561 | checker 35, parser 8 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/json_protocol_requirements.rs` | 9 | 569 | 569 | keep | - | - | - | #1561 | checker 9, parser 1 | checker tests of the `std.serde.json` trait spellings and of what providing one requires of a type's members and type arguments (#1885, #1886, #1867, #1887); typechecker only, no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/lane_followups_b.rs` | 4 | 72 | 72 | keep | - | - | - | #1561 | checker 2 | typechecker contracts for bounded sorting, stored trait annotations, bound-name validation and inline-list generic inference; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/list_method_forms.rs` | 4 | 186 | 186 | keep | - | - | - | #1561 | checker 4 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |

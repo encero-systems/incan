@@ -1,6 +1,7 @@
 //! Source-module and stdlib imports: module-style item imports (#1407), `check_with_imports` upcasts and cyclic
 //! interfaces, reserved root namespaces, which `std.*` modules and members exist, annotation-only imports (#902),
-//! prelude re-exports, `std.math` / `std.graph` / `std.regex` surfaces, and the unknown-module hint.
+//! prelude re-exports, `std.math` / `std.graph` / `std.regex` surfaces, the unknown-module hint, and the trait a method
+//! of an imported type's aliased standard-library adoption is dispatched through.
 
 use super::*;
 
@@ -1205,4 +1206,78 @@ fn std_root_import_of_an_unknown_name_is_refused_issue1767() -> Result<(), Strin
 fn std_root_import_of_a_submodule_binds_the_module_issue1767() -> Result<(), String> {
     check_str("from std import math, toml\n\ndef main() -> None:\n    println(\"ok\")\n")
         .map_err(|errors| format!("a std submodule imported from the root must bind: {errors:?}"))
+}
+
+/// #1561: a method a type imported from another module gets from a standard-library trait it adopts through an import
+/// alias (`Ord as Ordered`) is dispatched through the trait's declaration name beside its module, since the alias is
+/// the adopting module's binding and names nothing in the calling module. The dispatch named `Ordered`, which the
+/// generated Rust spelled as a path into the compiled SDK's `comparison` module (E0433). A call site that binds the
+/// alias itself keeps it.
+#[test]
+fn an_imported_adopter_dispatches_through_its_trait_declaration_not_the_alias_issue1561() -> Result<(), String> {
+    let levels = parse_program(
+        r#"
+from std.derives.comparison import Ord as Ordered
+
+pub enum Level with Ordered:
+  Low
+  High
+
+  def rank(self) -> int:
+    match self:
+      Level.Low => return 0
+      Level.High => return 1
+
+  def __eq__(self, other: Self) -> bool:
+    return self.rank() == other.rank()
+
+  def __lt__(self, other: Self) -> bool:
+    return self.rank() < other.rank()
+"#,
+        "adopter module",
+    );
+    let comparison_module = vec!["std".to_string(), "derives".to_string(), "comparison".to_string()];
+    for (importer, expected) in [
+        ("from levels import Level\n", "Ord"),
+        (
+            "from levels import Level\nfrom std.derives.comparison import Ord as Ordered\n",
+            "Ordered",
+        ),
+    ] {
+        let main = parse_program(
+            &format!("{importer}\ndef main() -> None:\n  println(Level.High.__gt__(Level.Low))\n"),
+            "importing module",
+        );
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".to_string()]));
+        checker
+            .check_with_imports(&main, &[("levels", &levels)])
+            .map_err(|errors| {
+                format!(
+                    "`{}`: {:?}",
+                    importer.trim(),
+                    errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>()
+                )
+            })?;
+        let dispatch = checker
+            .type_info()
+            .calls
+            .resolved_method_calls
+            .values()
+            .find(|call| call.method == "__gt__")
+            .map(|call| call.dispatch.clone())
+            .ok_or("`Level.High.__gt__(Level.Low)` must resolve to a trait dispatch")?;
+        let ResolvedMethodDispatch::Trait {
+            trait_name,
+            module_path,
+            ..
+        } = dispatch;
+        if trait_name != expected || module_path.as_ref() != Some(&comparison_module) {
+            return Err(format!(
+                "`{}`: expected `{expected}` in {comparison_module:?}, got `{trait_name}` in {module_path:?}",
+                importer.trim()
+            ));
+        }
+    }
+    Ok(())
 }
