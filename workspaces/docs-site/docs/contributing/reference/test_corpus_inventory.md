@@ -13,11 +13,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
 | keep | 3542 | 245 | 8 |
-| re-point | 518 | 86 | 1041 |
+| re-point | 519 | 86 | 1041 |
 | retire | 1487 | 151 | 0 |
 | unaffected | 1468 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7015** | **616** | **1054** |
+| **Total** | **7016** | **616** | **1054** |
 
 - Retire-class tests: 1487, of which twinned 1014, dies 294, open 179 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2589,7 +2589,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/toolchain/incan-cli` (657 tests in 80 files: keep 117, re-point 381, retire 34, unaffected 125)
+### `loaves/toolchain/incan-cli` (658 tests in 80 files: keep 117, re-point 382, retire 34, unaffected 125)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2654,7 +2654,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/tests/integration_sdk_interop_tests.rs` | 2 | 166 | 166 | re-point | - | - | - | #1561 | run 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/integration_test_runner_basics_tests.rs` | 12 | 720 | 720 | re-point | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/integration_test_runner_fixtures_tests.rs` | 13 | 1087 | 1087 | re-point (re-point 12, retire 1) | 1/1 | 0 | - | #1561 | text 1, run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
-| `loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs` | 8 | 908 | 908 | re-point | - | - | - | #1561 | run 3 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
+| `loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs` | 9 | 1001 | 1001 | re-point | - | - | - | #1561 | run 4 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/integration_tests.rs` | 14 | 369 | 369 | re-point (keep 13, re-point 1) | - | - | - | #1561 | run 1, checker 3, parser 10 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/layering_guard.rs` | 9 | 359 | 359 | unaffected | - | - | - | #1561 | - | crate and stdlib layering guards. |
 | `loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs` | 8 | 689 | 689 | re-point (re-point 8) | - | - | - | #1561 | run 8, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
@@ -3112,7 +3112,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_rustc/src/native_test/evidence.rs` | 4 | 258 | 74 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/plan/composition.rs` | 9 | 1710 | 804 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/plan/selection.rs` | 1 | 518 | 51 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_rustc/src/rustc.rs` | 95 | 11536 | 6635 | unaffected | - | - | required | #1561 | run 3 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_rustc/src/rustc.rs` | 95 | 11584 | 6651 | unaffected | - | - | required | #1561 | run 3 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/compiled_unit.rs` | 7 | 844 | 476 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/direct_compiler/retention.rs` | 3 | 771 | 771 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (compiler-closure retention) with a `#[cfg(all(test, unix))]` region over a synthetic sysroot, measured by that region. Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/inspection.rs` | 32 | 2657 | 1991 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |

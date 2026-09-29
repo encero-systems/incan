@@ -802,6 +802,99 @@ async def test_slept_task_returns_its_value() -> None:
         Ok(())
     }
 
+    /// #1561: a workspace member whose tests import the workspace-root library it depends on (`{ workspace = true }`
+    /// resolving to the root at `path = "."`) runs them locked after its own bake, with the root library built by
+    /// `incan build --lib` first, as a package's external-consumer check does. The library re-exports a model and the
+    /// identifier its list field holds from submodules, and carries a union in its surface; a test builds the model
+    /// with an empty list and `None` without importing the identifier.
+    #[test]
+    fn e2e_member_tests_importing_the_workspace_root_library_run_locked_after_the_members_bake_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src"))?;
+        std::fs::write(
+            root.path().join("loaf.toml"),
+            r#"[project]
+name = "root_provider"
+version = "0.1.0"
+
+[workspace]
+members = ["consumer"]
+
+[workspace.dependencies]
+root_provider = { path = "." }
+"#,
+        )?;
+        std::fs::write(
+            root.path().join("src/lib.incn"),
+            "pub from cards import Card, weigh\npub from ids import EvidenceId\n\n\npub model Reading:\n    pub value: int\n\n\npub def answer() -> int:\n    return 42\n",
+        )?;
+        std::fs::write(root.path().join("src/ids.incn"), "pub newtype EvidenceId = str\n")?;
+        std::fs::write(
+            root.path().join("src/cards.incn"),
+            "from crate.ids import EvidenceId\n\n\npub model Card:\n    pub evidence_ids: list[EvidenceId]\n    pub first: Option[EvidenceId]\n\n\npub def weigh(value: Card | int) -> int:\n    match value:\n        Card(card) => return len(card.evidence_ids)\n        int(number) => return number\n",
+        )?;
+        let consumer = root.path().join("consumer");
+        std::fs::create_dir_all(consumer.join("src"))?;
+        std::fs::create_dir_all(consumer.join("tests"))?;
+        std::fs::write(
+            consumer.join("loaf.toml"),
+            r#"[project]
+name = "root_consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+root_provider = { workspace = true }
+"#,
+        )?;
+        std::fs::write(
+            consumer.join("src/main.incn"),
+            "from pub::root_provider import answer\n\n\ndef main() -> None:\n    println(answer())\n",
+        )?;
+        std::fs::write(
+            consumer.join("tests/test_provider.incn"),
+            r#"from std.testing import assert_eq
+from pub::root_provider import Card, Reading, answer
+
+
+def test_the_root_library_answers() -> None:
+    assert_eq(answer(), 42)
+    reading = Reading(value=3)
+    assert_eq(reading.value, 3)
+
+
+def test_a_card_built_with_empty_fields() -> None:
+    card = Card(evidence_ids=[], first=None)
+    assert_eq(len(card.evidence_ids), 0)
+"#,
+        )?;
+        let incan_home = root.path().join(".incan-home");
+
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["oven", "bake", "--project", "."])?,
+            "the workspace root's explicit bake",
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["build", "--lib"])?,
+            "the workspace root's library build",
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(&consumer, &incan_home, &["oven", "bake", "--project", "."])?,
+            "the member's explicit bake",
+        );
+        let tests = run_on_source_standard_library(&consumer, &incan_home, &["test", "tests", "--locked"])?;
+        assert_command_succeeded(&tests, "the member's locked tests on the root library");
+        let stdout = String::from_utf8_lossy(&tests.stdout);
+        assert!(
+            stdout.contains("2 passed"),
+            "both member tests ran and passed:\n{stdout}"
+        );
+        Ok(())
+    }
+
     /// #1561: a project's own tests on the standard library compiled from source link the data and testing runtime
     /// crates. A test file importing `std.testing`, `std.collections` and `std.serde`'s `json` derive, compiled with
     /// the project's own module that does the same, failed with rustc's E0433 for `incan_std_data` and
