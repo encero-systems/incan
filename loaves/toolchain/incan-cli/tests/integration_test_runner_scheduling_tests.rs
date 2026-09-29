@@ -823,11 +823,17 @@ members = ["consumer"]
 
 [workspace.dependencies]
 root_provider = { path = "." }
+
+[workspace.rust-dependencies]
+libc = { version = "0.2", features = ["extra_traits"] }
+
+[rust-dependencies]
+sha2 = "=0.10.9"
 "#,
         )?;
         std::fs::write(
             root.path().join("src/lib.incn"),
-            "pub from cards import Card, weigh\npub from ids import EvidenceId\n\n\npub model Reading:\n    pub value: int\n\n\npub def answer() -> int:\n    return 42\n",
+            "from rust::sha2 import Sha256\npub from cards import Card, weigh\npub from ids import EvidenceId\n\n\npub model Reading:\n    pub value: int\n\n\npub def answer() -> int:\n    handle: Sha256 = Sha256.default()\n    return 42\n",
         )?;
         std::fs::write(root.path().join("src/ids.incn"), "pub newtype EvidenceId = str\n")?;
         std::fs::write(
@@ -891,6 +897,14 @@ def test_a_card_built_with_empty_fields() -> None:
         assert!(
             stdout.contains("2 passed"),
             "both member tests ran and passed:\n{stdout}"
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["oven", "bake", "--project", "."])?,
+            "the workspace root's bake after the member's",
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["build", "--lib"])?,
+            "the workspace root's library build after the member's bake",
         );
         Ok(())
     }
