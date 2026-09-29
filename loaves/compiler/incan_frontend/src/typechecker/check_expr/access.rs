@@ -720,6 +720,26 @@ impl TypeChecker {
         }
     }
 
+    /// Settle the `Result` sides an `Ok(...)` or `Err(...)` leaves open where the value is used in place, as the
+    /// iterable of a `for` statement or the subject of a `match`, and record the settled type as the value's own
+    /// (#1561).
+    ///
+    /// Nothing binds such a value, so no annotation spells the side the constructor leaves open: it is settled as for a
+    /// constructor bound to a local (see [`Self::settle_open_constructor_side`]), so `Err(m) => println(m)` over
+    /// `match Ok(1):` in a function returning no `Result` is checked against `None`. Lowering spells the recorded type
+    /// on the constructor.
+    pub(in crate::typechecker) fn settle_open_constructor_sides_in_place(
+        &mut self,
+        value: &Spanned<Expr>,
+        ty: ResolvedType,
+    ) -> ResolvedType {
+        let settled = self.settle_open_constructor_side(value, ty.clone());
+        if settled != ty {
+            self.record_expr_type(value.span, settled.clone());
+        }
+        settled
+    }
+
     /// Settle the open `Result` sides of the member type `member_ty` that one collection literal's `members` share,
     /// each member in turn (see [`Self::settle_open_constructor_side`]).
     fn settle_open_member_sides<'a>(
@@ -774,24 +794,31 @@ impl TypeChecker {
                     && sides.len() == 2
                     && matches!(sides[side], ResolvedType::Unknown) =>
             {
-                sides[side] = match self.symbols.enclosing_declared_return_type() {
-                    Some(ResolvedType::Generic(returned, returned_sides))
-                        if collection_type_id(returned.as_str()) == Some(CollectionTypeId::Result)
-                            && returned_sides.len() == 2 =>
-                    {
-                        returned_sides[side].clone()
-                    }
-                    _ => ResolvedType::Unit,
-                };
+                sides[side] = self.open_result_side_type(side);
                 ResolvedType::Generic(name, sides)
             }
             other => other,
         }
     }
 
+    /// The type an open side `side` (0 for success, 1 for error) of an `Ok(...)` or `Err(...)` is built with when
+    /// nothing fixes it: that side of the enclosing function's `Result` return type, or `None` when the function
+    /// returns no `Result` (#1561).
+    pub(in crate::typechecker) fn open_result_side_type(&self, side: usize) -> ResolvedType {
+        match self.symbols.enclosing_declared_return_type() {
+            Some(ResolvedType::Generic(returned, returned_sides))
+                if collection_type_id(returned.as_str()) == Some(CollectionTypeId::Result)
+                    && returned_sides.len() == 2 =>
+            {
+                returned_sides[side].clone()
+            }
+            _ => ResolvedType::Unit,
+        }
+    }
+
     /// Return the `Ok` or `Err` constructor `expr` produces: a call of it, in parentheses, or as the value of an `if`
     /// with an `else` (the first branch that produces one), as lowering finds the constructor a closure returns.
-    fn returned_result_constructor(&self, expr: &Spanned<Expr>) -> Option<ConstructorId> {
+    pub(in crate::typechecker) fn returned_result_constructor(&self, expr: &Spanned<Expr>) -> Option<ConstructorId> {
         match &expr.node {
             Expr::Paren(inner) => self.returned_result_constructor(inner),
             Expr::Call(callee, type_args, call_args) if type_args.is_empty() && call_args.len() == 1 => {

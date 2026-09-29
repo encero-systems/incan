@@ -1,0 +1,28 @@
+# behavior: the Ord and Eq dunders of adopters imported from another module, under every spelling of the trait, and of an imported derived Ord compare as their operators, an adopter's own __ge__ included
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::comparison_dunders_of_an_adopter_from_another_module_build_issue1561
+# expect-stdout:
+#   false
+#   true
+#   false
+#   true
+#   true
+#   false
+#   false
+#   true
+#   true
+#   false
+
+from scores import Score, Level, Qualified, Reversed, Key, Derived
+
+
+def main() -> None:
+    println(Score(points=2).__ge__(Score(points=3)))
+    println(Score(points=2).__le__(Score(points=3)))
+    println(Score(points=2).__gt__(Score(points=3)))
+    println(Score(points=2).__ne__(Score(points=3)))
+    println(Level.High.__gt__(Level.Low))
+    println(Qualified(v=2).__le__(Qualified(v=1)))
+    println(Reversed(v=1).__ge__(Reversed(v=0)))
+    println(Reversed(v=1).__le__(Reversed(v=0)))
+    println(Key(id=1).__ne__(Key(id=2)))
+    println(Derived(n=1).__ge__(Derived(n=2)))

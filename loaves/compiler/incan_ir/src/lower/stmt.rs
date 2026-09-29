@@ -1535,7 +1535,11 @@ impl AstLowering {
                     .and_then(|protocol| protocol.fallible_error_type.as_ref());
                 let iterable = match (&f.iter.node, fallible_protocol) {
                     (ast::Expr::Try(inner), Some(_)) => self.lower_expr_spanned(inner)?,
-                    _ => self.lower_expr_spanned(&f.iter)?,
+                    _ => {
+                        let mut iterable = self.lower_expr_spanned(&f.iter)?;
+                        self.pin_settled_in_place_result_constructors(f.iter.span, &mut iterable);
+                        iterable
+                    }
                 };
                 // The checker decided whether this loop takes the items of the list it iterates (#1844).
                 let takes_items = protocol_iteration.is_none()

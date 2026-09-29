@@ -1,0 +1,53 @@
+# behavior: each ordering dunder called on a type that derives Ord, a model, an enum, a generic model and a newtype, on a value and on self, is the operator it defines
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::dunders_of_a_derived_ord_are_its_operators_issue1561
+# expect-stdout:
+#   false
+#   true
+#   false
+#   true
+#   true
+#   false
+#   true
+#   true
+#   true
+#   true
+#   false
+
+@derive(Eq, Ord)
+model Score:
+    points: int
+
+    def at_least(self, other: Score) -> bool:
+        return self.__ge__(other)
+
+
+@derive(Eq, Ord)
+enum Level:
+    Low
+    High
+
+
+@derive(Eq, Ord)
+model Pair[T]:
+    left: T
+    right: T
+
+
+@derive(Eq, Ord)
+type Rank = newtype int
+
+
+def main() -> None:
+    a = Score(points=2)
+    b = Score(points=3)
+    println(a.__ge__(b))
+    println(a.__le__(b))
+    println(a.__gt__(b))
+    println(a.__lt__(b))
+    println(a.__ne__(b))
+    println(a.__eq__(b))
+    println(a.__ge__(b) == (a >= b))
+    println(b.at_least(a))
+    println(Level.High.__gt__(Level.Low))
+    println(Pair(left=1, right=2).__lt__(Pair(left=1, right=3)))
+    println(Rank(1).__ge__(Rank(2)))

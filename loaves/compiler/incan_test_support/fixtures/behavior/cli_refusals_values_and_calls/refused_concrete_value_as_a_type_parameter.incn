@@ -1,0 +1,9 @@
+# behavior: returning the int 0 where the generic function's own type parameter T is expected is refused, since a caller may pick any type for T
+# expect-diagnostic: INCAN-T0001
+
+def keep[T](x: T) -> T:
+    return 0
+
+
+def main() -> None:
+    println(keep(1))

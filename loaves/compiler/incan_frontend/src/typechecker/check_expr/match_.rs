@@ -209,6 +209,7 @@ impl TypeChecker {
         expected: Option<&ResolvedType>,
     ) -> ResolvedType {
         let subject_ty = self.check_expr(subject);
+        let subject_ty = self.settle_open_constructor_sides_in_place(subject, subject_ty);
         let subject_binding = if let Expr::Ident(name) = &subject.node {
             self.lookup_variable_info(name)
                 .cloned()

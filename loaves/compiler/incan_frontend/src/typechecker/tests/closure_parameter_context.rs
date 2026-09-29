@@ -328,7 +328,7 @@ def main() -> None:
 "#,
         &[
             "Argument 'g' of 'use' has type mismatch: expected '() -> Result[int, str]', found '() -> Result[int, Unit]'",
-            "expected 'Result[int, Unit]', found 'Result[?, str]'",
+            "expected 'Result[int, Unit]', found 'Result[int, str]'",
             "cannot print the None value 'm'",
             "Assignment to 'wrong' has type mismatch: expected 'List[Result[int, int]]', found 'List[Result[int, str]]'",
         ],
@@ -363,4 +363,118 @@ def main() -> None:
     println(keep().unwrap_or(0))
 "#,
     );
+}
+
+/// The side an `Ok(...)` or `Err(...)` leaves open where the value is used in place, as the subject of a `match` or in
+/// the iterable of a `for` statement, is settled as for a bound constructor: `None` where the enclosing function
+/// returns no `Result`, so printing that side is refused and an arm that ignores it is accepted, and that function's
+/// side where it does (#1561).
+#[test]
+fn open_result_sides_of_match_subjects_and_loop_iterables_are_settled_issue1561() {
+    assert_refused(
+        r#"
+def main() -> None:
+    match Ok(1):
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    for x in [Ok(1)]:
+        match x:
+            Ok(v) => println(v)
+            Err(e) => println(e)
+    match (Err("x"), 2):
+        (Ok(v), n) => println(v)
+        (Err(m), n) => println(m)
+"#,
+        &[
+            "cannot print the None value 'm'",
+            "cannot print the None value 'e'",
+            "cannot print the None value 'v'",
+        ],
+    );
+    assert_check_ok(
+        r#"
+def run() -> Result[str, int]:
+    match Ok("a"):
+        Ok(v) => println(v.upper())
+        Err(e) => println(e + 1)
+    for x in [Err(2), Ok("b")]:
+        match x:
+            Ok(v) => println(v)
+            Err(e) => println(e)
+    return Ok("done")
+
+def main() -> None:
+    match Ok(1):
+        Ok(v) => println(v + 1)
+        Err(_) => println("e")
+    for x in [Ok(1), Err("bad")]:
+        match x:
+            Ok(v) => println(v)
+            Err(m) => println(m.upper())
+    for row in [[Err("x")]]:
+        for r in row:
+            match r:
+                Ok(_) => println("ok")
+                Err(m) => println(m)
+    println(run().unwrap_or("none"))
+"#,
+    );
+}
+
+/// An `Ok(...)` or `Err(...)` argument leaves the side it does not build to its destination: a concrete parameter type
+/// gives that side, and a side the callee's own type parameter spells is inferred from all of the call's arguments
+/// first, so `pick(Err(2), 5)` instantiates `T` with `int` whatever the enclosing function returns, and the call's
+/// parameter types say so. A side no argument fixes is the enclosing function's side, or `None` (#1561).
+#[test]
+fn constructor_arguments_leave_their_open_side_to_the_call_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def pick[T](r: Result[T, int], d: T) -> T:
+    return r.unwrap_or(d)
+
+def show(r: Result[int, str]) -> None:
+    println(r.unwrap_or(0))
+
+def run() -> Result[str, int]:
+    println(pick(Err(2), 5))
+    show(Err("x"))
+    show(Ok(3))
+    return Ok("done")
+
+def main() -> None:
+    println(pick(Err(2), 5))
+    d = "w"
+    println(pick(Ok("x"), d))
+"#;
+    let info = typecheck_info_for_module(source, vec!["main".to_string()], "constructor arguments")?;
+    for (text, occurrence, expected) in [
+        ("pick(Err(2), 5)", 0, ["Result[int, int]", "int"]),
+        ("pick(Err(2), 5)", 1, ["Result[int, int]", "int"]),
+        ("pick(Ok(\"x\"), d)", 0, ["Result[str, int]", "str"]),
+    ] {
+        let start = source
+            .match_indices(text)
+            .nth(occurrence)
+            .map(|(start, _)| start)
+            .ok_or_else(|| format!("missing occurrence {occurrence} of `{text}`"))?;
+        let params = info
+            .call_site_callable_params(Span::new(start, start + text.len()))
+            .ok_or_else(|| format!("`{text}` (occurrence {occurrence}) records no parameter types"))?;
+        let params: Vec<String> = params.iter().map(|param| param.ty.to_string()).collect();
+        assert_eq!(params, expected, "`{text}` (occurrence {occurrence})");
+    }
+    assert_refused(
+        r#"
+def first[T](r: Result[T, int]) -> Option[T]:
+    match r:
+        Ok(v) => return Some(v)
+        Err(_) => return None
+
+def main() -> None:
+    match first(Err(3)):
+        Some(v) => println(v)
+        None => println("none")
+"#,
+        &["cannot print the None value 'v'"],
+    );
+    Ok(())
 }

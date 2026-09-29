@@ -6316,6 +6316,8 @@ impl TypeChecker {
             })
             .unwrap_or_default();
         let previous_owner = self.current_method_owner.replace(owner.to_string());
+        // Inside the owner's methods its type parameters are the body's own, each one fixed type: `self` of a
+        // `model Box[T]` is a `Box[T]` of that `T`, so a field of type `T` takes only a `T` (#1561).
         let owner_self_ty = if owner_type_params.is_empty() {
             ResolvedType::Named(owner.to_string())
         } else {
@@ -6323,7 +6325,7 @@ impl TypeChecker {
                 owner.to_string(),
                 owner_type_params
                     .iter()
-                    .map(|type_param| ResolvedType::TypeVar(type_param.clone()))
+                    .map(|type_param| ResolvedType::Named(type_param.clone()))
                     .collect(),
             )
         };
