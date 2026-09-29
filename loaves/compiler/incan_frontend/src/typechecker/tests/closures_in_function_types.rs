@@ -1,6 +1,7 @@
 //! Closures that capture local values in function-typed slots (#1561): a new local, a parameter its function only
 //! calls, and the one `return` of a function hold one; any other function-typed slot refuses it with `INCAN-T0001`,
-//! while a named function and a closure that captures nothing are accepted everywhere.
+//! while a named function and a closure that captures nothing are accepted everywhere. The standard library's own
+//! source, an SDK component compiled from its source included, is left as its own lowering spells it.
 
 use super::*;
 
@@ -136,4 +137,49 @@ def main() -> None:
         );
     }
     assert_eq!(messages.len(), expected.len(), "{messages:?}");
+}
+
+/// Parse one source module of the `stdlib-core` SDK component, named by its path below the component's `src`.
+fn parse_stdlib_core_module(relative: &str) -> Result<Program, String> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../stdlib/core/src")
+        .join(relative);
+    let source = std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let tokens = lexer::lex(&source).map_err(|errors| format!("{relative} lex failed: {errors:?}"))?;
+    parser::parse(&tokens).map_err(|errors| format!("{relative} parse failed: {errors:?}"))
+}
+
+/// #1561: an SDK component compiled from its own source is the standard library's own source, although its modules
+/// are checked under their physical paths (`derives.collection`, not `std.derives.collection`). The rules that leave
+/// the standard library's source as it is hold there too: `Iterator.flat_map`'s default builds its adapter with a
+/// closure that captures `f`, and `Iterator.collect` and `FallibleIterator.collect` append the item their own
+/// `__next__` returns, whose type the standard library's own lowering bounds. The same module checked outside an SDK
+/// bootstrap is a project module and meets the project rules.
+#[test]
+fn sdk_provider_bootstrap_checks_its_modules_as_standard_library_source_issue1561() -> Result<(), String> {
+    let collection = parse_stdlib_core_module("derives/collection.incn")?;
+    let callable = parse_stdlib_core_module("traits/callable.incn")?;
+    let check = |bootstrap_roots: &[&str]| {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["derives".to_string(), "collection".to_string()]));
+        checker.register_dependency_module_path_segments(
+            "traits_callable",
+            vec!["traits".to_string(), "callable".to_string()],
+        );
+        checker
+            .set_provider_plan(Arc::new(ProviderPlan::default().with_bootstrap_sdk_namespace_roots(
+                bootstrap_roots.iter().map(|root| (*root).to_string()),
+            )));
+        checker.check_with_imports_allow_private(&collection, &[("traits_callable", &callable)])
+    };
+    check(&["derives", "traits"])
+        .map_err(|errors| format!("the SDK component's own source should check as the standard library: {errors:?}"))?;
+    let errors = check(&[]).err().unwrap_or_default();
+    let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+    assert!(
+        messages.contains(&"A closure that captures local values cannot be an argument of a construction")
+            && messages.contains(&"List.append requires element type 'T' to be Clone"),
+        "outside an SDK bootstrap the module is a project module: {messages:?}"
+    );
+    Ok(())
 }

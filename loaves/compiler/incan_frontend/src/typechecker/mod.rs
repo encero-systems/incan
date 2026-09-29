@@ -2625,7 +2625,8 @@ impl TypeChecker {
         self.set_provider_plan(Arc::new(plan));
     }
 
-    /// Mark the program being checked as a module of the standard library, which a module path under `std` also marks.
+    /// Mark the program being checked as a module of the standard library, which a module path under `std` and an SDK
+    /// bootstrap grant in the provider plan also mark.
     pub fn set_standard_library_source(&mut self, standard_library_source: bool) {
         self.standard_library_source = standard_library_source;
     }

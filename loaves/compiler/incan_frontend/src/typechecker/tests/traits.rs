@@ -1335,6 +1335,41 @@ trait Tag:
     Err(format!("expected the str + int refusal, got: {:?}", messages(&errors)))
 }
 
+/// #1561: a trait default that appends the item its own `__next__`-style method returns reads a binding the generated
+/// code copies (the default is expanded into each adopter, where a read inside a loop is copied), so the item's type
+/// parameter needs `Clone`: unbounded it is refused, bounded by `Clone` it checks.
+#[test]
+fn list_append_of_a_trait_default_item_requires_clone_issue1561() -> Result<(), String> {
+    let source = |bound: &str| {
+        format!(
+            r#"
+trait Source[T{bound}]:
+  def pull(mut self) -> Option[T]: ...
+
+  def drain(mut self) -> list[T]:
+    mut items: list[T] = []
+    while true:
+      match self.pull():
+        Some(item) => items.append(item)
+        None => return items
+"#
+        )
+    };
+    let unbounded = source("");
+    let Err(errors) = check_str(&unbounded) else {
+        return Err(format!(
+            "appending an unbounded trait item should be refused:\n{unbounded}"
+        ));
+    };
+    if !errors
+        .iter()
+        .any(|error| error.message == "List.append requires element type 'T' to be Clone")
+    {
+        return Err(format!("expected the List.append Clone refusal, got {errors:?}"));
+    }
+    check_str(&source(" with Clone")).map_err(|errors| format!("a Clone-bounded trait item should append: {errors:?}"))
+}
+
 /// Return the messages of `errors`.
 fn messages(errors: &[CompileError]) -> Vec<&str> {
     errors.iter().map(|error| error.message.as_str()).collect()

@@ -276,10 +276,16 @@ impl TypeChecker {
         }
     }
 
-    /// Return whether the module being checked is a module of the standard library, whose function-typed slots and
-    /// closures are spelled by the standard library's own lowering rules and are left as they are.
+    /// Return whether the module being checked is a module of the standard library, whose function-typed slots,
+    /// closures and trait defaults are spelled by the standard library's own lowering rules and are left as they are.
+    ///
+    /// A module is one when a harness says so ([`TypeChecker::set_standard_library_source`]), when its path is under
+    /// `std`, and when the checker's provider plan carries an SDK bootstrap grant: the toolchain then compiles one SDK
+    /// component from its own source, whose modules are checked under their physical paths (`derives.collection`)
+    /// rather than their `std.*` paths.
     pub(super) fn checks_standard_library_source(&self) -> bool {
         self.standard_library_source
+            || self.provider_plan.bootstrap_sdk_namespace_roots().next().is_some()
             || self
                 .current_module_path
                 .as_ref()

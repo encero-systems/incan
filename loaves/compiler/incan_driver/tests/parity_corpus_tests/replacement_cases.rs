@@ -82,8 +82,7 @@ def generator_function() -> int:
 
 pub(super) const REPLACEMENT_BODY_V0_011_SRC: &str = r#"
 def generator_adapters() -> int:
-    offset = 1
-    increment: (int) -> int = (value) => value + offset
+    increment: (int) -> int = (value) => value + 1
     accepted: (int) -> bool = (value) => value > 2
     values = (value for value in range(1, 5)).map(increment).filter(accepted).collect()
     return values[0] * 10 + values[1]

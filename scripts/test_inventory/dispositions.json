@@ -3853,7 +3853,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
       "disposition": "retire",
-      "notes": "lowering through emission: trait-bound inference over generic element reads and the Rust shape of trait-method `mut` parameters on the legacy IR; retires with `incan_emit`.",
+      "notes": "lowering through emission: trait-bound inference over generic element reads, the Rust shape of trait-method `mut` parameters and a trait default's copy of the item it appends on the legacy IR; retires with `incan_emit`.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3877,6 +3877,10 @@
         "scalar_mut_parameter_is_a_mutable_local_in_every_body_issue1773": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/trait_default_method_mutable_parameter.incn",
           "notes": "Asserts generated Rust text for a scalar `mut` parameter changed in a function, a method and a trait default; retires with the Rust-source backend. The behavior, a trait default incrementing its `mut int` parameter, is carried by the named fixture (#1773)."
+        },
+        "trait_default_appending_its_own_item_copies_it_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_appending_its_own_item.incn",
+          "notes": "Asserts the copy an expanded trait default's append makes of the item its own method returns; retires with the Rust-source backend. The behavior, a `Clone`-bounded trait default draining an adopter's items into a list, is carried by the named fixture (#1561)."
         },
         "trait_method_and_slice_element_copies_state_clone_on_every_signature_issue1756": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/generic_list_index_without_clone_bound.incn",
