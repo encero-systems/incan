@@ -38,5 +38,6 @@ mod trait_parameters_and_element_bounds;
 mod trait_slot_mut_parameters;
 mod tuple_assignment_emission;
 mod tuple_element_places;
+mod unimported_nominal_types;
 mod union_member_identity;
 mod variant_pattern_emission;

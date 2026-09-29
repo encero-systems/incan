@@ -562,7 +562,15 @@ fn has_open_part(ty: &ResolvedType) -> bool {
 /// open, and one collection literal holding both is a collection of one `Result[int, str]`. `within_result` says
 /// whether `member` already lies inside a `Result` or `Option`; an unknown part anywhere else, such as a member whose
 /// type failed to check, is left as it is.
-fn fill_open_result_parts(member: &mut ResolvedType, observed: &ResolvedType, within_result: bool) {
+///
+/// The branches of a value-producing construct share one type the same way (see
+/// [`TypeChecker::unify_branch_value_types`]): `None` and `Some("a")` as two `match` arms are one `Option[str]`,
+/// whichever arm comes first.
+pub(in crate::typechecker) fn fill_open_result_parts(
+    member: &mut ResolvedType,
+    observed: &ResolvedType,
+    within_result: bool,
+) {
     match (member, observed) {
         (ResolvedType::Unknown, ResolvedType::Unknown) => {}
         (member @ ResolvedType::Unknown, observed) if within_result => *member = observed.clone(),

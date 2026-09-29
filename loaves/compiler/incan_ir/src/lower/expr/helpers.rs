@@ -312,13 +312,14 @@ impl AstLowering {
     }
 
     /// Spell the `Result` type of each `Ok(...)` or `Err(...)` a value used in place builds, the iterable of a `for`
-    /// statement or the subject of a `match`, with a side the constructor leaves open taken from the type the checker
-    /// settled for that value (#1561).
+    /// statement, the subject of a `match` or the value of a `loop:` expression's `break`, with a side the constructor
+    /// leaves open taken from the type the checker settled for that value (#1561).
     ///
-    /// Nothing binds such a value, so no annotation gives Rust the side the constructor leaves open: `match Ok(1):`
-    /// and `for x in [Ok(1)]:` failed to infer it. The checker settles it as for a constructor bound to a local (see
-    /// the checker's `settle_open_constructor_sides_in_place`); a constructor inside a list, set, dict or tuple literal
-    /// takes the side from the literal's settled member type, at any depth.
+    /// Nothing binds such a value, so no annotation gives Rust the side the constructor leaves open: `match Ok(1):`,
+    /// `for x in [Ok(1)]:` and a `loop:` whose every `break` gives an `Ok(...)` failed to infer it. The checker settles
+    /// it as for a constructor bound to a local (see the checker's `settle_open_constructor_sides_in_place` and
+    /// `record_settled_branch_values`); a constructor inside a list, set, dict or tuple literal takes the side from the
+    /// literal's settled member type, at any depth.
     pub(in crate::lower) fn pin_settled_in_place_result_constructors(
         &self,
         value_span: ast::Span,

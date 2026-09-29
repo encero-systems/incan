@@ -32,6 +32,7 @@ mod expr;
 mod receiver_plan;
 mod stmt;
 mod types;
+mod unbound_nominals;
 mod union_identity;
 mod web_surface;
 
@@ -2603,6 +2604,7 @@ impl AstLowering {
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
         self.collect_default_named_items(program);
         ir_program.function_reexports = self.collect_function_reexports(program);
+        ir_program.unbound_nominal_type_paths = self.unbound_nominal_type_paths(program);
         (self.imported_alias_targets, self.imported_module_bindings) = self.collect_imported_bindings(program);
         self.seed_imported_stdlib_trait_decls(program)?;
         self.adopted_traits_by_type = HashMap::new();
@@ -4807,6 +4809,7 @@ mod tests {
     mod tuple_assignment;
     mod tuple_element_places;
     mod unary_operand_grouping;
+    mod unbound_nominals;
     mod union_member_identity;
     mod web_surface;
 

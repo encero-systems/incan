@@ -2,7 +2,9 @@
 //! RFC 088 iterator adapter or terminal, a fold's accumulator, and a generic parameter's function type once the other
 //! arguments fix its type parameters. A capturing closure is refused where a lazy adapter stores it and as the
 //! callback of other standard-library functions and methods, and accepted by a `Result` combinator, which only calls
-//! it.
+//! it. The side of a `Result` that an `Ok(...)` or `Err(...)` leaves open, in a closure's result or elsewhere, is
+//! settled only where nothing else fixes it: not by its destination, another argument, or another `match` arm or
+//! `break` value.
 
 use super::*;
 
@@ -476,5 +478,116 @@ def main() -> None:
 "#,
         &["cannot print the None value 'v'"],
     );
+    Ok(())
+}
+
+/// Return the span of the value of the `match` arm spelled `arm` (`None => None`) in `source`.
+fn value_span(source: &str, arm: &str) -> Result<Span, String> {
+    let start = source
+        .find(arm)
+        .ok_or_else(|| format!("`{arm}` is not in the program"))?;
+    let value = arm.find("=> ").ok_or_else(|| format!("`{arm}` is not an arm"))? + "=> ".len();
+    Ok(Span::new(start + value, start + arm.len()))
+}
+
+/// The arms of a `match` and the `break` values of a `loop:` fill the `Option` payload or `Result` side one of them
+/// leaves open from another, whichever comes first, and each value records the filled type: `None` then `Some("a")` is
+/// an `Option[str]`, `Err("x")` then `Ok(1)` a `Result[int, str]`, also inside a list. A side none of them fixes stays
+/// open for the binding to settle to `None`, so printing it is refused, and an arm that ignores it is accepted (#1561).
+#[test]
+fn match_arms_and_loop_values_fill_open_parts_before_a_side_settles_issue1561() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+    content: Option[str] = Some("a")
+    upper = match content:
+        None => None
+        Some(value) => Some(value.upper())
+    println(upper.unwrap_or("-"))
+    parsed = match content:
+        None => Err("missing")
+        Some(value) => Ok(len(value))
+    println(parsed.unwrap_or(0))
+    listed = match content:
+        None => [None]
+        Some(value) => [Some(len(value))]
+    println(len(listed))
+    flag = true
+    looped = loop:
+        if flag:
+            break Err("stop")
+        break Ok(3)
+    println(looped.unwrap_or(0))
+    settled = match content:
+        Some(value) => Ok(len(value))
+        None => Ok(0)
+    match settled:
+        Ok(v) => println(v)
+        Err(_) => println("never")
+"#;
+    let program = parse_program(source, "match arm open parts");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("the arms must unify, got {errors:?}"))?;
+    let info = checker.type_info();
+    let option = |payload: ResolvedType| ResolvedType::Generic("Option".to_string(), vec![payload]);
+    let result = |ok: ResolvedType, err: ResolvedType| ResolvedType::Generic("Result".to_string(), vec![ok, err]);
+    assert_eq!(
+        info.expr_type(value_span(source, "None => None")?),
+        Some(&option(ResolvedType::Str)),
+        "the `None` arm takes the payload the `Some` arm after it gives"
+    );
+    assert_eq!(
+        info.expr_type(value_span(source, "None => Err(\"missing\")")?),
+        Some(&result(ResolvedType::Int, ResolvedType::Str)),
+        "the `Err` arm takes the success side the `Ok` arm after it gives"
+    );
+    assert_eq!(
+        info.expr_type(value_span(source, "None => [None]")?),
+        Some(&ResolvedType::Generic(
+            "List".to_string(),
+            vec![option(ResolvedType::Int)]
+        )),
+        "a list arm's open member payload is filled from the other arm"
+    );
+    let break_value = source.find("Err(\"stop\")").ok_or("missing `break Err(\"stop\")`")?;
+    assert_eq!(
+        info.expr_type(Span::new(break_value, break_value + "Err(\"stop\")".len())),
+        Some(&result(ResolvedType::Int, ResolvedType::Str)),
+        "a `break` value takes the side another `break` value gives"
+    );
+    assert_eq!(
+        info.expr_type(value_span(source, "None => Ok(0)")?),
+        Some(&result(ResolvedType::Int, ResolvedType::Unit)),
+        "a side no arm fixes settles to `None` for the binding, and every arm records it"
+    );
+
+    let errors = check_str(
+        r#"
+def main() -> None:
+    content: Option[int] = Some(1)
+    settled = match content:
+        Some(value) => Ok(value)
+        None => Ok(0)
+    match settled:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    flag = true
+    looped = loop:
+        if flag:
+            break Ok(1)
+        break Ok(2)
+    match looped:
+        Ok(v) => println(v)
+        Err(e) => println(e)
+"#,
+    )
+    .err()
+    .ok_or("printing a side no arm or `break` value fixes must be refused")?;
+    for needle in ["cannot print the None value 'm'", "cannot print the None value 'e'"] {
+        if !errors.iter().any(|error| error.message.contains(needle)) {
+            return Err(format!("expected an error containing `{needle}`, got {errors:?}"));
+        }
+    }
     Ok(())
 }

@@ -114,8 +114,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-      "sha256": "69f3161285eb9b1fd635f3d66ac8a1d6ad4e8c85238e6e66a95db82c93acfb38",
-      "lines": 4691
+      "sha256": "d39bbf733435db5c9377373c28d45befe0de5b63b3d00e3b429d3f8fff3b0aa2",
+      "lines": 4695
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
@@ -124,8 +124,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "5a7f1e2d0f90570e0afb0bcaab3a54aed4239954c82635405b7194cf391ba18b",
-      "lines": 4728
+      "sha256": "658bf8d29b206a2386fc57c5f5d149cdba6f95c078f1cc47350a41dedf47161a",
+      "lines": 4738
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
@@ -134,8 +134,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
-      "sha256": "833b7c29efd0f620fd53179148017cef0b4aff57b2c72b94e10fc6462767a4d0",
-      "lines": 721
+      "sha256": "b44863d857aff18407e8fe6def3374741a8602f940443f3c3716d96d7a9128eb",
+      "lines": 727
     }
   ],
   "changes": [
@@ -626,6 +626,29 @@
       "behavior_evidence": "option_and_result_unwrap_or_keep_their_values_issue1561 and closures_returning_constructors_build_with_their_own_result_issue1561 (incan_emit src/tests/result_method_receivers.rs) and the behavior fixtures ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn and emit_calls_and_builtins/closures_returning_constructors_have_their_own_result.incn",
       "semantic_owner": "the ownership planner (ownership::plan_consumed_option_receiver, ownership::result_unwrap_or_default_use_site) and the checker's settled closure result spelled by lowering (pin_settled_closure_result_constructor); Body IR use facts and checked constructor types",
       "retirement_condition": "the Rust-source backend is deleted (#654); Body IR plans the receiver copy and the default from the same use facts and builds each constructor with its checked type, and the Option method call site, the Result unwrap_or default and the constructor seeding stop applying them"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "unimported_nominal_types emit tests; behavior fixture emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+      "semantic_owner": "lowering: IrProgram::unbound_nominal_type_paths (AstLowering::unbound_nominal_type_paths)",
+      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route resolves nominal types through their canonical identities"
     }
   ]
 }

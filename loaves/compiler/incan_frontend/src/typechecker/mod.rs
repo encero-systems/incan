@@ -1087,15 +1087,19 @@ impl TypeChecker {
     ///
     /// With `expected`, the type of the place the construct is written to, every value must be assignable to it and
     /// the construct yields it. Without it, each value either is assignable to the type unified so far, or the type
-    /// unified so far is assignable to it and it becomes the result, so `i8` and `int` values unify to `int` and
-    /// `Some(5)` and `None` to `Option[int]`. A value that fits neither way is refused with a type mismatch at its span
-    /// and the construct yields `Unknown`. An `Unknown` value has already been refused or is not yet known and a
-    /// `Never` value does not complete, so neither takes part; `None` means no value took part.
+    /// unified so far is assignable to it and it becomes the result, so `i8` and `int` values unify to `int`. A
+    /// `Result` side or `Option` payload one value leaves open takes the type another value gives it, whichever value
+    /// comes first (#1561): `None` and `Some(5)` unify to `Option[int]`, and `Err("x")` and `Ok(1)` to
+    /// `Result[int, str]`. A side no value fixes stays open, and the place the construct is written to settles it.
+    /// A value that fits neither way is refused with a type mismatch at its span and the construct yields `Unknown`.
+    /// An `Unknown` value has already been refused or is not yet known and a `Never` value does not complete, so
+    /// neither takes part; `None` means no value took part.
     ///
     /// Every value whose type is not the result is recorded as written to a place of the result type
     /// ([`Self::record_value_destination_if_compatible`]), so lowering widens a narrower numeric value and wraps an
-    /// `Option` payload in that branch itself. The branches of the generated construct then share one type, as Rust
-    /// requires of the arms of a `match` and the values of a `loop`.
+    /// `Option` payload in that branch itself, and its type is recorded with the open parts the result fills, so the
+    /// `None` or `Err(...)` of one branch is built with the payload or side another branch gives. The branches of the
+    /// generated construct then share one type, as Rust requires of the arms of a `match` and the values of a `loop`.
     pub(in crate::typechecker) fn unify_branch_value_types(
         &mut self,
         values: &[(ResolvedType, Span)],
@@ -1118,10 +1122,13 @@ impl TypeChecker {
                 let mut result_ty = first_ty.clone();
                 for (ty, span) in participating {
                     if self.types_compatible(ty, &result_ty) {
+                        check_expr::fill_open_result_parts(&mut result_ty, ty, false);
                         continue;
                     }
                     if self.types_compatible(&result_ty, ty) {
-                        result_ty = ty.clone();
+                        let mut widened = ty.clone();
+                        check_expr::fill_open_result_parts(&mut widened, &result_ty, false);
+                        result_ty = widened;
                         continue;
                     }
                     self.errors
@@ -1134,6 +1141,11 @@ impl TypeChecker {
         for (ty, span) in values {
             if *ty != result_ty {
                 self.record_value_destination_if_compatible(*span, ty, &result_ty);
+                let mut filled = ty.clone();
+                check_expr::fill_open_result_parts(&mut filled, &result_ty, false);
+                if filled != *ty {
+                    self.record_expr_type(*span, filled);
+                }
             }
         }
         Some(result_ty)

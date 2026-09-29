@@ -1734,9 +1734,18 @@ impl AstLowering {
             }
 
             ast::Statement::Pass => IrStmtKind::Expr(TypedExpr::new(IrExprKind::Unit, IrType::Unit)),
+            // A `loop:` value's `break` builds its `Ok(...)` or `Err(...)` with the `Result` type the checker gave the
+            // `break` values of that loop together, a side none of them fixes included (#1561).
             ast::Statement::Break(value) => IrStmtKind::Break {
                 label: None,
-                value: value.as_ref().map(|value| self.lower_expr_spanned(value)).transpose()?,
+                value: value
+                    .as_ref()
+                    .map(|value| {
+                        let mut lowered = self.lower_expr_spanned(value)?;
+                        self.pin_settled_in_place_result_constructors(value.span, &mut lowered);
+                        Ok::<_, LoweringError>(lowered)
+                    })
+                    .transpose()?,
             },
             ast::Statement::Continue => IrStmtKind::Continue(None),
 

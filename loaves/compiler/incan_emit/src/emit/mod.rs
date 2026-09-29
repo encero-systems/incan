@@ -652,6 +652,9 @@ pub struct IrEmitter<'a> {
     type_module_paths: HashMap<String, Vec<String>>,
     /// Nominal declarations owned by the program currently being emitted.
     local_nominal_type_names: HashSet<String>,
+    /// Crate paths of the nominal types the program being emitted names without binding them, from lowering's
+    /// `IrProgram::unbound_nominal_type_paths` (#1561).
+    unbound_nominal_type_paths: HashMap<String, String>,
     /// Provider module paths owned by linked compiled SDK providers.
     ///
     /// These paths do not use the consumer-only `__incan_std` namespace, so generated support fast paths need an
@@ -817,6 +820,7 @@ impl<'a> IrEmitter<'a> {
             const_bindings: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
             local_nominal_type_names: HashSet::new(),
+            unbound_nominal_type_paths: HashMap::new(),
             compiled_sdk_module_paths: HashSet::new(),
             compiled_sdk_type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
