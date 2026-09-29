@@ -1,0 +1,18 @@
+"""The exact search profile."""
+
+from crate.search.models import Nomination
+
+
+@derive(Clone)
+pub model ExactResult:
+    pub nominations: list[Nomination]
+    pub best: Option[Nomination]
+
+
+pub def exact_query(count: int) -> Result[ExactResult, str]:
+    if count < 1:
+        return Err("empty query")
+    mut nominations: list[Nomination] = []
+    for index in range(count):
+        nominations.append(Nomination(rank=index + 1, relevance_bps=50 * (index + 1)))
+    return Ok(ExactResult(nominations=nominations, best=Some(nominations[0])))

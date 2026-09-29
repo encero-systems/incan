@@ -374,7 +374,7 @@ impl<'a> LibraryReexportResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -390,7 +390,9 @@ mod tests {
         CheckedExportIdentity, CheckedExportKind, CheckedNamedExport, checked_exports_by_name,
         collect_checked_public_exports,
     };
-    use incan_frontend::library_manifest::{LibraryManifest, LibraryManifestError};
+    use incan_frontend::library_manifest::{
+        ExportIdentityKind, LibraryManifest, LibraryManifestError, NativeUnionExport, NativeUnionOwnerExport, TypeRef,
+    };
     use incan_frontend::library_manifest_index::{
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
@@ -1291,20 +1293,96 @@ mod tests {
         Ok(())
     }
 
+    /// Give the first parameter of the root function export `function` a native union of the named `members`, owned by
+    /// the containing artifact, and record its emitted representation, as a library build publishes a union spelled
+    /// in a public signature: a member the package declares is bound to its declaration's canonical identity. The
+    /// in-memory build these tests use stops before union projection, so the published shape is placed here.
+    fn with_containing_artifact_union(
+        mut manifest: LibraryManifest,
+        function: &str,
+        members: &[&str],
+    ) -> Result<LibraryManifest, String> {
+        let local_nominals = members
+            .iter()
+            .filter_map(|name| {
+                manifest
+                    .contract_metadata
+                    .identity_graph
+                    .exports
+                    .iter()
+                    .find(|export| export.public_name == *name && export.kind != ExportIdentityKind::Alias)
+                    .and_then(|export| export.canonical.clone())
+                    .map(|canonical| ((*name).to_string(), canonical))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let export = manifest
+            .exports
+            .functions
+            .iter_mut()
+            .find(|export| export.name == function)
+            .ok_or_else(|| format!("`{function}` is not a root function export"))?;
+        let param = export
+            .params
+            .first_mut()
+            .ok_or_else(|| format!("`{function}` has no parameter"))?;
+        let union = NativeUnionExport {
+            owner: NativeUnionOwnerExport::ContainingArtifact,
+            rust_name: "__IncanUnion0000000000001561".to_string(),
+            members: members
+                .iter()
+                .map(|name| TypeRef::Named {
+                    name: (*name).to_string(),
+                    origin: None,
+                })
+                .collect(),
+            local_nominals,
+            checked_projection: None,
+        };
+        param.ty = TypeRef::NativeUnion(union.clone());
+        manifest.contract_metadata.native_unions.push(union);
+        Ok(manifest)
+    }
+
     /// Build `package` from `sources`, encode its manifest, and check each consumer in `consumers` against it, once
     /// through the manifest index alone and once with the dependency admitted as a provider.
     fn consume_library(package: &str, sources: &[(&str, &str)], consumers: &[(&str, String)]) -> Vec<String> {
-        let manifest = match published_library_manifest(package, sources) {
-            Ok(manifest) => manifest,
-            Err(error) => return vec![format!("{package}: {error}")],
-        };
+        consume_library_through(
+            package,
+            sources,
+            consumers,
+            &[("manifest index", false), ("admitted provider", true)],
+        )
+    }
+
+    /// Build `package` from `sources`, encode its manifest, and check each consumer in `consumers` against it through
+    /// each of `routes`, a label and whether the dependency is admitted as a provider.
+    fn consume_library_through(
+        package: &str,
+        sources: &[(&str, &str)],
+        consumers: &[(&str, String)],
+        routes: &[(&str, bool)],
+    ) -> Vec<String> {
+        match published_library_manifest(package, sources) {
+            Ok(manifest) => consume_manifest(package, &manifest, consumers, routes),
+            Err(error) => vec![format!("{package}: {error}")],
+        }
+    }
+
+    /// Check each consumer in `consumers` against `manifest`, published as `package`, through each of `routes`.
+    fn consume_manifest(
+        package: &str,
+        manifest: &LibraryManifest,
+        consumers: &[(&str, String)],
+        routes: &[(&str, bool)],
+    ) -> Vec<String> {
         consumers
             .iter()
             .flat_map(|(case, consumer)| {
-                [("manifest index", false), ("admitted provider", true)]
-                    .into_iter()
+                routes
+                    .iter()
+                    .copied()
                     .filter_map(|(route, admitted)| {
-                        check_consumer(package, &manifest, consumer, admitted)
+                        check_consumer(package, manifest, consumer, admitted)
                             .err()
                             .map(|error| format!("{package} / {case} / {route}: {error}"))
                     })
@@ -1379,7 +1457,9 @@ mod tests {
     /// the owner imports privately with other items, and both are re-exported through a directory facade and the
     /// package root, at one or two levels and in nested directories. The element type resolves to the declaration the
     /// owner's module names also when the root does not publish it or publishes another model under its name, and a
-    /// pattern names a type the consumer imports after the signature that returns it.
+    /// pattern names a type the consumer imports after the signature that returns it. A library whose public surface
+    /// carries a native union is read from its admitted artifact's rebuilt layouts, where a model the root re-exports
+    /// from a submodule keeps its fields too.
     #[test]
     fn reexported_element_models_keep_their_fields_issue1561() -> Result<(), Box<dyn std::error::Error>> {
         const MODELS: &str = "pub newtype MemoryId = int\n\n\npub enum SearchProfile:\n    Fast\n    Exact\n\n\npub enum SearchErrorKind:\n    Empty\n    Invalid\n\n\npub const DEFAULT_LIMIT: int = 10\n\n\npub model Nomination:\n    pub memory_id: MemoryId\n    pub rank: int\n    pub relevance_bps: int\n\n    def score(self) -> int:\n        return self.rank * self.relevance_bps\n\n\npub model SearchError:\n    pub kind: SearchErrorKind\n";
@@ -1387,6 +1467,7 @@ mod tests {
         const FACADE: &str = "pub from crate.search.models import (\n    DEFAULT_LIMIT,\n    MemoryId,\n    Nomination,\n    SearchError,\n    SearchErrorKind,\n    SearchProfile,\n)\npub from crate.search.exact import (\n    ExactResult,\n    Outcome,\n    best_outcome,\n    exact_query,\n)\n";
         const ROOT: &str = "pub from search import (\n    DEFAULT_LIMIT,\n    MemoryId,\n    Nomination,\n    SearchError,\n    SearchErrorKind,\n    SearchProfile,\n    ExactResult,\n    Outcome,\n    best_outcome,\n    exact_query,\n)\n";
         const READS: &str = "\n\ndef top_rank() -> int:\n    match exact_query(2):\n        case Ok(result):\n            return result.nominations[0].rank + result.nominations[1].relevance_bps + result.nominations[0].score()\n        case Err(_):\n            return 0\n\n\ndef first_memory() -> int:\n    match exact_query(1):\n        case Ok(result):\n            for nomination in result.nominations:\n                return nomination.memory_id.0\n            return 0\n        case Err(_):\n            return 0\n";
+        const OPTIONAL_READS: &str = "\n\ndef best_rank() -> int:\n    match exact_query(1):\n        case Ok(result):\n            match result.best:\n                case Some(nomination):\n                    return nomination.rank + nomination.score()\n                case None:\n                    return 0\n        case Err(_):\n            return 0\n";
         let mut failures = consume_library(
             "hyper_two_level",
             &[
@@ -1483,6 +1564,56 @@ mod tests {
                 format!("from pub::hyper_nested import exact_query\n{READS}"),
             )],
         ));
+
+        // ---- A native union in the public surface: only an admitted provider projects its containing artifact ----
+        const WEIGH: &str = "\n\npub def weigh(result: ExactResult) -> int:\n    return len(result.nominations)\n";
+        let admitted = [("admitted provider", true)];
+        for (package, root) in [
+            ("hyper_union_two_level", format!("{ROOT}{WEIGH}")),
+            (
+                "hyper_union_unexported_element",
+                format!("pub from search import ExactResult, exact_query\n{WEIGH}"),
+            ),
+        ] {
+            let manifest = published_library_manifest(
+                package,
+                &[
+                    ("search/models.incn", MODELS),
+                    ("search/exact.incn", EXACT),
+                    ("search/mod.incn", FACADE),
+                    ("lib.incn", &root),
+                ],
+            )
+            .and_then(|manifest| {
+                Ok(with_containing_artifact_union(
+                    manifest,
+                    "weigh",
+                    &["ExactResult", "int"],
+                )?)
+            });
+            let manifest = match manifest {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    failures.push(format!("{package}: {error}"));
+                    continue;
+                }
+            };
+            failures.extend(consume_manifest(
+                package,
+                &manifest,
+                &[
+                    (
+                        "reached only",
+                        format!("from pub::{package} import exact_query\n{READS}{OPTIONAL_READS}"),
+                    ),
+                    (
+                        "through std.testing",
+                        format!("from std.testing import assert_is_ok\nfrom pub::{package} import exact_query\n\n\ndef top_rank() -> int:\n    result = assert_is_ok(exact_query(2))\n    return result.nominations[0].rank + len(result.nominations)\n"),
+                    ),
+                ],
+                &admitted,
+            ));
+        }
         if failures.is_empty() {
             Ok(())
         } else {
