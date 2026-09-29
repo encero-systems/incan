@@ -215,77 +215,147 @@ fn artifact_inventory(
     Ok(inventory)
 }
 
-/// Two source-free providers reached from one consumer leave their published store entries untouched (#1458).
+/// Write one Incan library that reaches `cpufeatures` through a selected registry digest crate.
+fn write_registry_backed_provider(
+    fixture: &Path,
+    directory: &str,
+    project_name: &str,
+    digest_package: &str,
+    digest_version: &str,
+    function_name: &str,
+    value: i64,
+) -> TestResult {
+    let digest_type = if digest_package == "sha1" { "Sha1" } else { "Sha256" };
+    let provider = fixture.join(directory);
+    write_fixture_file(
+        &provider,
+        "loaf.toml",
+        &format!(
+            "[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\n{digest_package} = \"={digest_version}\"\n"
+        ),
+    )?;
+    write_fixture_file(
+        &provider,
+        "src/lib.incn",
+        &format!(
+            "from rust::{digest_package} import {digest_type}\n\npub def {function_name}() -> int:\n    handle: {digest_type} = {digest_type}.default()\n    return {value}\n"
+        ),
+    )?;
+    Ok(())
+}
+
+/// Bake one fixture project against its private Oven home.
+fn bake_with_home(project: &Path, home: &Path) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut command = configured_incan_command(project, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut command)?;
+    command.env("INCAN_HOME", home);
+    Ok(command.output()?)
+}
+
+/// Remove the authored inputs of a baked provider while preserving its published package artifacts.
+fn make_provider_source_free(fixture: &Path, directory: &str) -> TestResult {
+    let provider = fixture.join(directory);
+    fs::remove_dir_all(provider.join("src"))?;
+    fs::remove_file(provider.join("loaf.toml"))?;
+    Ok(())
+}
+
+/// A baked provider and a sibling library consumer share one portable registry unit (#1241).
 ///
-/// The providers are baked, their sources removed, and the consumer is baked over their sealed artifacts. Today that
-/// bake refuses at the #1241 boundary — the intermediate provider was compiled against its own re-materialized copy
-/// of the shared one, and one binary cannot hold two builds of one unit — and the refusal must not republish or
-/// mutate either provider's entry. The `84` this consumer used to print came from a unified Cargo build a normal
-/// command was never allowed to make.
+/// The provider reaches `cpufeatures` through `sha1`; the consumer reaches it through `sha2`.
+/// Their publisher-local payload paths may differ, but their RFC 124 selected-unit identity does not. The explicit
+/// consumer bake therefore selects the already-compiled provider unit for re-materialized dependents. The later
+/// locked library build reuses that bake without launching Cargo.
+#[test]
+fn baked_provider_reconciles_a_shared_registry_unit_issue1241() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let home = fixture.path().join("incan-home");
+    write_registry_backed_provider(
+        fixture.path(),
+        "catalog",
+        "immutable_catalog",
+        "sha1",
+        "0.10.6",
+        "catalog_value",
+        40,
+    )?;
+    assert_success(
+        &bake_with_home(&fixture.path().join("catalog"), &home)?,
+        "catalog publication with a sha1 registry closure",
+    );
+    let catalog_artifact = fixture.path().join("catalog/target/lib");
+    let catalog_before = artifact_inventory(&catalog_artifact)?;
+
+    let consumer = fixture.path().join("consumer");
+    write_fixture_file(
+        &consumer,
+        "loaf.toml",
+        "[project]\nname = \"shared_registry_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncatalog = { path = \"../catalog\" }\n\n[rust-dependencies]\nsha2 = \"=0.10.9\"\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "src/lib.incn",
+        "from pub::catalog import catalog_value\nfrom rust::sha2 import Sha256\n\npub def combined_value() -> int:\n    handle: Sha256 = Sha256.default()\n    return catalog_value() + 2\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "tests/test_shared_registry.incn",
+        "from pub::catalog import catalog_value\nfrom std.testing import assert_eq\n\n\ndef test_shared_registry_closure() -> None:\n    assert_eq(catalog_value(), 40)\n",
+    )?;
+    let consumer_bake = bake_with_home(&consumer, &home)?;
+    assert_success(&consumer_bake, "consumer bake over a compatible shared registry unit");
+    assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
+
+    let mut build = configured_incan_command(&consumer, &["build", "--lib", "--locked"]);
+    build.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(&build.output()?, "normal locked consumer library build without Cargo");
+    let mut test = configured_incan_command(&consumer, &["test", "tests", "--locked"]);
+    test.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(&test.output()?, "normal locked consumer tests without Cargo");
+    assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
+    Ok(())
+}
+
+/// Two source-free sibling providers share one registry unit without mutating their published entries (#1458).
+///
+/// Each provider owns a separately baked registry closure, and each reaches `cpufeatures` through a different digest
+/// crate. Composition retains one authoritative payload for their common selected-unit identity, keeps both
+/// dependents on that unit, and leaves both immutable package inventories untouched.
 #[test]
 fn source_free_native_diamond_preserves_published_store_inventory_issue1458() -> TestResult {
     let fixture = tempfile::tempdir()?;
     let catalog = fixture.path().join("catalog");
     let pricing = fixture.path().join("pricing");
     let home = fixture.path().join("incan-home");
-    // The named Rust dependency is what forces a portable project entry, rather than an empty package store whose
-    // native closure the compiler's release envelope happens to supply whole. Two things have to hold for that, and
-    // both have been quietly lost before.
-    //
-    // The emitted Rust has to reach the crate: a dependency nothing calls is not in the closure, so the bake
-    // resolves the plain stdlib Loaf and packages nothing. `fresh_id` therefore calls into it rather than naming it.
-    //
-    // And the crate has to be one the release envelope cannot contain. A registry crate is a poor choice for that:
-    // the lane pre-fetches a locked source inventory and builds an envelope from it, so a crate this fixture names
-    // may already be inside, the closure is satisfied, and the precondition fails on the lane while passing on a
-    // developer machine whose envelope is narrower. A path dependency written by the fixture itself cannot be in any
-    // envelope, needs no registry, and stays inside what the offline publisher will resolve.
-    let helper = fixture.path().join("shelfmark");
-    write_fixture_file(
-        &helper,
-        "Cargo.toml",
-        "[package]\nname = \"shelfmark\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    write_registry_backed_provider(
+        fixture.path(),
+        "catalog",
+        "immutable_catalog",
+        "sha1",
+        "0.10.6",
+        "catalog_value",
+        40,
     )?;
-    write_fixture_file(
-        &helper,
-        "src/lib.rs",
-        "/// Return a stable catalog shelfmark, so the generated crate reaches this dependency.\npub fn shelfmark() -> String {\n    \"aisle-7\".to_string()\n}\n",
+    write_registry_backed_provider(
+        fixture.path(),
+        "pricing",
+        "immutable_pricing",
+        "sha2",
+        "0.10.9",
+        "pricing_value",
+        2,
     )?;
-    write_fixture_file(
-        &catalog,
-        "loaf.toml",
-        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nshelfmark = { path = \"../shelfmark\" }\n",
-    )?;
-    write_fixture_file(
-        &catalog,
-        "src/lib.incn",
-        "from rust::shelfmark import shelfmark\n\npub def answer() -> int:\n    return 42\n\npub def location() -> str:\n    return shelfmark()\n",
-    )?;
-    write_fixture_file(
-        &pricing,
-        "loaf.toml",
-        "[project]\nname = \"immutable_pricing\"\nversion = \"0.1.0\"\n\n[dependencies]\ncatalog = { path = \"../catalog\" }\n",
-    )?;
-    write_fixture_file(
-        &pricing,
-        "src/lib.incn",
-        "from pub::catalog import answer\n\npub def quote() -> int:\n    return answer()\n",
-    )?;
-    let bake = |project: &Path| -> Result<Output, Box<dyn std::error::Error>> {
-        let mut command = configured_incan_command(project, &["oven", "bake", "--project", "."]);
-        support::configure_explicit_oven_bake_command(&mut command)?;
-        command.env("INCAN_HOME", &home);
-        Ok(command.output()?)
-    };
-    assert_success(&bake(&catalog)?, "catalog publication with a packaged Rust dependency");
+    assert_success(
+        &bake_with_home(&catalog, &home)?,
+        "catalog publication with a sha1 registry closure",
+    );
     let catalog_artifact = catalog.join("target/lib");
     let catalog_before = artifact_inventory(&catalog_artifact)?;
     assert!(
         catalog_before
             .keys()
-            .any(|path| path.starts_with("oven/loafs/entries")
-                && path.file_name().is_some_and(|name| name == "loaf.json")),
-        "the regression requires actual packaged store entries; the catalog published {} path(s) instead: {}",
+            .any(|path| path == Path::new("oven/package-loafs.json")),
+        "the regression requires a published package Loaf index; the catalog published {} path(s) instead: {}",
         catalog_before.len(),
         catalog_before
             .keys()
@@ -293,56 +363,38 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             .collect::<Vec<_>>()
             .join(", ")
     );
-    assert_success(&bake(&pricing)?, "pricing publication through catalog");
+    assert_success(
+        &bake_with_home(&pricing, &home)?,
+        "pricing publication with a sha2 registry closure",
+    );
     assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
     let pricing_artifact = pricing.join("target/lib");
     let pricing_before = artifact_inventory(&pricing_artifact)?;
-    for project in [&catalog, &pricing] {
-        fs::remove_dir_all(project.join("src"))?;
-        fs::remove_file(project.join("loaf.toml"))?;
-    }
+    make_provider_source_free(fixture.path(), "catalog")?;
+    make_provider_source_free(fixture.path(), "pricing")?;
     for name in ["first", "second"] {
         let consumer = fixture.path().join(name);
         write_fixture_file(
             &consumer,
             "loaf.toml",
             &format!(
-                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[dependencies]\nstock = {{ path = \"../catalog\" }}\npricing = {{ path = \"../pricing\" }}\n"
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[dependencies]\ncatalog = {{ path = \"../catalog\" }}\npricing = {{ path = \"../pricing\" }}\n"
             ),
         )?;
         write_fixture_file(
             &consumer,
             "src/main.incn",
-            "from pub::stock import answer\nfrom pub::pricing import quote\n\ndef main() -> None:\n    println(answer() + quote())\n",
+            "from pub::catalog import catalog_value\nfrom pub::pricing import pricing_value\n\ndef main() -> None:\n    println(catalog_value() + pricing_value())\n",
         )?;
-        // `pricing` was compiled against its own re-materialized copy of `catalog`, and one binary cannot hold two
-        // builds of one unit: rustc refuses the pair, and Oven names that as the #1241 boundary rather than
-        // surfacing the raw rustc report. Which rustc report it is depends on what the consumer's plan presents:
-        // two copies on the search path collide on their `StableCrateId`; one copy beside a consumer that was
-        // built against the other is rejected as a mismatched version (`E0460`). Both are the crate-loading family
-        // `direct_rustc_composition_failure` names, and neither is the sources failing to compile. Until the
-        // third-party direct-rustc cutover reconciles shared units that is where this bake stops -- never at a Cargo
-        // build, which is what the removed unified-Cargo detour used to do here -- and it leaves every published
-        // entry alone.
-        let consumer_bake = bake(&consumer)?;
-        let diagnostics = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&consumer_bake.stdout),
-            String::from_utf8_lossy(&consumer_bake.stderr)
+        assert_success(
+            &bake_with_home(&consumer, &home)?,
+            "diamond consumer bake over one reconciled cpufeatures unit",
         );
-        assert!(
-            !consumer_bake.status.success() && diagnostics.contains("Oven refuses to build"),
-            "the diamond consumer bake must stop at the Oven boundary rather than fall back to Cargo:\n{diagnostics}"
-        );
-        assert!(
-            diagnostics.contains("#1241")
-                && (diagnostics.contains("colliding StableCrateId") || diagnostics.contains("E0460")),
-            "the refusal must name the #1241 boundary and carry rustc's crate-loading report:\n{diagnostics}"
-        );
-        assert!(
-            !diagnostics.to_lowercase().contains("cargo-compatibility"),
-            "the refusal must never offer a Cargo route:\n{diagnostics}"
-        );
+        let mut run = configured_incan_command(&consumer, &["run", "--locked", "src/main.incn"]);
+        run.env_remove("CARGO").env("INCAN_HOME", &home);
+        let run_output = run.output()?;
+        assert_success(&run_output, "source-free diamond run without Cargo");
+        assert_eq!(String::from_utf8_lossy(&run_output.stdout).trim(), "42");
         assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
         assert_eq!(artifact_inventory(&pricing_artifact)?, pricing_before);
     }
@@ -354,8 +406,7 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
 /// The provider's generated manifest still spells out the Cargo edge to its private Rust dependency. Once the
 /// package is sealed, that edge is the producer's business: the consumer identifies the provider by its sealed
 /// artifact and composes its sealed package closure, so deleting the private crate after publication changes
-/// nothing: the consumer bakes and runs. (A diamond whose providers each compiled one shared unit for themselves is
-/// the shape composition cannot hold; that is #1241 and the test above it.)
+/// nothing: the consumer bakes and runs. The shared-registry-unit diamond is covered by the test above it.
 #[test]
 fn source_free_consumer_needs_no_provider_private_rust_sources_issue1469() -> TestResult {
     let fixture = tempfile::tempdir()?;

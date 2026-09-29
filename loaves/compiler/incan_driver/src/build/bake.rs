@@ -1023,7 +1023,7 @@ mod tests {
             .map(|error| error.to_string())
             .unwrap_or_default();
         assert!(refusal.contains("Oven refuses to build `app`"), "{refusal}");
-        assert!(refusal.contains("#1241"), "{refusal}");
+        assert!(refusal.contains("semantically different compiled units"), "{refusal}");
         assert!(refusal.contains("colliding StableCrateId"), "{refusal}");
     }
 

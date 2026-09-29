@@ -1,9 +1,9 @@
 //! Compose one direct-Rustc closure from compatible public package Loafs.
 //!
 //! Public providers are baked independently and may share compiler and runtime artifacts. The compositor admits only
-//! extension entries that agree on the compiler base, build intent, artifact bytes, registry source identity, and
-//! public crate identities, assigns one canonical copy of every byte-identical path, and retains every selected
-//! lease for the whole command. Cargo is never asked to resolve those packages again.
+//! extension entries that agree on the compiler base, build intent, registry unit identity, and public crate
+//! identities, assigns one canonical copy of every compatible shared unit or byte-identical path, and retains every
+//! selected lease for the whole command. Cargo is never asked to resolve those packages again.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -12,7 +12,7 @@ use crate::native_contract::OVEN_PROVIDER_COMPILATION_KEY;
 use crate::rustc::{
     OvenRegistryLeafAuthority, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
     OvenRustcRegistryLeaf, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenTrustedRustcArtifactRoot,
-    OvenTrustedRustcSearchRoot,
+    OvenTrustedRustcSearchRoot, metadata_sidecar_pair_path,
 };
 
 use super::PackagedProviderCandidate;
@@ -109,10 +109,10 @@ pub fn compose_selected_packaged_provider_plan(
 
 /// Build one direct-Rustc execution plan from every ABI-compatible public package Loaf.
 ///
-/// Each input has already passed receipt selection and retains its lease.  Composition is strictly byte based:
-/// duplicate artifact paths are accepted only when their digest is identical; duplicate public extern names or
-/// registry package identities must also agree on their sealed artifact and feature facts.  Those are genuine ABI
-/// conflicts, unlike merely having more than one public package.
+/// Each input has already passed receipt selection and retains its lease. Duplicate artifact paths are accepted only
+/// when their digest is identical, while independently staged registry payloads may reconcile through one portable
+/// selected-unit identity. Duplicate public extern names and all semantic unit facts must still agree. Those are
+/// genuine ABI conflicts, unlike merely having more than one public package.
 pub fn compose_packaged_provider_plan(
     selected: Vec<(String, OvenPackagedLibraryLoafEntry, OvenProjectExtensionExecutionPlan)>,
     expected_intent: &oven_store::OvenBuildIntent,
@@ -166,6 +166,11 @@ pub fn compose_packaged_provider_plan(
         .iter()
         .map(|artifact| artifact.relative_path.clone())
         .collect::<BTreeSet<_>>();
+    let selected_artifacts = artifacts
+        .composition_artifacts()?
+        .into_iter()
+        .map(|artifact| (artifact.relative_path, artifact.digest))
+        .collect::<BTreeSet<_>>();
     let mut fragments = Vec::new();
     for (dependency_key, receipt, extension, provider_artifacts) in inputs {
         let partition = provider_artifacts.partition_against_base(&base_artifacts)?;
@@ -173,7 +178,10 @@ pub fn compose_packaged_provider_plan(
         let root_inventory = extension_fragment.composition_artifacts()?;
         let mut supporting_artifacts = root_inventory
             .iter()
-            .filter(|artifact| owned_paths.insert(artifact.relative_path.clone()))
+            .filter(|artifact| {
+                selected_artifacts.contains(&(artifact.relative_path.clone(), artifact.digest.clone()))
+                    && owned_paths.insert(artifact.relative_path.clone())
+            })
             .cloned()
             .collect::<Vec<_>>();
         supporting_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
@@ -327,8 +335,9 @@ pub fn compose_packaged_provider_plan(
 ///
 /// An explicit provider bake may legitimately have no installed compiler Loaf to partition against. Its direct plan
 /// consequently contains the complete sealed Rust closure. Consumers still must not resolve that closure again: this
-/// compositor verifies every package entry by its receipt and immutable identity, accepts only byte-identical overlap,
-/// and materializes the union directly from the separately leased package roots.
+/// compositor verifies every package entry by its receipt and immutable identity, accepts byte-identical overlap or
+/// one portable registry selected-unit identity, and materializes the union directly from the separately leased
+/// package roots.
 pub fn compose_direct_packaged_provider_plan(
     selected: Vec<(String, OvenPackagedLibraryLoafEntry, OvenStoredDirectRustcExecutionPlan)>,
     expected_intent: &oven_store::OvenBuildIntent,
@@ -343,6 +352,11 @@ pub fn compose_direct_packaged_provider_plan(
         .map(|(dependency_key, _, plan)| (dependency_key.as_str(), &plan.artifacts))
         .collect::<Vec<_>>();
     let artifacts = merge_packaged_provider_artifact_manifests(&manifest_inputs, expected_intent)?;
+    let selected_artifacts = artifacts
+        .composition_artifacts()?
+        .into_iter()
+        .map(|artifact| (artifact.relative_path, artifact.digest))
+        .collect::<BTreeSet<_>>();
     let mut owned_paths = BTreeSet::new();
     let mut fragments = Vec::new();
     for (dependency_key, entry, plan) in selected {
@@ -354,7 +368,10 @@ pub fn compose_direct_packaged_provider_plan(
         let root_inventory = plan.artifacts.composition_artifacts()?;
         let mut supporting_artifacts = root_inventory
             .iter()
-            .filter(|artifact| owned_paths.insert(artifact.relative_path.clone()))
+            .filter(|artifact| {
+                selected_artifacts.contains(&(artifact.relative_path.clone(), artifact.digest.clone()))
+                    && owned_paths.insert(artifact.relative_path.clone())
+            })
             .cloned()
             .collect::<Vec<_>>();
         supporting_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
@@ -618,12 +635,95 @@ pub fn merge_packaged_provider_artifact_manifests_with_release_base(
     Ok(composed)
 }
 
+type RegistryUnitSlot = (
+    String,
+    String,
+    crate::rustc::OvenRustcRegistryLeafDomain,
+    crate::rustc::OvenRustcRegistryLeafKind,
+);
+
+/// Select one deterministic artifact record for every compatible shared registry unit.
+///
+/// Modern publisher leaves carry a portable selected-unit identity whose inputs include the unit's source graph,
+/// features, target domain, profile/toolchain selection and dependency identities. Two independently staged payloads
+/// with that same identity are therefore one RFC 124 unit even when their absolute staging paths changed their byte
+/// digest. Composition keeps the lexically stable already-compiled representative and removes the other record (and
+/// its split metadata sidecar) from the logical closure. Missing identities and any semantic disagreement remain a
+/// hard incompatibility.
+fn reconcile_packaged_registry_units(
+    inputs: &[(&str, &OvenRustcArtifactManifest)],
+) -> OvenPlanResult<(
+    BTreeMap<RegistryUnitSlot, OvenRustcRegistryLeaf>,
+    Vec<BTreeSet<(String, String)>>,
+)> {
+    let mut selected = BTreeMap::<RegistryUnitSlot, OvenRustcRegistryLeaf>::new();
+    for (name, manifest) in inputs {
+        for leaf in &manifest.registry_leaves {
+            let key = (leaf.package.clone(), leaf.version.clone(), leaf.domain, leaf.crate_kind);
+            let Some(existing) = selected.get_mut(&key) else {
+                selected.insert(key, leaf.clone());
+                continue;
+            };
+            if existing == leaf {
+                continue;
+            }
+            if !packaged_registry_units_are_compatible(existing, leaf) {
+                return Err(OvenPlanError::selection(format!(
+                    "Oven Alpha cannot compose pub::{name}: registry package `{}` `{}` has incompatible sealed unit identity, source, features, target domain, or artifact kind",
+                    leaf.package, leaf.version
+                )));
+            }
+            if (&leaf.artifact.relative_path, &leaf.artifact.digest)
+                < (&existing.artifact.relative_path, &existing.artifact.digest)
+            {
+                *existing = leaf.clone();
+            }
+        }
+    }
+
+    let mut superseded = vec![BTreeSet::new(); inputs.len()];
+    for (index, (_, manifest)) in inputs.iter().enumerate() {
+        for leaf in &manifest.registry_leaves {
+            let key = (leaf.package.clone(), leaf.version.clone(), leaf.domain, leaf.crate_kind);
+            let canonical = selected.get(&key).ok_or_else(|| {
+                OvenPlanError::selection("Oven Alpha package composition lost a selected registry unit")
+            })?;
+            if leaf.artifact == canonical.artifact {
+                continue;
+            }
+            superseded[index].insert((leaf.artifact.relative_path.clone(), leaf.artifact.digest.clone()));
+            if let Some(sidecar_path) = metadata_sidecar_pair_path(&leaf.artifact.relative_path)
+                && let Some(sidecar) = manifest
+                    .supporting_artifacts
+                    .iter()
+                    .find(|artifact| artifact.relative_path == sidecar_path)
+            {
+                superseded[index].insert((sidecar.relative_path.clone(), sidecar.digest.clone()));
+            }
+        }
+    }
+    Ok((selected, superseded))
+}
+
+/// Return whether two publisher records name one portable unit despite carrying different payload bytes.
+fn packaged_registry_units_are_compatible(left: &OvenRustcRegistryLeaf, right: &OvenRustcRegistryLeaf) -> bool {
+    left.selected_unit_identity.is_some()
+        && left.selected_unit_identity == right.selected_unit_identity
+        && left.package == right.package
+        && left.version == right.version
+        && left.crate_name == right.crate_name
+        && left.domain == right.domain
+        && left.crate_kind == right.crate_kind
+        && left.features == right.features
+        && left.source == right.source
+}
+
 /// Merge the compatible artifact declarations of independently baked public package Loafs.
 ///
 /// This is intentionally not a Cargo-style resolver.  The package publishers already resolved their independent
-/// graphs.  Oven only accepts their union when every overlap is byte-identical and every public crate or registry
-/// identity denotes one sealed ABI; otherwise it returns an actionable incompatibility instead of selecting an
-/// arbitrary first match.
+/// graphs. Oven accepts byte-identical overlaps and registry payloads that share one portable selected-unit identity;
+/// every public crate and semantic registry fact must still denote one sealed ABI. Otherwise it returns an actionable
+/// incompatibility instead of selecting an arbitrary first match.
 pub fn merge_packaged_provider_artifact_manifests(
     inputs: &[(&str, &OvenRustcArtifactManifest)],
     expected_intent: &oven_store::OvenBuildIntent,
@@ -647,19 +747,11 @@ pub fn merge_packaged_provider_artifact_manifests(
         role_keys.insert("generated-root".to_string());
     }
     let mut entrypoint_search_paths = BTreeMap::<String, crate::rustc::OvenRustcSourceSearchClosure>::new();
-    let mut registry_leaves = BTreeMap::<
-        (
-            String,
-            String,
-            crate::rustc::OvenRustcRegistryLeafDomain,
-            crate::rustc::OvenRustcRegistryLeafKind,
-        ),
-        OvenRustcRegistryLeaf,
-    >::new();
+    let (registry_leaves, superseded_registry_artifacts) = reconcile_packaged_registry_units(inputs)?;
     let mut registry_sources = BTreeMap::<(String, String, String), OvenRustcRegistrySourcePackage>::new();
     let mut compile_environment = BTreeMap::<String, String>::new();
     let vocabulary = first.vocab_auxiliary_targets.clone();
-    for (name, manifest) in inputs {
+    for ((name, manifest), superseded) in inputs.iter().zip(&superseded_registry_artifacts) {
         manifest.validate_shape(expected_intent)?;
         if manifest.vocab_auxiliary_targets != vocabulary {
             return Err(OvenPlanError::selection(format!(
@@ -678,6 +770,9 @@ pub fn merge_packaged_provider_artifact_manifests(
             }
         }
         for artifact in &manifest.externs {
+            if superseded.contains(&(artifact.relative_path.clone(), artifact.digest.clone())) {
+                continue;
+            }
             if let Some(existing) = externs.get(&artifact.crate_name)
                 && existing != artifact
             {
@@ -699,6 +794,9 @@ pub fn merge_packaged_provider_artifact_manifests(
             externs.insert(artifact.crate_name.clone(), artifact.clone());
         }
         for artifact in &manifest.supporting_artifacts {
+            if superseded.contains(&(artifact.relative_path.clone(), artifact.digest.clone())) {
+                continue;
+            }
             if let Some(existing_digest) =
                 artifact_digests.insert(artifact.relative_path.clone(), artifact.digest.clone())
                 && existing_digest != artifact.digest
@@ -721,28 +819,26 @@ pub fn merge_packaged_provider_artifact_manifests(
             } else {
                 "generated-root"
             };
+            let mut contribution = manifest.source_search_closure(contributor_key)?;
+            for (relative_path, digest) in superseded {
+                contribution.replace_artifact(
+                    &OvenRustcSupportingArtifact {
+                        relative_path: relative_path.clone(),
+                        digest: digest.clone(),
+                    },
+                    None,
+                );
+            }
             entrypoint_search_paths
                 .entry(source_key.clone())
                 .or_default()
-                .merge(&manifest.source_search_closure(contributor_key)?);
+                .merge(&contribution);
         }
         for (source_key, names) in &manifest.entrypoint_externs {
             entrypoint_externs
                 .entry(source_key.clone())
                 .or_default()
                 .extend(names.iter().cloned());
-        }
-        for leaf in &manifest.registry_leaves {
-            let key = (leaf.package.clone(), leaf.version.clone(), leaf.domain, leaf.crate_kind);
-            if let Some(existing) = registry_leaves.get(&key)
-                && existing != leaf
-            {
-                return Err(OvenPlanError::selection(format!(
-                    "Oven Alpha cannot compose pub::{name}: registry package `{}` `{}` has incompatible sealed features or artifacts",
-                    leaf.package, leaf.version
-                )));
-            }
-            registry_leaves.insert(key, leaf.clone());
         }
         for source in &manifest.registry_sources {
             let key = (
@@ -1242,6 +1338,124 @@ mod tests {
                 "incql".to_string()
             ])
         );
+        Ok(())
+    }
+
+    /// Build one provider manifest with a shared registry unit whose payload remains publisher-local.
+    fn package_manifest_with_shared_registry_unit(
+        intent: oven_store::OvenBuildIntent,
+        provider: &str,
+        unit_identity: &str,
+        features: &[&str],
+    ) -> Result<OvenRustcArtifactManifest, Box<dyn std::error::Error>> {
+        let mut manifest = package_loaf_manifest(intent, provider, &format!("sha256:{provider}"));
+        let source = crate::rustc::OvenRustcRegistrySource {
+            registry: "registry+https://example.invalid/index".to_string(),
+            checksum: "cpufeatures-checksum".to_string(),
+            relative_root: "registry-sources/cpufeatures-0.2.17".to_string(),
+            digest: "sha256:cpufeatures-source".to_string(),
+        };
+        let artifact = OvenRustcArtifactExtern {
+            crate_name: "cpufeatures".to_string(),
+            relative_path: format!("artifacts/deps/libcpufeatures-{provider}.rlib"),
+            digest: format!("sha256:cpufeatures-{provider}"),
+        };
+        manifest.registry_leaves.push(OvenRustcRegistryLeaf {
+            selected_unit_identity: Some(unit_identity.to_string()),
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            package: "cpufeatures".to_string(),
+            version: "0.2.17".to_string(),
+            crate_name: "cpufeatures".to_string(),
+            features: features.iter().map(|feature| (*feature).to_string()).collect(),
+            source: source.clone(),
+            artifact: artifact.clone(),
+        });
+        manifest.registry_sources.push(OvenRustcRegistrySourcePackage {
+            package: "cpufeatures".to_string(),
+            version: "0.2.17".to_string(),
+            features: features.iter().map(|feature| (*feature).to_string()).collect(),
+            source,
+        });
+        manifest.supporting_artifacts.extend([
+            OvenRustcSupportingArtifact {
+                relative_path: artifact.relative_path.clone(),
+                digest: artifact.digest.clone(),
+            },
+            OvenRustcSupportingArtifact {
+                relative_path: artifact.relative_path.replace(".rlib", ".rmeta"),
+                digest: format!("sha256:cpufeatures-metadata-{provider}"),
+            },
+            OvenRustcSupportingArtifact {
+                relative_path: "registry-sources/cpufeatures-0.2.17/Cargo.toml".to_string(),
+                digest: "sha256:cpufeatures-cargo-toml".to_string(),
+            },
+        ]);
+        manifest.entrypoint_dependency_search_paths = manifest
+            .entrypoint_externs
+            .keys()
+            .map(|key| {
+                Ok((
+                    key.clone(),
+                    manifest.capture_source_search_closure(&manifest.dependency_search_paths)?,
+                ))
+            })
+            .collect::<Result<_, crate::rustc::OvenRustcError>>()?;
+        manifest.validate_shape(&manifest.intent)?;
+        Ok(manifest)
+    }
+
+    #[test]
+    fn package_loaf_composition_selects_one_payload_for_one_shared_registry_unit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let intent = oven_store::OvenBuildIntent {
+            target: "aarch64-apple-darwin".to_string(),
+            toolchain: "rustc fixture".to_string(),
+            profile: "debug".to_string(),
+            features: Vec::new(),
+        };
+        let first = package_manifest_with_shared_registry_unit(
+            intent.clone(),
+            "first",
+            "sha256:shared-cpufeatures-unit",
+            &["default"],
+        )?;
+        let second = package_manifest_with_shared_registry_unit(
+            intent.clone(),
+            "second",
+            "sha256:shared-cpufeatures-unit",
+            &["default"],
+        )?;
+
+        let composed = merge_packaged_provider_artifact_manifests(&[("second", &second), ("first", &first)], &intent)?;
+        let [leaf] = composed.registry_leaves.as_slice() else {
+            return Err("composition did not retain exactly one shared registry unit".into());
+        };
+        assert_eq!(leaf.artifact.relative_path, "artifacts/deps/libcpufeatures-first.rlib");
+        assert!(
+            composed
+                .supporting_artifacts
+                .iter()
+                .any(|artifact| artifact.relative_path == "artifacts/deps/libcpufeatures-first.rmeta")
+        );
+        assert!(
+            composed
+                .supporting_artifacts
+                .iter()
+                .all(|artifact| artifact.relative_path != "artifacts/deps/libcpufeatures-second.rmeta")
+        );
+
+        let incompatible = package_manifest_with_shared_registry_unit(
+            intent.clone(),
+            "incompatible",
+            "sha256:shared-cpufeatures-unit",
+            &["default", "std"],
+        )?;
+        let error =
+            merge_packaged_provider_artifact_manifests(&[("first", &first), ("incompatible", &incompatible)], &intent)
+                .err()
+                .ok_or("feature-distinct shared unit must be refused")?;
+        assert!(error.to_string().contains("incompatible sealed unit identity"));
         Ok(())
     }
 

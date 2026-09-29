@@ -191,6 +191,17 @@ pub fn prepare_oven_test_dependency_envelope(
         .iter()
         .map(|checked| checked.dependency_key.replace('-', "_"))
         .collect::<BTreeSet<_>>();
+    let provider_entries = checked_package_profiles
+        .iter()
+        .flat_map(|checked| {
+            checked
+                .package
+                .entries
+                .iter()
+                .cloned()
+                .map(|entry| (checked.dependency_key.clone(), entry))
+        })
+        .collect::<Vec<_>>();
     let publisher_dependencies = test_dependency_publisher_dependencies(&dependencies, &packaged_provider_aliases);
     let publisher_dependency_surface_digest =
         digest_dependency_specs(&publisher_dependencies, incan_oven_facet::provider_hooks().as_ref())
@@ -226,6 +237,7 @@ pub fn prepare_oven_test_dependency_envelope(
                 dependency_surface_digest,
                 dependencies,
                 dependency_root_digests,
+                provider_entries,
                 plan_selection,
             });
         }
@@ -290,6 +302,7 @@ pub fn prepare_oven_test_dependency_envelope(
         dependency_surface_digest,
         dependencies,
         dependency_root_digests,
+        provider_entries,
         plan_selection,
     })
 }
@@ -480,13 +493,10 @@ pub fn registry_leaf_authority_for_plan_selection(
 /// compiled instance of a package `plan` already links explicitly, returning the first such package.
 ///
 /// Linking a provider's own registry-resolved package (for example an async runtime a query-engine provider pulls
-/// in through its own dependency graph) alongside the SDK/consumer's own separately compiled copy of that same
-/// package is a real, reproduced defect, not a theoretical one: it produced a runtime panic ("no reactor running")
-/// from two distinct compiled `tokio` instances silently linked into one binary, discovered only by inspecting the
-/// linked executable's own symbol table after the build otherwise succeeded. Properly unifying a provider's
-/// independently Cargo-resolved registry closure with the consumer's own is out of scope for Oven Alpha's
-/// direct-rustc execution (#1241). A bake that hits this shape refuses ([`oven_native_closure_refusal`]); there is
-/// no Cargo fallback.
+/// in through its own dependency graph) alongside a semantically different consumer copy is a real, reproduced
+/// defect: it produced a runtime panic ("no reactor running") from two distinct compiled `tokio` instances silently
+/// linked into one binary. Equal portable RFC 124 unit identities reconcile to one representative; this check keeps
+/// the refusal for missing identities and real source, feature, target, profile, toolchain or dependency divergence.
 pub fn caller_owned_provider_registry_conflict(
     consumer_authority: Option<&OvenRegistryLeafAuthority>,
     closure: &CallerOwnedProviderRegistryClosure,
@@ -503,7 +513,7 @@ pub fn caller_owned_provider_registry_conflict(
             return Ok(Some((package, Some(pinned_by))));
         }
         if let Some(package) = provider_authority
-            .first_conflicting_package_with(plan)
+            .first_conflicting_package_with_reconciled_authority(plan, consumer_authority)
             .map_err(oven_rustc_error)?
         {
             return Ok(Some((package, None)));
@@ -515,9 +525,8 @@ pub fn caller_owned_provider_registry_conflict(
 /// Describe one provider registry conflict for a refusal, naming the contributor that pins the package.
 ///
 /// "Two copies of `itoa` exist" leaves a reader with nowhere to go; "this prebuilt provider was compiled against
-/// that copy" says what would have to change. The distinction is also the boundary of the unimplemented capability:
-/// a leaf can be reconciled wherever every dependent linking it is recompiled against the choice, and a provider
-/// consumed from the store as an already-compiled artifact is exactly the case that cannot be (#1241).
+/// that copy" says what would have to change. This path is reached only after portable selected-unit reconciliation
+/// rejected the pair, so the named artifact identifies the genuinely incompatible pin.
 pub fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>) -> String {
     match pinned_by {
         Some(root) => format!(
@@ -534,19 +543,19 @@ pub fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>
     }
 }
 
-/// Refuse the one build shape direct-rustc composition cannot finish yet, naming it exactly.
+/// Refuse a genuinely incompatible direct-rustc closure, naming it exactly.
 ///
-/// Oven never launches Cargo during a normal command, and there is no fallback to declare: a project that hits this
-/// shape waits for the Oven-native reconciliation (#1241, one compiled instance of every shared registry package,
-/// every dependent relinked against it) or restructures so the shape does not arise.
+/// Oven never launches Cargo during a normal command. Equal RFC 124 selected units have already been reconciled
+/// before this boundary, so reaching it means the closures disagree on a semantic compilation fact or lack the
+/// portable identity needed to prove equivalence.
 pub fn oven_native_closure_refusal(crate_name: &str, reason: &str) -> CliError {
     CliError::failure(format!(
         "Oven refuses to build `{crate_name}`: {reason}. Linking both would silently admit two incompatible compiled \
          instances of the same crate into one binary -- for a crate that carries process-wide runtime state (most \
          dangerously an async runtime), this can produce a runtime panic instead of a build failure. Oven does not \
-         reconcile this shape through direct rustc yet (#1241) and never falls back to Cargo; prepare an explicit \
-         Oven-native closure that reconciles the shared package to one compiled artifact, or consume the provider \
-         from source rather than as a sealed packaged closure."
+         reconcile semantically different compiled units and never falls back to Cargo; align the shared package's \
+         source, version, features, target, profile and toolchain, or consume the provider from source rather than as \
+         a sealed packaged closure."
     ))
 }
 
