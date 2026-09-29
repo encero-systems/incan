@@ -882,8 +882,7 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                     }
                     aliases.push(ApiAliasProjectionRequest {
                         path: declaration_path(&module.module_path, &alias.name),
-                        target_path: normalized_api_target_path(&alias.target_path),
-                        module_path: module.module_path.clone(),
+                        target_path: resolve_api_alias_target(&module.module_path, &alias.target_path),
                         name: alias.name.clone(),
                         anchor: alias.anchor.clone(),
                     });
@@ -900,21 +899,12 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
             if projections.contains_key(&alias.path) && type_projections.contains_key(&alias.path) {
                 continue;
             }
-            // An alias whose target lives in its own module records that target unqualified, because that is how the
-            // source writes it: `pub run = alias helper` inside `provider` records `["helper"]`. Projections are
-            // keyed by resolved declaration path, `["provider", "helper"]`, so the two never met and every
-            // same-module alias published no callable metadata at all.
-            //
-            // Resolve against the alias's own module first, then fall back to the path as written for a target that
-            // really is module-qualified. The recorded `target_path` is deliberately left alone: it is compared
-            // against the identity graph downstream, and rewriting it here would move that comparison rather than
-            // fix this one.
-            let qualified =
-                (alias.target_path.len() == 1).then(|| declaration_path(&alias.module_path, &alias.target_path[0]));
-            let resolved = qualified
-                .as_ref()
-                .and_then(|path| projections.get(path))
-                .or_else(|| projections.get(&alias.target_path));
+            // An alias records its target as the source spelled it -- `pub run = alias helper` inside `provider`
+            // records `["helper"]` -- while projections are keyed by resolved declaration path, so look the target up
+            // under the path its spelling resolves to. The alias's recorded `target_path` is deliberately left alone:
+            // it is compared against the identity graph downstream, and rewriting it here would move that comparison
+            // rather than fix this one.
+            let resolved = projections.get(&alias.target_path);
             if !projections.contains_key(&alias.path)
                 && let Some(target) = resolved
             {
@@ -923,11 +913,7 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                 changed = true;
             }
             if !type_projections.contains_key(&alias.path) {
-                let target = qualified
-                    .as_ref()
-                    .and_then(|path| type_projections.get(path))
-                    .or_else(|| type_projections.get(&alias.target_path))
-                    .cloned();
+                let target = type_projections.get(&alias.target_path).cloned();
                 if let Some(target) = target {
                     type_projections.insert(alias.path.clone(), target);
                     changed = true;
@@ -1142,9 +1128,8 @@ pub fn api_declaration_public_name(declaration: &ApiDeclaration) -> Option<&str>
 #[derive(Debug)]
 struct ApiAliasProjectionRequest {
     path: Vec<String>,
+    /// The declaration path the alias's target names, resolved against the module that declares the alias.
     target_path: Vec<String>,
-    /// The module the alias is declared in, used to resolve a target written without a module qualifier.
-    module_path: Vec<String>,
     name: String,
     anchor: SourceAnchor,
 }
@@ -1156,12 +1141,25 @@ fn declaration_path(module_path: &[String], name: &str) -> Vec<String> {
     path
 }
 
-/// Normalize an API target path by removing a leading `crate` segment.
-fn normalized_api_target_path(path: &[String]) -> Vec<String> {
-    if path.first().is_some_and(|segment| segment == "crate") {
-        return path[1..].to_vec();
+/// Resolve an alias target, as the source spelled it, to the declaration path the checked API keys it by.
+///
+/// Checked API modules, projections and namespace members are keyed by resolved declaration paths, while an alias
+/// records its target as written in the module that declares it. Two spellings differ from the path they name:
+///
+/// - a bare name names a declaration of the owning module -- `pub run = alias helper` inside `provider` records
+///   `["helper"]` for `["provider", "helper"]`;
+/// - a `crate.` path starts at the package root -- `pub from crate.inner import greet` records `["crate", "inner",
+///   "greet"]` for `["inner", "greet"]`.
+///
+/// Any other path is read from the package root as written, the reading a consumer of the published manifest applies
+/// to the same target. The alias projections and the manifest's check that a namespace alias backs its identity-graph
+/// entry both resolve through this function, so the two cannot read one spelling differently.
+pub(crate) fn resolve_api_alias_target(owning_module: &[String], target_path: &[String]) -> Vec<String> {
+    match target_path {
+        [name] => declaration_path(owning_module, name),
+        [root, rest @ ..] if root == "crate" && !rest.is_empty() => rest.to_vec(),
+        _ => target_path.to_vec(),
     }
-    path.to_vec()
 }
 
 /// Build callable metadata from a checked API function export.

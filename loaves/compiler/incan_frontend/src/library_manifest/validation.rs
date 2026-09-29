@@ -19,7 +19,8 @@ use super::{
     PartialExport, ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
 };
 use crate::api_metadata::{
-    ApiDeclaration, ApiProjectedFunction, CHECKED_API_METADATA_SCHEMA_VERSION, validate_checked_api_public_namespaces,
+    ApiDeclaration, ApiProjectedFunction, CHECKED_API_METADATA_SCHEMA_VERSION, resolve_api_alias_target,
+    validate_checked_api_public_namespaces,
 };
 use crate::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 use crate::registry_metadata::CHECKED_REGISTRY_METADATA_SCHEMA_VERSION;
@@ -700,16 +701,16 @@ fn api_declaration_backs_identity_entry(
             if !target_matches || !matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Function) {
                 return false;
             }
-            // `source_path` is the target's resolved declaration path; `target_path` is how the alias spelled it.
-            // Resolution only prepends the owning module, so the spelling must be a suffix of the resolution rather
-            // than equal to it -- an unqualified `helper` resolves to `["provider", "helper"]` and still names the
-            // same declaration.
+            // `source_path` is the target's resolved declaration path; `target_path` is how the alias spelled it in its
+            // own module. Resolve the spelling as the projection was resolved and require it to name the projection's
+            // declaration: an unqualified `helper` inside `provider` names `["provider", "helper"]`, and
+            // `crate.inner.greet` names `["inner", "greet"]`.
             //
-            // A chain hop breaks that suffix relation honestly: an alias of an alias carries the *terminal* function's
-            // source path, while `target_path` names the hop right next to it, so `["registry", "scale"]` never ends
-            // with `["registry", "scale_alias"]`. Accept the hop when it republishes this same projection.
+            // A chain hop names a different declaration honestly: an alias of an alias carries the *terminal*
+            // function's source path, while `target_path` names the hop right next to it, so `["registry", "scale"]`
+            // is not `["registry", "scale_alias"]`. Accept the hop when it republishes this same projection.
             if let Some(projected) = &alias.projected_function
-                && !projected.source_path.ends_with(&alias.target_path)
+                && projected.source_path != resolve_api_alias_target(module_path, &alias.target_path)
                 && !alias_target_republishes_projection(api, module_path, &alias.target_path, projected)
             {
                 return false;
@@ -767,26 +768,12 @@ fn api_declaration_backs_identity_entry(
     }
 }
 
-/// Qualify an alias target that was written unqualified against the module the alias lives in.
-///
-/// Source writes a same-module target as the bare name -- `pub run = alias helper` inside `provider` records
-/// `["helper"]` -- while every checked API path is a resolved declaration path. Walking a chain from the bare spelling
-/// looks for a module named by nothing, so requalify before the first hop.
-fn qualify_alias_target(owning_module: &[String], target_path: &[String]) -> Vec<String> {
-    if target_path.len() != 1 {
-        return target_path.to_vec();
-    }
-    let mut qualified = owning_module.to_vec();
-    qualified.extend(target_path.iter().cloned());
-    qualified
-}
-
 /// Return whether one checked API alias path resolves, through any number of hops, to the named declaration.
 ///
 /// Each link of a re-export chain records the hop it was written on, so the first hop names an intermediate alias
 /// rather than the declaration the canonical identity carries. Follow the remaining hops instead of demanding that the
-/// first one already be terminal. A same-module hop records its target unqualified, so requalify it before the next
-/// step, and stop on a repeated path so a cyclic manifest cannot loop here.
+/// first one already be terminal. Each hop records its target as spelled in its own module, so resolve it there before
+/// the next step, and stop on a repeated path so a cyclic manifest cannot loop here.
 fn checked_api_alias_chain_reaches(
     api: &crate::api_metadata::CheckedApiMetadataPackage,
     owning_module: &[String],
@@ -794,7 +781,7 @@ fn checked_api_alias_chain_reaches(
     declaration_name: &str,
 ) -> bool {
     let mut seen = HashSet::new();
-    let mut path = qualify_alias_target(owning_module, target_path);
+    let mut path = resolve_api_alias_target(owning_module, target_path);
     loop {
         let Some((name, module_path)) = path.split_last() else {
             return false;
@@ -815,13 +802,7 @@ fn checked_api_alias_chain_reaches(
         }) else {
             return false;
         };
-        path = if next.len() == 1 {
-            let mut qualified = module_path;
-            qualified.extend(next);
-            qualified
-        } else {
-            next
-        };
+        path = resolve_api_alias_target(&module_path, &next);
     }
 }
 
@@ -836,8 +817,8 @@ fn alias_target_republishes_projection(
     target_path: &[String],
     projected: &ApiProjectedFunction,
 ) -> bool {
-    let qualified = qualify_alias_target(owning_module, target_path);
-    let Some((declaration_name, module_path)) = qualified.split_last() else {
+    let resolved = resolve_api_alias_target(owning_module, target_path);
+    let Some((declaration_name, module_path)) = resolved.split_last() else {
         return false;
     };
     api.modules
