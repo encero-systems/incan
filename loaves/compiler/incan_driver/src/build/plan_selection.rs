@@ -191,6 +191,17 @@ pub fn prepare_oven_test_dependency_envelope(
         .iter()
         .map(|checked| checked.dependency_key.replace('-', "_"))
         .collect::<BTreeSet<_>>();
+    let provider_entries = checked_package_profiles
+        .iter()
+        .flat_map(|checked| {
+            checked
+                .package
+                .entries
+                .iter()
+                .cloned()
+                .map(|entry| (checked.dependency_key.clone(), entry))
+        })
+        .collect::<Vec<_>>();
     let publisher_dependencies = test_dependency_publisher_dependencies(&dependencies, &packaged_provider_aliases);
     let publisher_dependency_surface_digest =
         digest_dependency_specs(&publisher_dependencies, incan_oven_facet::provider_hooks().as_ref())
@@ -226,6 +237,7 @@ pub fn prepare_oven_test_dependency_envelope(
                 dependency_surface_digest,
                 dependencies,
                 dependency_root_digests,
+                provider_entries,
                 plan_selection,
             });
         }
@@ -290,6 +302,7 @@ pub fn prepare_oven_test_dependency_envelope(
         dependency_surface_digest,
         dependencies,
         dependency_root_digests,
+        provider_entries,
         plan_selection,
     })
 }

@@ -20,12 +20,17 @@ use crate::build::{
 use crate::error::{CliError, CliResult, oven_rustc_error};
 use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::DependencySpec;
+use oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
+use oven_rustc::plan::selection::{
+    select_packaged_direct_rustc_execution_plan, select_receipt_project_extension_execution_plan,
+};
 use oven_rustc::rustc::{
     OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH,
     OvenProjectInspectionAuthorityPayload, OvenProjectInspectionAuthorityRef, OvenProjectInspectionConstituent,
     OvenProjectInspectionGeneratedOutDir, OvenProjectInspectionSource, OvenProjectInspectionSourceOwner,
-    OvenProjectInspectionTestDependencyEnvelope, validate_project_inspection_authority_payload,
+    OvenProjectInspectionTestDependencyEnvelope, OvenProjectInspectionTestProviderConstituent,
+    validate_project_inspection_authority_payload,
 };
 use oven_store::digest_bytes;
 use oven_store::store::{
@@ -237,6 +242,139 @@ pub fn publish_project_inspection_authority(
             }
         }
     }
+    let mut test_provider_constituents = Vec::new();
+    for (dependency_key, entry) in &test_dependency_envelope.provider_entries {
+        let constituent_index = if let Some(index) = constituents.iter().position(|constituent| {
+            matches!(constituent, OvenProjectInspectionConstituent::Stored { identity, .. } if identity == &entry.identity)
+        }) {
+            index
+        } else {
+            let base_index = if let Some(base_identity) = entry.base_loaf_identity.as_deref() {
+                if let Some(index) = constituents.iter().position(|constituent| {
+                    matches!(constituent, OvenProjectInspectionConstituent::ReleaseLoaf { loaf_identity, .. } if loaf_identity == base_identity)
+                }) {
+                    Some(index)
+                } else {
+                    let base = resolve_compiler_owned_loaf_by_identity(&entry.receipt, base_identity)
+                        .map_err(|error| CliError::failure(error.to_string()))?
+                        .ok_or_else(|| {
+                            CliError::failure(format!(
+                                "project inspection provider constituent `{}` requires unavailable release Loaf `{base_identity}`",
+                                entry.identity
+                            ))
+                        })?;
+                    let index = constituents.len();
+                    constituents.push(OvenProjectInspectionConstituent::ReleaseLoaf {
+                        loaf_identity: base.loaf_identity.clone(),
+                        build_unit_identity: base.loaf_build_unit_identity.clone(),
+                        receipt: entry.receipt.clone(),
+                    });
+                    for package in &base.artifacts.registry_sources {
+                        let known = registry_sources.iter().any(|source| {
+                            source.package.package == package.package
+                                && source.package.version == package.version
+                                && source.package.source.registry == package.source.registry
+                                && source.package.source.checksum == package.source.checksum
+                        });
+                        if !known {
+                            registry_sources.push(OvenProjectInspectionSource {
+                                package: package.clone(),
+                                owner: OvenProjectInspectionSourceOwner::Constituent { index },
+                            });
+                        }
+                    }
+                    Some(index)
+                }
+            } else {
+                None
+            };
+            let (artifacts, extension_paths) = match entry.kind {
+                OvenArtifactKind::ProjectPayload => {
+                    let selected = select_receipt_project_extension_execution_plan(
+                        store,
+                        &entry.receipt,
+                        Some(&entry.identity),
+                    )
+                    .map_err(crate::error::oven_plan_error)?
+                    .ok_or_else(|| {
+                        CliError::failure(format!(
+                            "project inspection authority lost imported provider constituent `{}`",
+                            entry.identity
+                        ))
+                    })?;
+                    (
+                        selected.artifacts,
+                        Some(selected.source_payload.extension_paths.into_iter().collect::<BTreeSet<_>>()),
+                    )
+                }
+                OvenArtifactKind::DirectRustcPlan => {
+                    let selected = select_packaged_direct_rustc_execution_plan(
+                        store,
+                        &entry.receipt,
+                        &entry.identity,
+                    )
+                    .map_err(crate::error::oven_plan_error)?
+                    .ok_or_else(|| {
+                        CliError::failure(format!(
+                            "project inspection authority lost imported provider constituent `{}`",
+                            entry.identity
+                        ))
+                    })?;
+                    (selected.artifacts, None)
+                }
+                _ => {
+                    return Err(CliError::failure(format!(
+                        "project inspection provider constituent `{}` is not a direct Rust closure",
+                        entry.identity
+                    )));
+                }
+            };
+            let index = constituents.len();
+            constituents.push(OvenProjectInspectionConstituent::Stored {
+                identity: entry.identity.clone(),
+                artifact_kind: entry.kind,
+                receipt: entry.receipt.clone(),
+                base_loaf_identity: entry.base_loaf_identity.clone(),
+            });
+            for package in &artifacts.registry_sources {
+                let known = registry_sources.iter().any(|source| {
+                    source.package.package == package.package
+                        && source.package.version == package.version
+                        && source.package.source.registry == package.source.registry
+                        && source.package.source.checksum == package.source.checksum
+                });
+                if known {
+                    continue;
+                }
+                let owner = if extension_paths.as_ref().is_some_and(|paths| {
+                    let prefix = format!("{}/", package.source.relative_root);
+                    paths.iter().any(|path| path == &package.source.relative_root || path.starts_with(&prefix))
+                }) {
+                    OvenProjectInspectionSourceOwner::Constituent { index }
+                } else if let Some(base_index) = base_index {
+                    OvenProjectInspectionSourceOwner::Constituent { index: base_index }
+                } else {
+                    OvenProjectInspectionSourceOwner::Constituent { index }
+                };
+                registry_sources.push(OvenProjectInspectionSource {
+                    package: package.clone(),
+                    owner,
+                });
+            }
+            index
+        };
+        if !test_provider_constituents
+            .iter()
+            .any(|provider: &OvenProjectInspectionTestProviderConstituent| {
+                provider.constituent_index == constituent_index
+            })
+        {
+            test_provider_constituents.push(OvenProjectInspectionTestProviderConstituent {
+                dependency_key: dependency_key.clone(),
+                constituent_index,
+            });
+        }
+    }
     registry_sources.sort_by(|left, right| {
         (
             &left.package.package,
@@ -276,6 +414,7 @@ pub fn publish_project_inspection_authority(
             )
             .map(|dependency_roots| OvenProjectInspectionTestDependencyEnvelope {
                 constituent_index,
+                provider_constituents: test_provider_constituents,
                 dependency_surface_digest: test_dependency_envelope.dependency_surface_digest.clone(),
                 dependency_roots,
             })

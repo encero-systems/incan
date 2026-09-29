@@ -297,6 +297,11 @@ fn baked_provider_reconciles_a_shared_registry_unit_issue1241() -> TestResult {
         "src/lib.incn",
         "from pub::catalog import catalog_value\nfrom rust::sha2 import Sha256\n\npub def combined_value() -> int:\n    handle: Sha256 = Sha256.default()\n    return catalog_value() + 2\n",
     )?;
+    write_fixture_file(
+        &consumer,
+        "tests/test_shared_registry.incn",
+        "from pub::catalog import catalog_value\nfrom std.testing import assert_eq\n\n\ndef test_shared_registry_closure() -> None:\n    assert_eq(catalog_value(), 40)\n",
+    )?;
     let consumer_bake = bake_with_home(&consumer, &home)?;
     assert_success(&consumer_bake, "consumer bake over a compatible shared registry unit");
     assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
@@ -304,6 +309,9 @@ fn baked_provider_reconciles_a_shared_registry_unit_issue1241() -> TestResult {
     let mut build = configured_incan_command(&consumer, &["build", "--lib", "--locked"]);
     build.env_remove("CARGO").env("INCAN_HOME", &home);
     assert_success(&build.output()?, "normal locked consumer library build without Cargo");
+    let mut test = configured_incan_command(&consumer, &["test", "tests", "--locked"]);
+    test.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(&test.output()?, "normal locked consumer tests without Cargo");
     assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
     Ok(())
 }

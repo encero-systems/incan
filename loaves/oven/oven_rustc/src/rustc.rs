@@ -1342,6 +1342,45 @@ pub fn validate_project_inspection_authority_payload(
                 message: "must name a debug-profile dependency constituent".to_string(),
             });
         }
+        let mut role_indices = vec![envelope.constituent_index];
+        let mut provider_keys = BTreeSet::new();
+        for provider in &envelope.provider_constituents {
+            if provider.dependency_key.trim().is_empty() || !provider_keys.insert(provider.dependency_key.as_str()) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider constituent keys must be non-empty and unique".to_string(),
+                });
+            }
+            if role_indices.contains(&provider.constituent_index) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "must not repeat a role-bearing constituent".to_string(),
+                });
+            }
+            let Some(OvenProjectInspectionConstituent::Stored {
+                artifact_kind,
+                receipt: provider_receipt,
+                base_loaf_identity,
+                ..
+            }) = payload.constituents.get(provider.constituent_index)
+            else {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider role must name one exact stored direct-Rustc constituent".to_string(),
+                });
+            };
+            let valid_shape = matches!(
+                (artifact_kind, base_loaf_identity),
+                (OvenArtifactKind::DirectRustcPlan, None) | (OvenArtifactKind::ProjectPayload, Some(_))
+            );
+            if !valid_shape || provider_receipt.intent != receipt.intent {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider role has a different kind, base, or build intent".to_string(),
+                });
+            }
+            role_indices.push(provider.constituent_index);
+        }
         for (alias, root) in &envelope.dependency_roots {
             validate_rust_identifier(alias)?;
             let (dependency_digest, locked) = match root {
@@ -10541,6 +10580,7 @@ fi
         });
         payload.test_dependency_envelope = Some(OvenProjectInspectionTestDependencyEnvelope {
             constituent_index: 1,
+            provider_constituents: Vec::new(),
             dependency_surface_digest: digest_bytes(b"normal+dev dependency surface"),
             dependency_roots: BTreeMap::from([(
                 "serde_json".to_string(),
@@ -10571,6 +10611,34 @@ fi
                 .as_deref(),
             Some("`missing_alias` has no sealed root")
         );
+
+        payload.constituents.push(OvenProjectInspectionConstituent::Stored {
+            identity: "sha256:test-provider-direct-plan".to_string(),
+            artifact_kind: OvenArtifactKind::DirectRustcPlan,
+            receipt: debug_receipt.clone(),
+            base_loaf_identity: None,
+        });
+        payload
+            .test_dependency_envelope
+            .as_mut()
+            .ok_or("test dependency role disappeared")?
+            .provider_constituents
+            .push(OvenProjectInspectionTestProviderConstituent {
+                dependency_key: "provider_fixture".to_string(),
+                constituent_index: 2,
+            });
+        validate_project_inspection_authority_payload(&payload)?;
+        let mut repeated_role = payload.clone();
+        repeated_role
+            .test_dependency_envelope
+            .as_mut()
+            .ok_or("test dependency role disappeared")?
+            .provider_constituents[0]
+            .constituent_index = 1;
+        let Err(error) = validate_project_inspection_authority_payload(&repeated_role) else {
+            return Err("authority accepted one constituent in two test dependency roles".into());
+        };
+        assert!(error.to_string().contains("must not repeat a role-bearing constituent"));
 
         let mut direct_plan_payload = payload.clone();
         direct_plan_payload.constituents[1] = OvenProjectInspectionConstituent::Stored {
