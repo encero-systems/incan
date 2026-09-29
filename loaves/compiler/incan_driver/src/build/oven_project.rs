@@ -564,9 +564,9 @@ pub fn prepare_oven_project(
     // registry authority for a consumer-declared dependency. With nothing consumer-declared there is nothing for it
     // to usurp, and composing the sealed package closures is the route that links a single provider's registry
     // closure once (#1469); rebuilding the consumer against the base Loaf and relinking the provider's closure
-    // beside it refused `itoa` twice. A diamond whose providers each compiled one shared unit for themselves is
-    // the shape neither route builds: rustc refuses the colliding `StableCrateId`s, and the reconciliation that
-    // would keep one compiled instance of every shared registry unit across sealed closures is #1241.
+    // beside it refused `itoa` twice. A diamond whose providers each compiled one shared registry unit is composed
+    // by portable selected-unit identity: one provider payload remains authoritative and a semantic mismatch fails
+    // closed before Rustc can observe colliding `StableCrateId`s.
     let consumer_declares_registry_roots = !oven_plan_dependencies.is_empty();
     let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
         || (oven_plan_mode == OvenProjectPlanMode::ExplicitBake && !consumer_declares_registry_roots)

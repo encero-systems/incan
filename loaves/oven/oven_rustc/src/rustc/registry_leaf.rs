@@ -89,16 +89,10 @@ impl OvenRegistryLeafAuthority {
     #[must_use]
     /// Join registry-leaf catalogs from independently sealed sources into one lookup surface.
     ///
-    /// This does not itself decide compatibility: [`select_sealed_registry_leaf`]'s existing candidate resolution
-    /// already tolerates a joined catalog naming the same package at different versions (it picks the
-    /// requirement-matching highest one), and separately fails closed if a *specific requested* package/version
-    /// resolves to more than one distinct compiled artifact. That per-lookup check is what actually protects against
-    /// admitting two incompatible compiled instances of a shared package (most dangerously an async runtime such as
-    /// `tokio`, where a runtime object built through one compiled instance becomes invisible to code compiled
-    /// against another) -- it is precise about only the package actually being resolved, unlike a blanket
-    /// pre-validation of every entry a joined catalog happens to carry, most of which are never looked up together.
-    /// Joining catalogs here is therefore safe for any sources whose own artifacts are independently receipt-bound;
-    /// it does not require the caller to have already reconciled a shared compiled closure.
+    /// This does not itself decide compatibility. Callers reconcile shared package facts before joining catalogs,
+    /// and [`select_sealed_registry_leaf`] verifies that every requirement-matching copy is either one portable
+    /// selected unit or byte-exact legacy evidence. Input order is authority order: provider catalogs may therefore
+    /// precede a consumer catalog so caller-owned dependents compile against the already-sealed provider unit.
     pub fn aggregate(authorities: impl IntoIterator<Item = Self>) -> Self {
         Self {
             entries: authorities
@@ -122,12 +116,27 @@ impl OvenRegistryLeafAuthority {
     /// against real evidence: linking a provider's own DataFusion/Tokio closure into the same binary as the SDK's
     /// own Tokio-based `block_on` support (RFC 048/114) is exactly what produced a real "no reactor running" panic
     /// at runtime, discovered as two distinct `tokio` symbol-mangled crate instances in the same linked executable.
-    /// A build-time refusal here is far cheaper than that panic. This is deliberately conservative: it compares by
-    /// digest, so a package the provider and consumer resolved to the exact same compiled bytes (a legitimate,
-    /// harmless case) is never rejected -- only a genuine, byte-distinct duplicate is.
+    /// A build-time refusal here is far cheaper than that panic. Without a second authority this deliberately
+    /// conservative compatibility check remains byte-exact; callers that have portable RFC 124 selected-unit
+    /// identities use [`Self::first_conflicting_package_with_reconciled_authority`] instead.
     pub fn first_conflicting_package_with(
         &self,
         plan: &OvenRustcArtifactPlan,
+    ) -> Result<Option<String>, OvenRustcError> {
+        self.first_conflicting_package_with_reconciled_authority(plan, None)
+    }
+
+    /// Return the first named plan extern that cannot be reconciled through another sealed unit authority.
+    ///
+    /// `reconciled` is the consumer authority that supplied the plan. When it carries the same portable selected-unit
+    /// identity and semantic facts as this provider leaf, both records denote one RFC 124 unit even if independent
+    /// publisher staging made their payload digests differ. The plan may keep its already compiled representative;
+    /// every caller-owned dependent compiled in this command is then built against that representative. A legacy
+    /// leaf without an identity, or any semantic mismatch, remains subject to the byte-exact refusal.
+    pub fn first_conflicting_package_with_reconciled_authority(
+        &self,
+        plan: &OvenRustcArtifactPlan,
+        reconciled: Option<&Self>,
     ) -> Result<Option<String>, OvenRustcError> {
         for entry in &self.entries {
             let Some((_, existing_path)) = plan
@@ -143,6 +152,13 @@ impl OvenRegistryLeafAuthority {
                 "registry leaf",
             )?;
             if fs::canonicalize(&candidate_path).ok().as_deref() == fs::canonicalize(existing_path).ok().as_deref() {
+                continue;
+            }
+            if reconciled
+                .map(|authority| authority.has_compatible_unit_at_path(&entry.leaf, existing_path))
+                .transpose()?
+                .unwrap_or(false)
+            {
                 continue;
             }
             let existing_bytes = fs::read(existing_path).map_err(|source| OvenRustcError::Io {
@@ -163,28 +179,178 @@ impl OvenRegistryLeafAuthority {
     /// checks was never a named extern of either compile; both copies loaded purely through `-L dependency=...`
     /// metadata search from their respective dependents. Whenever the consumer's dependents and a provider's
     /// dependents both end up in one link (which is always true for a caller-owned provider: the SDK runtime and the
-    /// provider library are both linked), a same-version/different-bytes package in the two catalogs means two
-    /// compiled instances of one crate in one binary. Two *different versions* of a package are deliberate, ordinary
-    /// Cargo semver coexistence and are not flagged; only a same-version byte divergence -- two independent compiles
-    /// of identical source -- is the anomaly this reports. Return the first diverging shared package together with the
-    /// artifact root of the copy `other` pins.
+    /// provider library are both linked), incompatible records for one package version mean the closures cannot
+    /// share one compiled unit. Different versions remain distinct Cargo units. Return the first diverging shared
+    /// package together with the artifact root of the copy `other` pins.
     ///
     /// The package name alone tells a reader what conflicts but not what to change. The pinning artifact root names
     /// the already-compiled contributor whose copy cannot move, which is the difference between "two versions of
     /// this crate exist" and "this provider was built against that one and would have to be rebuilt to agree".
     pub fn first_diverging_shared_package_pin(&self, other: &Self) -> Option<(String, PathBuf)> {
+        self.first_diverging_shared_package_pin_detail(other)
+            .map(|(package, pinned_by, _)| (package, pinned_by))
+    }
+
+    /// Return the first shared package as [`Self::first_diverging_shared_package_pin`] does, with a description of how
+    /// this authority's unit and `other`'s differ: both selected-unit identities and every semantic fact that
+    /// disagrees, so a refusal names what would have to be aligned.
+    pub fn first_diverging_shared_package_pin_detail(&self, other: &Self) -> Option<(String, PathBuf, String)> {
         for entry in &self.entries {
             for candidate in &other.entries {
                 if entry.leaf.package == candidate.leaf.package
                     && entry.leaf.version == candidate.leaf.version
-                    && entry.leaf.artifact.digest != candidate.leaf.artifact.digest
+                    && !registry_units_are_compatible(&entry.leaf, &candidate.leaf)
+                    && !registry_units_are_byte_equivalent(&entry.leaf, &candidate.leaf)
                 {
-                    return Some((entry.leaf.package.clone(), candidate.artifact_root.clone()));
+                    let mut divergence = registry_unit_divergence(&entry.leaf, &candidate.leaf);
+                    let shared = self.other_diverging_shared_packages(other, &entry.leaf.package);
+                    if !shared.is_empty() {
+                        divergence.push_str(&format!(
+                            "; the two closures also carry these packages at different units: {}",
+                            shared.join(", ")
+                        ));
+                    }
+                    return Some((entry.leaf.package.clone(), candidate.artifact_root.clone(), divergence));
                 }
             }
         }
         None
     }
+
+    /// Name every package other than `except` that this authority and `other` both carry at different units: another
+    /// version, or the same version at an incompatible unit with its two feature sets.
+    ///
+    /// A leaf's selected-unit identity binds its dependency graph, so two units of one package that record the same
+    /// facts differ through a dependency; this names the dependency to unify (`libc 0.2.189 features ["std"] vs
+    /// ["extra_traits", "std"]`) rather than only the package that exposed the split.
+    fn other_diverging_shared_packages(&self, other: &Self, except: &str) -> Vec<String> {
+        let mut named = Vec::new();
+        for entry in &self.entries {
+            if entry.leaf.package == except {
+                continue;
+            }
+            for candidate in &other.entries {
+                if entry.leaf.package != candidate.leaf.package || entry.leaf.domain != candidate.leaf.domain {
+                    continue;
+                }
+                let description = if entry.leaf.version != candidate.leaf.version {
+                    format!(
+                        "{} {} vs {}",
+                        entry.leaf.package, entry.leaf.version, candidate.leaf.version
+                    )
+                } else if !registry_units_are_compatible(&entry.leaf, &candidate.leaf)
+                    && !registry_units_are_byte_equivalent(&entry.leaf, &candidate.leaf)
+                {
+                    format!(
+                        "{} {} features {:?} vs {:?}",
+                        entry.leaf.package, entry.leaf.version, entry.leaf.features, candidate.leaf.features
+                    )
+                } else {
+                    continue;
+                };
+                if !named.contains(&description) {
+                    named.push(description);
+                }
+            }
+        }
+        named.sort();
+        named
+    }
+
+    /// Return whether `path` is this authority's selected representative of the same portable unit as `leaf`.
+    fn has_compatible_unit_at_path(&self, leaf: &OvenRustcRegistryLeaf, path: &Path) -> Result<bool, OvenRustcError> {
+        let selected_path = fs::canonicalize(path).map_err(|source| OvenRustcError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        for candidate in &self.entries {
+            if !registry_units_are_compatible(&candidate.leaf, leaf) {
+                continue;
+            }
+            let candidate_path = safe_artifact_path(
+                &candidate.artifact_root,
+                &candidate.leaf.artifact.relative_path,
+                "registry leaf",
+            )?;
+            let candidate_path = fs::canonicalize(&candidate_path).map_err(|source| OvenRustcError::Io {
+                path: candidate_path,
+                source,
+            })?;
+            if candidate_path == selected_path {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// Describe how two sealed units of one package and version differ, for a refusal: both selected-unit identities,
+/// then each semantic fact the two leaves record differently (domain, crate kind, crate name, features, source).
+fn registry_unit_divergence(ours: &OvenRustcRegistryLeaf, theirs: &OvenRustcRegistryLeaf) -> String {
+    let identity = |leaf: &OvenRustcRegistryLeaf| {
+        leaf.selected_unit_identity
+            .clone()
+            .unwrap_or_else(|| "none".to_string())
+    };
+    let mut differing = Vec::new();
+    if ours.domain != theirs.domain {
+        differing.push(format!("domain {:?} vs {:?}", ours.domain, theirs.domain));
+    }
+    if ours.crate_kind != theirs.crate_kind {
+        differing.push(format!("crate kind {:?} vs {:?}", ours.crate_kind, theirs.crate_kind));
+    }
+    if ours.crate_name != theirs.crate_name {
+        differing.push(format!("crate name `{}` vs `{}`", ours.crate_name, theirs.crate_name));
+    }
+    if ours.features != theirs.features {
+        differing.push(format!("features {:?} vs {:?}", ours.features, theirs.features));
+    }
+    if ours.source != theirs.source {
+        differing.push(format!("source {:?} vs {:?}", ours.source, theirs.source));
+    }
+    if differing.is_empty() {
+        differing.push(
+            "no recorded fact besides the selected-unit identity, which binds the dependency graph, target intent and \
+             compiler inputs"
+                .to_string(),
+        );
+    }
+    format!(
+        "this closure's unit {} and the provider's unit {} differ in {}",
+        identity(ours),
+        identity(theirs),
+        differing.join("; ")
+    )
+}
+
+/// Return whether two sealed leaves denote one interchangeable RFC 124 unit.
+///
+/// The selected-unit identity is the portable compiler-input key available on publisher-sealed registry leaves. It
+/// excludes physical staging paths while binding the source graph, features, domain, target intent and dependencies.
+/// Comparing the explicit leaf semantics as well makes a malformed catalog fail closed instead of trusting a copied
+/// identity string whose surrounding facts disagree.
+fn registry_units_are_compatible(left: &OvenRustcRegistryLeaf, right: &OvenRustcRegistryLeaf) -> bool {
+    left.selected_unit_identity.is_some()
+        && left.selected_unit_identity == right.selected_unit_identity
+        && left.package == right.package
+        && left.version == right.version
+        && left.crate_name == right.crate_name
+        && left.domain == right.domain
+        && left.crate_kind == right.crate_kind
+        && left.features == right.features
+        && left.source == right.source
+}
+
+/// Return whether legacy records prove compatibility through identical semantic facts and compiled bytes.
+fn registry_units_are_byte_equivalent(left: &OvenRustcRegistryLeaf, right: &OvenRustcRegistryLeaf) -> bool {
+    left.package == right.package
+        && left.version == right.version
+        && left.crate_name == right.crate_name
+        && left.domain == right.domain
+        && left.crate_kind == right.crate_kind
+        && left.features == right.features
+        && left.source == right.source
+        && left.artifact.digest == right.artifact.digest
 }
 
 /// One digest-verified registry leaf plus the plan directories Rustc may use solely for its transitive metadata.
@@ -357,12 +523,7 @@ pub fn select_sealed_registry_leaf<'a>(
                 .then_some((version, entry))
         })
         .collect::<Vec<_>>();
-    candidates.sort_by(|(left_version, left), (right_version, right)| {
-        right_version
-            .cmp(left_version)
-            .then_with(|| left.leaf.artifact.relative_path.cmp(&right.leaf.artifact.relative_path))
-            .then_with(|| left.artifact_root.cmp(&right.artifact_root))
-    });
+    candidates.sort_by(|(left_version, _), (right_version, _)| right_version.cmp(left_version));
     // A suite ships separate debug and release Loaf catalogs. Prefer the matching profile whenever its sealed
     // catalog contains this dependency; fixtures use short synthetic paths, so retain the complete catalog when no
     // profile-qualified artifact exists.
@@ -382,18 +543,12 @@ pub fn select_sealed_registry_leaf<'a>(
             ),
         });
     };
-    let selected_artifact_name = Path::new(&selected.leaf.artifact.relative_path)
-        .file_name()
-        .and_then(|name| name.to_str());
     let same_compilation = candidates
         .iter()
         .filter(|(version, _)| version == &selected_version)
         .all(|(_, entry)| {
-            entry.leaf.crate_name == selected.leaf.crate_name
-                && Path::new(&entry.leaf.artifact.relative_path)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    == selected_artifact_name
+            registry_units_are_compatible(&entry.leaf, &selected.leaf)
+                || registry_units_are_byte_equivalent(&entry.leaf, &selected.leaf)
         });
     if !same_compilation {
         return Err(OvenRustcError::InvalidInput {
@@ -414,11 +569,10 @@ pub fn resolve_sealed_registry_leaf_with_search_paths(
 ) -> Result<ResolvedSealedRegistryLeaf, OvenRustcError> {
     let selected = select_sealed_registry_leaf(dependency, authority, profile)?;
     let package_name = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
-    // A Cargo publisher can retain byte-distinct copies of one logical crate across independently sealed native
-    // units. Rustc's metadata-bearing artifact name is the compilation identity available at this boundary. Once
-    // the requested profile, crate name, version, features, and artifact name agree, choose the canonical sorted
-    // copy rather than turning equivalent receipt-bound copies into a false ambiguity. A different artifact name
-    // remains fail-closed above.
+    // A Cargo publisher can retain byte-distinct payloads for one portable selected unit across independently staged
+    // native closures. The RFC 124 identity, not an artifact filename containing staging-sensitive metadata, is the
+    // authority for choosing one representative. Legacy records require byte-exact semantic evidence;
+    // different portable identities remain fail-closed above.
     let artifact = &selected.leaf.artifact;
     let artifact_path = safe_artifact_path(&selected.artifact_root, &artifact.relative_path, "registry leaf")?;
     let bytes = fs::read(&artifact_path).map_err(|source| OvenRustcError::Io {
