@@ -455,6 +455,57 @@ impl TypeChecker {
             .then_some(name.as_str())
     }
 
+    /// Whether the checker sees every method the bounds of the active type parameter `placeholder_name` give it: each
+    /// bound names a trait whose declaration it has, or a `CallableN` trait (#1561).
+    ///
+    /// A bound on a Rust trait, or on a trait the checker cannot resolve, may declare methods the checker does not
+    /// know, so a method call through such a parameter is left to the Rust compiler.
+    pub(in crate::typechecker) fn active_type_param_bounds_are_visible(&self, placeholder_name: &str) -> bool {
+        let Some(bounds) = self
+            .current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(placeholder_name))
+        else {
+            return false;
+        };
+        bounds.iter().all(|bound| {
+            self.lookup_trait_adoption_info(bound).is_some() || self.callable_trait_for_bound(bound).is_some()
+        })
+    }
+
+    /// Whether a trait a bound of the active type parameter `placeholder_name` names, or one of its supertraits,
+    /// declares a member called `member`: a method, a method alias or a property (#1561).
+    ///
+    /// A method call through such a bound that does not resolve failed for a reason reported where it arises (two
+    /// supertraits that disagree on the member), not because no bound declares it.
+    pub(in crate::typechecker) fn active_type_param_bound_declares_member(
+        &self,
+        placeholder_name: &str,
+        member: &str,
+    ) -> bool {
+        let Some(bounds) = self
+            .current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(placeholder_name))
+        else {
+            return false;
+        };
+        let declares = |info: &crate::symbols::TraitInfo| {
+            info.methods.contains_key(member)
+                || info.method_aliases.contains_key(member)
+                || info.properties.contains_key(member)
+        };
+        bounds.iter().any(|bound| {
+            self.lookup_trait_adoption_info(bound).is_some_and(declares)
+                || self
+                    .semantic_supertrait_closure(&bound.name)
+                    .iter()
+                    .any(|(name, _)| self.lookup_semantic_trait_info(name).is_some_and(declares))
+        })
+    }
+
     /// Check whether an active generic placeholder already carries the bound required by a nested generic call.
     pub(in crate::typechecker) fn active_type_param_satisfies_bound_info(
         &self,

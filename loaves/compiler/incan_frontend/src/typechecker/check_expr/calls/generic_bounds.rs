@@ -7,6 +7,7 @@ use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
+use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::ConstructorId;
@@ -77,7 +78,9 @@ impl TypeChecker {
     /// type-parameter bounds.
     ///
     /// Bounds and hashed type parameters (#1758) are checked against what the call instantiates the callee with: the
-    /// inferred bindings, with any binding a literal argument leaves open closed from the literal's elements.
+    /// inferred bindings, with any binding a literal argument leaves open closed from the literal's elements, and the
+    /// side an `Ok(...)` or `Err(...)` argument leaves open settled. The arguments that bind one type parameter bind it
+    /// to one type, and a bounded type parameter no argument fixes is refused (#1561).
     pub(in crate::typechecker::check_expr::calls) fn validate_function_call(
         &mut self,
         func_name: &str,
@@ -137,26 +140,38 @@ impl TypeChecker {
             &mut type_bindings,
         );
         self.infer_type_param_bindings_from_source_callables(&info.type_param_bound_details, &mut type_bindings);
-        let instantiation =
+        let arguments = Self::arguments_with_parameter_types(&params_with_explicit, args);
+        self.unify_argument_type_bindings(&info.type_params, &arguments, &mut type_bindings);
+        let mut instantiation =
             self.bindings_closed_by_literal_arguments(&info.type_params, &params_with_explicit, args, &type_bindings);
         if self.errors.len() == errors_before_call {
-            let closed = self.retype_literal_arguments_at_instantiation(
+            self.close_bindings_from_literal_arguments(
                 func_name,
                 &info.type_params,
                 &params_with_explicit,
                 args,
                 &instantiation,
+                &mut type_bindings,
             );
-            for (type_param, ty) in closed {
-                if type_bindings
-                    .get(&type_param)
-                    .is_none_or(|bound| is_open_binding(bound, &info.type_params))
-                {
-                    type_bindings.insert(type_param, ty);
-                }
-            }
         }
         self.settle_constructor_argument_sides(&info.type_params, &params_with_explicit, args, &mut type_bindings);
+        Self::close_instantiation_from_bindings(&mut instantiation, &type_bindings, &info.type_params);
+        if self.errors.len() == errors_before_call {
+            self.refuse_conflicting_type_arguments(func_name, &info.type_params, &arguments, &type_bindings);
+        }
+        if self.errors.len() == errors_before_call {
+            self.record_argument_destinations_at_bindings(&info.type_params, &arguments, &type_bindings);
+        }
+        if self.errors.len() == errors_before_call && explicit_type_args.is_empty() {
+            self.refuse_bounded_type_params_left_open(
+                func_name,
+                &info.type_params,
+                &info.type_param_bound_details,
+                &arguments,
+                &instantiation,
+                call_span,
+            );
+        }
         let callee_identity = self.called_function_identity(func_name);
         self.refuse_unhashable_type_arguments(
             func_name,
@@ -199,6 +214,29 @@ impl TypeChecker {
         }
 
         substitute_resolved_type(&info.return_type, &type_bindings)
+    }
+
+    /// Retype a generic call's literal arguments at its instantiation (see
+    /// [`Self::retype_literal_arguments_at_instantiation`]) and close each binding the arguments left open with the
+    /// type the literals give it, for a function and a generic method alike (#1561).
+    fn close_bindings_from_literal_arguments(
+        &mut self,
+        callee: &str,
+        type_params: &[String],
+        params: &[CallableParam],
+        args: &[CallArg],
+        instantiation: &std::collections::HashMap<String, ResolvedType>,
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        let closed = self.retype_literal_arguments_at_instantiation(callee, type_params, params, args, instantiation);
+        for (type_param, ty) in closed {
+            if bindings
+                .get(&type_param)
+                .is_none_or(|bound| is_open_binding(bound, type_params))
+            {
+                bindings.insert(type_param, ty);
+            }
+        }
     }
 
     /// Give each literal argument of a generic call the type its parameter has in the instantiation the call made, or
@@ -353,6 +391,255 @@ impl TypeChecker {
         }
     }
 
+    /// Pair each argument with the type of the parameter it binds, as [`Self::arguments_with_parameters`] pairs them,
+    /// leaving out an argument that binds no parameter.
+    fn arguments_with_parameter_types<'a, 'p>(
+        params: &'p [CallableParam],
+        args: &'a [CallArg],
+    ) -> Vec<(&'a Spanned<Expr>, &'p ResolvedType)> {
+        Self::arguments_with_parameters(params, args)
+            .into_iter()
+            .filter_map(|(expr, param)| param.map(|param| (expr, &param.ty)))
+            .collect()
+    }
+
+    /// Close each binding of `instantiation` that is still open with the call's own binding for that type parameter,
+    /// once the call has settled the side an `Ok(...)` or `Err(...)` argument leaves open, so the bound checks hold
+    /// the type the call is built with (#1561).
+    fn close_instantiation_from_bindings(
+        instantiation: &mut std::collections::HashMap<String, ResolvedType>,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        type_params: &[String],
+    ) {
+        for (type_param, ty) in bindings {
+            let open = instantiation
+                .get(type_param)
+                .is_none_or(|bound| is_open_binding(bound, type_params));
+            if open && !is_open_binding(ty, type_params) {
+                instantiation.insert(type_param.clone(), ty.clone());
+            }
+        }
+    }
+
+    /// Return, in argument order, the closed type each argument binds the callee's type parameter `type_param` to,
+    /// read from the argument's recorded type against the type of the parameter it is passed to.
+    ///
+    /// An argument whose type leaves the parameter open (`[]` against `list[T]`, the side an `Err(...)` leaves open)
+    /// binds nothing, and so does one whose binding names a type the checker does not know (an unresolved import, a
+    /// Rust type), whose compatibility is left to the Rust compiler.
+    fn argument_type_param_bindings<'a>(
+        &self,
+        type_param: &str,
+        type_params: &[String],
+        arguments: &[(&'a Spanned<Expr>, &ResolvedType)],
+    ) -> Vec<(&'a Spanned<Expr>, ResolvedType)> {
+        arguments
+            .iter()
+            .filter_map(|(expr, param_ty)| {
+                let arg_ty = self.type_info.expr_type(expr.span)?;
+                let mut inferred = std::collections::HashMap::new();
+                self.infer_type_param_bindings(param_ty, arg_ty, &mut inferred);
+                let bound = inferred.remove(type_param)?;
+                (!is_open_binding(&bound, type_params) && !self.names_type_the_checker_does_not_know(&bound))
+                    .then_some((*expr, bound))
+            })
+            .collect()
+    }
+
+    /// Whether `ty` is unknown or names, at any depth, a type the checker has no declaration for: an unknown type, a
+    /// Rust path, or a name that is neither a declared type, a trait nor a type parameter in scope.
+    fn names_type_the_checker_does_not_know(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Unknown | ResolvedType::RustPath(_) => true,
+            ResolvedType::Named(name) => {
+                !self.is_generic_placeholder_type(ty)
+                    && self.lookup_semantic_type_info(name).is_none()
+                    && self.lookup_semantic_trait_info(name).is_none()
+            }
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                args.iter().any(|arg| self.names_type_the_checker_does_not_know(arg))
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => self.names_type_the_checker_does_not_know(inner),
+            ResolvedType::FrozenDict(key, value) => {
+                self.names_type_the_checker_does_not_know(key) || self.names_type_the_checker_does_not_know(value)
+            }
+            ResolvedType::Function(params, ret) => {
+                params
+                    .iter()
+                    .any(|param| self.names_type_the_checker_does_not_know(&param.ty))
+                    || self.names_type_the_checker_does_not_know(ret)
+            }
+            _ => false,
+        }
+    }
+
+    /// Bind each of the callee's type parameters that the arguments bind to different types to the one type every
+    /// other binding widens to, when there is one (#1561).
+    ///
+    /// Argument checking keeps a parameter's first binding when a later argument's type is compatible with it, and
+    /// leaves the parameter unknown when it is not, so `pick(small, wide)` for an `i8` and an `int` found no type for
+    /// `T` while `pick(wide, small)` bound it to `int`. The call's binding is the argument binding that every other
+    /// one is compatible with, following the numeric assignment rules of RFC 009, so both orders bind `T` to `int`.
+    /// An argument built from literals alone takes its parameter's type in the call (`1` and `2.5` are `f32` beside an
+    /// `f32` value), so it binds a parameter only through the literal retyping that follows. A binding every argument
+    /// is compatible with is kept, and so is the binding of a parameter that fewer than two arguments bind, which
+    /// argument checking settled; arguments that do not unify are left to [`Self::refuse_conflicting_type_arguments`].
+    pub(in crate::typechecker::check_expr::calls) fn unify_argument_type_bindings(
+        &self,
+        type_params: &[String],
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        for type_param in type_params {
+            let candidates = self
+                .argument_type_param_bindings(type_param, type_params, arguments)
+                .into_iter()
+                .filter(|(expr, _)| !is_built_from_literals(&expr.node))
+                .map(|(_, ty)| ty)
+                .collect::<Vec<_>>();
+            if candidates.len() < 2 {
+                continue;
+            }
+            let current_unifies = bindings.get(type_param).is_some_and(|current| {
+                !is_open_binding(current, type_params)
+                    && candidates
+                        .iter()
+                        .all(|candidate| self.types_compatible(candidate, current))
+            });
+            if current_unifies {
+                continue;
+            }
+            if let Some(unifier) = candidates.iter().find(|unifier| {
+                candidates
+                    .iter()
+                    .all(|candidate| self.types_compatible(candidate, unifier))
+            }) {
+                bindings.insert(type_param.clone(), unifier.clone());
+            }
+        }
+    }
+
+    /// Refuse a call whose arguments bind one of the callee's type parameters to types that do not unify (#1561).
+    ///
+    /// `take(1, "s")` for `def take[T](x: T, y: T)` binds `T` to `str` from `"s"`, and the `1` is not a `str`; the
+    /// generated call is refused by rustc. Each argument's binding must be compatible with the call's binding for the
+    /// parameter, which [`Self::unify_argument_type_bindings`] and the literal retyping chose, so a narrower integer
+    /// value widens to a wider one and an integer literal takes a float parameter's type (RFC 009). One argument is
+    /// reported per type parameter, at the first that does not fit.
+    pub(in crate::typechecker::check_expr::calls) fn refuse_conflicting_type_arguments(
+        &mut self,
+        callee: &str,
+        type_params: &[String],
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) {
+        for type_param in type_params {
+            let argument_bindings = self.argument_type_param_bindings(type_param, type_params, arguments);
+            let call_binding = bindings
+                .get(type_param)
+                .filter(|bound| !is_open_binding(bound, type_params))
+                .or_else(|| argument_bindings.first().map(|(_, ty)| ty))
+                .filter(|bound| !self.names_type_the_checker_does_not_know(bound));
+            let Some(call_binding) = call_binding.cloned() else {
+                continue;
+            };
+            if let Some((expr, found)) = argument_bindings
+                .iter()
+                .find(|(_, ty)| !self.types_compatible(ty, &call_binding))
+            {
+                self.errors.push(errors::conflicting_type_argument_bindings(
+                    callee,
+                    type_param,
+                    &call_binding.to_string(),
+                    &found.to_string(),
+                    expr.span,
+                ));
+            }
+        }
+    }
+
+    /// Record, for each argument whose parameter type names one of the callee's type parameters, the type that
+    /// parameter has in the call as the argument's destination, when the argument's own type widens to it (#1561).
+    ///
+    /// Once the call binds `T` to `int` for an `i8` and an `int` argument, the `i8` value is written to an `int`
+    /// place, so lowering widens it as it widens a value written to an `int` field (RFC 009); the generated call
+    /// otherwise passes two Rust types for one type parameter. An argument built from literals alone was already
+    /// checked against its instantiated parameter type.
+    pub(in crate::typechecker::check_expr::calls) fn record_argument_destinations_at_bindings(
+        &mut self,
+        type_params: &[String],
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) {
+        for (expr, param_ty) in arguments {
+            if first_open_type_param(param_ty, type_params).is_none() || is_built_from_literals(&expr.node) {
+                continue;
+            }
+            let destination = substitute_resolved_type(param_ty, bindings);
+            if first_open_type_param(&destination, type_params).is_some() {
+                continue;
+            }
+            let Some(arg_ty) = self.type_info.expr_type(expr.span).cloned() else {
+                continue;
+            };
+            if arg_ty != destination {
+                self.record_value_destination_if_compatible(expr.span, &arg_ty, &destination);
+            }
+        }
+    }
+
+    /// Refuse a call that leaves a type parameter with a declared bound open: no argument fixes it, since every
+    /// argument passed for a parameter that names it is built from literals that do not say what it is (`None`) or
+    /// there is none, and the expected type does not name it either (#1561).
+    ///
+    /// The bound says what the callee needs of the type argument, and such a call names no type argument for the bound
+    /// to hold of: `show(None)` for `def show[T with Display](o: Option[T])` and `make()` for
+    /// `def make[T with Display]() -> list[T]` are refused by rustc for want of a type. Only a bound the checker judges
+    /// counts: a trait whose declaration it has. A Rust capability marker (`Send`) or a Rust trait is left to the
+    /// Rust compiler, which may fix the parameter from what the checker does not model (a future's output). An
+    /// argument that fixes the parameter, a constructor argument whose open side the call settled, and explicit type
+    /// arguments, which the explicit-argument path checks, leave nothing open.
+    fn refuse_bounded_type_params_left_open(
+        &mut self,
+        callee: &str,
+        type_params: &[String],
+        bound_details: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        call_span: Span,
+    ) {
+        for type_param in type_params {
+            let Some(bound) = bound_details.get(type_param).and_then(|bounds| {
+                bounds.iter().find(|bound| {
+                    !bound.inferred
+                        && !is_rust_capability_bound(Self::type_bound_source_name(bound))
+                        && self.lookup_trait_adoption_info(bound).is_some()
+                })
+            }) else {
+                continue;
+            };
+            let open = bindings
+                .get(type_param)
+                .is_none_or(|ty| is_open_binding(ty, type_params));
+            let only_literals_name_it = arguments.iter().all(|(expr, param_ty)| {
+                first_open_type_param(param_ty, std::slice::from_ref(type_param)).is_none()
+                    || is_built_from_literals(&expr.node)
+            });
+            if open && only_literals_name_it {
+                self.errors.push(errors::bounded_type_param_left_open(
+                    callee,
+                    type_param,
+                    &self.type_bound_display(bound, bindings),
+                    call_span,
+                ));
+            }
+        }
+    }
+
     /// Side `side` (0 for success, 1 for error) of `ty` when it is a `Result`.
     fn result_side_of(ty: &ResolvedType, side: usize) -> Option<&ResolvedType> {
         match ty {
@@ -468,6 +755,8 @@ impl TypeChecker {
     ///   expected return type to bind still-open method type parameters before argument checking.
     /// - Validates value arguments against the specialized formals, then runs [`Self::infer_type_param_bindings`] so
     ///   remaining type parameters are filled from argument types.
+    /// - Unifies the bindings arguments give one type parameter, retypes literal arguments at the instantiation and
+    ///   refuses arguments whose bindings do not unify, as a function call does (#1561).
     /// - Enforces explicit `with` bounds and the hashed type parameters (#1758) against the bindings closed by literal
     ///   arguments, requires every method type parameter to be concretely bound when brackets were present, and records
     ///   `TypeCheckInfo::calls.call_site_monomorph_type_args` for lowering.
@@ -499,6 +788,7 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        let errors_before_call = self.errors.len();
         let mut type_bindings = self.receiver_type_param_bindings(receiver_ty);
         let explicit_arity_ok =
             explicit_type_args.is_empty() || explicit_type_args.len() == method_info.type_params.len();
@@ -553,8 +843,20 @@ impl TypeChecker {
             &mut type_bindings,
         );
         self.infer_type_param_bindings_from_source_callables(&method_info.type_param_bound_details, &mut type_bindings);
-        let instantiation =
+        let arguments = Self::arguments_with_parameter_types(&params, args);
+        self.unify_argument_type_bindings(&method_info.type_params, &arguments, &mut type_bindings);
+        let mut instantiation =
             self.bindings_closed_by_literal_arguments(&method_info.type_params, &params, args, &type_bindings);
+        if self.errors.len() == errors_before_call {
+            self.close_bindings_from_literal_arguments(
+                method,
+                &method_info.type_params,
+                &params,
+                args,
+                &instantiation,
+                &mut type_bindings,
+            );
+        }
         self.refuse_unhashable_type_arguments(
             method,
             method_info.identity.as_ref(),
@@ -563,6 +865,23 @@ impl TypeChecker {
             call_site_span,
         );
         self.settle_constructor_argument_sides(&method_info.type_params, &params, args, &mut type_bindings);
+        Self::close_instantiation_from_bindings(&mut instantiation, &type_bindings, &method_info.type_params);
+        if self.errors.len() == errors_before_call {
+            self.refuse_conflicting_type_arguments(method, &method_info.type_params, &arguments, &type_bindings);
+        }
+        if self.errors.len() == errors_before_call {
+            self.record_argument_destinations_at_bindings(&method_info.type_params, &arguments, &type_bindings);
+        }
+        if self.errors.len() == errors_before_call && explicit_type_args.is_empty() {
+            self.refuse_bounded_type_params_left_open(
+                method,
+                &method_info.type_params,
+                &method_info.type_param_bound_details,
+                &arguments,
+                &instantiation,
+                call_site_span,
+            );
+        }
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params_exact(call_site_span, &resolved_params);

@@ -32,6 +32,8 @@ impl TypeChecker {
         }
 
         // Track provided fields and validate existence/duplicates/type compatibility.
+        let errors_before_fields = self.errors.len();
+        let mut field_arguments: Vec<(&Spanned<Expr>, ResolvedType)> = Vec::new();
         let mut provided: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
         let mut type_bindings: std::collections::HashMap<String, ResolvedType> = std::collections::HashMap::new();
         // Canonical field bound by each written argument, in written source order, for #1158's Body IR binding fact.
@@ -83,6 +85,7 @@ impl TypeChecker {
             }
 
             self.infer_type_param_bindings(&field_info.ty, &value_ty, &mut type_bindings);
+            field_arguments.push((expr, field_info.ty.clone()));
 
             if !self.types_compatible(&value_ty, &field_info.ty)
                 && !self.record_validated_newtype_field_coercion_if_possible(
@@ -116,6 +119,20 @@ impl TypeChecker {
 
         if every_required_field_supplied {
             self.record_constructor_field_binding_for_lowering(type_name, &bound_fields, &provided, call_span);
+        }
+
+        // ---- Fields that bind one type parameter bind it to one type (#1561) ----
+        let type_params = self
+            .lookup_type_info(type_name)
+            .map(|info| Self::constructor_hook_owner_type_params(info).to_vec())
+            .unwrap_or_default();
+        let arguments = field_arguments.iter().map(|(expr, ty)| (*expr, ty)).collect::<Vec<_>>();
+        self.unify_argument_type_bindings(&type_params, &arguments, &mut type_bindings);
+        if self.errors.len() == errors_before_fields {
+            self.refuse_conflicting_type_arguments(display_name, &type_params, &arguments, &type_bindings);
+        }
+        if self.errors.len() == errors_before_fields {
+            self.record_argument_destinations_at_bindings(&type_params, &arguments, &type_bindings);
         }
         self.refuse_unsatisfied_nominal_type_arguments(
             type_name,

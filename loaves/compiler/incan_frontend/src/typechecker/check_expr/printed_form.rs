@@ -123,13 +123,13 @@ impl TypeChecker {
     /// Whether a type satisfies a `Display` bound under the display rule, or `None` when the rule leaves the answer to
     /// the bound's ordinary check.
     ///
-    /// The rule answers for `bytes` and `FrozenBytes` (#1838: the two share one display contract), which have no
-    /// printed form, and for a model, class, enum or newtype, which provides `Display` exactly as
+    /// The rule answers for `bytes` and `FrozenBytes` (#1838: the two share one display contract) and `None` (#1561),
+    /// which have no printed form, and for a model, class, enum or newtype, which provides `Display` exactly as
     /// [`Self::nominal_provides_display`] states. An `Error` adopter with no `Display` of its own satisfies the bound
     /// through `message()`: lowering gives it the Rust `Display` that writes that text.
     pub(in crate::typechecker) fn display_bound_satisfied(&self, ty: &ResolvedType) -> Option<bool> {
         match ty {
-            ResolvedType::Bytes => Some(false),
+            ResolvedType::Bytes | ResolvedType::Unit => Some(false),
             _ if is_frozen_bytes(ty) => Some(false),
             ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
                 self.nominal_provides_display(type_name)

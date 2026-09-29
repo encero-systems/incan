@@ -1,0 +1,11 @@
+# behavior: a call that leaves a Display-bounded type parameter open, with None as its only argument and no expected type, is refused
+# expect-diagnostic: INCAN-T0001
+
+def show[T with Display](o: Option[T]) -> str:
+    match o:
+        Some(v) => return f"{v}"
+        None => return "none"
+
+
+def main() -> None:
+    println(show(None))
