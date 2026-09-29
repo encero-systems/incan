@@ -48,6 +48,8 @@ pub enum SourceModuleImportResolution {
         can_use_root_import: bool,
     },
     /// Import points at an Incan stdlib source module. Callers that materialize stdlib source decide how to load it.
+    ///
+    /// `module_path` is the module the import names, a namespace's `prelude` path resolved to the namespace.
     Stdlib { module_path: Vec<String> },
     /// Import is not a source-backed Incan module, or no matching local source file exists.
     External,
@@ -158,12 +160,22 @@ fn stdlib_namespace_items(import: &ImportDecl) -> StdlibNamespaceItems {
             item_module_path
         })
         .filter(|item_module_path| stdlib::is_known_stdlib_module(item_module_path))
+        .map(|item_module_path| stdlib_module_named_by(&item_module_path))
         .collect::<Vec<_>>();
     let only_submodules = !submodules.is_empty() && submodules.len() == items.len();
     StdlibNamespaceItems {
         submodules,
         only_submodules,
     }
+}
+
+/// Return the stdlib module a `std...` import path names: a namespace's `prelude` path (`std.async.prelude`) names the
+/// namespace's own module (`std.async`), as the checker, the provider module-use set and lowering read it (#1561).
+///
+/// A source graph collects the module under that one identity, so a compiled SDK that claims `std.async` serves an
+/// import of `std.async.prelude` instead of the graph mounting `async/prelude.incn` from source beside the SDK crate.
+fn stdlib_module_named_by(path: &[String]) -> Vec<String> {
+    stdlib::stdlib_prelude_module_namespace(path).map_or_else(|| path.to_vec(), <[String]>::to_vec)
 }
 
 /// Resolve one import declaration into local source, stdlib source, or external/non-source classification.
@@ -197,7 +209,7 @@ pub fn resolve_source_module_import_from_source_file(
             .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
     {
         return SourceModuleImportResolution::Stdlib {
-            module_path: path.segments.clone(),
+            module_path: stdlib_module_named_by(&path.segments),
         };
     }
 
@@ -1037,6 +1049,34 @@ source-root = "library"
         assert_eq!(
             stdlib_dependencies_of("from std.derives.comparison import Ord\n")?,
             vec![path(&["std", "derives", "comparison"])]
+        );
+        Ok(())
+    }
+
+    /// A namespace's `prelude` path names the namespace's own module in the source graph, as it does for the checker
+    /// and the provider module-use set: `import std.async.prelude`, `from std.async.prelude import sleep` and
+    /// `from std.async import prelude` depend on `std.async`, which the compiled SDK claims, and not on a
+    /// `std.async.prelude` module it does not (#1561). The root `std.prelude` stays a module of its own.
+    #[test]
+    fn stdlib_namespace_prelude_imports_depend_on_the_namespace_module_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = |segments: &[&str]| {
+            segments
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            stdlib_dependencies_of("import std.async.prelude\nfrom std.async.prelude import sleep\n")?,
+            vec![path(&["std", "async"]), path(&["std", "async"])]
+        );
+        assert_eq!(
+            stdlib_dependencies_of("from std.async import prelude, time\n")?,
+            vec![path(&["std", "async"]), path(&["std", "async", "time"])]
+        );
+        assert_eq!(
+            stdlib_dependencies_of("import std.prelude\n")?,
+            vec![path(&["std", "prelude"])]
         );
         Ok(())
     }

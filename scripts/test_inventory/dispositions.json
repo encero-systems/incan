@@ -3583,7 +3583,7 @@
         },
         "generator_parameter_advanced_by_the_callee_reaches_the_caller_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/generator_mut_parameter_advanced_by_the_callee.incn",
-          "notes": "Asserts that generated Rust builds and prints each next item, and that an immutable generator is refused with `INCAN-T0117`; the behavior, three calls advancing the caller's generator directly and through a function that passes it on, is carried by the named fixture, and the refusal by `cli_refusals/refused_immutable_generator_argument_to_mut_parameter.incn` (#1561)."
+          "notes": "Asserts that generated Rust builds and prints each next item, and that an immutable generator is refused with `INCAN-T0117`; the behavior, three calls advancing the caller's generator directly and through a function that passes it on, is carried by the named fixture, and the refusal by `cli_refusals_mutation/refused_immutable_generator_argument_to_mut_parameter.incn` (#1561)."
         },
         "method_alias_on_a_mut_parameter_calls_its_target_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/method_alias_on_a_mut_parameter.incn",
@@ -4394,7 +4394,7 @@
         },
         "test_classes_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/classes.incn",
-          "notes": "twinned by the program run to completion, which also calls `Counter.reset`, `Stack.is_empty`, `Calculator.subtract`/`multiply` and reads `Calculator.name` and `Person.age` through methods. `Stack.pop` takes `mut self` in the twin: a mutation inside a plain `self` method is refused (#1723, INCAN-T0102, fixture `cli/refused_mutation_through_plain_self.incn`). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion, which also calls `Counter.reset`, `Stack.is_empty`, `Calculator.subtract`/`multiply` and reads `Calculator.name` and `Person.age` through methods. `Stack.pop` takes `mut self` in the twin: a mutation inside a plain `self` method is refused (#1723, INCAN-T0102, fixture `cli_refusals_mutation/refused_mutation_through_plain_self.incn`). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_collection_literal_spread_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/collection_literal_spread.incn",
@@ -5294,7 +5294,7 @@
         },
         "test_traits_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/traits.incn",
-          "notes": "twinned by the program run to completion. `Resizable.resize` takes `mut self` in the twin: a field assignment inside a plain `self` method is refused (#1723, INCAN-T0102, fixture `cli/refused_mutation_through_plain_self.incn`). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion. `Resizable.resize` takes `mut self` in the twin: a field assignment inside a plain `self` method is refused (#1723, INCAN-T0102, fixture `cli_refusals_mutation/refused_mutation_through_plain_self.incn`). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_type_annotations_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/type_annotations.incn",
@@ -11162,7 +11162,7 @@
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals_mutation": {
       "disposition": "re-point",
-      "notes": "behavior fixtures whose observable is a check-time refusal of a change through a place that does not permit it: a changing method call through a binding declared without `mut` or a parameter not marked `mut`, a `for` loop that changes the items of such a place or of a static through a local bound to it, a closure that changes a local it captures, a generator expression that changes the items it copies, and a local partial of a `mut self` method. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips.",
+      "notes": "behavior fixtures whose observable is a check-time refusal of a change through a place that does not permit it: a changing method call, a field write or a pattern binding's change through a binding declared without `mut`, a parameter not marked `mut` or a plain `self`, a `for` loop that changes the items of such a place or of a static through a local bound to it, a closure that changes a local it captures, a generator expression that changes the items it copies, a local partial of a `mut self` method, an immutable argument for a `mut` parameter the callee changes, a `mut` parameter held in or rebound to another place, and a `mut` marker a function type does not admit. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips.",
       "owner": 1561,
       "pattern": "<name>.incn or <name>/"
     },

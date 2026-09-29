@@ -18,8 +18,10 @@ fn behavior_cli_refusals_fixtures_hold() -> Result<(), Box<dyn std::error::Error
 }
 
 /// Programs refused at check time for a change through a place that does not permit it: a binding declared without
-/// `mut`, a parameter not marked `mut`, the items of such a place that a `for` loop changes, a static a local names, a
-/// local a closure captures, the items a generator expression copies, and the receiver a local partial holds.
+/// `mut`, a parameter not marked `mut`, a plain `self`, the items of such a place that a `for` loop changes, a static a
+/// local names, a local a closure captures, the items a generator expression copies, the receiver a local partial
+/// holds, an immutable argument for a `mut` parameter the callee changes, a `mut` parameter held in or rebound to
+/// another place, and a `mut` marker a function type does not admit.
 #[test]
 fn behavior_cli_refusals_mutation_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
     assert_area_green("cli_refusals_mutation")
