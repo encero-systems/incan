@@ -501,33 +501,44 @@ pub fn caller_owned_provider_registry_conflict(
     consumer_authority: Option<&OvenRegistryLeafAuthority>,
     closure: &CallerOwnedProviderRegistryClosure,
     plan: &OvenRustcArtifactPlan,
-) -> CliResult<Option<(String, Option<PathBuf>)>> {
+) -> CliResult<Option<(String, Option<PathBuf>, Option<String>)>> {
     for provider_authority in &closure.provider_authorities {
         // A shared package can enter both closures transitively without ever being a named extern of either
         // compile (the reproduced `tokio` duplication was exactly this shape), so the catalogs themselves are
         // compared first; the extern comparison then covers packages the selected plan links directly.
         if let Some(consumer_authority) = consumer_authority
-            && let Some((package, pinned_by)) =
-                consumer_authority.first_diverging_shared_package_pin(provider_authority)
+            && let Some((package, pinned_by, divergence)) =
+                consumer_authority.first_diverging_shared_package_pin_detail(provider_authority)
         {
-            return Ok(Some((package, Some(pinned_by))));
+            return Ok(Some((package, Some(pinned_by), Some(divergence))));
         }
         if let Some(package) = provider_authority
             .first_conflicting_package_with_reconciled_authority(plan, consumer_authority)
             .map_err(oven_rustc_error)?
         {
-            return Ok(Some((package, None)));
+            return Ok(Some((package, None, None)));
         }
     }
     Ok(None)
 }
 
-/// Describe one provider registry conflict for a refusal, naming the contributor that pins the package.
+/// Describe one provider registry conflict for a refusal, naming the contributor that pins the package and, when
+/// known, how the two units differ.
 ///
 /// "Two copies of `itoa` exist" leaves a reader with nowhere to go; "this prebuilt provider was compiled against
 /// that copy" says what would have to change. This path is reached only after portable selected-unit reconciliation
-/// rejected the pair, so the named artifact identifies the genuinely incompatible pin.
-pub fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>) -> String {
+/// rejected the pair, so the named artifact identifies the genuinely incompatible pin, and the divergence names both
+/// selected-unit identities and the facts that disagree.
+pub fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>, divergence: Option<&str>) -> String {
+    let reason = provider_registry_conflict_pin(package, pinned_by);
+    match divergence {
+        Some(divergence) => format!("{reason} ({divergence})"),
+        None => reason,
+    }
+}
+
+/// Name the contributor that pins `package` in a provider registry conflict.
+fn provider_registry_conflict_pin(package: &str, pinned_by: Option<&Path>) -> String {
     match pinned_by {
         Some(root) => format!(
             "a caller-owned provider's own registry closure resolves `{package}` to a different compiled artifact \
@@ -586,10 +597,10 @@ mod tests {
     /// points the reader at Cargo or a compatibility mode.
     #[test]
     fn a_closure_refusal_names_the_package_the_pinning_artifact_and_never_offers_cargo() {
-        let pinned = provider_registry_conflict_reason("tokio", Some(Path::new("/store/entries/x/artifacts")));
+        let pinned = provider_registry_conflict_reason("tokio", Some(Path::new("/store/entries/x/artifacts")), None);
         assert!(pinned.contains("`tokio`"));
         assert!(pinned.contains("/store/entries/x/artifacts"));
-        let linked = provider_registry_conflict_reason("tokio", None);
+        let linked = provider_registry_conflict_reason("tokio", None, None);
         assert!(linked.contains("already linked by this project's own selected plan"));
         let refusal = oven_native_closure_refusal("app", &pinned).to_string();
         assert!(refusal.contains("Oven refuses to build `app`"));
