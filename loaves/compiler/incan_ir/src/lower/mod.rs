@@ -516,19 +516,23 @@ impl AstLowering {
         &self,
         span: ast::Span,
         resolved_method_name: &str,
-        rebase_source_stdlib: bool,
     ) -> Option<String> {
         let identity = self.type_info.as_ref()?.resolved_identity(span)?;
-        self.emitted_method_reference_name_for_identity(identity, resolved_method_name, rebase_source_stdlib)
+        self.emitted_method_reference_name_for_identity(identity, resolved_method_name)
     }
 
     /// Project one checked source member identity the way [`Self::emitted_method_reference_name`] projects the
     /// identity recorded at a call span.
+    ///
+    /// A call reaches a projection whatever dispatch selected it: an inherent method, a trait method a type implements
+    /// in its own body, or a trait default expanded beside an adopter. Each is named through
+    /// [`Self::emitted_source_identity_name`]: an inherent method is emitted under the identity its own module mints,
+    /// which that projection leaves as it is, and a trait impl records its projections through
+    /// [`Self::emitted_source_identity`].
     pub(in crate::lower) fn emitted_method_reference_name_for_identity(
         &self,
         identity: &CanonicalSymbolId,
         resolved_method_name: &str,
-        rebase_source_stdlib: bool,
     ) -> Option<String> {
         Some(identity)
             .filter(|identity| {
@@ -546,26 +550,30 @@ impl AstLowering {
                     .as_ref()
                     .is_none_or(|info| !info.is_compiler_generated_member_identity(identity))
             })
-            .map(|identity| Self::emitted_source_identity_name(identity, rebase_source_stdlib))
+            .map(Self::emitted_source_identity_name)
     }
 
     /// Project a checked source identity into the physical namespace used by generated Rust.
     ///
-    /// Source stdlib metadata is owned by `std.*`; source-backed stdlib modules are emitted below `incan_std.*` to
-    /// keep that internal implementation distinct from the external standard library facets. Every lowering path that
-    /// compares or substitutes a checked stdlib identity must use the same one-way projection.
-    pub(in crate::lower) fn emitted_source_identity_name(
-        identity: &CanonicalSymbolId,
-        rebase_source_stdlib: bool,
-    ) -> String {
+    /// Source stdlib metadata is owned by `std.*`; source-backed stdlib modules are emitted below `__incan_std.*` to
+    /// keep that internal implementation distinct from the external standard library facets. A module mounted there
+    /// mints its own declarations under `__incan_std.*`, while a module that imports it, or a trait it adopts, sees
+    /// the same declarations under `std.*`. Every lowering path that compares or substitutes a checked stdlib identity
+    /// must use this same one-way projection, so both spellings of one declaration name one Rust item (#1561). An
+    /// identity of any other origin, a package's included, is returned unchanged.
+    pub(in crate::lower) fn emitted_source_identity(identity: &CanonicalSymbolId) -> CanonicalSymbolId {
         let mut identity = identity.clone();
-        if rebase_source_stdlib
-            && let SymbolOrigin::Module(module_path) = &mut identity.origin
+        if let SymbolOrigin::Module(module_path) = &mut identity.origin
             && module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT)
         {
             module_path[0] = incan_lang::lang::stdlib::INCAN_STD_NAMESPACE.to_string();
         }
-        encode_incan_symbol_identity(&identity)
+        identity
+    }
+
+    /// Encode the Rust item name of a checked source identity after [`Self::emitted_source_identity`] projects it.
+    pub(in crate::lower) fn emitted_source_identity_name(identity: &CanonicalSymbolId) -> String {
+        encode_incan_symbol_identity(&Self::emitted_source_identity(identity))
     }
 
     /// Enter one callable body with its declared return type available to statement lowering.

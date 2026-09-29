@@ -470,10 +470,17 @@
     },
     "loaves/compiler/incan_driver/src/session.rs": {
       "disposition": "keep",
-      "notes": "CompilationSession analysis (provider plan reuse, feature projection).",
+      "notes": "CompilationSession analysis (provider plan reuse, feature projection); one test builds a consumer's generated Rust with the standard library mounted from source.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "a_consumer_without_an_sdk_inventory_builds_std_io_and_std_fs_trait_calls_from_source_issue1561": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_io_and_fs_trait_method_calls",
+          "notes": "twinned by the module fixture that runs the same program and `codec` module: typed `BinaryWrite`/`BinaryRead` calls, `chunks` and `File`/`Path` reads and writes print the same three lines; the generated `std.io`/`std.fs` mount and the rustc build die with the Rust-source backend (#1561)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_driver/src/shadow_support.rs": {

@@ -325,6 +325,11 @@ impl AstLowering {
     }
 
     /// Pair Rust trait slots with exact method identities without reconstructing either from a spelling.
+    ///
+    /// Each identity is recorded as [`Self::emitted_source_identity`] projects it, the projection every call names it
+    /// through. The identity of a trait default comes from the adopter's view of the trait, which for a
+    /// standard-library trait is its `std.*` declaration, and a method a mounted standard-library type implements in
+    /// its own body is minted under `__incan_std.*`; the projection gives both one Rust name (#1561).
     #[allow(clippy::too_many_arguments)] // Keeps each checked trait and owner axis explicit.
     fn trait_method_projections(
         &mut self,
@@ -393,7 +398,7 @@ impl AstLowering {
             };
             projections.push(IrMethodProjection {
                 abi_method_name: method.name.clone(),
-                identity,
+                identity: Self::emitted_source_identity(&identity),
             });
         }
         Ok(projections)
@@ -1885,7 +1890,11 @@ impl AstLowering {
                 &type_param_names,
             )?;
             for source in refined_default_projections {
-                let identity = self.required_member_identity(trait_name, &source.node.name, source.span)?;
+                let identity = Self::emitted_source_identity(&self.required_member_identity(
+                    trait_name,
+                    &source.node.name,
+                    source.span,
+                )?);
                 if !method_projections
                     .iter()
                     .any(|projection| projection.identity == identity)
