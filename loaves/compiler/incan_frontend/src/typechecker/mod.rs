@@ -3487,6 +3487,23 @@ impl TypeChecker {
             .is_some_and(|root| root == stdlib::STDLIB_ROOT)
     }
 
+    /// The name a method dispatched through a collected adoption names the adopted trait by in this module (#1561).
+    ///
+    /// An adoption keeps the spelling of the module that declares the adopting type, which may be an import alias
+    /// (`from std.derives.comparison import Ord as Ordered`, then `enum Level with Ordered`). Where that spelling names
+    /// another trait, or none, here (see [`Self::adoption_spelling_names_another_trait`]), a call of the trait's method
+    /// on the imported type names the trait by its declaration's own name beside its module path, as the recorded
+    /// dispatch is read in this module: `Level.High.__gt__(Level.Low)` named `comparison::Ordered`, which no module of
+    /// the standard library declares (E0433 against the compiled SDK).
+    pub(in crate::typechecker) fn adoption_trait_name_here(&self, adoption: &TypeBoundInfo) -> String {
+        match adoption.source_name.as_deref() {
+            Some(declaration_name) if self.adoption_spelling_names_another_trait(adoption) => {
+                declaration_name.to_string()
+            }
+            _ => adoption.name.clone(),
+        }
+    }
+
     /// Return the transitive supertrait closure for one trait using visible symbols first, then cached `pub::`
     /// semantic metadata.
     ///

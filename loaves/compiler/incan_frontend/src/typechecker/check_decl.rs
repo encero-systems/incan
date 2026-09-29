@@ -1405,7 +1405,7 @@ impl TypeChecker {
             self.instantiate_trait_info(&root, &adoption.type_args)
         };
         let resolved = ResolvedTraitAdoption {
-            name: adoption.name.clone(),
+            name: self.adoption_trait_name_here(adoption),
             info: instantiated,
             args: adoption.type_args.clone(),
             module_path: adoption.module_path.clone(),
