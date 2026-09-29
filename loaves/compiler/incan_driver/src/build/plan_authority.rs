@@ -356,7 +356,7 @@ pub struct CallerOwnedProviderRegistryClosure {
 }
 
 impl CallerOwnedProviderRegistryClosure {
-    /// Join the consumer's own authority with every collected provider authority into one lookup surface.
+    /// Join every provider authority ahead of the consumer's own authority into one lookup surface.
     ///
     /// Joining decides only what is *discoverable*; safety against a genuinely diverging shared package is decided
     /// beforehand by [`caller_owned_provider_registry_conflict`] and per-lookup by `select_sealed_registry_leaf`'s
@@ -366,7 +366,7 @@ impl CallerOwnedProviderRegistryClosure {
             return consumer;
         }
         Some(OvenRegistryLeafAuthority::aggregate(
-            consumer.into_iter().chain(self.provider_authorities.iter().cloned()),
+            self.provider_authorities.iter().cloned().chain(consumer),
         ))
     }
 }
