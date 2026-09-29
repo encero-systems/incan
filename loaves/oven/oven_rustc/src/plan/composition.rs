@@ -657,10 +657,12 @@ fn reconcile_packaged_registry_units(
     Vec<BTreeSet<(String, String)>>,
 )> {
     let mut selected = BTreeMap::<RegistryUnitSlot, OvenRustcRegistryLeaf>::new();
+    let mut contributors = BTreeMap::<RegistryUnitSlot, &str>::new();
     for (name, manifest) in inputs {
         for leaf in &manifest.registry_leaves {
             let key = (leaf.package.clone(), leaf.version.clone(), leaf.domain, leaf.crate_kind);
             let Some(existing) = selected.get_mut(&key) else {
+                contributors.insert(key.clone(), name);
                 selected.insert(key, leaf.clone());
                 continue;
             };
@@ -668,9 +670,12 @@ fn reconcile_packaged_registry_units(
                 continue;
             }
             if !packaged_registry_units_are_compatible(existing, leaf) {
+                let first = contributors.get(&key).copied().unwrap_or("an earlier input");
                 return Err(OvenPlanError::selection(format!(
-                    "Oven Alpha cannot compose pub::{name}: registry package `{}` `{}` has incompatible sealed unit identity, source, features, target domain, or artifact kind",
-                    leaf.package, leaf.version
+                    "Oven Alpha cannot compose pub::{name}: registry package `{}` `{}` has incompatible sealed unit identity, source, features, target domain, or artifact kind ({})",
+                    leaf.package,
+                    leaf.version,
+                    packaged_registry_unit_conflict(first, existing, name, leaf)
                 )));
             }
             if (&leaf.artifact.relative_path, &leaf.artifact.digest)
@@ -703,6 +708,40 @@ fn reconcile_packaged_registry_units(
         }
     }
     Ok((selected, superseded))
+}
+
+/// Describe two incompatible sealed units of one registry package for a composition refusal: which input contributed
+/// each, both selected-unit identities, and each recorded fact that differs.
+fn packaged_registry_unit_conflict(
+    first_input: &str,
+    first: &OvenRustcRegistryLeaf,
+    second_input: &str,
+    second: &OvenRustcRegistryLeaf,
+) -> String {
+    let identity = |leaf: &OvenRustcRegistryLeaf| {
+        leaf.selected_unit_identity
+            .clone()
+            .unwrap_or_else(|| "none".to_string())
+    };
+    let mut differing = Vec::new();
+    if first.features != second.features {
+        differing.push(format!("features {:?} vs {:?}", first.features, second.features));
+    }
+    if first.source != second.source {
+        differing.push(format!("source {:?} vs {:?}", first.source, second.source));
+    }
+    if first.crate_name != second.crate_name {
+        differing.push(format!("crate name `{}` vs `{}`", first.crate_name, second.crate_name));
+    }
+    if differing.is_empty() {
+        differing.push("no recorded fact besides the selected-unit identity".to_string());
+    }
+    format!(
+        "`{first_input}` carries unit {} and `{second_input}` carries unit {}; they differ in {}",
+        identity(first),
+        identity(second),
+        differing.join("; ")
+    )
 }
 
 /// Return whether two publisher records name one portable unit despite carrying different payload bytes.
@@ -1456,6 +1495,12 @@ mod tests {
                 .err()
                 .ok_or("feature-distinct shared unit must be refused")?;
         assert!(error.to_string().contains("incompatible sealed unit identity"));
+        assert!(
+            error.to_string().contains("`first` carries unit")
+                && error.to_string().contains("`incompatible` carries unit")
+                && error.to_string().contains("features"),
+            "the refusal names both inputs, their units and the facts that differ: {error}"
+        );
         Ok(())
     }
 
