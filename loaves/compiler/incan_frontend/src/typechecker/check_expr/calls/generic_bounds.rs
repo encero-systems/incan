@@ -6,9 +6,12 @@ use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
+use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::CanonicalSymbolId;
 
 impl TypeChecker {
@@ -153,6 +156,7 @@ impl TypeChecker {
                 }
             }
         }
+        self.settle_constructor_argument_sides(&info.type_params, &params_with_explicit, args, &mut type_bindings);
         let callee_identity = self.called_function_identity(func_name);
         self.refuse_unhashable_type_arguments(
             func_name,
@@ -162,14 +166,14 @@ impl TypeChecker {
             call_span,
         );
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
-        if Self::literal_argument_spells_a_type_param(&info.type_params, &info.params, args)
+        if self.literal_argument_spells_a_type_param(&info.type_params, &info.params, args)
             && resolved_params
                 .iter()
                 .all(|param| first_open_type_param(&param.ty, &info.type_params).is_none())
         {
-            // A collection or `None` literal is written with its parameter's type, and the declared `list[T]` would
-            // spell the callee's own `T` at the call site, so the call carries its instantiated parameter types
-            // (#1862).
+            // A collection or `None` literal, or an `Ok(...)`/`Err(...)` constructor, is written with its parameter's
+            // type, and the declared `list[T]` or `Result[T, E]` would spell the callee's own `T` at the call site, so
+            // the call carries its instantiated parameter types (#1862, #1561).
             self.type_info
                 .record_call_site_callable_params_exact(call_span, &resolved_params);
         } else {
@@ -271,10 +275,16 @@ impl TypeChecker {
         closed
     }
 
-    /// Return whether a call passes a collection or `None` literal (looking through parentheses) for a parameter whose
-    /// declared type names one of the callee's type parameters: a literal whose written form spells its type, which
-    /// the declared parameter type would spell with the callee's own type parameter.
+    /// Return whether a call passes a collection or `None` literal, or an `Ok(...)` or `Err(...)` constructor (looking
+    /// through parentheses), for a parameter whose declared type names one of the callee's type parameters: a value
+    /// whose written form spells its type, which the declared parameter type would spell with the callee's own type
+    /// parameter.
+    ///
+    /// A constructor spells the side of its `Result` it leaves open from its parameter's type, so `pick(Err(2), 5)` for
+    /// `def pick[T](r: Result[T, int], d: T)` builds its `Err` with the `int` that `d` fixes `T` to, rather than with
+    /// the callee's own `T`, which the caller cannot name (#1561).
     fn literal_argument_spells_a_type_param(
+        &self,
         type_params: &[String],
         params: &[CallableParam],
         args: &[CallArg],
@@ -283,8 +293,76 @@ impl TypeChecker {
             .into_iter()
             .any(|(expr, param)| {
                 param.is_some_and(|param| first_open_type_param(&param.ty, type_params).is_some())
-                    && (is_collection_literal(&expr.node) || is_none_literal(&expr.node))
+                    && (is_collection_literal(&expr.node)
+                        || is_none_literal(&expr.node)
+                        || self.returned_result_constructor(expr).is_some())
             })
+    }
+
+    /// Close the call's open type-parameter bindings from all of its arguments, then bind each one an `Ok(...)` or
+    /// `Err(...)` argument's open side still leaves open to the type that side is built with when nothing fixes it
+    /// (#1561).
+    ///
+    /// Such a constructor leaves its open side to the call (see the constructor check), and an argument whose type
+    /// leaves a type parameter open binds it to nothing, so a later argument that fixes it wins: `pick(Err(2), 5)` for
+    /// `def pick[T](r: Result[T, int], d: T)` takes `T` from `5`, whether `d` is a literal or not. A side no argument
+    /// fixes is then the enclosing function's `Result` side, or `None`, as for a constructor bound to a local, and the
+    /// call's parameter and result types say so.
+    fn settle_constructor_argument_sides(
+        &self,
+        type_params: &[String],
+        params: &[CallableParam],
+        args: &[CallArg],
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        let arguments = Self::arguments_with_parameters(params, args);
+        if !arguments
+            .iter()
+            .any(|(expr, _)| self.returned_result_constructor(expr).is_some())
+        {
+            return;
+        }
+        let is_open = |bindings: &std::collections::HashMap<String, ResolvedType>, name: &str| {
+            bindings
+                .get(name)
+                .is_none_or(|bound| is_open_binding(bound, type_params))
+        };
+        for (expr, param) in &arguments {
+            let (Some(param), Some(arg_ty)) = (param, self.type_info.expr_type(expr.span)) else {
+                continue;
+            };
+            let mut inferred = std::collections::HashMap::new();
+            self.infer_type_param_bindings(&param.ty, arg_ty, &mut inferred);
+            for (name, ty) in inferred {
+                if !is_open_binding(&ty, type_params) && is_open(bindings, &name) {
+                    bindings.insert(name, ty);
+                }
+            }
+        }
+        for (expr, param) in arguments {
+            let (Some(param), Some(constructor)) = (param, self.returned_result_constructor(expr)) else {
+                continue;
+            };
+            let open_side = usize::from(constructor == ConstructorId::Ok);
+            let Some(ResolvedType::TypeVar(name)) = Self::result_side_of(&param.ty, open_side) else {
+                continue;
+            };
+            if type_params.contains(name) && is_open(bindings, name) {
+                bindings.insert(name.clone(), self.open_result_side_type(open_side));
+            }
+        }
+    }
+
+    /// Side `side` (0 for success, 1 for error) of `ty` when it is a `Result`.
+    fn result_side_of(ty: &ResolvedType, side: usize) -> Option<&ResolvedType> {
+        match ty {
+            ResolvedType::Generic(name, sides)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && sides.len() == 2 =>
+            {
+                sides.get(side)
+            }
+            _ => None,
+        }
     }
 
     /// Assert that call-site type parameters have been inferred.
@@ -484,6 +562,7 @@ impl TypeChecker {
             &instantiation,
             call_site_span,
         );
+        self.settle_constructor_argument_sides(&method_info.type_params, &params, args, &mut type_bindings);
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params_exact(call_site_span, &resolved_params);

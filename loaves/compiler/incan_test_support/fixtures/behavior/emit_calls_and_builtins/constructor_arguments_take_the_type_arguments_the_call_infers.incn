@@ -1,0 +1,67 @@
+# behavior: an Ok or Err argument of a generic call takes the type the call's other arguments fix for its open side, in any function, and a concrete Result parameter gives that side
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::constructor_arguments_build_with_the_type_arguments_the_call_infers_issue1561
+# expect-stdout:
+#   5
+#   7
+#   8
+#   a
+#   w
+#   9
+#   10
+#   none
+#   5
+#   x
+#   3
+#   done
+
+model Picker:
+    n: int
+
+    def pick[T](self, r: Result[T, int], d: T) -> T:
+        return r.unwrap_or(d)
+
+
+def pick[T](r: Result[T, int], d: T) -> T:
+    return r.unwrap_or(d)
+
+
+def pick_first[T](d: T, r: Result[T, int]) -> T:
+    return r.unwrap_or(d)
+
+
+def pick_list[T](rs: list[Result[T, int]], d: T) -> T:
+    return rs[0].unwrap_or(d)
+
+
+def first[T](r: Result[T, int]) -> Option[T]:
+    match r:
+        Ok(v) => return Some(v)
+        Err(_) => return None
+
+
+def show(r: Result[int, str]) -> None:
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+
+
+def run() -> Result[str, int]:
+    println(pick(Err(2), 5))
+    show(Err("x"))
+    show(Ok(3))
+    return Ok("done")
+
+
+def main() -> None:
+    println(pick(Err(2), 5))
+    println(pick(Ok(7), 5))
+    println(pick(d=8, r=Err(2)))
+    println(pick_first("a", Err(2)))
+    d = "w"
+    println(pick(Err(2), d))
+    println(pick_list([Err(2)], 9))
+    println(Picker(n=1).pick(Err(2), 10))
+    match first(Err(3)):
+        Some(_) => println("some")
+        None => println("none")
+    println(run().unwrap_or("none"))

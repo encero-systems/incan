@@ -1786,6 +1786,7 @@ impl TypeChecker {
             }
             _ => {
                 let iter_ty = self.check_expr(&for_stmt.iter);
+                let iter_ty = self.settle_open_constructor_sides_in_place(&for_stmt.iter, iter_ty);
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };

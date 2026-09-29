@@ -3,8 +3,8 @@
 //! `Result` combinator's closure returns, and the closure a `Result` observer is called with.
 
 use super::super::super::expr::{
-    BuiltinFn, IrCallArg, IrCallArgKind, IrExprKind, IrGeneratorClause, IteratorMethodKind, MethodKind, Pattern,
-    VarAccess, VarRefKind,
+    BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IteratorMethodKind,
+    MethodKind, Pattern, VarAccess, VarRefKind,
 };
 use super::super::super::types::IrType;
 use super::super::AstLowering;
@@ -309,6 +309,69 @@ impl AstLowering {
                 _ => None,
             });
         Self::pin_settled_result_constructor(element, settled);
+    }
+
+    /// Spell the `Result` type of each `Ok(...)` or `Err(...)` a value used in place builds, the iterable of a `for`
+    /// statement or the subject of a `match`, with a side the constructor leaves open taken from the type the checker
+    /// settled for that value (#1561).
+    ///
+    /// Nothing binds such a value, so no annotation gives Rust the side the constructor leaves open: `match Ok(1):`
+    /// and `for x in [Ok(1)]:` failed to infer it. The checker settles it as for a constructor bound to a local (see
+    /// the checker's `settle_open_constructor_sides_in_place`); a constructor inside a list, set, dict or tuple literal
+    /// takes the side from the literal's settled member type, at any depth.
+    pub(in crate::lower) fn pin_settled_in_place_result_constructors(
+        &self,
+        value_span: ast::Span,
+        value: &mut TypedExpr,
+    ) {
+        // An imported trait default's body keeps its defining module's spans, so this module's facts at those offsets
+        // say nothing about it (see `lower_expr_spanned`).
+        if self.active_imported_trait_defaults.last().copied().unwrap_or(false) {
+            return;
+        }
+        let settled = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(value_span))
+            .map(|ty| self.lower_resolved_type(ty));
+        Self::pin_settled_member_result_constructors(value, settled);
+    }
+
+    /// Pin the `Ok(...)` or `Err(...)` that `value` is, or each one its list, set, dict or tuple literal holds, to
+    /// the `Result` type `settled` gives it (see [`Self::pin_settled_in_place_result_constructors`]).
+    fn pin_settled_member_result_constructors(value: &mut TypedExpr, settled: Option<IrType>) {
+        match (&mut value.kind, settled) {
+            (IrExprKind::List(entries), Some(IrType::List(member))) => {
+                for entry in entries {
+                    if let IrListEntry::Element(element) = entry {
+                        Self::pin_settled_member_result_constructors(element, Some((*member).clone()));
+                    }
+                }
+                value.ty = IrType::List(member);
+            }
+            (IrExprKind::Set(elements), Some(IrType::Set(member))) => {
+                for element in elements {
+                    Self::pin_settled_member_result_constructors(element, Some((*member).clone()));
+                }
+                value.ty = IrType::Set(member);
+            }
+            (IrExprKind::Dict(entries), Some(IrType::Dict(key, member))) => {
+                for entry in entries {
+                    if let IrDictEntry::Pair(entry_key, entry_value) = entry {
+                        Self::pin_settled_member_result_constructors(entry_key, Some((*key).clone()));
+                        Self::pin_settled_member_result_constructors(entry_value, Some((*member).clone()));
+                    }
+                }
+                value.ty = IrType::Dict(key, member);
+            }
+            (IrExprKind::Tuple(elements), Some(IrType::Tuple(items))) if elements.len() == items.len() => {
+                for (element, item) in elements.iter_mut().zip(items.iter()) {
+                    Self::pin_settled_member_result_constructors(element, Some(item.clone()));
+                }
+                value.ty = IrType::Tuple(items);
+            }
+            (_, settled) => Self::pin_settled_result_constructor(value, settled),
+        }
     }
 
     /// Give the `Ok(...)` or `Err(...)` that `value` produces its own `Result` sides as type arguments, taking a side

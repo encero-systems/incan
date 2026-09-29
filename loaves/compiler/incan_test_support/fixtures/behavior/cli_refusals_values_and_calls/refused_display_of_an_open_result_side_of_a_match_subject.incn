@@ -1,0 +1,7 @@
+# behavior: printing the error side that a match subject Ok(1) leaves open, which is None where the function returns no Result, is refused
+# expect-diagnostic: INCAN-T0103
+
+def main() -> None:
+    match Ok(1):
+        Ok(v) => println(v)
+        Err(m) => println(m)

@@ -1,7 +1,8 @@
 //! Generic functions and methods: `Self` substitution at call sites (#237, #388), bounds enforced at call sites,
 //! explicit call type arguments and RFC 054 inference placeholders, the #1373 hints, local inference after factory
-//! calls, `Type[...]` tokens as values, reflection magic methods, the arithmetic a type parameter admits (#1715), and
-//! the `unwrap_or` default a type-parameter payload admits (#1561).
+//! calls, `Type[...]` tokens as values, reflection magic methods, the arithmetic a type parameter admits (#1715), the
+//! `unwrap_or` default a type-parameter payload admits, and the values a type parameter's own declaration admits for it
+//! (#1561).
 
 use super::*;
 
@@ -1222,6 +1223,159 @@ def main() -> None:
     println(len(pick(Ok(1), None, 2)))
     r: Result[int, str] = Err("e")
     println(r.unwrap_or(0))
+"#,
+    );
+}
+
+/// A type parameter is one fixed type inside its generic declaration, whatever a caller picks for it, so a value of a
+/// concrete type, or of another type parameter, is not a value of it: returning, binding, assigning, appending,
+/// yielding or passing one where a `T` is expected is refused, in a generic function, a generic method and a generic
+/// model's or class's methods through `self`, bare and as a list, `Option`, `Result`, dict or closure part, and as the
+/// argument of a callee whose own type parameter the call fixes to `T`. A value of `T`, a borrowed `&T`, `[]`, `None`
+/// and a callee's type parameter fixed to a concrete type at the call are accepted (#1561).
+#[test]
+fn concrete_values_are_not_values_of_a_type_parameter_issue1561() {
+    let errors = check_str_err(
+        r#"
+model Box[T]:
+    value: T
+    items: list[T]
+
+    def reset(mut self) -> None:
+        self.value = 0
+
+    def grow(mut self) -> None:
+        self.items.append(0)
+
+    def keep(mut self, v: T) -> None:
+        self.value = v
+
+    def refill(mut self) -> None:
+        self.keep("s")
+
+model Conv:
+    n: int
+
+    def same[T](self, x: T) -> T:
+        return 1.5
+
+def zero[T](x: T) -> T:
+    return 0
+
+def local[T](x: T) -> T:
+    y: T = "s"
+    return y
+
+def listed[T](x: T) -> list[T]:
+    return [x, 0]
+
+def fallback[T](r: Result[list[T], int]) -> list[T]:
+    return r.unwrap_or([0])
+
+def maybe[T](x: T) -> Option[T]:
+    return Some(true)
+
+def keyed[K, V](k: K, v: V) -> dict[K, V]:
+    return {k: 0}
+
+def other[T, U](x: T, y: U) -> T:
+    return y
+
+def both[T](a: T, b: T) -> T:
+    return a
+
+def forwarded[T](x: T) -> T:
+    return both(x, 0)
+
+def apply[T](f: (T) -> T, x: T) -> T:
+    return f(x)
+
+def mapped[T](x: T) -> T:
+    return apply((v) => 0, x)
+
+def gen[T](x: T) -> Generator[T]:
+    yield 0
+"#,
+        "concrete values where a type parameter is expected",
+    );
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    for needle in [
+        "Cannot assign 'int' to field 'value' of type 'T'",
+        "Argument 'v' of 'keep' has type mismatch: expected 'T', found 'str'",
+        "Return type mismatch: expected 'T', found 'float'",
+        "Return type mismatch: expected 'T', found 'int'",
+        "Assignment to 'y' has type mismatch: expected 'T', found 'str'",
+        "Return type mismatch: expected 'Option[T]', found 'Option[bool]'",
+        "Type mismatch: expected 'V', found 'int'",
+        "Return type mismatch: expected 'T', found 'U'",
+        "Argument 'b' of 'both' has type mismatch: expected 'T', found 'int'",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected an error containing `{needle}`, got {messages:?}"
+        );
+    }
+    assert!(
+        messages
+            .iter()
+            .filter(|message| message.contains("Type mismatch: expected 'T', found 'int'"))
+            .count()
+            >= 5,
+        "the appended, listed, defaulted, closure-returned and yielded `0` are each refused: {messages:?}"
+    );
+    assert_check_ok(
+        r#"
+model Box[T]:
+    value: T
+    items: list[T]
+
+    def keep(mut self, v: T) -> None:
+        self.value = v
+
+    def copy_from(mut self, other: Box[T]) -> None:
+        self.value = other.value
+        self.items.append(other.value)
+
+    def swap(mut self, v: T) -> T:
+        old = self.value
+        self.value = v
+        return old
+
+    def wrapped(self) -> Option[T]:
+        return Some(self.value)
+
+    def first(self) -> Option[T]:
+        if len(self.items) == 0:
+            return None
+        return Some(self.items[0])
+
+def ident[T](x: T) -> T:
+    return x
+
+def replace[T](first: T, second: &T) -> T:
+    mut current = first
+    current = second
+    return current
+
+def empty[T](x: T) -> list[T]:
+    return []
+
+def nothing[T](x: T) -> Option[T]:
+    return None
+
+def counted[T](x: T) -> int:
+    return ident(0)
+
+def paired[T](x: T) -> list[T]:
+    return [x, ident(x)]
+
+def main() -> None:
+    mut b = Box(value=1, items=[2])
+    b.keep(3)
+    println(b.swap(4))
+    println(ident("a"))
+    println(counted(1.5))
+    println(len(paired(1)))
 "#,
     );
 }

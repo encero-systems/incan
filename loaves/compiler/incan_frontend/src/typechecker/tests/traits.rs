@@ -1,6 +1,6 @@
 //! Trait conformance for models and classes (#42): required fields and methods, default methods, signature mismatches,
-//! supertrait closure and cycles, trait-typed receivers and upcasts, abstract methods, and the provider-metadata
-//! recovery of an empty trait stub.
+//! supertrait closure and cycles, trait-typed receivers and upcasts, abstract methods, the provider-metadata recovery
+//! of an empty trait stub, and the trait defaults of a comparison adopter imported from another module.
 
 use super::*;
 
@@ -1368,6 +1368,81 @@ trait Source[T{bound}]:
         return Err(format!("expected the List.append Clone refusal, got {errors:?}"));
     }
     check_str(&source(" with Clone")).map_err(|errors| format!("a Clone-bounded trait item should append: {errors:?}"))
+}
+
+/// #1561: a type imported from another module that adopts `std.derives.comparison.Ord` or `Eq` gets the defaults of
+/// the trait it adopts there, whether the importing module names the trait or not: `__ge__`, `__le__`, `__gt__` and
+/// `__ne__` resolve through that trait, under any spelling of the adoption. In a module that does not import it, the
+/// bare name `Ord` is the builtin's stub, which declares no methods, and the defaults were not found.
+#[test]
+fn an_imported_comparison_adopter_gets_its_trait_defaults_issue1561() -> Result<(), String> {
+    let scores = parse_program(
+        r#"
+from std.derives import comparison
+from std.derives.comparison import Eq, Ord
+from std.derives.comparison import Ord as Ordered
+
+pub model Score with Ord:
+  pub points: int
+
+  def __eq__(self, other: Self) -> bool:
+    return self.points == other.points
+
+  def __lt__(self, other: Self) -> bool:
+    return self.points < other.points
+
+pub enum Level with Ordered:
+  Low
+  High
+
+  def rank(self) -> int:
+    match self:
+      Level.Low => return 0
+      Level.High => return 1
+
+  def __eq__(self, other: Self) -> bool:
+    return self.rank() == other.rank()
+
+  def __lt__(self, other: Self) -> bool:
+    return self.rank() < other.rank()
+
+pub model Qualified with comparison.Ord:
+  pub v: int
+
+  def __eq__(self, other: Self) -> bool:
+    return self.v == other.v
+
+  def __lt__(self, other: Self) -> bool:
+    return self.v < other.v
+
+pub model Key with Eq:
+  pub id: int
+
+  def __eq__(self, other: Self) -> bool:
+    return self.id == other.id
+"#,
+        "adopter module",
+    );
+    for importer in [
+        "from scores import Score, Level, Qualified, Key\n",
+        "from scores import Score, Level, Qualified, Key\nfrom std.derives.comparison import Ord\n",
+    ] {
+        let main = parse_program(
+            &format!(
+                "{importer}\ndef main() -> None:\n  println(Score(points=2).__ge__(Score(points=3)))\n  \
+                 println(Score(points=2).__le__(Score(points=3)))\n  println(Level.High.__gt__(Level.Low))\n  \
+                 println(Qualified(v=1).__ge__(Qualified(v=2)))\n  println(Score(points=1).__ne__(Score(points=2)))\n  \
+                 println(Key(id=1).__ne__(Key(id=2)))\n"
+            ),
+            "importing module",
+        );
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".to_string()]));
+        checker
+            .check_with_imports(&main, &[("scores", &scores)])
+            .map_err(|errors| format!("`{}`: {:?}", importer.trim(), messages(&errors)))?;
+    }
+    Ok(())
 }
 
 /// Return the messages of `errors`.

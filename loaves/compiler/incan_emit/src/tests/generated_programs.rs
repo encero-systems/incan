@@ -1,6 +1,6 @@
 //! Build generated programs with rustc and run them: a program alone, with the standard-library source modules its
-//! generated Rust reaches through `crate::__incan_std` (checked with no module path, or as a project's module), and a
-//! consumer with the `pub::` dependency it imports.
+//! generated Rust reaches through `crate::__incan_std` (checked with no module path, or as a project's module), a
+//! program of several modules with them, and a consumer with the `pub::` dependency it imports.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -59,6 +59,15 @@ fn with_stdlib_modules(program: String) -> BuildResult<String> {
     if !program.contains("__incan_std") {
         return Ok(program);
     }
+    Ok(format!(
+        "{program}\npub mod __incan_std {{\n{}\n}}\n",
+        stdlib_module_tree()?
+    ))
+}
+
+/// Return the body of the `__incan_std` module a generated program mounts: each stdlib source module it may reach,
+/// generated as the standard library's own source, nested under its module path.
+pub(super) fn stdlib_module_tree() -> BuildResult<String> {
     let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
     for (group, module, path) in MOUNTED_MODULES {
         let mounted = format!("pub mod {module} {{\n{}\n}}", generate_stdlib_module(path)?);
@@ -72,7 +81,7 @@ fn with_stdlib_modules(program: String) -> BuildResult<String> {
         .map(|(group, modules)| format!("pub mod {group} {{\n{}\n}}", modules.join("\n")))
         .collect::<Vec<_>>()
         .join("\n");
-    Ok(format!("{program}\npub mod __incan_std {{\n{groups}\n}}\n"))
+    Ok(groups)
 }
 
 /// Generate `source`, mount the stdlib modules it reaches, build it, run it and return its standard output.
@@ -108,6 +117,29 @@ pub(super) fn run_checked_with_stdlib(program: &Program, checker: &TypeChecker) 
     let directory = tempfile::tempdir()?;
     let built = build_program(directory.path(), &with_stdlib_modules(generated)?, &[])?;
     run(&built)
+}
+
+/// Generate a program whose root is `main` and whose other modules are `modules`, each a top-level module named as
+/// given, mount the stdlib modules they reach as the module `__incan_std`, build the program, run it and return its
+/// standard output.
+pub(super) fn run_modules_with_stdlib(modules: &[(&str, &str)], main: &str) -> BuildResult<String> {
+    let programs = modules
+        .iter()
+        .map(|(name, source)| Ok((*name, parse(source)?)))
+        .collect::<BuildResult<Vec<_>>>()?;
+    let main = parse(main)?;
+    let mut codegen = IrCodegen::new();
+    for (name, program) in &programs {
+        codegen.add_module_with_path_segments(name, program, vec![name.to_string()]);
+    }
+    let paths = modules
+        .iter()
+        .map(|(name, _)| vec![name.to_string()])
+        .collect::<Vec<_>>();
+    let (root, generated) = codegen.try_generate_multi_file_nested(&main, &paths)?;
+    let mut generated = generated.into_iter().collect::<HashMap<_, _>>();
+    generated.insert(vec!["__incan_std".to_string()], stdlib_module_tree()?);
+    super::mut_ownership_regressions::run_generated_modules(&root, &generated)
 }
 
 /// Generate a consumer against the dependency `name` published from `provider`, or return the check's refusal.

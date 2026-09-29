@@ -576,6 +576,9 @@ impl TypeChecker {
         if self.type_bound_names_match(active, required) && self.type_bound_args_match(active, required, bindings) {
             return true;
         }
+        if self.builtin_comparison_bound_implies(active, required) {
+            return true;
+        }
 
         let Some(active_trait) = self.lookup_semantic_trait_info(&active.name) else {
             return false;
@@ -607,6 +610,42 @@ impl TypeChecker {
                 self.type_bound_names_match(&candidate, required)
                     && self.type_bound_args_match(&candidate, required, bindings)
             })
+    }
+
+    /// Whether a bound on the builtin `Eq` or `Ord` implies the builtin bound `required`, as Rust's `Eq: PartialEq` and
+    /// `Ord: Eq + PartialOrd` do (#1561).
+    ///
+    /// A module that names the builtin without importing it binds a stub that declares no supertraits, so `T with Ord`
+    /// did not meet a callee's `T with Eq`, although the generated Rust bound does. The relation is the one the derive
+    /// table records for `@derive(Eq)` and `@derive(Ord)`, which bring exactly those traits with them.
+    fn builtin_comparison_bound_implies(&self, active: &TypeBoundInfo, required: &TypeBoundInfo) -> bool {
+        let Some(active_derive) = [TraitId::Eq, TraitId::Ord]
+            .into_iter()
+            .find(|trait_id| self.bound_names_builtin_trait(active, *trait_id))
+            .and_then(|trait_id| derives::from_str(builtin_traits::as_str(trait_id)))
+        else {
+            return false;
+        };
+        derives::implied_derives(active_derive).iter().any(|implied| {
+            builtin_traits::from_str(derives::as_str(*implied))
+                .is_some_and(|trait_id| self.bound_names_builtin_trait(required, trait_id))
+        })
+    }
+
+    /// Whether a checked bound names the builtin trait `trait_id` (see [`Self::bound_is_builtin_trait`]), the
+    /// builtin's own stub that a module binds without importing it included.
+    fn bound_names_builtin_trait(&self, bound: &TypeBoundInfo, trait_id: TraitId) -> bool {
+        if self.bound_is_builtin_trait(bound, trait_id) {
+            return true;
+        }
+        bound.module_path.is_none()
+            && self.import_binding_path(&bound.name).is_none()
+            && builtin_traits::from_str(Self::type_bound_source_name(bound)) == Some(trait_id)
+            && self
+                .symbols
+                .lookup(&bound.name)
+                .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+                .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin)
     }
 
     /// Check whether `ty` satisfies a nominal trait bound `bound_trait` under RFC 042 semantics.
