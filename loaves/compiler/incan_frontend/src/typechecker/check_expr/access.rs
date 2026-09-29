@@ -658,17 +658,110 @@ impl TypeChecker {
     ///
     /// `x = Ok(1)` gives `x` no error type unless the enclosing function's `Result` return type gives the constructor
     /// one; the constructor is then built with `None` there, so the binding's type says so and a later use of that side
-    /// is checked against `None`. Any other value, and a side something fixed, is left as it is.
+    /// is checked against `None`. The same holds for such a constructor inside a list, set, dict or tuple literal: a
+    /// side no member of the literal fixes is built with that type for every member (`[Ok(1)]` is a
+    /// `List[Result[int, None]]`). Any other value, and a side something fixed, is left as it is.
     pub(in crate::typechecker) fn settle_open_constructor_side(
         &self,
         value: &Spanned<Expr>,
         ty: ResolvedType,
     ) -> ResolvedType {
         match self.returned_result_constructor(value) {
-            Some(ConstructorId::Ok) => self.settle_result_side(ty, 1),
-            Some(ConstructorId::Err) => self.settle_result_side(ty, 0),
-            _ => ty,
+            Some(ConstructorId::Ok) => return self.settle_result_side(ty, 1),
+            Some(ConstructorId::Err) => return self.settle_result_side(ty, 0),
+            _ => {}
         }
+        match (&value.node, ty) {
+            (Expr::List(entries), ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1 =>
+            {
+                let elements = entries.iter().filter_map(|entry| match entry {
+                    ListEntry::Element(element) => Some(element),
+                    ListEntry::Spread(_) => None,
+                });
+                let settled = args
+                    .into_iter()
+                    .map(|member_ty| self.settle_open_member_sides(member_ty, elements.clone()));
+                ResolvedType::Generic(name, settled.collect())
+            }
+            (Expr::Set(elements), ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Set) && args.len() == 1 =>
+            {
+                let settled = args
+                    .into_iter()
+                    .map(|member_ty| self.settle_open_member_sides(member_ty, elements.iter()));
+                ResolvedType::Generic(name, settled.collect())
+            }
+            (Expr::Dict(entries), ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
+            {
+                let pairs = entries.iter().filter_map(|entry| match entry {
+                    DictEntry::Pair(key, value) => Some((key, value)),
+                    DictEntry::Spread(_) => None,
+                });
+                let settled = args.into_iter().enumerate().map(|(position, member_ty)| {
+                    let members = pairs
+                        .clone()
+                        .map(move |(key, value)| if position == 0 { key } else { value });
+                    self.settle_open_member_sides(member_ty, members)
+                });
+                ResolvedType::Generic(name, settled.collect())
+            }
+            (Expr::Tuple(elements), ResolvedType::Tuple(items)) if elements.len() == items.len() => {
+                ResolvedType::Tuple(
+                    elements
+                        .iter()
+                        .zip(items)
+                        .map(|(element, item_ty)| self.settle_open_constructor_side(element, item_ty))
+                        .collect(),
+                )
+            }
+            (_, ty) => ty,
+        }
+    }
+
+    /// Settle the open `Result` sides of the member type `member_ty` that one collection literal's `members` share,
+    /// each member in turn (see [`Self::settle_open_constructor_side`]).
+    fn settle_open_member_sides<'a>(
+        &self,
+        member_ty: ResolvedType,
+        members: impl Iterator<Item = &'a Spanned<Expr>>,
+    ) -> ResolvedType {
+        members.fold(member_ty, |member_ty, member| {
+            self.settle_open_constructor_side(member, member_ty)
+        })
+    }
+
+    /// Give the side of a closure literal's `Result` return type that the `Ok(...)` or `Err(...)` its body returns
+    /// leaves open, and that its expected return type does not fix, the type that constructor is built with (#1561).
+    ///
+    /// `f = () => Ok(1)` gives `f` a result with no error type. As for an `Ok(...)` bound to a local (see
+    /// [`Self::settle_open_constructor_side`]), that side is the enclosing function's `Result` side, or `None` when
+    /// that function returns no `Result`, so a call of `f` has a complete `Result` type. A side the expected return
+    /// type fixes, such as the error side of an `and_then` callback's `Ok(...)`, which is the receiver's, stays
+    /// open for the call to fix; an unknown or still-to-be-inferred expected side fixes nothing.
+    pub(in crate::typechecker) fn settle_open_closure_result_side(
+        &self,
+        body: &Spanned<Expr>,
+        return_ty: ResolvedType,
+        expected_ret: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let open_side = match self.returned_result_constructor(body) {
+            Some(ConstructorId::Ok) => 1,
+            Some(ConstructorId::Err) => 0,
+            _ => return self.settle_open_constructor_side(body, return_ty),
+        };
+        if let Some(ResolvedType::Generic(name, sides)) = expected_ret
+            && collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+            && sides.len() == 2
+            && !matches!(
+                sides[open_side],
+                ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer
+            )
+        {
+            return return_ty;
+        }
+        self.settle_result_side(return_ty, open_side)
     }
 
     /// Fill side `side` (0 for success, 1 for error) of the `Result` type `ty` when it is open, with the type an open
@@ -727,6 +820,59 @@ impl TypeChecker {
                 Some(constructor)
             }
             _ => None,
+        }
+    }
+
+    /// Whether the default of type `default_ty` passed to an `Option` or `Result` `unwrap_or` can be the payload of
+    /// type `payload_ty` the call returns in its place (#1561).
+    ///
+    /// A type parameter of the enclosing generic declaration is one fixed type inside that declaration, whatever a
+    /// caller later picks for it, so only a value of that same parameter stands in for it: `r.unwrap_or(0)` on a
+    /// `Result[T, int]` is refused, where ordinary compatibility accepts any type against a type parameter. The rule
+    /// holds at every depth of the payload that has the default's shape (`List[T]` takes a `List[T]` or `[]`, not a
+    /// `List[int]`), and an unknown default is left to the error that made it unknown. Everything else, a payload that
+    /// mentions no such parameter included, is checked by ordinary compatibility.
+    fn unwrap_or_default_fits_payload(&self, default_ty: &ResolvedType, payload_ty: &ResolvedType) -> bool {
+        if matches!(default_ty, ResolvedType::Unknown | ResolvedType::Never)
+            || !self.mentions_active_type_param(payload_ty)
+        {
+            return self.types_compatible(default_ty, payload_ty);
+        }
+        if let Some(param) = self.active_type_param_name(payload_ty) {
+            return self.active_type_param_name(default_ty) == Some(param);
+        }
+        match (default_ty, payload_ty) {
+            (ResolvedType::Generic(default_name, default_args), ResolvedType::Generic(payload_name, payload_args))
+                if default_name == payload_name && default_args.len() == payload_args.len() =>
+            {
+                default_args
+                    .iter()
+                    .zip(payload_args)
+                    .all(|(default_arg, payload_arg)| self.unwrap_or_default_fits_payload(default_arg, payload_arg))
+            }
+            (ResolvedType::Tuple(default_items), ResolvedType::Tuple(payload_items))
+                if default_items.len() == payload_items.len() =>
+            {
+                default_items
+                    .iter()
+                    .zip(payload_items)
+                    .all(|(default_item, payload_item)| self.unwrap_or_default_fits_payload(default_item, payload_item))
+            }
+            _ => self.types_compatible(default_ty, payload_ty),
+        }
+    }
+
+    /// Whether `ty` names a type parameter of an enclosing generic declaration anywhere in it.
+    fn mentions_active_type_param(&self, ty: &ResolvedType) -> bool {
+        if self.active_type_param_name(ty).is_some() {
+            return true;
+        }
+        match ty {
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                args.iter().any(|arg| self.mentions_active_type_param(arg))
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.mentions_active_type_param(inner),
+            _ => false,
         }
     }
 
@@ -6506,7 +6652,7 @@ impl TypeChecker {
                     //
                     // For `Option<&T>`, this is `unwrap_or(default: &T) -> &T`.
                     if let Some(default_ty) = arg_types.first()
-                        && !self.types_compatible(default_ty, &inner)
+                        && !self.unwrap_or_default_fits_payload(default_ty, &inner)
                     {
                         self.errors
                             .push(errors::type_mismatch(&inner.to_string(), &default_ty.to_string(), span));
@@ -6538,7 +6684,7 @@ impl TypeChecker {
                 }
                 Some(result_methods::ResultMethodId::UnwrapOr) => {
                     if let Some(default_ty) = arg_types.first()
-                        && !self.types_compatible(default_ty, &ok_ty)
+                        && !self.unwrap_or_default_fits_payload(default_ty, &ok_ty)
                     {
                         self.errors
                             .push(errors::type_mismatch(&ok_ty.to_string(), &default_ty.to_string(), span));

@@ -301,3 +301,66 @@ def main() -> None:
 "#,
     );
 }
+
+/// A closure literal whose body returns `Ok(...)` or `Err(...)`, and a list comprehension of them, build the side the
+/// constructor leaves open with `None` where the enclosing function returns no `Result`, and with that function's side
+/// where it does; the closure's expected type fixes that side instead. The members of a list or dict literal share
+/// one `Result` type, each side taken from the member that fixes it, and a side no member fixes is `None`. A later
+/// use that needs another type for a `None` side is refused (#1561).
+#[test]
+fn closure_results_and_collection_literals_settle_their_open_result_sides_issue1561() {
+    assert_refused(
+        r#"
+def use(g: () -> Result[int, str]) -> int:
+    return g().unwrap_or(0)
+
+def main() -> None:
+    f = () => Ok(1)
+    println(use(f))
+    mut xs = [Ok(1)]
+    xs.append(Err("x"))
+    for x in xs:
+        match x:
+            Ok(v) => println(v)
+            Err(m) => println(m)
+    both = [Ok(1), Err("x")]
+    wrong: list[Result[int, int]] = both
+"#,
+        &[
+            "Argument 'g' of 'use' has type mismatch: expected '() -> Result[int, str]', found '() -> Result[int, Unit]'",
+            "expected 'Result[int, Unit]', found 'Result[?, str]'",
+            "cannot print the None value 'm'",
+            "Assignment to 'wrong' has type mismatch: expected 'List[Result[int, int]]', found 'List[Result[int, str]]'",
+        ],
+    );
+    assert_check_ok(
+        r#"
+def use(g: () -> Result[int, str]) -> int:
+    return g().unwrap_or(0)
+
+def keep() -> Result[int, str]:
+    f = () => Ok(1)
+    println(use(f))
+    ys = [Ok(y) for y in [1, 2]]
+    for y in ys:
+        match y:
+            Ok(v) => println(v)
+            Err(m) => println(m.upper())
+    return f()
+
+def main() -> None:
+    annotated: () -> Result[int, str] = () => Ok(1)
+    println(use(annotated))
+    println(use(() => Ok(2)))
+    xs = [Ok(1), Err("x")]
+    for x in xs:
+        match x:
+            Ok(v) => println(v + 1)
+            Err(m) => println(m.upper())
+    nested = [[Err("y")], [Ok(2)]]
+    d = {"a": Ok(1), "b": Err("z")}
+    typed: dict[str, Result[int, str]] = d
+    println(keep().unwrap_or(0))
+"#,
+    );
+}

@@ -266,6 +266,74 @@ impl AstLowering {
         (params.len() == 1).then(|| ((callback.span.start, callback.span.end), payload.as_ref().clone()))
     }
 
+    /// Spell the `Result` type of the `Ok(...)` or `Err(...)` a closure literal's body returns on that constructor: the
+    /// body's own sides, and for a side the body leaves open, the type the checker settled for that side of the
+    /// closure's result (#1561).
+    ///
+    /// `f = () => Ok(1)` gives the constructor no error type, and Rust cannot infer one from a later `f()`; the checker
+    /// gives the closure's result the enclosing function's `Result` side, or `None` (see the checker's
+    /// `settle_open_closure_result_side`). The closure's result is also not the enclosing function's: a closure in a
+    /// function returning `Result[str, int]` may return `Ok(1)`.
+    pub(in crate::lower) fn pin_settled_closure_result_constructor(
+        &self,
+        closure_span: ast::Span,
+        body: &mut TypedExpr,
+    ) {
+        let settled = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(closure_span))
+            .and_then(|ty| match ty {
+                incan_frontend::symbols::ResolvedType::Function(_, settled_ret) => {
+                    Some(self.lower_resolved_type(settled_ret))
+                }
+                _ => None,
+            });
+        Self::pin_settled_result_constructor(body, settled);
+    }
+
+    /// Spell the `Result` type of the `Ok(...)` or `Err(...)` a list comprehension's element is on that constructor,
+    /// with a side the element leaves open taken from the element type the checker settled for the comprehension, as
+    /// for a closure's body (see [`Self::pin_settled_closure_result_constructor`]) (#1561).
+    pub(in crate::lower) fn pin_settled_comprehension_result_constructor(
+        &self,
+        comprehension_span: ast::Span,
+        element: &mut TypedExpr,
+    ) {
+        let settled = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(comprehension_span))
+            .and_then(|ty| match self.lower_resolved_type(ty) {
+                IrType::List(element_ty) => Some(*element_ty),
+                _ => None,
+            });
+        Self::pin_settled_result_constructor(element, settled);
+    }
+
+    /// Give the `Ok(...)` or `Err(...)` that `value` produces its own `Result` sides as type arguments, taking a side
+    /// it leaves open from `settled`, the `Result` type the checker settled for the place the value is built in.
+    /// The value is left as it is when it produces no such constructor, or when a side stays open in `settled` too.
+    fn pin_settled_result_constructor(value: &mut TypedExpr, settled: Option<IrType>) {
+        let IrType::Result(value_ok, value_err) = &value.ty else {
+            return;
+        };
+        let (settled_ok, settled_err) = match settled {
+            Some(IrType::Result(settled_ok, settled_err)) => (*settled_ok, *settled_err),
+            _ => (IrType::Unknown, IrType::Unknown),
+        };
+        let side = |value_side: &IrType, settled_side: IrType| match value_side {
+            IrType::Unknown => settled_side,
+            known => known.clone(),
+        };
+        let ok = side(value_ok, settled_ok);
+        let err = side(value_err, settled_err);
+        if matches!(ok, IrType::Unknown) || matches!(err, IrType::Unknown) {
+            return;
+        }
+        let _ = Self::pin_returned_result_constructor(value, &ok, &err);
+    }
+
     /// Give the `Ok(...)` or `Err(...)` that `expr` produces, directly, as a block's value or as both branches of an
     /// `if`, the type arguments `ok` and `err`, with an open side other than the constructor's own payload as `None`,
     /// and return the result type it then has. `None` when `expr` produces no such constructor call.

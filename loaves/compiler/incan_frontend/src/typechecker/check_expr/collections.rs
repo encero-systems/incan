@@ -223,6 +223,9 @@ impl TypeChecker {
     }
 
     /// Merge one observed collection member type into the literal's candidate member type.
+    ///
+    /// Compatible members share one type, so a `Result` side or `Option` payload one member leaves open takes the type
+    /// another member gives it: `[Ok(1), Err("x")]` is a `List[Result[int, str]]` (#1561).
     fn merge_collection_member_type(&mut self, member_ty: &mut ResolvedType, value_ty: ResolvedType, span: Span) {
         if matches!(member_ty, ResolvedType::Unknown) {
             *member_ty = value_ty;
@@ -230,10 +233,13 @@ impl TypeChecker {
         }
 
         if self.types_compatible(&value_ty, member_ty) {
+            fill_open_result_parts(member_ty, &value_ty, false);
             return;
         }
 
         if self.types_compatible(member_ty, &value_ty) {
+            let mut value_ty = value_ty;
+            fill_open_result_parts(&mut value_ty, member_ty, false);
             *member_ty = value_ty;
             return;
         }
@@ -546,5 +552,40 @@ fn has_open_part(ty: &ResolvedType) -> bool {
             params.iter().any(|param| has_open_part(&param.ty)) || has_open_part(ret)
         }
         _ => false,
+    }
+}
+
+/// Fill each unknown part of `member` that lies inside a `Result` or `Option` with the type the same part of `observed`
+/// has, where the two types have the same shape (#1561).
+///
+/// `Ok(1)` checks as a `Result[int, ?]` and `Err("x")` as a `Result[?, str]`: the constructor leaves the other side
+/// open, and one collection literal holding both is a collection of one `Result[int, str]`. `within_result` says
+/// whether `member` already lies inside a `Result` or `Option`; an unknown part anywhere else, such as a member whose
+/// type failed to check, is left as it is.
+fn fill_open_result_parts(member: &mut ResolvedType, observed: &ResolvedType, within_result: bool) {
+    match (member, observed) {
+        (ResolvedType::Unknown, ResolvedType::Unknown) => {}
+        (member @ ResolvedType::Unknown, observed) if within_result => *member = observed.clone(),
+        (ResolvedType::Generic(name, args), ResolvedType::Generic(observed_name, observed_args))
+            if args.len() == observed_args.len()
+                && (name == observed_name
+                    || collection_type_id(name.as_str())
+                        .is_some_and(|id| collection_type_id(observed_name.as_str()) == Some(id))) =>
+        {
+            let within_result = within_result
+                || matches!(
+                    collection_type_id(name.as_str()),
+                    Some(CollectionTypeId::Result | CollectionTypeId::Option)
+                );
+            for (arg, observed_arg) in args.iter_mut().zip(observed_args) {
+                fill_open_result_parts(arg, observed_arg, within_result);
+            }
+        }
+        (ResolvedType::Tuple(items), ResolvedType::Tuple(observed_items)) if items.len() == observed_items.len() => {
+            for (item, observed_item) in items.iter_mut().zip(observed_items) {
+                fill_open_result_parts(item, observed_item, within_result);
+            }
+        }
+        _ => {}
     }
 }

@@ -1,6 +1,8 @@
-//! A `Result` stays a value across its methods (#1561): a receiver the program reads again after a method call stays
-//! usable, an observer closure passed to `inspect` or `inspect_err` takes the payload it observes, and a side of a
-//! `Result` that an `Ok(...)` or `Err(...)` leaves open is built with the type the checker gives it.
+//! A `Result` or `Option` stays a value across its methods (#1561): a receiver the program reads again after a method
+//! call stays usable, an `unwrap_or` default is a value of the payload type, an observer closure passed to `inspect` or
+//! `inspect_err` takes the payload it observes, and a side of a `Result` that an `Ok(...)` or `Err(...)` leaves open is
+//! built with the type the checker gives it, in a binding, a closure's result, a comprehension and a collection
+//! literal whose other members fix it.
 
 use super::generated_programs::run_with_stdlib;
 
@@ -128,5 +130,144 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(stdout, "1\n2\n0\n3\n4\nOk(4)\n");
+    Ok(())
+}
+
+/// Rust's `Option` `unwrap` and `unwrap_or` take their receiver by value; a local, a field, a generic `Option`, a `mut`
+/// parameter and a static read again after them stay usable, in a loop too. An `unwrap_or` default is a value of the
+/// payload type: a `str` literal default of a `Result[str, E]` builds, and a default local the program reads again,
+/// of an `Option` or a `Result`, stays usable.
+#[test]
+fn option_and_result_unwrap_or_keep_their_values_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+static NAME: Option[str] = Some("n")
+
+
+model Holder:
+    o: Option[str]
+    r: Result[str, str]
+
+    def first(self) -> str:
+        head = self.o.unwrap_or("none")
+        tail = self.r.unwrap_or("z")
+        return f"{head}{tail}"
+
+
+def both[T](o: Option[T], r: Result[T, int], d: T) -> list[T]:
+    return [o.unwrap_or(d), o.unwrap(), r.unwrap_or(d), d]
+
+
+def twice(mut o: Option[str]) -> str:
+    first = o.unwrap_or("b")
+    return f"{first}{o.unwrap()}"
+
+
+def main() -> None:
+    o: Option[str] = Some("a")
+    println(o.unwrap_or("b"))
+    println(o.unwrap_or("b"))
+    println(o.unwrap())
+    for i in range(2):
+        println(o.unwrap_or("c"))
+    r: Result[str, str] = Err("e")
+    println(r.unwrap_or("z"))
+    d = "dflt"
+    println(r.unwrap_or(d))
+    println(d)
+    items: Option[list[int]] = None
+    fallback = [1, 2]
+    println(len(items.unwrap_or(fallback)) + len(fallback))
+    h = Holder(o=Some("h"), r=Ok("r"))
+    println(h.first())
+    held = h.o.unwrap_or("x")
+    println(f"{held}{h.o.unwrap()}")
+    failed: Result[str, int] = Err(1)
+    println(len(both(Some("s"), failed, "t")))
+    named = NAME.unwrap_or("x")
+    again = NAME.unwrap_or("y")
+    println(f"{named}{again}")
+    mut m: Option[str] = Some("m")
+    println(twice(m))
+"#,
+    )?;
+    assert_eq!(stdout, "a\na\na\na\na\nz\ndflt\ndflt\n4\nhr\nhh\n4\nnn\nmm\n");
+    Ok(())
+}
+
+/// A closure literal returning `Ok(...)` or `Err(...)` has a complete `Result` result: the side it leaves open is
+/// `None` where the enclosing function returns no `Result` and that function's side where it does, and the side it
+/// builds is its own, not the enclosing function's. A call of the closure, a generic callee inferring from it, and a
+/// list comprehension of constructors build and run.
+#[test]
+fn closures_returning_constructors_build_with_their_own_result_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+def call[T, E](f: () -> Result[T, E]) -> Result[T, E]:
+    return f()
+
+
+def run() -> Result[str, int]:
+    f = () => Ok(1)
+    println(f().unwrap_or(0))
+    g = () => Err(5)
+    match g():
+        Ok(_) => println("ok")
+        Err(e) => println(e)
+    return Ok("done")
+
+
+def main() -> None:
+    f = () => Ok(1)
+    r = f()
+    println(r.unwrap_or(0))
+    e = () => Err("no")
+    match e():
+        Ok(_) => println("ok")
+        Err(m) => println(m)
+    println(call(() => Ok(2)).unwrap_or(0))
+    ys = [Ok(x * 2) for x in [1, 2]]
+    for y in ys:
+        println(y.unwrap_or(0))
+    match run():
+        Ok(v) => println(v)
+        Err(code) => println(code)
+"#,
+    )?;
+    assert_eq!(stdout, "1\nno\n2\n2\n4\n1\n5\ndone\n");
+    Ok(())
+}
+
+/// The members of a list or dict literal share one type: a `Result` side one `Ok(...)` or `Err(...)` leaves open takes
+/// the type another member gives it, at any depth, as does an `Option` payload a `None` leaves open, and a side no
+/// member fixes is `None`.
+#[test]
+fn collection_literals_of_constructors_share_one_result_type_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+def main() -> None:
+    xs = [Ok(1), Err("x")]
+    for x in xs:
+        match x:
+            Ok(v) => println(v + 1)
+            Err(m) => println(m.upper())
+    firsts = [Err("a"), Ok(2), Ok(3)]
+    mut total = 0
+    for x in firsts:
+        total += x.unwrap_or(10)
+    println(total)
+    nested = [[Ok(1)], [Err("y")]]
+    println(len(nested))
+    d = {"a": Ok(1), "b": Err("z")}
+    println(len(d))
+    maybes = [None, Some(4)]
+    for maybe in maybes:
+        println(maybe.unwrap_or(0))
+    single = [Ok(5)]
+    for s in single:
+        println(s.unwrap_or(0))
+"#,
+    )?;
+    assert_eq!(stdout, "2\nX\n15\n2\n2\n0\n4\n5\n");
     Ok(())
 }

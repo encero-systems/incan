@@ -23,6 +23,7 @@ use incan_ir::expr::{
     VarRefKind,
 };
 use incan_ir::types::IrType;
+use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 /// Return the owned assignment element type for a list index, including explicit reference wrappers.
@@ -760,11 +761,22 @@ impl ReadByRefReceiverPlan {
 ///
 /// Such a call consumes its receiver, while a `Result` is a value that stays usable after the call reads it, as the
 /// `std.result` helper form taking it as an argument does. A local the program reads again later, or a field, is
-/// therefore copied into the call, and a local at its last use moves into it. A `Copy` result needs no copy, and one
-/// whose types are not all known to be `Clone` (a Rust type, an unknown type) keeps its move, as a `match` over it
-/// does.
+/// therefore copied into the call, and a local at its last use moves into it. A binding that reaches the value through
+/// a Rust reference, such as a `mut` parameter or the guard a static is read through, cannot move out of it and is
+/// copied at every call. A `Copy` result needs no copy, and one whose types are not all known to be `Clone` (a Rust
+/// type, an unknown type) keeps its move, as a `match` over it does.
 #[must_use]
 pub fn plan_consumed_receiver(receiver: &IrExpr) -> OwnershipPlan {
+    if let IrType::Ref(referent) | IrType::RefMut(referent) = &receiver.ty {
+        return if matches!(receiver.kind, IrExprKind::Var { .. })
+            && !referent.is_copy()
+            && value_type_is_known_clone(referent)
+        {
+            OwnershipPlan::Clone
+        } else {
+            OwnershipPlan::None
+        };
+    }
     if receiver.ty.is_copy() || !value_type_is_known_clone(&receiver.ty) {
         return OwnershipPlan::None;
     }
@@ -779,6 +791,48 @@ pub fn plan_consumed_receiver(receiver: &IrExpr) -> OwnershipPlan {
         } => OwnershipPlan::Clone,
         IrExprKind::Field { .. } if field_read_needs_owned_materialization(receiver) => OwnershipPlan::Clone,
         _ => OwnershipPlan::None,
+    }
+}
+
+/// Plan the receiver of an ordinary method call on an `Option` whose Rust implementation takes its receiver by value:
+/// `unwrap` and `unwrap_or` (#1561).
+///
+/// As for a `Result` method (see [`plan_consumed_receiver`]), the `Option` stays usable after such a call reads it, so
+/// a local the program reads again later, a field, or a binding that reaches the `Option` through a Rust reference is
+/// copied into the call, and a local at its last use moves into it. `as_mut` borrows its receiver and `copied` works on
+/// a `Copy` option, so they, and every method of another receiver, keep their receiver as it is.
+#[must_use]
+pub fn plan_consumed_option_receiver(receiver: &IrExpr, method: &str) -> OwnershipPlan {
+    let option_receiver = match &receiver.ty {
+        IrType::Ref(referent) | IrType::RefMut(referent) => referent.as_ref(),
+        ty => ty,
+    };
+    let consumes_receiver = matches!(option_receiver, IrType::Option(_))
+        && matches!(
+            option_methods::from_str(method),
+            Some(OptionMethodId::Unwrap | OptionMethodId::UnwrapOr)
+        );
+    if consumes_receiver {
+        plan_consumed_receiver(receiver)
+    } else {
+        OwnershipPlan::None
+    }
+}
+
+/// Return the value-use site of the default a `Result` `unwrap_or` returns in place of the success payload (#1561).
+///
+/// The default becomes the call's owned result, a value of the payload type, as an argument an Incan function takes by
+/// value does: a `str` literal is made a `String` for a `Result[str, E]`, and a local the program reads again is copied
+/// rather than moved. An unknown payload type leaves the default to the conversion that site makes without a target.
+pub fn result_unwrap_or_default_use_site(receiver_ty: &IrType) -> ValueUseSite<'_> {
+    let target_ty = match receiver_ty {
+        IrType::Result(ok_ty, _) if !matches!(ok_ty.as_ref(), IrType::Unknown) => Some(ok_ty.as_ref()),
+        _ => None,
+    };
+    ValueUseSite::IncanCallArg {
+        target_ty,
+        callee_param: None,
+        in_return: false,
     }
 }
 

@@ -3738,14 +3738,26 @@
     },
     "loaves/compiler/incan_emit/src/tests/result_method_receivers.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of Result receivers read again after a method call, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of Result and Option receivers read again after a method call, unwrap_or defaults, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open in bindings, closures, comprehensions and collection literals (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "tests": {
+        "closures_returning_constructors_build_with_their_own_result_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/closures_returning_constructors_have_their_own_result.incn",
+          "notes": "Calls closures returning Ok and Err inside and outside a Result function, passes one to a generic callee and builds a comprehension of constructors; the fixture prints each result."
+        },
+        "collection_literals_of_constructors_share_one_result_type_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/collection_literals_of_constructors_share_one_result_type.incn",
+          "notes": "Reads both sides of list, nested list and dict literals mixing Ok and Err, and a list mixing None and Some; the fixture prints each result."
+        },
         "open_result_sides_build_with_the_type_the_checker_gives_them_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/open_result_sides_take_the_enclosing_function_side.incn",
           "notes": "Reads the open side of an or_else result and a bound Ok inside a Result function and leaves it unread elsewhere; the fixture prints each result."
+        },
+        "option_and_result_unwrap_or_keep_their_values_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn",
+          "notes": "Reuses an Option local, field, generic value, mut parameter and static after unwrap and unwrap_or, and passes str literal and local defaults; the fixture prints each result."
         },
         "result_observer_closures_take_the_payload_they_observe_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/result_observer_closures_take_their_payload.incn",

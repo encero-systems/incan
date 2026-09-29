@@ -1494,9 +1494,10 @@ impl AstLowering {
 
     /// Return the ordinary argument policy for a method call.
     ///
-    /// The fallback of `unwrap_or` on an `Option[str]` is the owned `str` the call returns, so it takes Incan value
-    /// semantics rather than the borrowed shape a Rust method argument otherwise takes (`d.unwrap_or(missing)` passes
-    /// `missing`, not `&missing`) (#1875).
+    /// The fallback of `unwrap_or` on an `Option` is the owned payload the call returns, so it takes Incan value
+    /// semantics rather than the borrowed shape a Rust method argument otherwise takes: `d.unwrap_or(missing)` passes
+    /// `missing`, not `&missing` (#1875), and copies a `missing` the program reads again (#1561). A `Copy` payload,
+    /// which needs neither, a Rust reference and an unknown type keep the Rust argument shape.
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: incan_frontend::ast::Span,
@@ -1512,8 +1513,12 @@ impl AstLowering {
             return MethodCallArgPolicy::PreserveShape;
         }
 
-        if matches!(&receiver.ty, IrType::Option(payload) if matches!(payload.as_ref(), IrType::String))
-            && option_methods::from_str(method) == Some(OptionMethodId::UnwrapOr)
+        if matches!(
+            &receiver.ty,
+            IrType::Option(payload)
+                if !payload.is_copy()
+                    && !matches!(payload.as_ref(), IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::Unknown)
+        ) && option_methods::from_str(method) == Some(OptionMethodId::UnwrapOr)
         {
             return MethodCallArgPolicy::SourceOwned;
         }
@@ -3067,7 +3072,8 @@ impl AstLowering {
                 self.pop_scope();
                 self.non_linear_context_depth -= 1;
                 let _ = self.remaining_ident_reads.pop();
-                let body_ir = body_ir_result?;
+                let mut body_ir = body_ir_result?;
+                self.pin_settled_closure_result_constructor(expr_span, &mut body_ir);
                 let ret_ty = body_ir.ty.clone();
                 let param_tys: Vec<IrType> = param_pairs.iter().map(|(_, t)| t.clone()).collect();
                 let annotate_param_types = observed_payload.is_some()
@@ -3286,7 +3292,7 @@ impl AstLowering {
 
             // ---- Comprehensions (delegated to comprehensions submodule) ----
             ast::Expr::Generator(generator) => self.lower_generator_expr(generator)?,
-            ast::Expr::ListComp(comp) => self.lower_list_comp(comp)?,
+            ast::Expr::ListComp(comp) => self.lower_list_comp(comp, expr_span)?,
             ast::Expr::DictComp(comp) => self.lower_dict_comp(comp)?,
 
             // ---- Yield (placeholder) ----

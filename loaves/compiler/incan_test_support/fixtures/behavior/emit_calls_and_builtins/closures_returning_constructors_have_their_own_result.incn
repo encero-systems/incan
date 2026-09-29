@@ -1,0 +1,41 @@
+# behavior: a closure returning Ok(...) or Err(...) has a complete Result result, None on the side it leaves open outside a Result function and that function's side inside one, and its own type on the side it builds; calling it, passing it to a generic callee and a list comprehension of constructors run
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::closures_returning_constructors_build_with_their_own_result_issue1561
+# expect-stdout:
+#   1
+#   no
+#   2
+#   2
+#   4
+#   1
+#   5
+#   done
+
+def call[T, E](f: () -> Result[T, E]) -> Result[T, E]:
+    return f()
+
+
+def run() -> Result[str, int]:
+    f = () => Ok(1)
+    println(f().unwrap_or(0))
+    g = () => Err(5)
+    match g():
+        Ok(_) => println("ok")
+        Err(e) => println(e)
+    return Ok("done")
+
+
+def main() -> None:
+    f = () => Ok(1)
+    r = f()
+    println(r.unwrap_or(0))
+    e = () => Err("no")
+    match e():
+        Ok(_) => println("ok")
+        Err(m) => println(m)
+    println(call(() => Ok(2)).unwrap_or(0))
+    ys = [Ok(x * 2) for x in [1, 2]]
+    for y in ys:
+        println(y.unwrap_or(0))
+    match run():
+        Ok(v) => println(v)
+        Err(code) => println(code)

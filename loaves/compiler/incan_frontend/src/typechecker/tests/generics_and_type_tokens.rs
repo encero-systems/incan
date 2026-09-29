@@ -1,6 +1,7 @@
 //! Generic functions and methods: `Self` substitution at call sites (#237, #388), bounds enforced at call sites,
 //! explicit call type arguments and RFC 054 inference placeholders, the #1373 hints, local inference after factory
-//! calls, `Type[...]` tokens as values, reflection magic methods, and the arithmetic a type parameter admits (#1715).
+//! calls, `Type[...]` tokens as values, reflection magic methods, the arithmetic a type parameter admits (#1715), and
+//! the `unwrap_or` default a type-parameter payload admits (#1561).
 
 use super::*;
 
@@ -1153,4 +1154,74 @@ fn channel_constructor_type_argument_is_checked() {
             errors.iter().map(|error| &error.message).collect::<Vec<_>>()
         );
     }
+}
+
+/// A type parameter is one fixed type inside its generic declaration, so the default an `Option` or `Result`
+/// `unwrap_or` returns in place of a `T` payload must be a `T`: `0`, `"x"` and a `list[int]` for a `list[T]` payload
+/// are refused, in a generic function and a generic model's method alike, where a value of `T`, `[]` and `None` are
+/// accepted (#1561).
+#[test]
+fn unwrap_or_defaults_of_a_type_parameter_payload_are_that_parameter_issue1561() {
+    let errors = check_str_err(
+        r#"
+model Box[T]:
+    r: Result[T, str]
+
+    def get(self) -> T:
+        return self.r.unwrap_or(0)
+
+def pick[T](r: Result[T, int]) -> T:
+    return r.unwrap_or(0)
+
+def first[T](o: Option[T]) -> T:
+    return o.unwrap_or("x")
+
+def count[T](r: Result[list[T], int], fallback: list[int]) -> int:
+    return len(r.unwrap_or(fallback))
+
+def main() -> None:
+    println(pick(Ok(1)))
+"#,
+        "unwrap_or defaults against a type parameter",
+    );
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    for needle in [
+        "expected 'T', found 'int'",
+        "expected 'T', found 'str'",
+        "expected 'List[T]', found 'List[int]'",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected an error containing `{needle}`, got {messages:?}"
+        );
+    }
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("expected 'T', found 'int'"))
+            .count(),
+        2,
+        "both `unwrap_or(0)` defaults are refused: {messages:?}"
+    );
+    assert_check_ok(
+        r#"
+model Box[T]:
+    r: Result[T, str]
+
+    def get(self, d: T) -> T:
+        return self.r.unwrap_or(d)
+
+def pick[T](r: Result[T, int], o: Option[T], d: T) -> list[T]:
+    return [r.unwrap_or(d), o.unwrap_or(d)]
+
+def count[T](r: Result[list[T], int], nested: Option[Option[T]]) -> int:
+    inner = nested.unwrap_or(None)
+    return len(r.unwrap_or([]))
+
+def main() -> None:
+    println(len(pick(Ok(1), None, 2)))
+    r: Result[int, str] = Err("e")
+    println(r.unwrap_or(0))
+"#,
+    );
 }

@@ -110,6 +110,8 @@ impl TypeChecker {
         }
 
         let result_elem_ty = self.check_expr(&comp.expr);
+        // A side an `Ok(...)` or `Err(...)` element leaves open is built with a type all the same (#1561).
+        let result_elem_ty = self.settle_open_constructor_side(&comp.expr, result_elem_ty);
         self.exit_pattern_views(previous_views);
         self.symbols.exit_scope();
 
@@ -182,6 +184,8 @@ impl TypeChecker {
         self.enter_mut_param_closure();
         let return_ty = self.check_expr(body);
         self.exit_mut_param_closure();
+        // A side the body's `Ok(...)` or `Err(...)` leaves open is built with a type all the same (#1561).
+        let return_ty = self.settle_open_closure_result_side(body, return_ty, None);
         self.current_return_error_type = prev_return_error_type;
         self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
@@ -262,6 +266,9 @@ impl TypeChecker {
             } else {
                 expected_ret.clone()
             };
+        // A side the body's `Ok(...)` or `Err(...)` leaves open and the expected type does not fix, such as the error
+        // side of an `or_else` callback's `Ok(...)`, is built with a type all the same (#1561).
+        let resolved_return = self.settle_open_closure_result_side(body, resolved_return, Some(expected_ret));
         ResolvedType::Function(param_types, Box::new(resolved_return))
     }
 }

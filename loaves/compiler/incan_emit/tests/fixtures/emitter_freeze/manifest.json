@@ -44,8 +44,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
-      "sha256": "86e7c157dbd1086cd91ce275d8489904f75e317b704f893c0c1ed7afaf490843",
-      "lines": 2804
+      "sha256": "e901d85c1693bba62f1de364caf0f58bc1b78fb8c0f3be12f98a0aeb7eb2b13f",
+      "lines": 2815
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls/testing_asserts.rs",
@@ -79,8 +79,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "961d0bc24f9554b77a1ca3b189477ddbc7d84ae6c8b053c4206e8d3d47a5e224",
-      "lines": 1618
+      "sha256": "6929f76e9bacd397e47a7d61ccc44db03248203ac599721b661bb8cac050d609",
+      "lines": 1639
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
@@ -607,6 +607,25 @@
       "behavior_evidence": "result_receivers_stay_usable_after_a_method_call_issue1561 (incan_emit src/tests/result_method_receivers.rs) and the behavior fixture ownership_parameters_and_receivers/result_methods_leave_their_receiver_usable.incn",
       "semantic_owner": "the ownership planner consumed-receiver plan (ownership::plan_consumed_receiver); Body IR use facts",
       "retirement_condition": "the Rust-source backend is deleted (#654); Body IR plans the receiver copy from the same use facts and the Result method call site stops applying it"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "option_and_result_unwrap_or_keep_their_values_issue1561 and closures_returning_constructors_build_with_their_own_result_issue1561 (incan_emit src/tests/result_method_receivers.rs) and the behavior fixtures ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn and emit_calls_and_builtins/closures_returning_constructors_have_their_own_result.incn",
+      "semantic_owner": "the ownership planner (ownership::plan_consumed_option_receiver, ownership::result_unwrap_or_default_use_site) and the checker's settled closure result spelled by lowering (pin_settled_closure_result_constructor); Body IR use facts and checked constructor types",
+      "retirement_condition": "the Rust-source backend is deleted (#654); Body IR plans the receiver copy and the default from the same use facts and builds each constructor with its checked type, and the Option method call site, the Result unwrap_or default and the constructor seeding stop applying them"
     }
   ]
 }

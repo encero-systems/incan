@@ -722,7 +722,18 @@ impl<'a> IrEmitter<'a> {
                 return Ok(result);
             }
 
-            if let Some(IrType::Result(ok_ty, err_ty)) = self.current_function_return_type.borrow().as_ref()
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `f = () => Ok(1)` in a function returning `Result[str, int]` built the
+            //   closure's `Ok` with the function's `Result` type (E0308): the type arguments lowering spells on a
+            //   constructor now win over the enclosing function's.
+            // - Behavior evidence: `closures_returning_constructors_build_with_their_own_result_issue1561` and the
+            //   behavior fixture `closures_returning_constructors_have_their_own_result`.
+            // - Semantic owner: the checker's settled closure result and lowering's constructor type arguments
+            //   (`pin_settled_closure_result_constructor`); this site only yields to them.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR builds each constructor with
+            //   its checked type.
+            if type_args.is_empty()
+                && let Some(IrType::Result(ok_ty, err_ty)) = self.current_function_return_type.borrow().as_ref()
                 && let Some(first_arg) = positional.first()
                 && let Some(result) = self.emit_result_constructor_with_context(name, first_arg, ok_ty, err_ty)?
             {
