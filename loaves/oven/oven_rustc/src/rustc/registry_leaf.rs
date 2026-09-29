@@ -187,6 +187,14 @@ impl OvenRegistryLeafAuthority {
     /// the already-compiled contributor whose copy cannot move, which is the difference between "two versions of
     /// this crate exist" and "this provider was built against that one and would have to be rebuilt to agree".
     pub fn first_diverging_shared_package_pin(&self, other: &Self) -> Option<(String, PathBuf)> {
+        self.first_diverging_shared_package_pin_detail(other)
+            .map(|(package, pinned_by, _)| (package, pinned_by))
+    }
+
+    /// Return the first shared package as [`Self::first_diverging_shared_package_pin`] does, with a description of how
+    /// this authority's unit and `other`'s differ: both selected-unit identities and every semantic fact that
+    /// disagrees, so a refusal names what would have to be aligned.
+    pub fn first_diverging_shared_package_pin_detail(&self, other: &Self) -> Option<(String, PathBuf, String)> {
         for entry in &self.entries {
             for candidate in &other.entries {
                 if entry.leaf.package == candidate.leaf.package
@@ -194,7 +202,11 @@ impl OvenRegistryLeafAuthority {
                     && !registry_units_are_compatible(&entry.leaf, &candidate.leaf)
                     && !registry_units_are_byte_equivalent(&entry.leaf, &candidate.leaf)
                 {
-                    return Some((entry.leaf.package.clone(), candidate.artifact_root.clone()));
+                    return Some((
+                        entry.leaf.package.clone(),
+                        candidate.artifact_root.clone(),
+                        registry_unit_divergence(&entry.leaf, &candidate.leaf),
+                    ));
                 }
             }
         }
@@ -226,6 +238,45 @@ impl OvenRegistryLeafAuthority {
         }
         Ok(false)
     }
+}
+
+/// Describe how two sealed units of one package and version differ, for a refusal: both selected-unit identities,
+/// then each semantic fact the two leaves record differently (domain, crate kind, crate name, features, source).
+fn registry_unit_divergence(ours: &OvenRustcRegistryLeaf, theirs: &OvenRustcRegistryLeaf) -> String {
+    let identity = |leaf: &OvenRustcRegistryLeaf| {
+        leaf.selected_unit_identity
+            .clone()
+            .unwrap_or_else(|| "none".to_string())
+    };
+    let mut differing = Vec::new();
+    if ours.domain != theirs.domain {
+        differing.push(format!("domain {:?} vs {:?}", ours.domain, theirs.domain));
+    }
+    if ours.crate_kind != theirs.crate_kind {
+        differing.push(format!("crate kind {:?} vs {:?}", ours.crate_kind, theirs.crate_kind));
+    }
+    if ours.crate_name != theirs.crate_name {
+        differing.push(format!("crate name `{}` vs `{}`", ours.crate_name, theirs.crate_name));
+    }
+    if ours.features != theirs.features {
+        differing.push(format!("features {:?} vs {:?}", ours.features, theirs.features));
+    }
+    if ours.source != theirs.source {
+        differing.push(format!("source {:?} vs {:?}", ours.source, theirs.source));
+    }
+    if differing.is_empty() {
+        differing.push(
+            "no recorded fact besides the selected-unit identity, which binds the dependency graph, target intent and \
+             compiler inputs"
+                .to_string(),
+        );
+    }
+    format!(
+        "this closure's unit {} and the provider's unit {} differ in {}",
+        identity(ours),
+        identity(theirs),
+        differing.join("; ")
+    )
 }
 
 /// Return whether two sealed leaves denote one interchangeable RFC 124 unit.
