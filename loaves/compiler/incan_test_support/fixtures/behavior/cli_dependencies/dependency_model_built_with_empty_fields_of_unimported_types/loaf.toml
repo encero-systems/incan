@@ -1,0 +1,9 @@
+[project]
+name = "dependency_model_built_with_empty_fields_of_unimported_types"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+cards = { path = "deps/cards" }

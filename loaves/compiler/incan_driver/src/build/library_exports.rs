@@ -1343,6 +1343,59 @@ mod tests {
         Ok(manifest)
     }
 
+    /// Generate the Rust source of `consumer` against `manifest`, published as `package` and admitted as a resolved
+    /// provider artifact, as a consumer build generates it.
+    fn generate_admitted_consumer(
+        package: &str,
+        manifest: &LibraryManifest,
+        consumer: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let decoded = LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
+        let artifact = LibraryArtifactMetadata::from_crate_root(
+            package,
+            package,
+            std::env::temp_dir().join(format!("incan_test_{package}_artifacts/target/lib")),
+        );
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            package.to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(decoded.clone()),
+                metadata: artifact.clone(),
+            },
+        )]));
+        let record = ProviderRecord {
+            identity: ProviderIdentity {
+                name: package.to_string(),
+                version: decoded.version.clone(),
+                digest: format!(
+                    "{:0>64}",
+                    package.bytes().map(|byte| format!("{byte:02x}")).collect::<String>()
+                ),
+                feature_projection: Default::default(),
+            },
+            provenance: ProviderProvenance::ProjectDependency {
+                dependency_key: package.to_string(),
+                manifest_path: artifact.manifest_path.clone(),
+            },
+            authority: NamespaceAuthority::ProjectDependency {
+                dependency_key: package.to_string(),
+            },
+            namespace_claims: Default::default(),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(decoded)),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        };
+        let tokens = lexer::lex(consumer).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut codegen = crate::backend::IrCodegen::new();
+        codegen.set_provider_plan(Arc::new(ProviderPlan::new(index, vec![record], [])?));
+        codegen
+            .try_generate(&program)
+            .map_err(|error| format!("the consumer of `{package}` should generate: {error:?}").into())
+    }
+
     /// Build `package` from `sources`, encode its manifest, and check each consumer in `consumers` against it, once
     /// through the manifest index alone and once with the dependency admitted as a provider.
     fn consume_library(package: &str, sources: &[(&str, &str)], consumers: &[(&str, String)]) -> Vec<String> {
@@ -1619,5 +1672,43 @@ mod tests {
         } else {
             Err(failures.join("\n").into())
         }
+    }
+
+    /// A consumer building a compiled library's model with an empty list, an empty dict and `None` for fields whose
+    /// element types it never imports spells each element type from the dependency crate: at the package root for a
+    /// type the root republishes and at its declaring module for one it does not. The manifest records the provider's
+    /// bare spelling, which named nothing in the consumer's crate (`Vec::<EvidenceId>::new()`, rustc E0425).
+    #[test]
+    fn a_dependency_models_empty_fields_spell_their_element_types_from_the_dependency_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = published_library_manifest(
+            "card_provider",
+            &[
+                ("ids.incn", "pub newtype EvidenceId = str\n\n\npub newtype Tag = str\n"),
+                (
+                    "cards.incn",
+                    "from crate.ids import EvidenceId, Tag\n\n\npub model Card:\n    pub evidence_ids: list[EvidenceId]\n    pub tags: dict[str, Tag]\n    pub first: Option[EvidenceId]\n",
+                ),
+                (
+                    "lib.incn",
+                    "pub from cards import Card\npub from ids import EvidenceId\n",
+                ),
+            ],
+        )?;
+        let source = generate_admitted_consumer(
+            "card_provider",
+            &manifest,
+            "from pub::card_provider import Card\n\n\ndef main() -> None:\n    card = Card(evidence_ids=[], tags={}, first=None)\n    println(len(card.evidence_ids) + len(card.tags))\n",
+        )?;
+        let spelled = |text: &str| source.replace(' ', "").contains(text);
+        assert!(
+            spelled("Vec::<card_provider::EvidenceId>::new()"),
+            "the empty list names the root's `EvidenceId`:\n{source}"
+        );
+        assert!(
+            !spelled("Vec::<EvidenceId>") && !spelled(",Tag>"),
+            "no element type is spelled by the provider's bare name:\n{source}"
+        );
+        Ok(())
     }
 }
