@@ -1,0 +1,8 @@
+from std.io import BytesIO, Endian, IoError
+
+
+pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
+    out = BytesIO()
+    out.write(first, Endian.Big)?
+    out.write(second, Endian.Little)?
+    return Ok(out.getvalue())

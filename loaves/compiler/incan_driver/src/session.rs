@@ -1094,6 +1094,35 @@ mod tests {
         Ok(workspace)
     }
 
+    /// Seed the inspected `rustix::fs::flock` a consumer's Rust inspection holds when it mounts `std.fs.locking` from
+    /// source into `workspace`, as the inspector reads it: its `Fd: AsFd` descriptor is lent (`&impl AsFd`), so a
+    /// lock guard keeps the file it locked.
+    #[cfg(feature = "rust_inspect")]
+    fn seed_rustix_flock(workspace: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+        let param = |name: &str, type_display: &str| RustParam {
+            name: Some(name.to_string()),
+            type_display: type_display.to_string(),
+        };
+        rust_inspect::RustMetadataCache::new().insert_test_item(
+            workspace,
+            RustItemMetadata {
+                canonical_path: "rustix::fs::flock".to_string(),
+                definition_path: Some("rustix::fs::flock".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
+                    type_params: Vec::new(),
+                    params: vec![param("fd", "&impl AsFd"), param("operation", "FlockOperation")],
+                    return_type: "Result<()>".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )?;
+        Ok(())
+    }
+
     /// #1561: a consumer that imports `std.io` and `std.fs` with no SDK inventory, as on a fresh home, checks those
     /// modules and the `std.derives.collection` they import from the standard library's source, under the generated
     /// `__incan_std` namespace. That source is the standard library's own there as it is under `std` or in an SDK
@@ -1142,6 +1171,388 @@ mod tests {
                 .analyze_modules(&modules, Some(inspection.path()))
                 .map_err(|failure| format!("with Rust inspection:\n{}", failure.render_human()))?;
         }
+        Ok(())
+    }
+
+    /// A consumer whose calls reach the methods `std.io` and `std.fs` implement in their own source, trait methods
+    /// beside inherent ones: `BytesIO.write` of bytes and the typed `BinaryWrite` writes, on a local, a parameter
+    /// spelled `_BytesIO`, a field, a list element and a module-qualified construction; the typed `BinaryRead` reads;
+    /// the same calls through a type parameter's bound; the `BinaryReader.chunks` default a `BytesIO` and a `File`
+    /// both adopt; and a `File`'s and a `Path`'s text and byte reads and writes. It imports the module
+    /// [`STD_IO_CODEC_MODULE`], which makes typed writes of its own.
+    #[cfg(feature = "rust_inspect")]
+    const STD_IO_AND_FS_CALLS: &str = r#"import std.io as io
+from std.fs import Path
+from std.io import BinaryRead, BinaryWrite, BytesIO, Endian, IoError, _BytesIO
+from codec import encode_pair
+
+
+class Encoder:
+    pub writer: _BytesIO
+
+    def put(self, item: u16) -> Result[None, IoError]:
+        return self.writer.write(item, Endian.Big)
+
+
+def put_bounded[W with BinaryWrite[u32]](writer: W, item: u32) -> Result[None, IoError]:
+    return writer.write(item, Endian.Big)
+
+
+def get_bounded[R with BinaryRead[u16]](reader: R) -> Result[u16, IoError]:
+    return reader.read(Endian.Little)
+
+
+def encode(writer: _BytesIO, item: u32) -> Result[bytes, IoError]:
+    writer.write(b"ab")?
+    small: u8 = 9
+    writer.write(small, Endian.Little)?
+    writer.write(item, Endian.Big)?
+    return Ok(writer.getvalue())
+
+
+def decode(data: bytes) -> Result[str, IoError]:
+    reader = BytesIO(data)
+    head = reader.read_exact(2)?
+    small: u8 = reader.read(Endian.Little)?
+    item: u32 = reader.read(Endian.Big)?
+    return Ok(f"{len(head)} {small} {item}")
+
+
+def chunk_count(data: bytes) -> Result[int, IoError]:
+    mut count = 0
+    for chunk in BytesIO(data).chunks(4)?:
+        count = count + 1
+    return Ok(count)
+
+
+def round_trip() -> Result[str, IoError]:
+    data = encode(BytesIO(), 258)?
+    decoded = decode(data)?
+    chunks = chunk_count(data)?
+    return Ok(f"{len(data)} {decoded} {chunks}")
+
+
+def other_receivers() -> Result[str, IoError]:
+    encoder = Encoder(writer=BytesIO())
+    encoder.put(772)?
+    stream = io.BytesIO()
+    put_bounded(stream, 5)?
+    writers = [BytesIO()]
+    narrow: u16 = 513
+    writers[0].write(narrow, Endian.Little)?
+    widened = get_bounded(BytesIO(writers[0].getvalue()))?
+    pair = encode_pair(7, 9)?
+    return Ok(f"{len(encoder.writer.getvalue())} {len(stream.getvalue())} {widened} {len(pair)}")
+
+
+def files() -> Result[str, IoError]:
+    path = Path("data.txt")
+    out = path.open("w")?
+    out.write("hello")?
+    out.write_bytes(b" world")?
+    out.flush()?
+    text = path.open("r")?
+    head = text.read(5)?
+    rest = text.read_bytes(-1)?
+    exact = path.open("rb")?.read_exact(3)?
+    mut chunks = 0
+    for chunk in path.open("rb")?.chunks(4)?:
+        chunks = chunks + 1
+    raw = Path("data.bin")
+    raw.write_bytes(b"xyz")?
+    return Ok(f"{head}|{len(rest)}|{len(exact)}|{chunks}|{len(raw.read_bytes()?)}")
+
+
+def report(outcome: Result[str, IoError]) -> None:
+    match outcome:
+        Ok(text) => println(text)
+        Err(err) => println(err.message())
+
+
+def main() -> None:
+    report(round_trip())
+    report(other_receivers())
+    report(files())
+"#;
+
+    /// The module `codec` of [`STD_IO_AND_FS_CALLS`]: typed `BytesIO` writes made in a module the entry imports.
+    #[cfg(feature = "rust_inspect")]
+    const STD_IO_CODEC_MODULE: &str = r#"from std.io import BytesIO, Endian, IoError
+
+
+pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
+    out = BytesIO()
+    out.write(first, Endian.Big)?
+    out.write(second, Endian.Little)?
+    return Ok(out.getvalue())
+"#;
+
+    /// The runtime crates a program that mounts `std.io` and `std.fs` from source links beside `incan_std_core`, each
+    /// with the version its source names (`rust::byteorder @ "1"`), which selects among the versions a build holds.
+    #[cfg(feature = "rust_inspect")]
+    const STD_IO_AND_FS_RUNTIME_CRATES: [(&str, Option<&str>); 4] = [
+        ("incan_std_core", None),
+        ("byteorder", Some("1.")),
+        ("encoding_rs", Some("0.8.")),
+        ("rustix", Some("1.")),
+    ];
+
+    /// Write `source` as the entry of a project with no SDK inventory under `root`, beside each of `modules` as a
+    /// module of that name, and collect its module graph as a consumer on a fresh home collects it: every `std` module
+    /// the entry reaches comes from source.
+    #[cfg(feature = "rust_inspect")]
+    fn consumer_without_sdk_inventory(
+        root: &Path,
+        source: &str,
+        modules: &[(&str, &str)],
+    ) -> Result<(CompilationSession, Vec<ParsedModule>), Box<dyn std::error::Error>> {
+        let project = root.join("consumer");
+        std::fs::create_dir_all(project.join("src"))?;
+        for (name, module) in modules {
+            std::fs::write(project.join("src").join(format!("{name}.incn")), module)?;
+        }
+        let entry = project.join("src/main.incn");
+        std::fs::write(&entry, source)?;
+        let session = session_without_sdk_inventory(&project);
+        let modules = crate::modules::collect_modules_detailed_with_session(entry, &session)
+            .map_err(|failure| failure.render_human())?;
+        Ok((session, modules))
+    }
+
+    /// Check `modules` in `session` with the Rust inspection in `inspection`, generate the Rust project an Oven build
+    /// prepares from those facts under `output`, and return its crate root.
+    ///
+    /// The entry module is the crate root; every other module, each standard-library module mounted from source
+    /// included, is emitted under its module path with its public items kept, and the edition is the Oven's default.
+    #[cfg(feature = "rust_inspect")]
+    fn generate_consumer_project(
+        session: &CompilationSession,
+        modules: &[ParsedModule],
+        inspection: &Path,
+        output: &Path,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        use crate::backend::ir::IrCodegen;
+        use crate::backend::project::ProjectGenerator;
+
+        let analysis = session
+            .analyze_modules(modules, Some(inspection))
+            .map_err(|failure| failure.render_human())?;
+        let (entry, dependencies) = modules.split_last().ok_or("the module graph has no entry module")?;
+        let type_info_of = |module: &ParsedModule| {
+            analysis
+                .type_info_for_path(&module.file_path)
+                .cloned()
+                .ok_or_else(|| format!("no analysis for {}", module.file_path.display()))
+        };
+        let mut dependency_type_info = std::collections::HashMap::new();
+        let mut codegen = IrCodegen::new();
+        codegen.set_rust_inspect_manifest_dir(inspection.to_path_buf());
+        codegen.set_preserve_dependency_public_items(true);
+        codegen.set_registry_package_identity(Some("consumer".to_string()));
+        codegen.set_root_source_module_name(Some("main".to_string()));
+        codegen.set_provider_plan(session.provider_plan_for_modules(modules)?);
+        for module in dependencies {
+            codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
+            dependency_type_info.insert(module.path_segments.clone(), type_info_of(module)?);
+        }
+        codegen.set_stdlib_cache(analysis.stdlib_cache().clone());
+        codegen.set_prechecked_type_info(type_info_of(entry)?, dependency_type_info);
+        let module_paths = dependencies
+            .iter()
+            .map(|module| module.path_segments.clone())
+            .collect::<Vec<_>>();
+        let (main_code, rust_modules) = codegen.try_generate_multi_file_nested(&entry.ast, &module_paths)?;
+        let mut generator = ProjectGenerator::new(output, "consumer", true);
+        generator.set_rust_edition(Some("2024".to_string()));
+        generator.generate_nested(&main_code, &rust_modules)?;
+        Ok(generator.crate_root_path())
+    }
+
+    /// Build the generated binary crate rooted at `crate_root` with rustc, linking `runtime_crates`, run it in
+    /// `run_directory` and return its standard output.
+    ///
+    /// Under the compiler suite, the stored capability names rustc and every runtime crate. Otherwise rustc links the
+    /// runtime crates this test binary's own build produced, found beside it in the target profile.
+    #[cfg(feature = "rust_inspect")]
+    fn build_and_run_generated_program(
+        crate_root: &Path,
+        runtime_crates: &[(&str, Option<&str>)],
+        run_directory: &Path,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let build = tempfile::tempdir()?;
+        let program = build.path().join("program");
+        let mut command = generated_program_rustc(runtime_crates)?;
+        let built = command
+            .arg(crate_root)
+            .arg("-o")
+            .arg(&program)
+            .env("CARGO_PKG_NAME", "consumer")
+            .env("CARGO_PKG_VERSION", "0.1.0")
+            .output()?;
+        if !built.status.success() {
+            return Err(format!(
+                "rustc refused the generated program:\n{}",
+                String::from_utf8_lossy(&built.stderr)
+            )
+            .into());
+        }
+        let ran = std::process::Command::new(&program)
+            .current_dir(run_directory)
+            .output()?;
+        if !ran.status.success() {
+            return Err(format!(
+                "the generated program failed:\n{}",
+                String::from_utf8_lossy(&ran.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8(ran.stdout)?)
+    }
+
+    /// Return a rustc invocation for one generated binary with `runtime_crates` as the crates it may name.
+    #[cfg(feature = "rust_inspect")]
+    fn generated_program_rustc(
+        runtime_crates: &[(&str, Option<&str>)],
+    ) -> Result<std::process::Command, Box<dyn std::error::Error>> {
+        use oven_store::compiler_suite_env::{OVEN_COMPILER_SUITE_CAPABILITY_ENV, OvenCompilerSuiteCapability};
+
+        let capability = OvenCompilerSuiteCapability::from_environment(OVEN_COMPILER_SUITE_CAPABILITY_ENV)
+            .map_err(std::io::Error::other)?;
+        let rustc = capability
+            .as_ref()
+            .map(|capability| capability.rustc.clone())
+            .or_else(|| std::env::var_os("RUSTC").map(PathBuf::from))
+            .unwrap_or_else(|| "rustc".into());
+        let mut command = std::process::Command::new(rustc);
+        command.args([
+            "--edition=2024",
+            "-A",
+            "warnings",
+            "--crate-name=consumer",
+            "--crate-type=bin",
+        ]);
+        if let Some(capability) = capability {
+            for path in capability.dependency_search_paths {
+                command.arg("-L").arg(format!("dependency={}", path.display()));
+            }
+            for (name, path) in capability.externs {
+                command.arg("--extern").arg(format!("{name}={}", path.display()));
+            }
+            return Ok(command);
+        }
+        let directories = test_build_artifact_directories()?;
+        for directory in &directories {
+            command.arg("-L").arg(format!("dependency={}", directory.display()));
+        }
+        let derive = newest_build_artifact(&directories, "incan_derive", std::env::consts::DLL_EXTENSION, None)?
+            .ok_or("building a generated program requires a compiled incan_derive")?;
+        command
+            .arg("--extern")
+            .arg(format!("incan_derive={}", derive.display()));
+        for (name, version) in runtime_crates {
+            let artifact = newest_build_artifact(&directories, name, "rlib", *version)?
+                .ok_or_else(|| format!("building a generated program requires a compiled `{name}`"))?;
+            command.arg("--extern").arg(format!("{name}={}", artifact.display()));
+        }
+        Ok(command)
+    }
+
+    /// Return the directories of this test binary's target profile that hold the crates its own build compiled.
+    ///
+    /// Cargo places every compiled crate of one build in the same layout as the test binary: beside it in `deps`, or
+    /// in each build unit's output directory under `build`. Only that layout is searched, because another toolchain's
+    /// build of the same profile, such as the SDK prewarm's, can leave crates in the other one that the rustc on
+    /// `PATH` refuses (E0514).
+    #[cfg(feature = "rust_inspect")]
+    fn test_build_artifact_directories() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+        let executable = std::env::current_exe()?;
+        if let Some(deps) = executable
+            .parent()
+            .filter(|parent| parent.file_name().is_some_and(|name| name == "deps"))
+        {
+            return Ok(vec![deps.to_path_buf()]);
+        }
+        let profile = executable
+            .ancestors()
+            .find(|ancestor| ancestor.join("build").is_dir())
+            .ok_or("the test executable has no target profile directory")?;
+        let mut directories = Vec::new();
+        for package in std::fs::read_dir(profile.join("build"))? {
+            for unit in std::fs::read_dir(package?.path())? {
+                let output = unit?.path().join("out");
+                if output.is_dir() {
+                    directories.push(output);
+                }
+            }
+        }
+        Ok(directories)
+    }
+
+    /// Find the newest compiled `lib<name>-<hash>.<extension>` in `directories`, of the version `version` starts when
+    /// one is given.
+    ///
+    /// The version is read from the dependency file rustc writes beside the artifact, which names the crate's source
+    /// directory (`rustix-1.1.4/src/lib.rs`), so a build that holds two versions of one crate yields the one asked for.
+    #[cfg(feature = "rust_inspect")]
+    fn newest_build_artifact(
+        directories: &[PathBuf],
+        name: &str,
+        extension: &str,
+        version: Option<&str>,
+    ) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+        let prefix = format!("lib{name}-");
+        let mut matches = Vec::new();
+        for directory in directories {
+            for entry in std::fs::read_dir(directory)? {
+                let path = entry?.path();
+                let Some(hash) = path
+                    .file_name()
+                    .and_then(|file| file.to_str())
+                    .and_then(|file| file.strip_prefix(&prefix))
+                    .and_then(|file| file.strip_suffix(&format!(".{extension}")))
+                else {
+                    continue;
+                };
+                if let Some(version) = version {
+                    let dependency_file = directory.join(format!("{name}-{hash}.d"));
+                    let sources = std::fs::read_to_string(dependency_file).unwrap_or_default();
+                    let source_directory = format!("{}-{version}", name.replace('_', "-"));
+                    let exact_directory = format!("{name}-{version}");
+                    if !sources.contains(&source_directory) && !sources.contains(&exact_directory) {
+                        continue;
+                    }
+                }
+                let modified = std::fs::metadata(&path).and_then(|metadata| metadata.modified()).ok();
+                matches.push((modified, path));
+            }
+        }
+        matches.sort_by_key(|(modified, _)| *modified);
+        Ok(matches.pop().map(|(_, path)| path))
+    }
+
+    /// #1561: a consumer with no SDK inventory emits the `std.io` and `std.fs` modules it mounts from source beside
+    /// its own, and every standard-library method it calls names an item those modules emit, whatever dispatch
+    /// selected it; the program builds with rustc and runs.
+    ///
+    /// A mounted module declares its methods under `__incan_std.*`, while the consumer and its other modules see them
+    /// under `std.*`. A call dispatched through `BinaryWrite`, `BinaryRead` or `BinaryReader` on a `BytesIO` named the
+    /// method under `std.io`, which no module emits, and rustc refused the program with E0599, in the entry and in
+    /// `codec` alike.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn a_consumer_without_an_sdk_inventory_builds_std_io_and_std_fs_trait_calls_from_source_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let (session, modules) =
+            consumer_without_sdk_inventory(tmp.path(), STD_IO_AND_FS_CALLS, &[("codec", STD_IO_CODEC_MODULE)])?;
+        let inspection = inspection_workspace_with_std_io_read()?;
+        seed_rustix_flock(inspection.path())?;
+        let crate_root =
+            generate_consumer_project(&session, &modules, inspection.path(), &tmp.path().join("generated"))?;
+        let run_directory = tmp.path().join("run");
+        std::fs::create_dir_all(&run_directory)?;
+        let stdout = build_and_run_generated_program(&crate_root, &STD_IO_AND_FS_RUNTIME_CRATES, &run_directory)?;
+        assert_eq!(stdout, "7 2 9 258 2\n2 4 513 6\nhello|6|3|3|3\n");
         Ok(())
     }
 }

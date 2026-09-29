@@ -433,7 +433,7 @@ impl AstLowering {
             CheckedMethodSpelling::Provider => {
                 self.compiled_provider_method_reference_name(call_span, receiver_ty, &identity.declaration_name)
             }
-            CheckedMethodSpelling::Projected => Some(Self::emitted_source_identity_name(identity, true)),
+            CheckedMethodSpelling::Projected => Some(Self::emitted_source_identity_name(identity)),
         }
     }
 
@@ -646,10 +646,8 @@ pub static package_capability: RegistryEntry[CapabilityId, CapabilitySpec] = cap
                     _ => None,
                 })
                 .ok_or_else(|| format!("no lowered static `{name}`"))?;
-            let projected_placeholder =
-                AstLowering::emitted_source_identity_name(&entry.subject_constructor_identity, true);
-            let projected_checked =
-                AstLowering::emitted_source_identity_name(&entry.checked_constructor_identity, true);
+            let projected_placeholder = AstLowering::emitted_source_identity_name(&entry.subject_constructor_identity);
+            let projected_checked = AstLowering::emitted_source_identity_name(&entry.checked_constructor_identity);
             assert_ne!(projected_placeholder, projected_checked);
             assert_eq!(
                 lowering.checked_method_spelling(
