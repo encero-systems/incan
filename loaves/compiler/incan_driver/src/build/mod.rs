@@ -111,6 +111,8 @@ pub struct OvenPreparedProject {
     /// the selected Loaf is the one the foundation was compiled against; the generation's other profile shares the
     /// retained compiler without composing the closure.
     pub runtime_foundation: Option<oven_rustc::loaf::OvenHeldReleaseRuntimeFoundation>,
+    /// Release-generation lease retained when its compiler runs the build but its closure must not be composed.
+    pub release_generation_guard: Option<oven_rustc::loaf::OvenHeldReleaseRuntimeFoundation>,
     pub materialization: OvenToolchainMaterialization,
     pub cargo_process_started: bool,
     pub rustc: PathBuf,

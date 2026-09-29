@@ -1,5 +1,6 @@
 //! Bound inference carries what a called source method requires into the generic caller that calls it (#1779,
-//! #1280): the method's own bounds through its arguments, and its impl header's bounds through the receiver.
+//! #1280): the method's own bounds through its arguments, and its impl header's bounds through the receiver. A type
+//! parameter a `dict` or `set` type hashes receives `Eq` and `Hash` (#1758).
 
 use incan_frontend::ast::Program;
 use incan_frontend::typechecker::TypeChecker;
@@ -196,4 +197,71 @@ def describe[U with Display](held: Holder[U]) -> str:
         &function_bounds(&consumer_ir, "describe", "U")?,
         &[rust_trait_bounds::DISPLAY, rust_trait_bounds::CLONE],
     )
+}
+
+/// A generic callable that hashes its type parameter through a `dict` or `set` type builds: the parameter of a function
+/// that writes a dict entry, adds to a set or inserts into a dict, with the collection annotated or not, and of a
+/// generic class whose method writes to its dict field, carries `Eq` and `Hash` (and `Clone` for a borrowed key), and
+/// so does a caller forwarding its own type parameter (#1758). Each program is compiled by rustc.
+#[test]
+fn dict_and_set_types_bound_their_hashed_type_parameter_issue1758() -> Result<(), Box<dyn std::error::Error>> {
+    for (case, source) in [
+        (
+            "annotated index write",
+            "pub def count[T](items: list[T]) -> dict[T, int]:\n    mut d: dict[T, int] = {}\n    for x in items:\n        d[x] = 1\n    return d\n",
+        ),
+        (
+            "unannotated index write",
+            "pub def count[T](items: list[T]) -> int:\n    mut d = {}\n    for x in items:\n        d[x] = 1\n    return len(d)\n",
+        ),
+        (
+            "set add",
+            "pub def uniq[T](items: list[T]) -> int:\n    mut s = set()\n    for x in items:\n        s.add(x)\n    return len(s)\n",
+        ),
+        (
+            "dict insert",
+            "pub def keyed[T](items: list[T]) -> dict[T, int]:\n    mut d: dict[T, int] = {}\n    for x in items:\n        d.insert(x, 1)\n    return d\n",
+        ),
+        (
+            "forwarding caller",
+            "def count[T](items: list[T]) -> dict[T, int]:\n    mut d: dict[T, int] = {}\n    for x in items:\n        d[x] = 1\n    return d\n\npub def relay[U](items: list[U]) -> int:\n    return len(count(items))\n",
+        ),
+        (
+            "generic class field",
+            "pub class Index[K, V]:\n    entries: dict[K, V]\n\n    def put(mut self, key: K, value: V) -> None:\n        self.entries[key] = value\n\n    def size(self) -> int:\n        return len(self.entries)\n\npub def fill[K, V](mut idx: Index[K, V], key: K, value: V) -> int:\n    idx.put(key, value)\n    return idx.size()\n",
+        ),
+    ] {
+        let code = crate::IrCodegen::new().try_generate(&parse(source).map_err(|error| format!("{case}: {error}"))?)?;
+        super::mut_ownership_regressions::compile_generated_rust(&code)
+            .map_err(|error| format!("{case} did not build: {error}"))?;
+    }
+    Ok(())
+}
+
+/// #1852: a generic function that copies a list of its type parameter, by `sorted(items)` or by a spread of a list it
+/// reads again, receives `Clone` for that parameter, so it builds for any type argument and runs.
+#[test]
+fn copying_a_list_of_the_type_parameter_bounds_it_by_clone_issue1852() -> Result<(), Box<dyn std::error::Error>> {
+    let code = crate::IrCodegen::new().try_generate(&parse(
+        r#"
+def ordered[T with Ord](items: list[T]) -> list[T]:
+    return sorted(items)
+
+
+def doubled[T](items: list[T]) -> int:
+    more = [*items]
+    return len(more) + len(items)
+
+
+def main() -> None:
+    println(ordered([3, 1, 2])[0])
+    println(ordered(["b", "a"])[0])
+    println(doubled([1, 2]))
+"#,
+    )?)?;
+    assert_eq!(
+        super::mut_ownership_regressions::run_generated_program(&code)?,
+        "1\na\n4\n"
+    );
+    Ok(())
 }

@@ -963,7 +963,7 @@ model Pair:
   right: int
 
 def main() -> int:
-  pair = Pair(left=40, right=2)
+  mut pair = Pair(left=40, right=2)
   pair.left = 41
   return pair.left
 "#;

@@ -1,0 +1,13 @@
+# behavior: debug formatting of a union prints the held member rather than a compiler-generated variant name
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::generated_union_debug_delegates_to_member_issue1833
+# expect-stdout:
+#   7
+#   "text"
+
+def show(value: int | str) -> None:
+    println(f"{value:?}")
+
+
+def main() -> None:
+    show(7)
+    show("text")

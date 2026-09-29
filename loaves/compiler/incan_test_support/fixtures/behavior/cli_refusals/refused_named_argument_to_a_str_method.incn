@@ -1,0 +1,6 @@
+# behavior: a str method other than encode takes its arguments by position, so a named argument is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    text = "a,b"
+    println(text.replace(old="a", new="b"))

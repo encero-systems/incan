@@ -1,0 +1,10 @@
+# behavior: a closure returning Ok(1) outside a Result function has None as its error side, so passing it where a closure returning Result[int, str] is expected is refused
+# expect-diagnostic: INCAN-T0001
+
+def use(g: () -> Result[int, str]) -> int:
+    return g().unwrap_or(0)
+
+
+def main() -> None:
+    f = () => Ok(1)
+    println(use(f))

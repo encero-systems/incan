@@ -1,6 +1,7 @@
 //! The Rust spellings emission gives checked programs whose names or reads the frozen emitter used to spell wrongly:
 //! identifiers that are Rust keywords (#1775), a program type named like a runtime surface type (#1770), `set()` over
-//! a generator (#1744) and the reads of a `const` `FrozenDict` (#1757).
+//! a generator (#1744), the reads of a `const` `FrozenDict` (#1757), the element type written on a
+//! `std.async.channel` constructor, and the future of an async function called through a module binding (#1561).
 
 use crate::codegen::IrCodegen;
 use incan_frontend::{lexer, parser};
@@ -199,5 +200,46 @@ def main() -> None:
         ),
         "the `str` value is read out of the lookup before it is converted:\n{rust}"
     );
+    Ok(())
+}
+
+/// RFC 054: an explicit element type on a `std.async.channel` constructor reaches the generated call as a turbofish.
+#[test]
+fn explicit_channel_element_type_is_spelled_on_the_call() -> Result<(), String> {
+    let rust = compact(&generate(
+        r#"
+import std.async
+from std.async.channel import channel, oneshot, unbounded_channel
+
+
+async def main() -> None:
+    tx, rx = channel[str](4)
+    unbounded_tx, unbounded_rx = unbounded_channel[int]()
+    once_tx, once_rx = oneshot[bool]()
+    match await tx.send("hello"):
+        Ok(_) => println("sent")
+        Err(err) => println(err.message())
+"#,
+    )?);
+    for expected in ["channel::<String", "unbounded_channel::<i64", "oneshot::<bool"] {
+        assert!(rust.contains(expected), "missing `{expected}` in:\n{rust}");
+    }
+    Ok(())
+}
+
+/// `await` of a standard-library async function called through a module binding awaits the function's future, as the
+/// directly imported function does.
+#[test]
+fn awaiting_a_module_function_through_its_binding_awaits_its_future_issue1561() -> Result<(), String> {
+    let rust = generate(
+        r#"
+import std.async.time
+
+async def main() -> None:
+    await time.sleep(0.01)
+    println("done")
+"#,
+    )?;
+    assert!(compact(&rust).contains("time::sleep(0.01).await"), "{rust}");
     Ok(())
 }

@@ -43,6 +43,8 @@ In Python, packages are driven by directory structure and `__init__.py`. In Inca
 
 A `rust::` import and a project module import are different kinds of dependency. `rust::serde_json` declares a dependency on a Rust crate, which `incan lock` resolves and records; `from db.schema import Database` names a module of the same package, so it adds no dependency.
 
+In generated Rust, an import of a project module names the module that source resolution loaded by its path from the crate root, such as `crate::db::schema::Database` for `from db.schema import Database`, whichever module of the project writes the import.
+
 ## Source hierarchy and package facades
 
 A library has two complementary public shapes. Its checked source hierarchy gives consumers stable, scalable namespaces such as `pub::hees_ai.hyperquant`. Its `src/lib.incn` can additionally re-export selected declarations as a small flat facade. Preserving both avoids forcing large packages into one enormous root namespace without breaking existing facade imports.

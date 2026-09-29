@@ -103,6 +103,16 @@ fn held_release_matches_selected_root(held_root: &Path, selected_root: &Path) ->
     Ok(held_root == selected)
 }
 
+/// Keep a held release authority as either the composable closure or a compiler-generation lease.
+fn retain_release_authority<T>(held: T, compose_closure: bool, generation_guard: &mut Option<T>) -> Option<T> {
+    if compose_closure {
+        Some(held)
+    } else {
+        *generation_guard = Some(held);
+        None
+    }
+}
+
 /// Analyze, generate, receipt, and select the direct-Rustc plan for one normal Oven executable command.
 #[allow(clippy::too_many_arguments)]
 pub fn prepare_oven_project(
@@ -681,6 +691,7 @@ pub fn prepare_oven_project(
         ],
         backend: Some(backend_receipt),
     };
+    let mut release_generation_guard = None;
     let runtime_foundation = match &plan_selection {
         OvenDirectRustcPlanSelection::ToolchainLoaf(native) => {
             let Some(root) = native
@@ -695,6 +706,7 @@ pub fn prepare_oven_project(
                     receipt,
                     plan_selection,
                     runtime_foundation: None,
+                    release_generation_guard: active_runtime_foundation,
                     materialization: plan_preparation.materialization,
                     cargo_process_started: plan_preparation.cargo_process_started,
                     rustc,
@@ -744,11 +756,9 @@ pub fn prepare_oven_project(
             // that Loaf composes the closure into its plan; a consumer of the generation's other profile shares the
             // retained compiler and the generation lock its own selection holds, but links nothing rebuilt above
             // a different profile's artifacts.
-            if held.compiled_loaf_identity == native.loaf_identity && held_intent.profile == receipt.intent.profile {
-                Some(held)
-            } else {
-                None
-            }
+            let compose_closure =
+                held.compiled_loaf_identity == native.loaf_identity && held_intent.profile == receipt.intent.profile;
+            retain_release_authority(held, compose_closure, &mut release_generation_guard)
         }
         _ => {
             if active_runtime_foundation.is_some() {
@@ -772,6 +782,7 @@ pub fn prepare_oven_project(
         receipt,
         plan_selection,
         runtime_foundation,
+        release_generation_guard,
         materialization: plan_preparation.materialization,
         cargo_process_started: plan_preparation.cargo_process_started,
         rustc,
@@ -785,6 +796,19 @@ pub fn prepare_oven_project(
             .as_ref()
             .map(|workspace| workspace.manifest_dir().to_path_buf()),
     })
+}
+
+#[cfg(test)]
+mod generation_guard_tests {
+    use super::retain_release_authority;
+
+    #[test]
+    fn held_release_compiler_remains_guarded_when_its_closure_is_not_composed() {
+        let mut guard = None;
+        let foundation = retain_release_authority("held-generation", false, &mut guard);
+        assert!(foundation.is_none());
+        assert_eq!(guard, Some("held-generation"));
+    }
 }
 
 /// Prepare the Rust-only direct-rustc base required before Oven can seal a package's declared native artifacts.

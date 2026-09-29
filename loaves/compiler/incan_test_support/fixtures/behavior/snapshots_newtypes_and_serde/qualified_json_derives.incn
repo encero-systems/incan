@@ -1,5 +1,6 @@
 # behavior: module-qualified derives (json.Serialize, json.Deserialize) give a model, a class, an enum and a newtype to_json and from_json and satisfy a json.Serialize bound (#1885)
 # retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::qualified_json_derives_implement_the_stdlib_traits_issue1885
+# retires: loaves/compiler/incan_emit/src/codegen.rs::followups_b_serde_derives_are_crate_rooted_when_stdlib_serde_is_imported
 # expect-stdout:
 #   {"value":1}
 #   {"value":1}

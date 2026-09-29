@@ -499,6 +499,38 @@ fn issue1872_dunder_beside_its_matching_derive_is_refused() -> TestResult {
     Ok(())
 }
 
+/// A `__str__` inherited from an extended class or supplied by an adopted trait gives the type its display as a
+/// declared one does, so `@derive(Display)` beside it is refused too.
+#[test]
+fn issue1872_derived_display_beside_an_inherited_or_adopted_str_is_refused() -> TestResult {
+    let inherited = refused(
+        r#"
+class Base:
+    pub id: int
+
+    def __str__(self) -> str:
+        return "base"
+
+@derive(Display)
+class Child extends Base:
+    pub extra: int
+"#,
+    )?;
+    assert_refusal(&inherited, &["'Child' defines __str__ and derives Display"])?;
+    let adopted = refused(
+        r#"
+trait Named:
+    def __str__(self) -> str:
+        return "named"
+
+@derive(Display)
+model Thing with Named:
+    id: int
+"#,
+    )?;
+    assert_refusal(&adopted, &["'Thing' defines __str__ and derives Display"])
+}
+
 #[test]
 fn issue1872_dunders_without_their_matching_derive_stay_accepted() -> TestResult {
     accepted(
@@ -623,5 +655,197 @@ def main() -> None:
     println(len(seen))
     println(Key(id=3).__hash__())
 "#,
+    )
+}
+
+/// A `Hash` bound is met only by the derive, which gives no `__hash__`, so calling it through the bound is refused
+/// under either spelling of the trait; the method stays callable on a type that defines it (#1561).
+#[test]
+fn hash_method_through_a_hash_bound_is_refused_issue1561() -> TestResult {
+    for import in [
+        "from std.derives.comparison import Hash",
+        "from std.derives.comparison import Hash as Hashable",
+    ] {
+        let bound = import.rsplit(' ').next().unwrap_or("Hash");
+        let source =
+            format!("{import}\n\ndef hash_of[T with {bound}](value: T) -> int:\n    return value.__hash__()\n");
+        let errors = refused(&source)?;
+        assert_refusal(
+            &errors,
+            &["'__hash__' cannot be called on 'T' through its 'Hash' bound"],
+        )?;
+    }
+    accepted(
+        r#"
+from std.derives.comparison import Hash
+
+model Hashed with Hash:
+    value: int
+
+    def __hash__(self) -> int:
+        return self.value
+
+def main() -> None:
+    println(Hashed(value=5).__hash__())
+"#,
+    )
+}
+
+/// In a type's own dunder, a method called on its `Self` parameter resolves on the type, so a missing one is refused;
+/// and an `Ord` adoption named through its module (`comparison.Ord`) provides `sorted()` (#1561).
+#[test]
+fn comparison_adopters_resolve_self_parameters_and_module_qualified_adoptions_issue1561() -> TestResult {
+    let errors = refused(
+        r#"
+from std.derives.comparison import Eq
+
+model Key with Eq:
+    id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return other.missing() == self.id
+"#,
+    )?;
+    assert_refusal(&errors, &["missing"])?;
+    accepted(
+        r#"
+from std.derives import comparison
+
+model Score with comparison.Ord:
+    points: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.points == other.points
+
+    def __lt__(self, other: Self) -> bool:
+        return self.points < other.points
+
+def main() -> None:
+    println(sorted([Score(points=2), Score(points=1)])[0].points)
+"#,
+    )
+}
+
+/// An `Ord` adopter that imports only `Ord` reaches the `__ne__` default of its `Eq` supertrait, as a `bool`, under the
+/// trait's own and its module-qualified spelling (#1561).
+#[test]
+fn ne_reaches_the_eq_supertrait_default_of_an_ord_only_adopter_issue1561() -> TestResult {
+    accepted(
+        r#"
+from std.derives.comparison import Ord
+from std.derives import comparison
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+model Qualified with comparison.Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+def main() -> None:
+    differs: bool = Ordered(v=1).__ne__(Ordered(v=2))
+    same: bool = Qualified(v=1).__ne__(Qualified(v=1))
+    println(differs and not same)
+"#,
+    )?;
+    let errors = refused(
+        r#"
+from std.derives.comparison import Ord
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+def main() -> None:
+    count: int = Ordered(v=1).__ne__(Ordered(v=2))
+"#,
+    )?;
+    assert_refusal(&errors, &["int", "bool"])
+}
+
+/// A newtype is `Copy` without a derive when its underlying type is a builtin `Copy` value (a number, `bool`, or a
+/// tuple, `Option` or `Result` of those); over another newtype or a model that derives `Copy` it is `Copy` only by
+/// deriving it.
+#[test]
+fn newtype_copy_follows_a_builtin_underlying_type_or_its_own_derive() -> TestResult {
+    accepted(
+        r#"
+type Meters = newtype int
+type Span = newtype tuple[int, float]
+type Maybe = newtype Option[bool]
+
+@derive(Copy)
+type Distance = newtype Meters
+
+@derive(Copy)
+model Leg:
+    meters: Meters
+    span: Span
+    maybe: Maybe
+    distance: Distance
+"#,
+    )?;
+    for (declarations, holder) in [
+        (
+            "type Meters = newtype int\ntype Distance = newtype Meters\n",
+            "Distance",
+        ),
+        (
+            "@derive(Copy)\nmodel Point:\n    x: int\n\ntype Place = newtype Point\n",
+            "Place",
+        ),
+    ] {
+        let source = format!("{declarations}\n@derive(Copy)\nmodel Leg:\n    value: {holder}\n");
+        let errors = refused(&source)?;
+        assert_refusal(&errors, &["@derive(Copy) on model 'Leg'", holder])?;
+    }
+    Ok(())
+}
+
+/// RFC 000 `@derive(Display)` displays a value as its `Debug` structure, so on a newtype it needs `Debug` of the
+/// underlying type, and a newtype over a type without it is refused.
+#[test]
+fn derived_display_on_a_newtype_needs_debug_of_its_underlying_type() -> TestResult {
+    let errors = refused(
+        "import std.async\nfrom std.async.task import JoinHandle\n\n@derive(Display)\ntype Handle = newtype JoinHandle[int]\n",
+    )?;
+    assert_refusal(
+        &errors,
+        &[
+            "@derive(Display) on newtype 'Handle'",
+            "underlying type 'JoinHandle[int]'",
+        ],
+    )?;
+    accepted("@derive(Display)\ntype UserId = newtype int\n\ndef main() -> None:\n    println(UserId(1))\n")
+}
+
+/// A newtype lacks the derives its underlying type lacks, and deriving one of them on the newtype is refused.
+#[test]
+fn newtype_derive_its_underlying_type_lacks_is_refused() -> TestResult {
+    let errors = refused(
+        "import std.async\nfrom std.async.task import JoinHandle\n\n@derive(Clone)\ntype Handle = newtype JoinHandle[int]\n",
+    )?;
+    assert_refusal(
+        &errors,
+        &[
+            "@derive(Clone) on newtype 'Handle'",
+            "underlying type 'JoinHandle[int]'",
+        ],
     )
 }

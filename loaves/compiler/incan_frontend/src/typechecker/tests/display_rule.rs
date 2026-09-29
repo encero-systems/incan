@@ -1,6 +1,6 @@
 //! The display rule shared by `print`/`println` arguments, `str(value)`, f-string `{value}` parts and `Display` bounds
 //! (#1725, #1748): structural values display their structure, a type displays through the `Display` it provides, and a
-//! value with no printed form is refused with `INCAN-T0103`.
+//! value with no printed form, a `None` value among them (#1561), is refused with `INCAN-T0103`.
 
 use super::*;
 
@@ -249,10 +249,9 @@ def main() -> None:
 }
 
 #[test]
-fn plain_enums_newtypes_and_derived_display_are_refused_in_every_position_issue1748()
--> Result<(), Box<dyn std::error::Error>> {
-    // An enum that declares no values, a newtype, and a model whose only claim is `@derive(Display)` provide no
-    // `Display`, so each is refused in all three value positions.
+fn plain_enums_and_newtypes_are_refused_in_every_position_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    // An enum that declares no values and a newtype provide no `Display`, so each is refused in all three value
+    // positions.
     let refused = printed_form_refusals(
         r#"
 enum Color:
@@ -260,10 +259,6 @@ enum Color:
     Green
 
 type UserId = newtype int
-
-@derive(Display)
-model Derived:
-    x: int
 
 def main() -> None:
     color = Color.Red
@@ -274,10 +269,6 @@ def main() -> None:
     print(user)
     user_text = str(user)
     println(f"{user}")
-    derived = Derived(x=1)
-    println(derived)
-    derived_text = str(derived)
-    println(f"{derived}")
 "#,
     )?;
     assert_eq!(
@@ -289,12 +280,49 @@ def main() -> None:
             "'print' cannot print the UserId value 'user'",
             "'str' cannot convert the UserId value 'user' to text",
             "f-string cannot interpolate the UserId value 'user'",
-            "'println' cannot print the Derived value 'derived'",
-            "'str' cannot convert the Derived value 'derived' to text",
-            "f-string cannot interpolate the Derived value 'derived'",
         ],
         "one refusal per displayed value whose type provides no Display, in source order"
     );
+    Ok(())
+}
+
+/// RFC 000 `@derive(Display)` gives a model, class, enum or newtype a display form: its values display in every
+/// position and satisfy a `Display` bound.
+#[test]
+fn a_derived_display_displays_in_every_position_and_meets_a_display_bound() -> Result<(), Box<dyn std::error::Error>> {
+    check_str(
+        r#"
+@derive(Display)
+model Point:
+    x: int
+
+@derive(Display)
+class Account:
+    pub owner: str
+
+@derive(Display)
+enum Color:
+    Red
+
+@derive(Display)
+type UserId = newtype int
+
+@derive(Display)
+model Box[T]:
+    value: T
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+def main() -> None:
+    point = Point(x=1)
+    println(point)
+    text = str(Account(owner="Ada"))
+    println(f"{Color.Red} {UserId(1)} {Box(value=2)} {text}")
+    shown = show(point) + show(Color.Red) + show(UserId(2)) + show(Box(value="b"))
+"#,
+    )
+    .map_err(|errors| format!("a derived Display must display, got: {errors:?}"))?;
     Ok(())
 }
 
@@ -383,10 +411,6 @@ enum Color:
 
 type UserId = newtype int
 
-@derive(Display)
-model Derived:
-    x: int
-
 def show[T with Display](value: T) -> str:
     return f"{value}"
 
@@ -396,7 +420,6 @@ def main() -> None:
     plain = show(Plain(x=1))
     color = show(Color.Red)
     user = show(UserId(1))
-    derived = show(Derived(x=1))
     raw = show(data)
 "#,
     )
@@ -420,10 +443,6 @@ def main() -> None:
             (
                 Some("INCAN-T0103"),
                 "Call to 'show' cannot bind a value of type 'UserId' to 'T', which requires 'Display'"
-            ),
-            (
-                Some("INCAN-T0103"),
-                "Call to 'show' cannot bind a value of type 'Derived' to 'T', which requires 'Display'"
             ),
             (
                 Some("INCAN-T0103"),
@@ -477,5 +496,153 @@ def show[T](value: T) -> str:
             .any(|error| error.stable_code() == Some("INCAN-T0103") && error.message.contains("type parameter 'T'")),
         "expected a type-parameter display refusal, got {errors:?}"
     );
+    Ok(())
+}
+
+/// Inside a tuple, list, dict, set, `Option` or `Result` every element displays as its structure, and a generator, a
+/// function and `bytes` have none at any depth, so the structure holding one is refused in every display position; a
+/// union, an enum or a model element displays.
+#[test]
+fn structures_holding_an_element_with_no_printed_form_are_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let refused = printed_form_refusals(
+        r#"
+def numbers() -> Generator[int]:
+    yield 1
+
+def double(n: int) -> int:
+    return n * 2
+
+def main() -> None:
+    gens = [numbers()]
+    print(gens)
+    raw = b"hi"
+    println((raw, 1))
+    maybe = Some(double)
+    println(f"{maybe}")
+    table = {"a": [numbers()]}
+    text = str(table)
+"#,
+    )?;
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "'print' cannot print 'gens', which holds a generator",
+            "'println' cannot print a value of type '(bytes, int)', which holds a bytes value",
+            "f-string cannot interpolate 'maybe', which holds a function",
+            "'str' cannot convert 'table' to text, since it holds a generator",
+        ]
+    );
+    check_str(
+        r#"
+enum Color:
+    Red
+
+model Point:
+    x: int
+
+def main() -> None:
+    member: int | str = 1
+    print([member])
+    println([Color.Red], [Point(x=1)], (Some(1), 2))
+"#,
+    )
+    .map_err(|errors| format!("structures of displayable elements must print, got: {errors:?}"))?;
+    Ok(())
+}
+
+/// Every exact-width numeric type satisfies a `Display` bound, as it displays by the rule above; `i64` is `int`.
+#[test]
+fn exact_width_numerics_satisfy_a_display_bound() -> Result<(), Box<dyn std::error::Error>> {
+    check_str(
+        r#"
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+def main() -> None:
+    small: i32 = 3
+    byte: u8 = 250
+    single: f32 = 1.5
+    long_count: long = 7
+    println(show(small) + show(byte) + show(single) + show(long_count))
+"#,
+    )
+    .map_err(|errors| format!("exact-width numerics must satisfy Display, got: {errors:?}"))?;
+    Ok(())
+}
+
+/// A value of type `None` has no printed form (#1561): the result of a function that returns `None`, and the side of a
+/// `Result` that an `Ok(...)` or `Err(...)` leaves open where the enclosing function returns no `Result`, bound to a
+/// local or returned by the closure of `or_else` or `and_then`. Inside a function that returns a `Result`, that side
+/// has the function's side and displays.
+#[test]
+fn none_values_and_open_result_sides_are_refused_in_display_positions_issue1561()
+-> Result<(), Box<dyn std::error::Error>> {
+    let refused = printed_form_refusals(
+        r#"
+def nothing() -> None:
+    return
+
+def main() -> None:
+    x = nothing()
+    println(x)
+    text = str(x)
+    println(f"{x}")
+    e: Result[int, str] = Err("abc")
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    g: Result[int, str] = Ok(3)
+    match g.and_then((v) => Err("no")):
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    bound = Ok(2)
+    match bound:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+"#,
+    )?;
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "'println' cannot print the None value 'x'",
+            "'str' cannot convert the None value 'x' to text",
+            "f-string cannot interpolate the None value 'x'",
+            "'println' cannot print the None value 'm'",
+            "'println' cannot print the None value 'v'",
+            "'println' cannot print the None value 'm'",
+        ],
+        "one refusal per displayed None value, in source order"
+    );
+    assert!(
+        refused[3].1.iter().any(|hint| hint.contains("annotate the Result")),
+        "a None value's remedy names the annotation that types an open side, got: {:?}",
+        refused[3].1
+    );
+    check_str(
+        r#"
+def recover(e: Result[int, str]) -> Result[int, str]:
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    bound = Ok(2)
+    match bound:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    return Ok(0)
+
+def main() -> None:
+    e: Result[int, str] = Err("abc")
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(_) => println("never")
+    println(r)
+"#,
+    )
+    .map_err(|errors| {
+        format!("a Result side the enclosing function types, or one never read, must pass: {errors:?}")
+    })?;
     Ok(())
 }

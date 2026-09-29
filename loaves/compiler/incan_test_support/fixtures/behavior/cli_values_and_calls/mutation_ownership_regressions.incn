@@ -1,0 +1,130 @@
+# behavior: copies and mutations through collection parameters, indexed elements, derived iterables, match and comprehension bindings, closures, loop bindings and generic mut parameters preserve the values visible to the program
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::nonempty_dict_conversion_is_a_checked_copy_of_its_source_issue1852
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::collection_copies_from_mut_parameters_are_owned_issue1852
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::mut_method_on_list_element_borrows_the_element_issue1857
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::tuple_index_after_list_index_has_no_bad_deref_issue1861
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::derived_iterables_keep_mutable_elements_live_issue1863
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::changed_match_comprehension_and_closure_bindings_build_issue1864
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::loop_popping_each_element_builds_issue1869
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::comprehension_filter_mutation_reaches_the_source_issue1864
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::closure_module_function_reads_and_str_literal_arms_build_issue1864
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::loop_and_mut_receiver_shapes_are_rust_valid_issue1869
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::mut_parameter_copy_in_generic_function_states_clone_issue1874
+# expect-stdout:
+#   6
+#   2
+#   1.5
+#   3 1 2 2
+#   1 2
+#   1
+#   2
+#   k
+#   k:1
+#   1 2
+#   2
+#   2
+
+def copies(mut table: dict[str, int], mut tags: set[str], mut items: list[int]) -> int:
+    b = dict(table)
+    c = set(tags)
+    d = [*items]
+    return len(b) + len(c) + len(d)
+
+
+def describe(key: str, code: int) -> str:
+    return f"{key}:{code}"
+
+
+model Failure:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+
+def lookup(key: str) -> Result[str, Failure]:
+    return Err(Failure(detail=key))
+
+
+def fetch(key: str) -> Result[str, str]:
+    result = lookup(key).map_err((failure) => describe(key, len(failure.message())))
+    println(key)
+    return result
+
+
+class Cell:
+    pub value: int
+
+    def tag(mut self) -> None:
+        self.value += 1
+
+
+class Grid:
+    pub cells: list[Cell]
+
+
+def grow(mut pairs: list[tuple[list[int], int]]) -> int:
+    for xs, n in pairs:
+        xs.append(n)
+    return len(pairs)
+
+
+def count[T](mut row: list[T]) -> int:
+    return len(row)
+
+
+def total[T](grid: list[list[T]]) -> int:
+    mut n = 0
+    for row in grid:
+        n += count(row)
+    return n
+
+
+def main() -> None:
+    println(copies({"a": 1, "b": 2}, {"x", "y"}, [1, 2]))
+    mut indexed: list[list[int]] = [[1]]
+    indexed[0].append(9)
+    println(len(indexed[0]))
+    points: list[tuple[float, float]] = [(1.5, 2.5)]
+    println(points[0][0])
+    mut rows: list[list[int]] = [[0]]
+    for i, row in enumerate(rows):
+        row.append(i)
+    mut other: list[list[int]] = [[1]]
+    for left, right in zip(rows, other):
+        left.append(len(right))
+    mut table: dict[str, list[int]] = {"x": [1]}
+    for item in table.values():
+        item.append(2)
+    mut groups: list[list[list[int]]] = [[[3]]]
+    for row in groups[0]:
+        row.append(4)
+    table_size = len(table["x"])
+    group_size = len(groups[0][0])
+    println(f"{len(rows[0])} {len(other[0])} {table_size} {group_size}")
+    mut changed: list[list[int]] = [[1, 2]]
+    popped = [row.pop() for row in changed]
+    match changed[0]:
+        xs => xs.append(3)
+    mut items: list[int] = []
+    size = () => len(items)
+    items.append(1)
+    println(f"{size() + len(popped)} {len(changed[0])}")
+    mut popped_rows: list[list[int]] = [[1, 2], [3]]
+    for row in popped_rows:
+        row.pop()
+    println(len(popped_rows[0]))
+    mut filtered_rows: list[list[int]] = [[1, 2]]
+    sizes = [len(row) for row in filtered_rows if row.pop() > 0]
+    println(len(sizes) + len(filtered_rows[0]))
+    match fetch("k"):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    mut pairs = [([1], 2)]
+    mut grid = Grid(cells=[Cell(value=1)])
+    for cell in grid.cells:
+        if true:
+            cell.tag()
+    println(f"{grow(pairs)} {grid.cells[0].value}")
+    println(total([[1], [2]]))
+    println(total([["a"], ["b"]]))

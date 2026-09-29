@@ -20,7 +20,7 @@ use incan_ir::types::IrType;
 /// replacement executor shares) spells a float the way Python does, and the emitter only routes the three display
 /// positions -- f-string interpolation, `str(x)`, and `print`/`println` -- to it through [`float_display_text`].
 /// Exact `f32`/`f64` carriers are deliberately not routed: they keep their native Rust spelling, which the
-/// replacement profile pins as their checked-carrier behaviour.
+/// replacement profile pins as their checked-carrier behavior.
 ///
 /// - Compatibility issue: #1372.
 /// - Behavior evidence: `codegen_snapshot_tests` (`float_display`), `incan_std_core::strings` unit tests, and the

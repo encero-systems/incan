@@ -25,7 +25,7 @@ fn lowering_tuple_assign_in_if_block_returns_error() -> Result<(), String> {
     let mut lowering = AstLowering::new();
     match lowering.lower_expr(&if_expr, span()) {
         Ok(_) => Err("expected the tuple-assignment target's LoweringError, got Ok".to_string()),
-        Err(LoweringError { message, .. }) if message.contains("tuple assignment target") => Ok(()),
+        Err(LoweringError { message, .. }) if message.contains("tuple assignment place") => Ok(()),
         Err(LoweringError { message, .. }) => Err(format!("unexpected lowering error: {message}")),
     }
 }

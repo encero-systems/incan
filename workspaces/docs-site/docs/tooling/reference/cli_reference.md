@@ -18,6 +18,7 @@ incan [OPTIONS] [FILE] [COMMAND]
 | [`env`](#incan-env) | Lists, shows and runs project environments. |
 | [`explain`](#incan-explain) | Explains a diagnostic code. |
 | [`fmt`](#incan-fmt) | Formats Incan source files. |
+| `help` | Prints the help of `incan` or of the named command. |
 | [`init`](#incan-init) | Adds a project to a directory, creating the directory when it is missing. |
 | [`inspect`](#incan-inspect) | Reports compiler artifacts and projections. |
 | [`lock`](#incan-lock) | Generates or updates `oven.lock`. |
@@ -35,8 +36,10 @@ These options come before the command.
 
 - `--no-banner`: suppress the logo banner. `INCAN_NO_BANNER=1` does the same.
 - `--color auto|always|never` (default `auto`): control ANSI color. Under `auto`, `NO_COLOR` disables color.
+- `-h`, `--help`: print the help and exit with `0`. Every command also takes `-h` and `--help`, and `incan help [COMMAND]` prints the same help.
+- `-V`, `--version`: print `incan <VERSION>` on one line and exit with `0`.
 
-The banner shows only for an interactive `incan build` or `incan run`.
+The banner shows only for an interactive `incan build` or `incan run`. `incan` with no command, no `FILE` and no debug option prints the help and exits with `1`.
 
 ## Debug options
 
@@ -48,6 +51,8 @@ Each takes a file and runs one pipeline stage:
 | `--parse FILE` | The syntax tree. |
 | `--check FILE [--format text\|json]` | Diagnostics; outside a workspace, `--format json` produces the same report as `incan check FILE --format json`. |
 | `--emit-rust FILE [--strict]` | Generated Rust; `--strict` makes it warning-clean. |
+
+A debug option cannot be combined with `FILE`. `--format` is accepted only with `--check`, and `--strict` only with `--emit-rust`.
 
 ## Package-feature and SDK profile options
 
@@ -70,27 +75,34 @@ Each takes a file and runs one pipeline stage:
 | `--offline` | `INCAN_OFFLINE` | Locked inputs available without fetching. |
 | `--frozen` | `INCAN_FROZEN` | Both of the above. |
 
-`--no-locked`, `--no-offline` and `--no-frozen` disable the environment variable for one invocation.
+`--no-locked`, `--no-offline` and `--no-frozen` disable the environment variable for one invocation. An environment variable enables its option when set to `1`, `true`, `TRUE`, `on` or `ON`. `--help` does not list these options.
+
+Under `--locked` or `--frozen`, a Rust git dependency selected by `branch` is refused.
 
 An `oven.lock` whose only stale part is its dependency fingerprint is reported with a warning, and the command continues without using it as the lock or rewriting it; under `--locked` or `--frozen` it is refused.
 
 ## Inspection reports
 
-| Report | Command |
-| --- | --- |
-| Diagnostics | `incan check --format json` |
-| Build report | `incan build --report json` |
-| Backend-selection receipt | `incan inspect backend-selection --format json` |
-| Generated Rust | `incan inspect rust --format json` |
-| Codegraph | `incan inspect codegraph --format jsonl` |
-| SDK components and providers | `incan inspect providers --format json` |
-| Package features | `incan inspect features --format json` |
-| C bindings | `incan inspect bindings --format json`, or `--format receipt` |
-| Interop deployment plan | `incan inspect interop-plan --format json` |
-| Executable representation | `incan inspect representation --format json` |
-| Typed registry | `incan inspect registry` |
+| Report | Command | `schema_version` |
+| --- | --- | --- |
+| Diagnostics | `incan check --format json` | `2` |
+| Diagnostic explanation | `incan explain --format json` | `2` |
+| Build report | `incan build --report json` | `2`; `"incan.replacement_execution.v1"` with `--backend replacement` |
+| Backend-selection receipt | `incan inspect backend-selection --format json` | `2` |
+| Generated Rust | `incan inspect rust --format json` | `2` |
+| Codegraph | `incan inspect codegraph --format jsonl` | `8`, on the header record |
+| SDK components and providers | `incan inspect providers --format json` | `1` |
+| Package features | `incan inspect features --format json` | `1` |
+| C bindings | `incan inspect bindings --format json`, or `--format receipt` | `2` |
+| Interop deployment plan | `incan inspect interop-plan --format json` | `3` |
+| Executable representation | `incan inspect representation --format json` | none |
+| Typed registry | `incan inspect registry` | See [`std.registry`](../../language/reference/stdlib/registry.md) |
+| Test results | `incan test --format json` | `"incan.test.v1"` |
+| Generated-build cache | `incan cache inspect --format json`, `incan cache prune --format json` | `1` |
+| Workspace graph | `incan workspace inspect --format json` | `1` |
+| Checked API metadata | `incan tools metadata api --format json` | `2` |
 
-Each report is separate. A fact that appears in more than one report carries the same identity fields, source paths and schema versions. Human-readable output is not part of the contract.
+Each report is separate and versioned on its own. A fact that appears in more than one report carries the same identity fields and source paths. Human-readable output is not part of the contract.
 
 ## Workspace scope
 
@@ -101,6 +113,15 @@ In a project that belongs to a workspace, `check`, `build`, `test`, `fmt`, `run`
 - `check`, `build`, `test` and `fmt` run over the selected members in a fixed order. `run` and `version` require the scope to resolve to exactly one member.
 - Machine-readable `check`, `build` and `test` output names the workspace and member.
 - `incan lock` always covers the whole workspace (see [`incan lock`](#incan-lock)).
+
+In a workspace, the machine-readable output of `check` and `build` is one report for the selected members:
+
+| Command | `schema_version` | Fields |
+| --- | --- | --- |
+| `incan check --format json` | `"incan.workspace.check.v1"` | `workspace`, `ok`, and `results`: per member, `member`, `target` (the checked path, or `null`), and the member's diagnostics report as `report`, or `ok: false` with `error`. |
+| `incan build --report json` | `"incan.workspace.build.v1"` | `workspace`, `ok`, and `results`: per member, `member` and `ok`, with `error` when `ok` is `false`. |
+
+`workspace` holds `root` and `selected_scope`, which holds `origin` and `members`; `member` and each selected member hold `name` and `root`. `origin` is `current_member`, `default_members`, `implicit_root_member`, `workspace` or `explicit_members`. `incan test --format json` in a workspace adds a `workspace_scope` event with the same `workspace` object, and a `workspace_member_error` event for a member that cannot run.
 
 ## `incan check`
 
@@ -120,10 +141,12 @@ Options:
 The JSON report:
 
 - has `schema_version: 2`, `ok`, and `diagnostics`;
-- lists each diagnostic with its `code`, `severity`, `phase`, `origin`, primary span, message, notes, hints, labeled related spans and `incan explain` command, and, when it compares two values, `expected` and `actual`;
+- lists each diagnostic with its `code`, `severity` (`error`, `warning` or `hint`), `phase` (`lex`, `parse`, `typecheck`, `import`, `tooling` or `unknown`), `origin` (`lexer`, `parser`, `import_resolver`, `typechecker`, `tooling` or `unknown`), `message`, `primary_span`, `notes`, `hints` and `explain` command; `expected` and `actual` when it compares two values; `related_spans`, each a `span` with a `label`, when there are any; and `related_declarations`, each a canonical declaration `identity` with a `label`, when there are any;
 - includes warnings: `ok` is `false` only when an error is present, and a check with only warnings succeeds;
 - orders warnings by source module, parser before typechecker within a module, and is identical across runs over unchanged sources;
-- gives each position as a line, a column and a byte offset. `incan inspect codegraph --allow-errors` and the LSP report the same diagnostics; codegraph gives spans as byte offsets.
+- gives each span as a `file` with a `start` and an exclusive `end`, each position a 1-based `line`, a 1-based `column` counted in Unicode scalar values, and a byte `offset`.
+
+`incan inspect codegraph --allow-errors` and the LSP report the same diagnostics for source that does not check. Codegraph spans carry byte offsets and line and column positions, and codegraph reports no warnings for source that checks.
 
 Text output, the default, is source-highlighted diagnostics.
 
@@ -142,29 +165,31 @@ incan explain [OPTIONS] <CODE>
 
 Explains a diagnostic code. `--format text|json` (default `text`); `json` prints the catalog entry. The catalog is versioned with the diagnostic schema.
 
+The JSON report has `schema_version: 2`, `found`, and `entry`, which holds `code`, `title`, `severity`, `phase`, `summary`, `explanation`, `examples`, `common_causes`, `fixes` and `docs_url`. For a code outside the catalog, the command prints the `INCAN-U0001` entry, with `found: false` in JSON, and exits with `1`.
+
 | Code | Meaning |
 | --- | --- |
 | `INCAN-P0001` | Syntax error. |
 | `INCAN-T0001` | Type checking error. |
 | `INCAN-T0101` | Unreachable code: statements after a `return` in the same block. A warning. |
 | `INCAN-T0102` | A method assigns to a field, or calls a method that changes one, through a plain `self` receiver. |
-| `INCAN-T0103` | A value displayed by `print`, `println`, `str` or an f-string `{value}`, or given as the type argument of a `Display` bound, has no printed form: a union value, a `Generator`, a function, `bytes`, or a `model`, `class`, `enum` or `newtype` whose type provides no `Display`. See [Display](../../language/reference/strings.md#display). |
+| `INCAN-T0103` | A value displayed by `print`, `println`, `str` or an f-string `{value}`, or given as the type argument of a `Display` bound, has no printed form: a union value, a `Generator`, a function, `bytes`, a value of type `None`, or a `model`, `class`, `enum` or `newtype` whose type provides no `Display`; or an f-string `{value:?}` part renders a `Generator`, a function, or a value whose type implements no `Debug`. See [Display](../../language/reference/strings.md#display) and [F-strings](../../language/reference/strings.md#f-strings). |
 | `INCAN-T0104` | A `list`, `dict`, `set`, `tuple`, `Option`, `Result`, frozen collection or `Generator` annotation names no type arguments, alone or nested in another annotation. |
 | `INCAN-T0105` | A Rust associated call such as `HashMap.new()` leaves the owner's type arguments open, and nothing later fixes them. |
 | `INCAN-T0106` | An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a type parameter of a nominal declaration. |
 | `INCAN-T0107` | A `@route` handler's return type is not a response type: `str`, `bytes`, `None`, `Json[...]`, `Html`, `Response`, a wrapper deriving `IntoResponse`, or a `Result` of these. |
 | `INCAN-T0108` | A `@route` handler parameter that no `{segment}` of the path binds and no extractor supplies: `Json[...]`, `Query[...]`, `Path[...]`, `Body`, `Request`, a `str` or `bytes` body, or a wrapper deriving `FromRequestParts`. |
-| `INCAN-T0109` | `/`, `//`, `%` or `**` applied to values of a type parameter. |
+| `INCAN-T0109` | `/`, `//`, `%` or `**` applied to two values of the same type parameter, when no trait bounding that parameter defines the operator's hook (`__div__`, `__floordiv__`, `__mod__` or `__pow__`). |
 | `INCAN-T0110` | A method decorator's shape, or a function a decorator returns in the method's place, writes the receiver as `&Owner` or `&mut Owner` instead of `Owner` for a `self` method or `mut Owner` for a `mut self` method. |
-| `INCAN-T0111` | A name the source declares or binds starts with `__incan_`, the prefix reserved for the compiler. See [Reserved name prefix](../../language/reference/imports_and_modules.md#reserved-name-prefix). |
-| `INCAN-T0112` | A `@route` handler's `Json[T]`, `Query[T]` or `Path[T]` parameter, or `Json[T]` return, carries a model or class with no JSON form (no `@derive(json)` and no adopted `std.serde.json` trait), directly or inside a collection. |
+| `INCAN-T0111` | A name the source declares or binds starts with `__incan_`, the prefix reserved for the compiler, other than a method named `__incan_new`. See [Reserved name prefix](../../language/reference/imports_and_modules.md#reserved-name-prefix). |
+| `INCAN-T0112` | A `@route` handler's `Json[T]`, `Query[T]` or `Path[T]` parameter, or `Json[T]` return, carries a model or class with no JSON form (no `@derive(json)` and no adopted `std.serde.json` trait), or a `decimal` or frozen type, directly or inside a collection. |
 | `INCAN-T0113` | A `model` or `class` field, or an `enum` variant payload, whose type does not implement `Clone` and `Debug`, such as a `JoinHandle[T]` field. |
 | `INCAN-T0114` | A `set` element type or `dict` key type that does not implement `Eq` and `Hash`, in an annotation, a literal, a comprehension, a `set(...)` call, or as the type argument of a generic call that uses its type parameter as a set element or dict key. |
 | `INCAN-T0115` | An argument that is not a task where `spawn`, `timeout`, `timeout_ms`, `race_timeout` or `arm` requires one, such as `spawn(work)`, or `spawn(fut)` after `fut = work()`. |
 | `INCAN-T0116` | A decorator chain of a `self` method, whose shapes name the receiver, that cannot pass the receiver: the decorator is imported or reached through a value or a method; a shape that names the receiver is written through a type alias; a `return` gives something other than the accepted callable or a function of the module named directly; the decorator calls, stores or passes on the callable it accepts; a function of the chain is `pub`; or a function of the chain is used outside it, other than a direct call of a returned function in its module. See [Decorators](../../language/reference/language.md#decorators). |
-| `INCAN-T0117` | An immutable binding or a field of one, a list or dict element, a static, or a `for` loop variable passed to a `mut` parameter that the call changes and whose changes reach the caller: a parameter of any type except `int`, `float`, `bool` or a Rust type, and not `*args` or `**kwargs`. |
+| `INCAN-T0117` | An immutable binding or a field of one, a list or dict element, a static, or a `for` loop variable passed to a `mut` parameter whose changes reach the caller (a parameter of any type except `int`, `float`, `bool` or a Rust type, and not `*args` or `**kwargs`) when the call changes the parameter, or when the argument's type cannot be copied, such as a `Generator`. |
 | `INCAN-T0118` | A `dict.get(key)` whose result is a copy of the stored value, on a dict whose value type cannot be copied, such as a `Generator` or a Rust type without `Clone`. See [Reading a dict entry with `get`](../../language/explanation/static_storage.md#reading-a-dict-entry-with-get). |
-| `INCAN-T0119` | A `for` loop took the task handles out of a list, and the list is then read inside or after the loop, a closure captured it before the loop, or an enclosing loop repeats the loop. See [`JoinHandle[T]`](../../language/reference/stdlib/async.md#joinhandlet). |
+| `INCAN-T0119` | A `for` loop took the task handles out of a list, and the list is then read inside or after the loop, a closure captured it before the loop, or an enclosing loop repeats the loop; or a `for` loop that hands each task handle on iterates something it cannot take the handles out of, such as a list element, a field, `values()`, `enumerate(...)` or a `mut` parameter. See [`JoinHandle[T]`](../../language/reference/stdlib/async.md#joinhandlet). |
 | `INCAN-I0001` | Import or module resolution error. |
 | `INCAN-I0101` | A known SDK provider module belongs to a component the project disables. |
 | `INCAN-I0102` | The project enables an SDK component that is unavailable in the active installation. |
@@ -185,9 +210,11 @@ incan build [OPTIONS] [FILE] [OUTPUT_DIR]
 
 Compiles `FILE`, or the project entrypoint, to an executable and prints the generated project path and the binary path. Generated source and the binary go under `target/incan/`, or under `OUTPUT_DIR` when given.
 
+With no `FILE`, a project that declares one or more `[[rust.bin]]` entries and no `[project.scripts].main` builds the declared toolchain binaries from stored direct-`rustc` plans. This mode accepts `OUTPUT_DIR`. It refuses `--release`, backend-selection options, package-feature options, `--sdk-profile`, lock-policy options, Cargo feature or passthrough controls, generated-Cargo target-directory controls, and build reports. `INCAN_OVEN_COMPILER_SUITE_STORE` selects the compiler-suite store for this mode.
+
 Options:
 
-- `--lib`: build the library rooted at `src/lib.incn`: its checked `.incnlib` manifest, debug and release `rlib` outputs, and its [package executable representation](package_executable_representation.md).
+- `--lib`: build the library rooted at `src/lib.incn`: its checked `.incnlib` manifest, debug and release `rlib` outputs, and its [package executable representation](package_executable_representation.md). `--help` does not list this option.
 - `--release`: build the release profile, which is the default for `incan build`. The profile does not change language semantics; integer `abs` and `sum` stay overflow-checked in every profile.
 - `--backend legacy|replacement` (default `legacy`): select the compiler backend. `replacement` runs the entrypoint's zero-argument `main` directly, without generating Rust or an Oven plan, for a program within the replacement backend's supported profile; a program outside it is refused before it runs. The profile is described in [Backend selection & execution receipts](../explanation/backend_selection_receipts.md).
 - `--backend-fallback refuse`: refuse an unavailable backend instead of substituting another. `refuse` is the only policy.
@@ -381,13 +408,13 @@ incan inspect codegraph [OPTIONS] <PATH>
 Exports codegraph records for an Incan source file or directory as a deterministic JSONL stream.
 
 - `--format jsonl` (the default and only format).
-- `--allow-errors`: for broken source, emit a partial graph marked degraded, with diagnostic records. Without it, a diagnostic fails the command.
+- `--allow-errors`: for source that does not check, emit a partial graph marked degraded, with diagnostic records. Without it, an error fails the command. Warnings of source that checks produce no records.
 - The [package-feature and SDK profile options](#package-feature-and-sdk-profile-options), which select the feature-conditioned facts and the provider-backed facts.
 
-The stream holds files, modules, top-level declarations, imports, public exports, checked C binding declarations, direct C calls inside `unsafe:`, body-level reference and call syntax, resolved reference and call targets where resolution proves them, containment, source spans, provenance, degraded state, diagnostics, and the active provider, component and feature projection. The record contract is in [Codegraph inspection](codegraph_inspection.md).
+The stream holds files, namespaces, modules, top-level declarations, imports, public exports, checked registry entries, checked capability declarations, checked C binding declarations, direct C calls inside `unsafe:` and the public functions that reach them through a private bridge, body-level reference and call syntax, resolved reference and call targets where resolution proves them, containment, source spans, provenance, degraded state, diagnostics, and the active provider, component and feature projection. The record contract is in [Codegraph inspection](codegraph_inspection.md).
 
-- The header lists the represented languages and has a `semantic_contexts` entry for each project: its SDK identity and profile, component availability and enablement, package feature closures with activation reasons, and provider identities, participation, artifacts, implementation facets and provenance.
-- Every record carries `degraded`, and every record other than the header carries `language` and `provenance`. An Incan record has `language: "incan"`; a Rust interop reference record has `language: "rust"`.
+- The header has `languages: ["incan"]` and a `semantic_contexts` entry for each project: its SDK identity and profile, component availability and enablement, package feature closures with activation reasons, and provider identities, participation, artifacts, implementation facets and provenance.
+- Every record carries `degraded`, and every record other than the header carries `language` and `provenance`. `language` is `"rust"` on the import record of a `rust::` import, on the reference records for the Rust items it names and their containment records, and on a reference whose checked target is a Rust crate item; it is `"incan"` on every other record.
 - A `c_binding` record holds a checked C declaration; a `c_binding_call` record marks a direct symbol call inside `unsafe:` and links it to the binding and to its ordinary `call` record, when there is one.
 - Declaration, reference and call records carry `canonical_identity` when resolution proves one; an alias or re-export keeps the original declaration's identity. `target_id` optionally links a record to a declaration record in the same export and is not an identity: a checked identity can come with `target_id: null`. A syntax-only or ambiguous fact has no identity.
 - The export is not the runtime `std.graph` module, not a generated-Rust interface, and not a whole-program call graph.
@@ -493,11 +520,13 @@ incan run -c "import this"
 incan fmt [OPTIONS] [PATH]
 ```
 
-Formats the Incan files under `PATH` (default `.`) in place.
+Formats the Incan files under `PATH` (default `.`) in place. A directory is searched recursively, skipping hidden directories, `target/` and `node_modules/`.
 
-- `--check`: change nothing; exit with `1` if a file would change.
-- `--diff`: print the changes instead of writing them.
+- `--check`: change nothing; list each file that would change and exit with `1` if there is one.
+- `--diff`: change nothing; print the changes as a diff and exit with `1` if a file would change.
 - `--workspace`, `--member <NAME_OR_PATH>`: the [workspace scope](#workspace-scope).
+
+A `PATH` that holds no `.incn` file, or a file that cannot be read, parsed or written, exits with `1`.
 
 ```bash
 incan fmt .
@@ -536,7 +565,7 @@ Collects and runs the tests under `PATH` (default `.`).
 
 `incan test` also takes the [package-feature and SDK profile options](#package-feature-and-sdk-profile-options) and the [lock policy options](#lock-policy-options).
 
-Each test batch compiles through one prepared direct-`rustc` plan from the Oven store and runs only the test names its binary lists. A batch without a compatible prepared plan is refused. `incan test` does not run Cargo.
+Each test batch compiles through one prepared direct-`rustc` plan from the Oven store and runs only the test names its binary lists. A batch without a compatible prepared plan is refused. `incan test` does not run Cargo or read a Cargo target directory.
 
 ```bash
 incan test tests/
@@ -648,7 +677,7 @@ Resolves the project's dependencies (from the manifest, inline declarations and 
 - The [package-feature and SDK profile options](#package-feature-and-sdk-profile-options), which shape the locked projection.
 - `--cargo-features <FEATURES>`, `--cargo-no-default-features`, `--cargo-all-features`: select Rust dependency features for resolution.
 
-`oven.lock` holds an embedded `Cargo.lock`, the SDK component and provider identities, the public package-feature graph with activation reasons, the private implementation-facet closure, and a fingerprint of the dependency inputs.
+`oven.lock` holds an embedded `Cargo.lock`, the SDK component and provider identities, the public package-feature graph with activation reasons, the private implementation-facet closure, and a fingerprint of the dependency inputs. No command reads an `incan.lock` file.
 
 In a workspace, `incan lock` resolves every member and writes one `oven.lock` at the workspace root, from any member. It creates and reads no member-local lock. Each member is locked with its declared package-feature activation: `--features`, `--no-default-features` and `--all-features` do not reach the lock, while `--sdk-profile` and the Cargo feature options apply to every member. Publication is atomic; see [Project lifecycle](../../language/reference/project_lifecycle.md) for the locking protocol.
 
@@ -667,12 +696,26 @@ incan lock --cargo-features metrics
 incan workspace inspect [OPTIONS]
 ```
 
-Prints the validated workspace graph and the member scope this invocation selects. Membership comes from the workspace manifest, never from paths.
+Prints the validated workspace graph and the member scope this invocation selects. Membership comes from the workspace manifest, never from paths. The command reads the manifests and the root `oven.lock`; it does not resolve dependency versions. Outside a workspace it exits with `1`.
 
 - `--format text|json` (default `text`).
 - `--workspace`, `--member <NAME_OR_PATH>`: the scope to project.
 
-The JSON report gives the canonical root and manifest paths, the ordered members with their root-member status, defaults and exclusions, the selection origin, shared declarations, the provenance of inherited dependencies, workspace environment extensions, root-lock state, each member's locked feature, component and provider graph, stale member-local locks, and configuration reserved for later use. Capability application is reported once, at the top level.
+The JSON report has these fields:
+
+| Field | Contents |
+| --- | --- |
+| `schema_version` | `1`. |
+| `invocation` | `current_dir`. |
+| `workspace` | The canonical `root` and `manifest_path`. |
+| `members` | Each member in order: `name`, `root`, `manifest_path`, `is_root_member`, `effective_dependencies` (`libraries`, `rust` and `rust_dev`, each dependency with the `origin` of its declaration, `member` or `workspace`, and a Rust dependency with its `workspace_features` and `member_features`), `workspace_environment_extends`, and `capabilities: []`. |
+| `default_members`, `exclusions` | The default member names, and the workspace manifest's `exclude` entries. |
+| `selected_scope` | The selection `origin` and the selected `members`, as in the [workspace scope](#workspace-scope) reports. |
+| `lock` | The root lock's `canonical_path`, `exists`, `state` (`status` `present` with the lock's `fingerprint`, `cargo_features` and `semantic` graph; `invalid` with `error`; or `missing`), and `stale_member_local_locks`: each member-local `oven.lock` path. |
+| `shared_dependencies` | The workspace's `libraries`, `rust` and `rust_dev` declarations. |
+| `shared_environments`, `shared_policy`, `shared_sources` | The workspace manifest's environment, policy and source sections. |
+| `capabilities` | `status: "member_local_only"` and a `reason`. |
+| `warnings` | `unmatched_glob` with its `pattern`, and `unused_shared_dependency` with its `dependency_kind` and `name`. |
 
 ```bash
 incan workspace inspect --workspace --format json
@@ -708,9 +751,9 @@ Prints the checked public API of `PATH` (default `.`); for a directory, of `src/
 - `--format json` (default): the checked API metadata.
 - `--format markdown`: a Markdown API reference from the same metadata.
 
-The JSON package holds `schema_version`, `package` (the project name and version, when present), `public_namespaces` (when the package publishes any), and `modules` (the entry module and its imported local modules); each module holds its `declarations`: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, public import aliases and public partial presets, each with an `anchor` (stable id and byte span), its `docstring`, its parsed `docstring_sections`, and its resolved `decorators`.
+The JSON package holds `schema_version: 2`, `package` (the project name, and version when declared; omitted without a project name), `public_namespaces` (omitted when empty), and `modules` (the entry module and its imported local modules); each module holds its `declarations`: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, public import aliases and public partial presets, each with an `anchor` (stable id and byte span). Functions, models, classes, traits, enums, newtypes and methods also carry their `docstring`, parsed `docstring_sections` and resolved `decorators`.
 
-A docstring's `Args:`, `Returns:`, `Fields:`, `Aliases:` or `Decorators:` section that contradicts the checked source produces diagnostics and no JSON.
+The recognized docstring sections are `Args:` (or `Parameters:`), `Returns:`, `Fields:`, `Aliases:` and `Decorators:`. A docstring that contradicts the checked source produces diagnostics and no JSON: an `Args:` or `Fields:` section that omits a checked parameter or field; an entry in any section that names no checked parameter, field, alias or decorator, or repeats a name; or a `Returns:` type that differs from the checked return type.
 
 The JSON contract is in [Checked API metadata](checked_api_metadata.md).
 
@@ -759,5 +802,9 @@ A command exits with `0` on success and a nonzero code on failure.
 | --- | --- |
 | `incan run` | The program's exit code. |
 | `incan test` | `0` when every test passes, and when test files exist but no test is collected; `1` when a test fails, an `@xfail` test passes, no test file is found under `PATH`, or no test is collected under `--fail-on-empty`. |
-| `incan fmt --check` | `1` when a file would be reformatted. |
+| `incan fmt` | `1` when a file would be reformatted under `--check` or `--diff`, when `PATH` holds no `.incn` file, or when a file cannot be read, parsed or written. |
 | `incan build`, `incan check`, `incan FILE` and the debug options | `1` on a compile or build error. |
+| `incan explain` | `1` for a code outside the catalog. |
+| `incan -h`, `incan -V` and every `--help` | `0`. |
+| `incan` with no command, `FILE` or debug option | `1`, after printing the help. |
+| Any command given an unknown option or a missing argument | `1`. |

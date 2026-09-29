@@ -515,16 +515,28 @@ pub fn route_handler_parameter_unbound(
 /// return serializes `T` as the response body, so `T`, and every model or class it is built from, must derive `json`.
 /// A model or class declared without it checked and then could not be registered as a handler. `handler` is the
 /// function's name, `wrapper` the declared wrapper type as written, and `payload` the model or class that lacks the
-/// derive. `INCAN-T0112` is its stable code.
-pub fn route_payload_without_json_form(handler: &str, wrapper: &str, payload: &str, span: Span) -> CompileError {
+/// derive, or, when `builtin` is set, the `decimal` or frozen type that has no JSON form at all (#1561).
+/// `INCAN-T0112` is its stable code.
+pub fn route_payload_without_json_form(
+    handler: &str,
+    wrapper: &str,
+    payload: &str,
+    builtin: bool,
+    span: Span,
+) -> CompileError {
+    let hint = if builtin {
+        format!("Use a type with a JSON form in place of '{payload}', such as 'str', 'float', 'list' or 'dict'")
+    } else {
+        format!(
+            "Derive JSON support on '{payload}': add '@derive(json)' above its declaration, with 'from std.serde import json'"
+        )
+    };
     CompileError::type_error(
         format!("Route handler '{handler}' uses '{wrapper}', but '{payload}' has no JSON form"),
         span,
     )
     .with_stable_code("INCAN-T0112")
-    .with_hint(format!(
-        "Derive JSON support on '{payload}': add '@derive(json)' above its declaration, with 'from std.serde import json'"
-    ))
+    .with_hint(hint)
     .with_note(
         "A route's 'Json[T]', 'Query[T]' and 'Path[T]' parameters deserialize the request into 'T', and a 'Json[T]' \
          return serializes 'T' as the response body, so every model or class in 'T' must derive 'json'",
@@ -879,6 +891,22 @@ pub fn generic_function_reference(name: &str, span: Span) -> CompileError {
     .with_note("Only monomorphic (non-generic) functions can be passed by name (RFC 035)")
 }
 
+/// Type error for a local partial of a generic callable that leaves one of the callable's type parameters unfixed.
+///
+/// A local partial expression is a value, and a value is not generic: the partial instantiates its target with the type
+/// arguments its presets fix or that it writes (RFC 084, RFC 054). `target` is the target as the partial spells it.
+pub fn local_partial_type_param_unfixed(target: &str, type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Local partial of '{target}' leaves type parameter '{type_param}' unfixed; a local partial is not generic"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Preset a parameter whose type fixes '{type_param}', or write the type arguments: partial {target}[...](...)"
+    ))
+}
+
 /// Type error for using a type-like name in value position.
 pub fn type_name_used_as_value(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Cannot use type '{name}' as a value"), span)
@@ -1074,6 +1102,117 @@ pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {
         .with_note("This prevents accidental modifications and makes code easier to reason about")
 }
 
+/// The place a pattern or a `for` loop bound a name from, when that place does not permit a change through the name
+/// (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadOnlyScrutinee<'a> {
+    /// A local binding declared without `mut`.
+    Binding(&'a str),
+    /// A parameter declared without `mut`.
+    Parameter(&'a str),
+    /// A module static, which a bound name cannot change in place.
+    Static(&'a str),
+    /// A local bound directly to a module static, which names the static's own storage.
+    StaticAlias { alias: &'a str, static_name: &'a str },
+    /// The items of a place a generator expression reads, which it holds as copies; the place's root name.
+    GeneratorItems(&'a str),
+    /// A local a closure captures, which the closure holds as its own copy.
+    Captured(&'a str),
+    /// `self` in a method that takes a plain `self` receiver.
+    SelfReceiver,
+    /// A dict value, which a pattern binds as a copy.
+    DictValue,
+}
+
+/// Refuse a closure that captures local values where a function type holds only a named function or a closure that
+/// captures nothing (#1561).
+///
+/// `what` names the value and ends where the sentence continues ("A closure that captures local values", "'g', which
+/// holds a closure that captures local values,"); `slot` says where it is held ("stored in a list").
+pub fn capturing_callable_in_function_slot(what: &str, slot: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("{what} cannot be {slot}"), span)
+        .with_hint("Bind the closure to a new local and call it there, or pass it to a parameter its function only calls")
+        .with_note(
+            "A function type holds a named function or a closure that captures nothing. A closure that captures local values is held by a new local, by a function-typed parameter of a function of this module that only calls the parameter and is only called by name, and by the one 'return' of such a function",
+        )
+}
+
+/// Refuse a method of a value as a local partial's target (RFC 084): an overloaded method, a generic method, or one
+/// that takes `mut self`. `reason` says which, as the end of the sentence the message starts.
+pub fn local_partial_method_target_refused(method: &str, reason: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("A local partial of the method '{method}' is not supported: {reason}"),
+        span,
+    )
+}
+
+/// Refuse a change, inside a closure, through a local the closure captures from its enclosing callable (#1561).
+///
+/// A closure reads each outer local it names as the value the local holds when the closure is constructed, so a change
+/// through `name` would change the closure's own copy and never reach the local. A method that changes its receiver,
+/// and a field or element write, are refused alike.
+pub fn change_through_closure_capture(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot change '{name}' inside a closure - the closure captures its own copy of it"),
+        span,
+    )
+    .with_hint(format!("Change '{name}' outside the closure"))
+    .with_note("A closure reads each outer local it names as the value the local holds when the closure is constructed")
+}
+
+/// Refuse a change through a name a `match`, `if let` or `while let` pattern, or a `for` loop, binds from a place that
+/// does not permit it (#1561).
+///
+/// A name a pattern or a loop binds from a place is part of that place, so a change through the name is a change to the
+/// place: a `mut` binding or parameter, a field or list element of one, or `self` in a `mut self` method takes the
+/// change. The place named by `place` does not, so the change is refused rather than applied to a copy or left to fail
+/// in the build. `binding` is the name the change goes through.
+pub fn change_through_binding_of_read_only_place(
+    binding: &str,
+    place: ReadOnlyScrutinee<'_>,
+    span: Span,
+) -> CompileError {
+    let (source, hint) = match place {
+        ReadOnlyScrutinee::Binding(name) => (
+            format!("'{name}', which is immutable"),
+            format!("Declare '{name}' with 'mut' to change it through '{binding}': mut {name} = ..."),
+        ),
+        ReadOnlyScrutinee::Parameter(name) => (
+            format!("the parameter '{name}', which is not declared 'mut'"),
+            format!("Declare the parameter 'mut' to change the caller's value through '{binding}': mut {name}: ..."),
+        ),
+        ReadOnlyScrutinee::Static(name) => (
+            format!("the static '{name}', which is changed only through its own name"),
+            format!("Change a copy of its value in a 'mut' variable, then assign the copy back to '{name}'"),
+        ),
+        ReadOnlyScrutinee::Captured(name) => (
+            format!("'{name}', which the closure captures as its own copy"),
+            format!("Change '{name}' outside the closure"),
+        ),
+        ReadOnlyScrutinee::GeneratorItems(place) => (
+            format!("'{place}' by a generator expression, which holds copies of the items it reads"),
+            format!("Change the items of '{place}' in a list comprehension or a 'for' loop"),
+        ),
+        ReadOnlyScrutinee::StaticAlias { alias, static_name } => (
+            format!("'{alias}', which names the static '{static_name}', which is changed only through its own name"),
+            format!("Change a copy of its value in a 'mut' variable, then assign the copy back to '{static_name}'"),
+        ),
+        ReadOnlyScrutinee::SelfReceiver => (
+            "'self', which this method takes as plain 'self'".to_string(),
+            format!("Declare the method with 'mut self' to change 'self' through '{binding}'"),
+        ),
+        ReadOnlyScrutinee::DictValue => (
+            "a dict value, which a pattern binds as a copy".to_string(),
+            "Bind the value to a 'mut' variable, change it, and store it back into the dict".to_string(),
+        ),
+    };
+    CompileError::type_error(format!("Cannot change '{binding}' - it is bound from {source}"), span)
+        .with_hint(hint)
+        .with_note(
+            "A name a pattern or a `for` loop binds from a place is part of that place, so a change through the name changes the place",
+        )
+}
+
 /// How a method body changes the object its plain `self` receiver names (#1723).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfMutation<'a> {
@@ -1125,6 +1264,8 @@ pub enum MutArgumentPlace {
     /// A `for` loop variable, which cannot be declared `mut`: its name, and whether the loop's pattern destructures
     /// each element (`for xs, n in pairs:`).
     LoopVariable { name: String, destructured: bool },
+    /// A local a closure captures from its enclosing callable, which the closure holds as its own copy.
+    Captured(String),
 }
 
 /// How an `INCAN-T0117` refusal names the `mut` parameter: by its declared name, or by its position when the callee is
@@ -1181,9 +1322,54 @@ pub fn immutable_argument_to_mut_parameter(
     place: MutArgumentPlace,
     span: Span,
 ) -> CompileError {
-    let binding = parameter.binding_name();
+    let hint = mut_argument_hint(&place, parameter);
     let parameter = parameter.in_sentence();
-    let hint = match &place {
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' {} the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'",
+        match change {
+            MutParameterChange::Changes => "changes",
+            MutParameterChange::MayChange => "may change",
+        }
+    ))
+}
+
+/// Refuse an immutable argument for a `mut` parameter whose changes reach the caller when the callee does not change
+/// the parameter but the argument cannot be copied (#1561).
+///
+/// An argument the caller may not change reaches a parameter the call never changes as a copy of its value. A value of
+/// `value_type`, such as a `Generator`, has no copy, so the argument has to be a place the caller may change, as for a
+/// parameter the call changes. `parameter`, `callee` and `place` are as for [`immutable_argument_to_mut_parameter`].
+/// `INCAN-T0117` is its stable code.
+pub fn uncopyable_argument_to_mut_parameter(
+    parameter: MutParameterLabel<'_>,
+    callee: &str,
+    value_type: &str,
+    place: MutArgumentPlace,
+    span: Span,
+) -> CompileError {
+    let hint = mut_argument_hint(&place, parameter);
+    let parameter = parameter.in_sentence();
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' does not change the parameter {parameter}, so an argument the caller may not change is passed as a copy, and a '{value_type}' cannot be copied"
+    ))
+}
+
+/// Spell the remedy for an `INCAN-T0117` argument: declare the binding `mut`, or pass a `mut` variable in its place.
+fn mut_argument_hint(place: &MutArgumentPlace, parameter: MutParameterLabel<'_>) -> String {
+    let binding = parameter.binding_name();
+    match place {
         MutArgumentPlace::Binding(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
         MutArgumentPlace::Field => "Declare the binding the field belongs to with 'mut'".to_string(),
         MutArgumentPlace::Element | MutArgumentPlace::Static => format!(
@@ -1198,23 +1384,11 @@ pub fn immutable_argument_to_mut_parameter(
         MutArgumentPlace::LoopVariable {
             name,
             destructured: true,
-        } => format!(
-            "A 'for' loop variable cannot be declared 'mut', so '{name}' cannot be passed to a parameter the call changes"
+        } => format!("A 'for' loop variable cannot be declared 'mut', so '{name}' cannot be passed to this parameter"),
+        MutArgumentPlace::Captured(name) => format!(
+            "A closure holds its own copy of '{name}', which it captures, so the call could not change '{name}': make the call outside the closure"
         ),
-    };
-    CompileError::type_error(
-        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
-        span,
-    )
-    .with_stable_code("INCAN-T0117")
-    .with_hint(hint)
-    .with_note(format!(
-        "'{callee}' {} the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'",
-        match change {
-            MutParameterChange::Changes => "changes",
-            MutParameterChange::MayChange => "may change",
-        }
-    ))
+    }
 }
 
 /// Refuse rebinding a `mut` parameter whose changes reach the caller inside its own body (#1773).
@@ -1248,9 +1422,8 @@ pub enum MutParameterCopy {
 /// `other = items`, a literal, comprehension, field store, construction or `partial` preset holding `items`, a
 /// `match`, `if`, `break` or `yield` value that is `items`, a `match items:` arm that binds it and a closure that
 /// returns it, changes it or passes it on to a parameter that may change it would each hold the parameter's value under
-/// another name. Whether such a holder
-/// shares the caller's value or copies it is not defined, so the parameter is used only directly. `copy` spells the
-/// independent copy the hint offers.
+/// another name. Whether such a holder shares the caller's value or copies it is not defined, so the parameter is used
+/// only directly. `copy` spells the independent copy the hint offers.
 pub fn caller_visible_mut_parameter_held(name: &str, copy: &MutParameterCopy, span: Span) -> CompileError {
     let copy = match copy {
         MutParameterCopy::Expression(expression) => format!("write {expression}"),
@@ -2921,19 +3094,66 @@ pub fn taken_list_used_again(
         .with_hint(hint)
 }
 
+/// What a `for` loop that has to take its items out iterates instead of a list it can take them from (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntakeableIterable<'a> {
+    /// A `mut` parameter, whose items belong to the caller.
+    MutParameter(&'a str),
+    /// The variable of an enclosing `for` loop that reads its items in place.
+    InPlaceLoopVariable(&'a str),
+    /// Another binding that is not a local list, such as a static.
+    Binding(&'a str),
+    /// An element of a list or a value of a dict.
+    Element,
+    /// A field.
+    Field,
+    /// The result of a `list`, `dict` or `set` method, such as `values()`, by method name.
+    CollectionMethod(&'a str),
+    /// `enumerate(...)` or `zip(...)`, by name, which pair up the items of what they iterate.
+    Adapter(&'a str),
+    /// Any other expression.
+    Other,
+}
+
+/// Refuse a `for` loop that has to take its items out of what it iterates and cannot (#1561).
+///
+/// The loop body hands each item on by value and `item_ty` can be neither copied nor cloned, so the loop has to take
+/// the items out of `iterable`, which is only possible for a local list, the variable of an enclosing loop that owns
+/// its items, a parameter not marked `mut`, or a new list such as a call result. `span` is the iterable.
+/// `INCAN-T0119` is its stable code.
+pub fn loop_cannot_take_items(iterable: UntakeableIterable<'_>, item_ty: &str, span: Span) -> CompileError {
+    let what = match iterable {
+        UntakeableIterable::MutParameter(name) => {
+            format!("`{name}`, a `mut` parameter whose items belong to the caller")
+        }
+        UntakeableIterable::InPlaceLoopVariable(name) => {
+            format!("`{name}`, the variable of a `for` loop that reads its items in place")
+        }
+        UntakeableIterable::Binding(name) => format!("`{name}`"),
+        UntakeableIterable::Element => "a list element or dict value".to_string(),
+        UntakeableIterable::Field => "a field".to_string(),
+        UntakeableIterable::CollectionMethod(method) => format!("`{method}()`, which reads the collection in place"),
+        UntakeableIterable::Adapter(name) => format!("`{name}(...)`, which reads what it iterates in place"),
+        UntakeableIterable::Other => "this iterable".to_string(),
+    };
+    CompileError::type_error(
+        format!("the `for` loop cannot take its `{item_ty}` items out of {what}"),
+        span,
+    )
+    .with_stable_code("INCAN-T0119")
+    .with_note(format!(
+        "The loop body hands each `{item_ty}` item on by value, and a `{item_ty}` can be neither copied nor cloned, so \
+         the loop has to take the items out of what it iterates: a local list, the variable of an enclosing loop that \
+         owns its items, a parameter not marked `mut`, or a new list such as a call result"
+    ))
+    .with_hint("Iterate a local list or a parameter not marked `mut` that holds the items, or take the items out one at a time with `pop()`")
+}
+
 pub fn string_index_assignment_not_allowed(span: Span) -> CompileError {
     CompileError::type_error("Strings are immutable - cannot assign to index".to_string(), span)
 }
 
 // -- Tuples ------------------------------------------------------------------
-
-pub fn mutable_tuple(span: Span) -> CompileError {
-    CompileError::type_error(
-        "Tuples are immutable and cannot be declared with 'mut'".to_string(),
-        span,
-    )
-    .with_hint("Remove 'mut' - tuples cannot be modified after creation")
-}
 
 /// Report a tuple annotation written without its element types (#1717).
 ///
@@ -3031,6 +3251,9 @@ pub enum UnprintableValue<'a> {
     Function,
     /// A `bytes` value, which has no text of its own.
     Bytes,
+    /// A value of type `None`, such as the result of a function that returns `None` or the side of a `Result` that
+    /// nothing gives another type.
+    NoneValue,
     /// A model, class, enum or newtype value whose type provides no `Display`.
     Nominal {
         /// The type as the checker names it.
@@ -3049,6 +3272,7 @@ impl UnprintableValue<'_> {
             Self::Generator => "generator".to_string(),
             Self::Function => "function".to_string(),
             Self::Bytes => "bytes value".to_string(),
+            Self::NoneValue => "None value".to_string(),
             Self::Nominal { type_name } => match name {
                 Some(_) => format!("{type_name} value"),
                 None => return format!("a value of type '{type_name}'"),
@@ -3098,6 +3322,9 @@ pub fn value_has_no_printed_form(
         UnprintableValue::Bytes => {
             "Decode it to text first with decode(), or display its length with len(...)".to_string()
         }
+        UnprintableValue::NoneValue => {
+            "Display a value of another type; a Result side that nothing else types is None, so annotate the Result's type to give that side one".to_string()
+        }
         UnprintableValue::Nominal { type_name } => {
             // Spell the structure form with the operand's own name; any other expression gets the format spec alone,
             // so the hint never names a binding the program does not have. A bound displays inside the callee, where
@@ -3127,6 +3354,86 @@ pub fn value_has_no_printed_form(
         .with_stable_code("INCAN-T0103")
         .with_hint(hint)
         .with_note(note)
+}
+
+/// Report a displayed tuple, list, dict, set, frozen collection, `Option` or `Result` that holds a value with no
+/// printed form (#1748).
+///
+/// Inside a structure every element displays as its `{value:?}` structure, and a generator, a function and a `bytes`
+/// value have none, at any depth: the structure is refused in every display position as the element itself is.
+/// `container` is the displayed value's type, `name` the operand when the source spells it as a plain name (or `self`),
+/// and `element` the kind of the element with no printed form. `INCAN-T0103` is its stable code.
+pub fn element_has_no_printed_form(
+    position: DisplayPosition<'_>,
+    name: Option<&str>,
+    container: &str,
+    element: UnprintableValue<'_>,
+    span: Span,
+) -> CompileError {
+    let what = match name {
+        Some(name) => format!("'{name}'"),
+        None => format!("a value of type '{container}'"),
+    };
+    let element_what = element.describe(None);
+    let message = match position {
+        DisplayPosition::Print { builtin } => format!("'{builtin}' cannot print {what}, which holds {element_what}"),
+        DisplayPosition::Str => format!("'str' cannot convert {what} to text, since it holds {element_what}"),
+        DisplayPosition::Interpolation => format!("f-string cannot interpolate {what}, which holds {element_what}"),
+        DisplayPosition::Bound { callee, type_param } => format!(
+            "Call to '{callee}' cannot bind {what} to '{type_param}', which requires 'Display', since it holds {element_what}"
+        ),
+    };
+    let hint = match element {
+        UnprintableValue::Generator => "Collect the generator's items into a list first; a list displays its elements",
+        UnprintableValue::Function => "Hold what the function returns instead of the function",
+        UnprintableValue::Bytes => "Decode the bytes to text first with decode()",
+        _ => "Display the elements that have a printed form",
+    };
+    CompileError::type_error(message, span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(hint)
+        .with_note(
+            "Inside a tuple, list, dict, set, frozen collection, Option or Result every element displays as its {value:?} structure; a generator, a function or bytes has none",
+        )
+}
+
+/// A value an f-string `{value:?}` part cannot render, because its type has no `Debug` form (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndebuggableValue<'a> {
+    /// A `Generator` value, whose items exist only as it is consumed.
+    Generator,
+    /// A function or closure value.
+    Function,
+    /// A value whose type, or a type inside it, implements no `Debug`, such as a `JoinHandle[T]`.
+    Type {
+        /// The type that implements no `Debug`, as the checker names it.
+        type_name: &'a str,
+    },
+}
+
+/// Report an f-string `{value:?}` part whose value has no `Debug` form (#1561).
+///
+/// `{value:?}` renders a value's structure through `Debug`. A generator, a function, and a value whose type (or a type
+/// inside it) implements no `Debug` have no such structure, so the part is refused the way a `{value}` part with no
+/// printed form is. `name` is the operand when the source spells it as a plain name (or `self`), `None` for any other
+/// expression. `INCAN-T0103` is its stable code.
+pub fn value_has_no_debug_form(name: Option<&str>, value: UndebuggableValue<'_>, span: Span) -> CompileError {
+    let what = match (value, name) {
+        (UndebuggableValue::Generator, Some(name)) => format!("the generator '{name}'"),
+        (UndebuggableValue::Generator, None) => "a generator".to_string(),
+        (UndebuggableValue::Function, Some(name)) => format!("the function '{name}'"),
+        (UndebuggableValue::Function, None) => "a function".to_string(),
+        (UndebuggableValue::Type { type_name }, _) => format!("a value of type '{type_name}'"),
+    };
+    let hint = match value {
+        UndebuggableValue::Generator => "Collect its items first with list(...); a list shows its elements",
+        UndebuggableValue::Function => "Call it and interpolate the result",
+        UndebuggableValue::Type { .. } => "Interpolate a value read from it instead, such as one of its fields",
+    };
+    CompileError::type_error(format!("f-string cannot interpolate {what} with ':?'"), span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(hint)
+        .with_note("An f-string {value:?} part renders the value's structure through Debug, and this value has none")
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {
@@ -3255,4 +3562,52 @@ pub fn capability_description_must_be_text(name: &str, span: Span) -> CompileErr
         span,
     )
     .with_hint("Write the description as a quoted string, such as `description = \"Issue a refund\"`")
+}
+
+/// Refuse a `__hash__` call through a type parameter's `Hash` bound (#1561).
+///
+/// A `Hash` bound is met only by `@derive(Hash)` or `Hash` in `@rust.derive(...)`, and neither gives a type a
+/// `__hash__` method (#1822), so the method the stdlib `Hash` trait declares has nothing to call through the bound.
+pub fn hash_method_through_hash_bound(type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("'__hash__' cannot be called on '{type_param}' through its 'Hash' bound"),
+        span,
+    )
+    .with_hint("Bound the type parameter by a trait that declares '__hash__', or use the value as a set element or dict key")
+    .with_note(
+        "A 'Hash' bound is met only by '@derive(Hash)' or 'Hash' in '@rust.derive(...)', which provide no '__hash__' method; a method named '__hash__' is an ordinary method of the type that defines it",
+    )
+}
+
+/// Refuse an adopter that relies on a default method of a trait another compiled package declares (#1561).
+///
+/// A package's manifest publishes its traits' method signatures, and its generated crate declares each trait method
+/// without a body (defaults are expanded into each adopter's impl), so no default body reaches an adopter built in
+/// another package.
+pub fn package_trait_default_not_available(
+    trait_name: &str,
+    type_name: &str,
+    method: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("'{type_name}' adopts '{trait_name}' from another package and does not define its default method '{method}'"),
+        span,
+    )
+    .with_hint(format!("Define '{method}' in '{type_name}'"))
+    .with_note(
+        "A compiled package publishes the signatures of its traits' methods, not their default bodies, so a type in another package defines each method the trait gives a default",
+    )
+}
+
+/// Refuse an RFC 088 iterator adapter or terminal called on a value that is iterable but is not an iterator (#1561).
+///
+/// A list, set, frozen collection or `Iterable[T]` provides `iter()`; the adapters and terminals are methods of the
+/// `Iterator[T]` that `iter()` returns, and the collection has no method of their name.
+pub fn iterator_method_on_an_iterable(type_name: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Type '{type_name}' has no method '{method}(...)'"), span)
+        .with_hint(format!("Call it on the value's iterator: `.iter().{method}(...)`"))
+        .with_note(format!(
+            "'{method}' is a method of 'Iterator[T]'; a collection or 'Iterable[T]' value provides 'iter()', which returns its iterator"
+        ))
 }

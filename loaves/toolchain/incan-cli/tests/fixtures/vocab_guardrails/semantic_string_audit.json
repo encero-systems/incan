@@ -368,9 +368,9 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/trait_bound_inference.rs",
-      "category": "clone/as_ref/self and reflection trait-bound inference compatibility",
-      "expected_count": 5,
-      "expected_fingerprint": "0xf6d0bb81c55383f5"
+      "category": "cloned/as_ref/self trait-bound inference compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0xb7fce6edc61ea47a"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/provider/features.rs",
@@ -412,7 +412,7 @@
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
       "category": "enum constructor, public-module member, and checked C output/string-constructor compatibility",
       "expected_count": 16,
-      "expected_fingerprint": "0x9a95063b42aca948"
+      "expected_fingerprint": "0x3ee02b85b45ec271"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/constructors.rs",
@@ -466,7 +466,7 @@
       "path": "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs",
       "category": "stdlib import, checked API target paths, exact provider Rust reexports, provider-bound roots, and extension-trait compatibility",
       "expected_count": 13,
-      "expected_fingerprint": "0x06a60de7f5265c7f"
+      "expected_fingerprint": "0xe7c84e5fc0e3a94c"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/const_eval.rs",

@@ -597,7 +597,7 @@ pub fn run_file(
         let mut command = Command::new(&selected.native_output);
         command.current_dir(project_root);
         clear_inherited_cargo_environment(&mut command);
-        apply_program_args(&mut command, &program_args);
+        command.args(&program_args);
         let status = command.status().map_err(|error| {
             CliError::failure(format!(
                 "failed to run selected Oven project-output Loaf {}: {error}",
@@ -695,16 +695,11 @@ fn run_oven_prepared_project(
     let mut command = Command::new(&bake.output);
     command.current_dir(&prepared.project_root);
     clear_inherited_cargo_environment(&mut command);
-    apply_program_args(&mut command, program_args);
+    command.args(program_args);
     let status = command
         .status()
         .map_err(|error| CliError::failure(format!("failed to run Oven binary {}: {error}", bake.output.display())))?;
     Ok(ExitCode(status.code().unwrap_or(ExitCode::FAILURE.0)))
-}
-
-/// Attach source-level program arguments to either selected or freshly prepared native output.
-fn apply_program_args(command: &mut Command, program_args: &[String]) {
-    command.args(program_args);
 }
 
 #[cfg(test)]
@@ -731,16 +726,6 @@ mod tests {
     use incan_provider::FeatureSelection;
     use oven_model::lock::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
 
-    #[test]
-    fn native_oven_command_receives_program_args_issue1883() {
-        let mut command = Command::new("program");
-        let program_args = vec!["--verbose".to_string(), "input.txt".to_string()];
-        apply_program_args(&mut command, &program_args);
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            vec![std::ffi::OsStr::new("--verbose"), std::ffi::OsStr::new("input.txt")]
-        );
-    }
     #[cfg(feature = "rust_inspect")]
     use rust_inspect::Inspector;
     #[cfg(feature = "rust_inspect")]

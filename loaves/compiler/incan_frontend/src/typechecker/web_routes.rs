@@ -26,6 +26,7 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use super::TypeChecker;
 use super::collect::decorators::resolve_decorator_path;
 use super::helpers::collection_type_id;
+use super::json_member_requirements::builtin_type_without_json_form;
 
 /// What the checker can say about a declared type's role at a route boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,13 +196,14 @@ impl TypeChecker {
         }
 
         // ---- JSON payloads: what the wrappers decode from the request and encode as the response (#1768) ----
-        if let Some((wrapper, payload)) =
+        if let Some((wrapper, payload, builtin)) =
             self.route_payload_without_json_form(return_type, JsonPayloadDirection::Encode)
         {
             self.errors.push(errors::route_payload_without_json_form(
                 &func.name,
                 &wrapper,
                 &payload,
+                builtin,
                 func.return_type.span,
             ));
         }
@@ -209,11 +211,11 @@ impl TypeChecker {
             if param.node.kind != ParamKind::Normal {
                 continue;
             }
-            if let Some((wrapper, payload)) =
+            if let Some((wrapper, payload, builtin)) =
                 self.route_payload_without_json_form(param_ty, JsonPayloadDirection::Decode)
             {
                 self.errors.push(errors::route_payload_without_json_form(
-                    &func.name, &wrapper, &payload, param.span,
+                    &func.name, &wrapper, &payload, builtin, param.span,
                 ));
             }
         }
@@ -346,8 +348,9 @@ impl TypeChecker {
         }
     }
 
-    /// Return the wrapper and offending type spellings when a declared route type carries a JSON payload that
-    /// certainly has no JSON form for `direction`, or `None` otherwise.
+    /// Return the wrapper and offending type spellings, and whether the offending type is a builtin with no JSON form,
+    /// when a declared route type carries a JSON payload that certainly has no JSON form for `direction`, or `None`
+    /// otherwise.
     ///
     /// The JSON-carrying wrappers are the web surface types the program brought into scope: `Json[T]` in both
     /// directions, and `Query[T]` and `Path[T]` as decoded parameters. A `Result` or `Option` return is judged by the
@@ -357,7 +360,7 @@ impl TypeChecker {
         &self,
         ty: &ResolvedType,
         direction: JsonPayloadDirection,
-    ) -> Option<(String, String)> {
+    ) -> Option<(String, String, bool)> {
         let ResolvedType::Generic(name, args) = ty else {
             return None;
         };
@@ -387,38 +390,36 @@ impl TypeChecker {
             return None;
         }
         self.type_without_json_form(payload, direction)
-            .map(|offending| (ty.to_string(), offending))
+            .map(|(offending, builtin)| (ty.to_string(), offending, builtin))
     }
 
-    /// Return the spelling of the first type inside `ty` that certainly cannot cross as JSON in `direction`, or `None`
-    /// when every part of it has, or may have, a JSON form.
+    /// Return the spelling of the first type inside `ty` that certainly cannot cross as JSON in `direction`, and
+    /// whether it is a builtin, or `None` when every part of it has, or may have, a JSON form.
     ///
-    /// Collections, `Option`, `Result`, tuples and the frozen collections cross as JSON exactly when their elements
-    /// do, so the search descends into them; a generic model or class that has a JSON form still needs its type
-    /// arguments to have one. The misfits are decided by [`Self::nominal_certainly_lacks_json_form`]; every other leaf
-    /// -- a scalar, an enum, a newtype, a Rust-origin or unresolved type -- is left to the build.
-    fn type_without_json_form(&self, ty: &ResolvedType, direction: JsonPayloadDirection) -> Option<String> {
+    /// `decimal` and the frozen types have no JSON form (#1561). Collections, `Option`, `Result` and tuples cross as
+    /// JSON exactly when their elements do, so the search descends into them; a generic model or class that has a JSON
+    /// form still needs its type arguments to have one. The misfits are decided by
+    /// [`Self::nominal_certainly_lacks_json_form`]; every other leaf -- a scalar, an enum, a newtype, a Rust-origin or
+    /// unresolved type -- is left to the build.
+    fn type_without_json_form(&self, ty: &ResolvedType, direction: JsonPayloadDirection) -> Option<(String, bool)> {
+        if let Some(builtin) = builtin_type_without_json_form(ty) {
+            return Some((builtin, true));
+        }
         match ty {
             ResolvedType::Named(name) => self
                 .nominal_certainly_lacks_json_form(name, direction.protocol())
-                .then(|| name.clone()),
+                .then(|| (name.clone(), false)),
             ResolvedType::Generic(name, args) => {
                 if collection_type_id(name).is_none()
                     && self.nominal_certainly_lacks_json_form(name, direction.protocol())
                 {
-                    return Some(name.clone());
+                    return Some((name.clone(), false));
                 }
                 args.iter().find_map(|arg| self.type_without_json_form(arg, direction))
             }
             ResolvedType::Tuple(items) => items
                 .iter()
                 .find_map(|item| self.type_without_json_form(item, direction)),
-            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
-                self.type_without_json_form(inner, direction)
-            }
-            ResolvedType::FrozenDict(key, value) => self
-                .type_without_json_form(key, direction)
-                .or_else(|| self.type_without_json_form(value, direction)),
             _ => None,
         }
     }

@@ -13,7 +13,7 @@ fn double(x: i64) -> i64 {
 fn square(x: i64) -> i64 {
     return x * x;
 }
-fn apply_transform(func: fn(i64) -> i64, value: i64) -> i64 {
+fn apply_transform(func: impl Fn(i64) -> i64, value: i64) -> i64 {
     return func(value);
 }
 fn test_function_references() -> (i64, i64) {
@@ -21,7 +21,7 @@ fn test_function_references() -> (i64, i64) {
     let squared = apply_transform(square, 3);
     return (doubled, squared);
 }
-fn map_list(items: Vec<i64>, transformer: fn(i64) -> i64) -> Vec<i64> {
+fn map_list(items: Vec<i64>, transformer: impl Fn(i64) -> i64) -> Vec<i64> {
     let mut result: Vec<i64> = Vec::<i64>::new();
     for item in items.iter().copied() {
         let _ = result.push(transformer(item));
@@ -37,7 +37,7 @@ fn test_callable_syntax() -> Vec<i64> {
     }
     return doubled_arrows;
 }
-fn apply_binary(func: fn(i64, i64) -> i64, a: i64, b: i64) -> i64 {
+fn apply_binary(func: impl Fn(i64, i64) -> i64, a: i64, b: i64) -> i64 {
     return func(a, b);
 }
 fn add(x: i64, y: i64) -> i64 {
@@ -54,7 +54,7 @@ fn test_multi_param() -> (i64, i64) {
 fn constant() -> i64 {
     return 42;
 }
-fn invoke_zero_param(func: fn() -> i64) -> i64 {
+fn invoke_zero_param(func: impl Fn() -> i64) -> i64 {
     return func();
 }
 fn test_zero_param() -> i64 {

@@ -1,0 +1,18 @@
+# behavior: await of a standard-library async function called through its module binding waits for it, as a directly imported one does, and a task spawned from one completes
+# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::awaiting_a_module_function_through_its_binding_awaits_its_future_issue1561
+# expect-stdout:
+#   slept
+#   spawned
+
+import std.async.time
+import std.async.prelude
+
+
+async def main() -> None:
+    await time.sleep(0.01)
+    await time.sleep_ms(1)
+    println("slept")
+    handle = prelude.spawn(time.sleep_ms(1))
+    match await handle:
+        Ok(_) => println("spawned")
+        Err(_) => println("failed")

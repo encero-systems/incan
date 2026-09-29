@@ -18,6 +18,11 @@
 //! | used as `Dict` key          | `Eq + Hash`                    |
 //! | used as `Set` element       | `Eq + Hash`                    |
 //!
+//! A type parameter is used as a `Dict` key or `Set` element wherever the callable holds a value of such a type: a
+//! parameter, the return type, a local, or any expression of it (#1758). Every method a Rust `HashMap` or `HashSet`
+//! offers for inserting or looking up requires the bound, and the typechecker infers the same requirement for the
+//! callable's callers (`hash_key_inference`).
+//!
 //! `/`, `//`, `%` and `**` between values of a type parameter never reach this pass: the typechecker refuses them
 //! (`INCAN-T0109`, #1715) because their Python-shaped numeric semantics are provided by the runtime for the concrete
 //! numeric types only, so no bound a type argument could satisfy exists for them. The `Div` and `Rem` rows of
@@ -31,14 +36,17 @@
 use std::collections::{HashMap, HashSet};
 
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::{magic_methods, trait_bounds::rust as tb};
 
 use crate::emit::IrEmitter;
 
+use crate::conversions::Conversion as OwnershipPlan;
 use crate::ownership::{
     RegularMethodArgumentContext, ValueUseSite, collection_element_type, dict_entry_types, list_constructor_item_type,
-    list_index_assignment_element_type, plan_list_constructor_source, regular_method_argument_use_site,
+    list_index_assignment_element_type, plan_consumed_option_receiver, plan_consumed_receiver,
+    plan_list_constructor_source, regular_method_argument_use_site, result_unwrap_or_default_use_site,
     value_use_requires_clone_bound, value_use_site_target_ty,
 };
 use incan_ir::IrProgram;
@@ -875,10 +883,31 @@ fn collect_backend_clone_bounds_in_stmt(
             );
         }
         IrStmtKind::Assign {
-            target: AssignTarget::Index { object, .. },
+            target: AssignTarget::Index { object, index },
             value,
         } => {
-            if let Some(target_ty) = list_index_assignment_element_type(&object.ty) {
+            if matches!(&object.ty, IrType::Unknown) || dict_entry_types(&object.ty).is_some() {
+                // Mirror the dict entry write, `d.insert(key, value)`: the key and the value are both owned elements
+                // of the dict, so a borrowed one is cloned.
+                let (key_ty, value_ty) =
+                    dict_entry_types(&object.ty).map_or((None, None), |(key, value)| (Some(key), Some(value)));
+                collect_backend_clone_bounds_for_value_use(
+                    index,
+                    ValueUseSite::CollectionElement { target_ty: key_ty },
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+                collect_backend_clone_bounds_for_value_use(
+                    value,
+                    ValueUseSite::CollectionElement { target_ty: value_ty },
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            } else if let Some(target_ty) = list_index_assignment_element_type(&object.ty) {
                 collect_backend_clone_bounds_for_value_use(
                     value,
                     ValueUseSite::Assignment {
@@ -1337,12 +1366,18 @@ fn collect_backend_clone_bounds_in_expr(
     match &expr.kind {
         IrExprKind::MethodCall {
             receiver,
+            method,
             args,
             arg_policy,
             callable_signature,
             dispatch,
             ..
         } => {
+            // `unwrap` and `unwrap_or` consume an `Option` receiver; the copy planned for a receiver that stays usable
+            // demands the same bound here (#1561).
+            if plan_consumed_option_receiver(receiver, method) == OwnershipPlan::Clone {
+                add_backend_clone_bounds_for_cloned_expr(receiver, type_param_names, self_clone_params, clone_params);
+            }
             let callable_signature = callable_signature.as_ref();
             for (idx, arg) in args.iter().enumerate() {
                 let sig_param = callable_signature.and_then(|sig| sig.params.get(idx));
@@ -1397,6 +1432,23 @@ fn collect_backend_clone_bounds_in_expr(
                 clone_context,
                 clone_params,
             );
+            // A `Result` method consumes its receiver; the copy planned for a receiver that stays usable demands the
+            // same bound here (#1561).
+            if matches!(kind, MethodKind::Result(_)) && plan_consumed_receiver(receiver) == OwnershipPlan::Clone {
+                add_backend_clone_bounds_for_cloned_expr(receiver, type_param_names, self_clone_params, clone_params);
+            }
+            // So does the copy planned for an `unwrap_or` default the program reads again.
+            if matches!(kind, MethodKind::Result(ResultMethodId::UnwrapOr))
+                && let Some(default) = args.first()
+                && value_use_requires_clone_bound(&default.expr, result_unwrap_or_default_use_site(&receiver.ty))
+            {
+                add_backend_clone_bounds_for_cloned_expr(
+                    &default.expr,
+                    type_param_names,
+                    self_clone_params,
+                    clone_params,
+                );
+            }
             // Storing into a builtin collection is an owned-element sink. Mirror the sites collection-method
             // emission uses so a clone planned for `items.append(item)` demands the same bound here (#1489).
             let element_sites: Vec<(usize, Option<&IrType>)> = match kind {
@@ -2300,6 +2352,11 @@ fn infer_function_bounds(func: &IrFunction, type_params: &[IrTypeParam]) -> Vec<
         scan_stmt_for_bounds(stmt, &type_param_names, &func.params, &mut bounds_map);
     }
 
+    // A parameter or return type that hashes a type parameter needs its bound whatever the body does with it.
+    for ty in func.params.iter().map(|param| &param.ty).chain([&func.return_type]) {
+        add_hashed_key_bounds(ty, &type_param_names, &mut bounds_map);
+    }
+
     // Rebuild type params with combined bounds.
     type_params
         .iter()
@@ -2322,9 +2379,20 @@ fn scan_stmt_for_bounds(
 ) {
     match &stmt.kind {
         IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => scan_expr_for_bounds(expr, type_params, params, bounds_map),
-        IrStmtKind::Let { value, .. } => scan_expr_for_bounds(value, type_params, params, bounds_map),
-        IrStmtKind::Assign { value, .. } => scan_expr_for_bounds(value, type_params, params, bounds_map),
-        IrStmtKind::CompoundAssign { value, .. } => {
+        IrStmtKind::Let {
+            ty,
+            type_annotation,
+            value,
+            ..
+        } => {
+            add_hashed_key_bounds(ty, type_params, bounds_map);
+            if let Some(annotation) = type_annotation {
+                add_hashed_key_bounds(annotation, type_params, bounds_map);
+            }
+            scan_expr_for_bounds(value, type_params, params, bounds_map);
+        }
+        IrStmtKind::Assign { target, value } | IrStmtKind::CompoundAssign { target, value, .. } => {
+            scan_assign_target_for_bounds(target, type_params, params, bounds_map);
             scan_expr_for_bounds(value, type_params, params, bounds_map);
         }
         IrStmtKind::Return(Some(expr)) => scan_expr_for_bounds(expr, type_params, params, bounds_map),
@@ -2389,6 +2457,88 @@ fn scan_stmt_for_bounds(
     }
 }
 
+/// Scan the expressions an assignment target reads: the object of a field write, and the object and index of an index
+/// write, whose dict type (`d[x] = v`) hashes its key.
+fn scan_assign_target_for_bounds(
+    target: &AssignTarget,
+    type_params: &HashSet<&str>,
+    params: &[incan_ir::decl::FunctionParam],
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+) {
+    match target {
+        AssignTarget::Var { ty, .. } => add_hashed_key_bounds(ty, type_params, bounds_map),
+        AssignTarget::Field { object, .. } => scan_expr_for_bounds(object, type_params, params, bounds_map),
+        AssignTarget::Index { object, index } => {
+            // Emission writes a dict entry with `insert`, as it does for an object of unknown type, so the key's type
+            // parameters are hashed even when the dict's own key type is not known yet (`d = {}` then `d[x] = v`).
+            if matches!(&object.ty, IrType::Unknown) || dict_entry_types(&object.ty).is_some() {
+                add_hashed_argument_bounds(&index.ty, type_params, bounds_map);
+            }
+            scan_expr_for_bounds(object, type_params, params, bounds_map);
+            scan_expr_for_bounds(index, type_params, params, bounds_map);
+        }
+        AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
+    }
+}
+
+/// Require `Eq` and `Hash` of every type parameter a value hashed as a set element or dict key mentions.
+fn add_hashed_argument_bounds(
+    key_ty: &IrType,
+    type_params: &HashSet<&str>,
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+) {
+    let mut key_type_params = HashSet::new();
+    collect_generic_type_param_names(key_ty, type_params, &mut key_type_params);
+    for tp_name in key_type_params {
+        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
+        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+    }
+}
+
+/// Require `Eq` and `Hash` of every type parameter `ty` hashes: each one mentioned by the key of a `Dict` or the
+/// element of a `Set` anywhere inside it (#1758).
+///
+/// Such a value is a Rust `HashMap` or `HashSet`, whose inserting and lookup methods all require their key to be
+/// `Eq + Hash`, so a callable that holds one bounds the type parameter whatever it does with the value.
+fn add_hashed_key_bounds(
+    ty: &IrType,
+    type_params: &HashSet<&str>,
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+) {
+    let hashed_key = match ty {
+        IrType::Dict(key, _) => Some(key.as_ref()),
+        IrType::Set(element) => Some(element.as_ref()),
+        _ => None,
+    };
+    if let Some(key) = hashed_key {
+        add_hashed_argument_bounds(key, type_params, bounds_map);
+    }
+    match ty {
+        IrType::List(inner)
+        | IrType::Set(inner)
+        | IrType::Option(inner)
+        | IrType::Ref(inner)
+        | IrType::RefMut(inner)
+        | IrType::TypeToken(inner) => add_hashed_key_bounds(inner, type_params, bounds_map),
+        IrType::Dict(first, second) | IrType::Result(first, second) => {
+            add_hashed_key_bounds(first, type_params, bounds_map);
+            add_hashed_key_bounds(second, type_params, bounds_map);
+        }
+        IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+            for item in items {
+                add_hashed_key_bounds(item, type_params, bounds_map);
+            }
+        }
+        IrType::Function { params, ret } => {
+            for param in params {
+                add_hashed_key_bounds(param, type_params, bounds_map);
+            }
+            add_hashed_key_bounds(ret, type_params, bounds_map);
+        }
+        _ => {}
+    }
+}
+
 /// Return the trait bound implied by a value-level reflection magic method.
 fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
     match magic_methods::from_str(method) {
@@ -2417,6 +2567,9 @@ fn scan_expr_for_bounds(
     params: &[incan_ir::decl::FunctionParam],
     bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
 ) {
+    // ---- A value whose dict or set type hashes a type parameter ----
+    add_hashed_key_bounds(&expr.ty, type_params, bounds_map);
+
     match &expr.kind {
         // ---- Binary operations: check if either operand is a type parameter ----
         IrExprKind::BinOp { op, left, right } => {
@@ -2469,7 +2622,7 @@ fn scan_expr_for_bounds(
                 }
             );
             if let Some(tp_name) = expr_type_param_name(receiver, type_params, params) {
-                if method == "clone" && !receiver_is_type_name {
+                if method == tb::CLONE_METHOD && !receiver_is_type_name {
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
                 let reflection_bound = if receiver_is_type_name {
@@ -2485,12 +2638,20 @@ fn scan_expr_for_bounds(
                 && let Some(bound) = type_reflection_magic_trait_bound(method)
             {
                 add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
-            } else if method == "clone"
+            } else if method == tb::CLONE_METHOD
                 && matches!(receiver.ty, IrType::Unknown)
                 && matches!(&receiver.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
             {
                 for tp_name in type_params {
                     add_bound(bounds_map, tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            } else if method == tb::CLONE_METHOD && !receiver_is_type_name && args.is_empty() {
+                // A copy of a collection of the type parameter (`items.clone()` for a spread that must leave `items`
+                // as it was, #1852) copies each item, so every type parameter the collection holds is `Clone`.
+                let mut held_type_params = HashSet::new();
+                collect_generic_type_param_names(&receiver.ty, type_params, &mut held_type_params);
+                for tp_name in held_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
             }
             // `.cloned()` over the entry an in-place lookup finds (`Option<&V>`) copies the `V`, so every type
@@ -2528,12 +2689,23 @@ fn scan_expr_for_bounds(
                 )
             ) && let Some(key_ty) = dict_key_type(&receiver.ty)
             {
-                let mut key_type_params = HashSet::new();
-                collect_generic_type_param_names(key_ty, type_params, &mut key_type_params);
-                for tp_name in key_type_params {
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
-                }
+                add_hashed_argument_bounds(key_ty, type_params, bounds_map);
+            }
+            // A keyed method of a set or dict hashes its first argument, the element or key, also while the
+            // receiver's own element or key type is not known yet (`s = set()` then `s.add(x)`).
+            if matches!(
+                kind,
+                MethodKind::Collection(
+                    CollectionMethodKind::Add
+                        | CollectionMethodKind::Contains
+                        | CollectionMethodKind::Get
+                        | CollectionMethodKind::Insert
+                        | CollectionMethodKind::Remove
+                )
+            ) && is_hashed_collection(&receiver.ty)
+                && let Some(key) = args.first()
+            {
+                add_hashed_argument_bounds(&key.expr.ty, type_params, bounds_map);
             }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
             for arg in args {
@@ -2576,6 +2748,21 @@ fn scan_expr_for_bounds(
                     for tp_name in item_type_params {
                         add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                     }
+                }
+                scan_expr_for_bounds(arg, type_params, params, bounds_map);
+            }
+        }
+
+        // ---- `sorted(values)`: the sorted list is a copy of `values`, so its item type parameters are `Clone` ----
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Sorted,
+            args,
+        } => {
+            for arg in args {
+                let mut item_type_params = HashSet::new();
+                collect_generic_type_param_names(&arg.ty, type_params, &mut item_type_params);
+                for tp_name in item_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
                 scan_expr_for_bounds(arg, type_params, params, bounds_map);
             }
@@ -3086,6 +3273,16 @@ fn binop_to_trait_bound(op: &BinOp, tp_name: &str) -> Option<IrTraitBound> {
     }
 }
 
+/// Whether a receiver is a Rust `HashMap` or `HashSet`: a dict or a set, looking through the reference wrapper of a
+/// `mut` parameter, whatever its key or element type.
+fn is_hashed_collection(ty: &IrType) -> bool {
+    match ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_hashed_collection(inner),
+        IrType::Dict(_, _) | IrType::Set(_) => true,
+        _ => false,
+    }
+}
+
 /// Return the key type of a dict receiver, looking through the reference wrapper of a `mut` parameter.
 fn dict_key_type(ty: &IrType) -> Option<&IrType> {
     match ty {
@@ -3510,6 +3707,32 @@ fn collect_calls_in_stmt(
 }
 
 /// Recursively collect generic function calls from an expression.
+/// Collect what displaying one value requires of the caller's type parameters.
+///
+/// A value of a source nominal type displays through the `Display` the emitter implements from the type's `__str__`, a
+/// declared one or the one lowering gives a type with a derived `Display` or an `Error` adopter. That implementation
+/// holds under the header of the impl block holding `__str__`, so a caller that forwards its own type parameter into
+/// the value's type arguments needs the header's bounds, as a call of `__str__` does. Any other value adds nothing.
+fn collect_display_requirements(
+    value: &IrExpr,
+    context: &BoundCollectionContext<'_, '_>,
+    result: &mut Vec<PropagatedBoundRequirement>,
+) {
+    collect_method_implementation_bound_requirements(
+        MethodCallParts {
+            receiver: value,
+            method: magic_methods::as_str(magic_methods::MagicMethodId::Str),
+            dispatch: None,
+            type_args: &[],
+            args: &[],
+        },
+        context,
+        result,
+    );
+}
+
+/// Collect the requirements the calls, method calls and displayed values of one expression put on the caller's type
+/// parameters.
 fn collect_calls_in_expr(
     expr: &IrExpr,
     context: &BoundCollectionContext<'_, '_>,
@@ -3630,6 +3853,15 @@ fn collect_calls_in_expr(
                 recurse_expr(&arg.expr, result);
             }
         }
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Print | BuiltinFn::Str,
+            args,
+        } => {
+            for arg in args {
+                collect_display_requirements(arg, context, result);
+                recurse_expr(arg, result);
+            }
+        }
         IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) | IrExprKind::Set(args) => {
             for arg in args {
                 recurse_expr(arg, result);
@@ -3684,7 +3916,10 @@ fn collect_calls_in_expr(
         }
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr { expr, .. } = part {
+                if let FormatPart::Expr { expr, style } = part {
+                    if !style.emits_rust_debug(&expr.ty) {
+                        collect_display_requirements(expr, context, result);
+                    }
                     recurse_expr(expr, result);
                 }
             }

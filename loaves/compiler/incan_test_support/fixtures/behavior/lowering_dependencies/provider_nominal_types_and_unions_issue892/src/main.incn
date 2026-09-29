@@ -3,6 +3,7 @@
 # retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_type_qualifies_generic_public_library_identity_issue892
 # retires: loaves/compiler/incan_ir/src/lower/types.rs::pub_external_type_normalizes_canonical_union_members_issue892
 # retires: loaves/compiler/incan_ir/src/types.rs::external_union_member_matching_is_provider_aware_issue892
+# retires: loaves/compiler/incan_ir/src/lower/tests/union_member_identity.rs::an_imported_nominal_of_another_package_keeps_its_spelling_issue1796
 # expect-stdout:
 #   widget gear
 #   fallback empty name

@@ -337,6 +337,20 @@ fn magic_methods_spellings_unique_and_resolvable() {
 }
 
 #[test]
+fn comparison_dunders_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "comparison dunder",
+        expected_len: 6,
+        items: magic_methods::COMPARISON_DUNDERS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |_| &[],
+        from_str: magic_methods::comparison_from_str,
+        as_str: magic_methods::comparison_as_str,
+    });
+}
+
+#[test]
 fn constructors_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "constructor",

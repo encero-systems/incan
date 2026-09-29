@@ -12,6 +12,9 @@ For the exact rules, see [Decorators (reference)](../reference/language.md#decor
 Registry, catalog, routing, telemetry and validation decorators usually record something about the function and return it unchanged. Make the decorator, or the factory that produces it, generic over the whole callable, `(F) -> F`, so the decorated name keeps its own signature:
 
 ```incan
+pub model ColumnExpr:
+    pub name: str
+
 def registered[F](function_ref: str) -> ((F) -> F):
     return (func) => func
 
@@ -33,6 +36,8 @@ pub def col(name: str) -> ColumnExpr:
 Read `func.__name__` in the decorator instead of repeating the declaration's name in a string argument:
 
 ```incan
+static registry_names: list[str] = []
+
 def capture[F](func: F) -> F:
     registry_names.append(func.__name__)
     return func
@@ -200,3 +205,7 @@ def main() -> None:
     println(apply((value) => f"item:{value}", 3))   # item:3
     println(apply(Prefixer(prefix="model"), 4))     # model:4
 ```
+
+Adopt a `CallableN` trait explicitly when a model or class owns callable behavior. A function-typed field or parameter that does not need a named generic capability keeps an arrow type such as `(int) -> str`, or the `Callable[Params, R]` sugar.
+
+Import the trait from `std.traits.callable`, as the example does. If a call of `apply` is refused with `INCAN-T0001`, the message names the bound and the type passed: compare the value's parameter and return types with the bound's type arguments.

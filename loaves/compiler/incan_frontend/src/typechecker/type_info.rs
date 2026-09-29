@@ -716,7 +716,8 @@ pub struct ExpressionArtifacts {
     /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
     pub ambient_logger_bindings: HashSet<(usize, usize)>,
     /// The type of the place a value is written to, keyed by the value span, when the value needs adapting to it: a
-    /// field or index assignment, a model or class constructor field, or a `return` (#1858, RFC 009).
+    /// field or index assignment, a model or class constructor field, a `return`, a `yield`, or a `match` arm or
+    /// `break` value of the construct's type (#1858, RFC 009).
     ///
     /// The checker accepts a value of an `Option`'s payload type there (`box.count = 5` for an `Option[int]` field),
     /// and a numeric value of a type that losslessly widens to the place's numeric type or union member
@@ -759,6 +760,18 @@ pub struct ExpressionArtifacts {
     /// lowering records the rest as a rest marker instead of one wildcard per field, because a model declared in
     /// another module keeps that field out of reach of the matching code (#1740).
     pub pattern_rests_with_private_fields: HashSet<(usize, usize)>,
+    /// The enum-qualified canonical variant a variant pattern names, keyed by the pattern's constructor name span.
+    ///
+    /// A pattern names its variant through the subject's enum: bare (`Filled(n)`), through a variant alias (`Full(n)`,
+    /// `Shape.Full(n)`), or qualified by the enum itself. Only the checker knows which enum the subject is and what a
+    /// variant alias names, so it records the path lowering spells the pattern with (`Shape::Filled`): the same path a
+    /// qualified pattern over the canonical variant has, which is what the generated program can name.
+    pub pattern_variant_paths: HashMap<(usize, usize), String>,
+    /// The method a local partial's target names on a value (`partial user.label(prefix="x")`), keyed by the target
+    /// span, by the name its declaration has (after a method alias) (RFC 084).
+    ///
+    /// Lowering evaluates the target's receiver once, when the partial is built, and calls this method on it.
+    pub local_partial_method_targets: HashMap<(usize, usize), String>,
 }
 
 /// Source-reference resolution facts keyed by source spans.
@@ -1383,6 +1396,13 @@ pub struct CallArtifacts {
     /// Argument expressions, by span, that a call hands to a caller-visible `mut` parameter the callee never changes
     /// while the argument is an immutable binding or field: lowering passes a copy of the value (#1773).
     pub mut_argument_copies: HashSet<(usize, usize)>,
+    /// Method calls, by full call span, whose receiver's source type declares the method only with `mut self`.
+    ///
+    /// Lowering marks the binding at the root of such a call's receiver as borrowed mutably, so every later question
+    /// about whether a body changes that binding, such as whether a `for` loop must reach its items in place, sees the
+    /// call wherever it sits in the body (#1561). A method that trait dispatch selects carries its receiver in the
+    /// dispatch fact instead.
+    pub mutable_receiver_method_calls: HashSet<(usize, usize)>,
     /// Compiler-owned builtin selected for a call, keyed by the full call span.
     ///
     /// This distinguishes an explicit `std.builtins.name(...)` or unshadowed ambient builtin from a source/import
@@ -1461,6 +1481,27 @@ pub struct CallArtifacts {
     pub resolved_string_helper_calls: HashMap<(usize, usize), StringMethodId>,
     /// Direct closures whose contextual parameter types came from a canonical source `CallableN` bound.
     pub source_callable_closures: HashSet<(usize, usize)>,
+    /// Function-typed parameters of this module's functions and methods that hold any callable of their type, since
+    /// the body only calls them, keyed by the parameter's span (#1561).
+    ///
+    /// Lowering spells each such parameter `impl Fn(A) -> R`, which holds a closure that captures local values as well
+    /// as a named function; any other function-typed parameter is a function pointer.
+    pub closure_holding_params: HashSet<(usize, usize)>,
+    /// Functions and methods of this module whose one returned value is a closure that captures local values, keyed by
+    /// the span of their declared function return type, which lowering spells `impl Fn(A) -> R` (#1561).
+    pub closure_returning_callables: HashSet<(usize, usize)>,
+    /// New local bindings whose value is a closure that captures local values, a local partial or the closure a
+    /// closure-returning function returns, keyed by the assignment statement span (#1561).
+    ///
+    /// The binding takes the value's own type, so lowering does not spell the binding's function-type annotation, and
+    /// spells the parameter types of a closure bound there instead.
+    pub capturing_callable_bindings: HashSet<(usize, usize)>,
+    /// Arguments for a closure-holding parameter that name a local bound to a capturing callable, keyed by the
+    /// argument's span: lowering passes them by reference, so the local stays usable after the call (#1561).
+    pub borrowed_callable_arguments: HashSet<(usize, usize)>,
+    /// Closures a closure-returning function returns, keyed by the closure's span (#1561). Such a closure outlives the
+    /// call that built it, so lowering moves a copy of every local it reads into it.
+    pub returned_closures: HashSet<(usize, usize)>,
     /// Display operands that render through `message()`, keyed by the operand's expression span (#1778).
     ///
     /// A model or class has a textual form only through `__str__`. A type that adopts `Error` and has no `Display` of
@@ -1474,6 +1515,12 @@ pub struct CallArtifacts {
     /// so it satisfies a `Display` bound. The value is the `message()` call the checker resolved on the type, which
     /// lowering makes the body of the Rust `Display` it gives the type.
     pub error_message_display_types: HashMap<String, ErrorMessageDisplay>,
+    /// Types this module declares whose values display through a derived `Display` (RFC 000), by type name.
+    ///
+    /// A model, class, enum or newtype whose `@derive(...)` names the builtin `Display` displays as its `{value:?}`
+    /// structure. Lowering gives each such type the `__str__` that returns that text, which the Rust `Display` of the
+    /// type writes.
+    pub derived_display_types: HashSet<String>,
 }
 
 /// The `message()` call one displayed `Error` adopter renders through (#1778).
@@ -1535,6 +1582,12 @@ pub struct ProtocolArtifacts {
     /// assignment that no branch, `break` or `continue` can skip gives the binding a new list, a closure that captured
     /// the list before the loop, and a repeat of the loop that would reach the emptied list.
     pub item_taking_iterations: HashSet<(usize, usize)>,
+    /// Scrutinee spans of the `match`, `if let` and `while let` forms whose pattern binds a view into a caller-visible
+    /// `mut` parameter that an arm changes (#1561).
+    ///
+    /// The change has to reach the parameter, so lowering matches such a scrutinee in place, through a mutable
+    /// reference, and binds each pattern name to the part of the parameter it names rather than to a copy.
+    pub in_place_match_scrutinees: HashSet<(usize, usize)>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -1638,6 +1691,8 @@ pub enum ResolvedOperatorKind {
     Binary,
     Unary,
     Index,
+    /// `obj[start:end:step]` on a type that defines `__getslice__` (`Sliceable[T]`).
+    Slice,
     IndexAssign,
     Truthiness,
     Len,
@@ -1892,6 +1947,13 @@ impl TypeCheckInfo {
     /// Return whether the argument expression at `span` is passed to its `mut` parameter as a copy.
     pub fn mut_argument_is_copied(&self, span: Span) -> bool {
         self.calls.mut_argument_copies.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the method call at `span` calls a source method whose receiver is `mut self`.
+    pub fn method_call_takes_mutable_receiver(&self, span: Span) -> bool {
+        self.calls
+            .mutable_receiver_method_calls
+            .contains(&(span.start, span.end))
     }
 
     /// Return the checked source path associated with one active import-derived binding.
@@ -2199,6 +2261,17 @@ impl TypeCheckInfo {
         self.expressions
             .pattern_rests_with_private_fields
             .contains(&(span.start, span.end))
+    }
+
+    /// Return the enum-qualified canonical variant (`Shape::Filled`) the variant pattern whose constructor name sits
+    /// at `span` names, when the checker resolved it to a variant of an enum declared in Incan.
+    ///
+    /// See [`ExpressionArtifacts::pattern_variant_paths`].
+    pub fn pattern_variant_path(&self, span: Span) -> Option<&str> {
+        self.expressions
+            .pattern_variant_paths
+            .get(&(span.start, span.end))
+            .map(String::as_str)
     }
 
     /// Return exact Rust parameter displays recorded for a closure expression, if any.
@@ -2532,6 +2605,35 @@ impl TypeCheckInfo {
             .insert((span.start, span.end), binding);
     }
 
+    /// Return whether the function-typed parameter declared at `span` holds any callable of its type, so lowering
+    /// spells it `impl Fn(A) -> R` (#1561).
+    pub fn is_closure_holding_param(&self, span: Span) -> bool {
+        self.calls.closure_holding_params.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the function or method whose function return type is written at `span` returns a closure that
+    /// captures local values, so lowering spells the return type `impl Fn(A) -> R` (#1561).
+    pub fn is_closure_returning_type(&self, span: Span) -> bool {
+        self.calls.closure_returning_callables.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the assignment statement at `span` binds a new local to a capturing callable, whose own type the
+    /// binding takes (#1561).
+    pub fn binds_capturing_callable(&self, span: Span) -> bool {
+        self.calls.capturing_callable_bindings.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the closure at `span` is returned by its function, and so holds its own copy of every local it
+    /// reads (#1561).
+    pub fn is_returned_closure(&self, span: Span) -> bool {
+        self.calls.returned_closures.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the argument at `span` is passed by reference to a closure-holding parameter (#1561).
+    pub fn is_borrowed_callable_argument(&self, span: Span) -> bool {
+        self.calls.borrowed_callable_arguments.contains(&(span.start, span.end))
+    }
+
     /// Return whether a canonical source `CallableN` bound supplied this closure's contextual parameter types.
     pub fn is_source_callable_closure(&self, span: Span) -> bool {
         self.calls.source_callable_closures.contains(&(span.start, span.end))
@@ -2610,6 +2712,18 @@ impl TypeCheckInfo {
         self.calls
             .error_message_display_types
             .insert(type_name.to_string(), display);
+    }
+
+    /// Return whether a declared type displays through a derived `Display`.
+    ///
+    /// See [`CallArtifacts::derived_display_types`].
+    pub fn type_derives_display(&self, type_name: &str) -> bool {
+        self.calls.derived_display_types.contains(type_name)
+    }
+
+    /// Record that a declared type displays through a derived `Display`.
+    pub fn record_derived_display_type(&mut self, type_name: &str) {
+        self.calls.derived_display_types.insert(type_name.to_string());
     }
 
     /// Record the compiler-owned builtin selected for one checked call.
@@ -2805,6 +2919,20 @@ impl TypeCheckInfo {
         self.protocols
             .item_taking_iterations
             .contains(&(iter_span.start, iter_span.end))
+    }
+
+    /// Record that an arm of the `match`, `if let` or `while let` over the scrutinee at `span` changes a caller-visible
+    /// `mut` parameter through a name its pattern binds (#1561).
+    pub fn record_match_scrutinee_changed_in_place(&mut self, span: Span) {
+        self.protocols.in_place_match_scrutinees.insert((span.start, span.end));
+    }
+
+    /// Return whether the scrutinee at `span` is matched in place: an arm changes a caller-visible `mut` parameter
+    /// through a name the pattern binds, so each name binds the part of the parameter it names (#1561).
+    pub fn match_scrutinee_is_changed_in_place(&self, span: Span) -> bool {
+        self.protocols
+            .in_place_match_scrutinees
+            .contains(&(span.start, span.end))
     }
 }
 

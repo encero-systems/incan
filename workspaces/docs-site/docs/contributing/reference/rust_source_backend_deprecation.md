@@ -1,57 +1,26 @@
-# Rust-source backend deprecation policy
+# Rust-source backend migration notes and freeze
 
-This policy seeds issue [#647](https://github.com/encero-systems/incan/issues/647). It does not remove the Rust-source backend. It draws the boundary for 0.5 work so the old backend remains useful while semantic authority moves toward stable IDs, backend-neutral facts, `IncanType`, HIR, Body IR, ABI metadata, and diagnostics.
+This page states the migration note a change to the Rust-source backend carries, the semantic owners a note names, the freeze of the emission tree, and the guardrails for backend boundaries. The deprecation policy these serve is explained in [Rust-source backend deprecation](../explanation/rust_source_backend_deprecation.md); reviewing a backend change is described in [Auditing generated Rust](../how-to/auditing_generated_rust.md#review-a-backend-change).
 
-## Policy
+## Migration note
 
-The Rust-source backend is a compatibility and reference backend. It may keep current users unblocked and may remain inspectable, but new language semantics should not be implemented only in Rust-source lowering or emission.
+A compatibility fix in the Rust-source backend (Rust-source lowering and emission) that adds or preserves behavior belonging to the middle end carries a migration note with these fields:
 
-Generated Rust can still answer useful questions:
+| Field | Required content | `--record` option | Manifest key |
+| --- | --- | --- | --- |
+| Compatibility issue | The bug or release issue that needs the old backend fix. | `--issue` | `compatibility_issue` |
+| Behavior evidence | The test, snapshot or downstream lane proving the behavior. | `--evidence` | `behavior_evidence` |
+| Semantic owner | The owner the behavior moves to: stable IDs, semantic facts, `IncanType`, HIR, Body IR, ABI metadata, runtime-service facts, diagnostics, or package metadata (see [Semantic owners](#semantic-owners)). | `--owner` | `semantic_owner` |
+| Retirement condition | What lets this compatibility path disappear or become a thin adapter. | `--retirement` | `retirement_condition` |
 
-- what the current backend emits;
-- whether a generated project compiles and runs;
-- whether public tooling reports useful artifacts;
-- whether compatibility behavior still works during migration.
+Where the note is written:
 
-Generated Rust must not be the only answer to semantic questions such as:
+- For the emission tree (every `.rs` file under `loaves/compiler/incan_emit/src/emit/`), the note is the manifest `change` entry that `python3 scripts/check_emitter_freeze.py --record --issue <issue> --evidence <evidence> --owner <owner> --retirement <condition>` writes. Every modification of the tree carries one, and so does every deletion under the `frozen` policy (see [Emission tree freeze](#emission-tree-freeze)).
+- For any other change to the Rust-source backend, the note is written in the code comment, test name, issue note or pull request text of the change.
 
-- what source declaration, expression, local, type, or call an operation means;
-- which overload, trait dispatch, callable surface, or generic binding was selected;
-- which ownership, borrow, coercion, runtime-helper, or target requirement exists;
-- which package/import/reexport identity a downstream consumer should see.
+## Semantic owners
 
-## Allowed old-backend compatibility fixes
-
-Compatibility fixes in the old backend are allowed when they keep current users or 0.4/0.5 proof lanes unblocked. They must include a migration note when they add or preserve behavior that should move to the middle end.
-
-Use this template in the code comment, test name, issue note, or PR text:
-
-| Field | Required content |
-| --- | --- |
-| Compatibility issue | Link the bug or release issue that needs the old backend fix. |
-| Behavior evidence | Name the test/snapshot/downstream lane proving the behavior. |
-| Semantic owner | Name the future owner: stable IDs, semantic facts, `IncanType`, HIR, Body IR, ABI metadata, runtime-service facts, diagnostics, or package metadata. |
-| Retirement condition | State what will let this compatibility path disappear or become a thin adapter. |
-
-Do not use the template as bureaucracy. Use it to prevent backend-only fixes from becoming hidden architecture.
-
-## Current v0.5 adoption
-
-`CompilationSession` now owns one checked analysis result for executable builds, generated-Rust inspection, and codegraph inspection. That result bundles the lowering inputs and source-backed stdlib metadata still required by the current backend with a `SemanticModuleSnapshot` per module. The build paths pass that analysis into `IrCodegen` rather than asking codegen to typecheck the same source again, and codegraph resolves checked call/reference targets from semantic facts rather than `TypeCheckInfo` directly.
-
-The remaining internal `IrCodegen` typecheck fallback is deliberate and narrow: it serves direct backend API callers that do not yet supply a session analysis. Its owner is [#225](https://github.com/encero-systems/incan/issues/225); remove it when those callers supply session analysis and Body IR owns the lowering-specific queries that facts do not yet model. It must not receive new semantic decisions.
-
-## Not allowed without explicit maintainer approval
-
-- Adding new source semantics only in an emitter branch.
-- Duplicating typechecker decisions in codegen by matching method names, Rust strings, or generated token shapes.
-- Adding `.clone()`, `.into()`, `.to_string()`, `.as_ref()`, or borrow rewrites as local emitter patches without routing the decision through ownership or Rust-boundary planning.
-- Treating a generated-Rust snapshot as sufficient evidence for package, import, vocab, test-batch, or downstream behavior when those boundaries can observe the change.
-- Expanding `__incan_std` source materialization as if it were the long-term stdlib packaging model.
-
-## Semantic destinations
-
-| If a change needs to know... | Put the authority in... |
+| A change that needs to know... | Owner |
 | --- | --- |
 | Declaration, expression, statement, local, or type identity | Stable compiler IDs and semantic facts. |
 | Source-level type meaning independent of Rust spelling | `IncanType` or the backend-neutral semantic type model. |
@@ -62,41 +31,62 @@ The remaining internal `IrCodegen` typecheck fallback is deliberate and narrow: 
 | Generated project layout, Cargo manifest shape, or artifact reports | Backend preparation and artifact plan. |
 | Public import, reexport, package, or checked API identity | Package metadata and checked API facts. |
 
-## Existing guardrails to reuse
+## Emission tree freeze
 
-Before adding a new broad regression lane, check whether the repo already has a compact guardrail for the boundary:
+The emission tree, every `.rs` file under `loaves/compiler/incan_emit/src/emit/` (recursively), is frozen against the fingerprint manifest `loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json`. `scripts/check_emitter_freeze.py` compares the tree with the manifest in `make pre-commit-fast`, in CI and in `cargo test -p incan_emit`. A file's fingerprint is its sha256 digest and line count, with `\r\n` read as `\n`.
 
-| Boundary | Existing guardrail |
+### Policies
+
+The manifest's `policy` decides what drift the gate admits; the committed manifest carries `frozen`.
+
+| Policy | Added file | Modified file | Deleted file |
+| --- | --- | --- | --- |
+| `frozen` | Refused. | Admitted with a recorded `change` entry. | Admitted with a recorded `change` entry. |
+| `deletions-only` | Refused. | Admitted with a recorded `change` entry. | Admitted with a `deletion` entry that carries no migration note. |
+
+### Commands
+
+| Command | Effect |
+| --- | --- |
+| `python3 scripts/check_emitter_freeze.py` | Checks the tree against the manifest under its policy. |
+| `python3 scripts/check_emitter_freeze.py --record --issue <issue> --evidence <evidence> --owner <owner> --retirement <condition>` | Rewrites the fingerprints for the current tree and appends one `change` entry carrying the four migration-note fields. `--pr <number>` records the pull request; `--policy <policy>` sets the policy in force after the change. |
+| `python3 scripts/check_emitter_freeze.py --record --prune-deletions` | Drops every missing file from the manifest and appends one `deletion` entry, which carries no migration note; `--pr <number>` records the pull request. A modified file keeps its recorded fingerprint. |
+
+`--root <path>` and `--manifest <path>` select the repository root and the manifest for any command.
+
+`--record` is refused when a migration-note field is missing or blank, when the tree gained a file, under `deletions-only` while the manifest lists a deleted file, and when the tree matches the manifest and the policy after the change equals the one in force. `--record --prune-deletions` is refused under `frozen`, when the tree gained a file, and when every file the manifest lists exists. `--prune-deletions` together with `--policy` or a migration-note option, `--pr` with a value below 1, and `--prune-deletions`, `--policy`, `--pr` or a migration-note option without `--record` are usage errors.
+
+Exit status: `0` when the tree matches the manifest under its policy, `1` on drift or a refused record, `2` on a malformed manifest or a usage error.
+
+### Manifest schema
+
+The manifest is a JSON object with exactly the keys `tree`, `policy`, `files` and `changes`, in that order.
+
+| Key | Content |
+| --- | --- |
+| `tree` | The frozen tree, `loaves/compiler/incan_emit/src/emit`. |
+| `policy` | `frozen` or `deletions-only`; equal to the `policy` of the last `changes` entry. |
+| `files` | One object per frozen file, with the keys `path`, `sha256` (lowercase hex) and `lines`, sorted by `path`, each path listed once. |
+| `changes` | The recorded entries, oldest first. |
+
+Each `changes` entry has the keys `kind`, `pr`, `policy` and `files`:
+
+| Key | Content |
+| --- | --- |
+| `kind` | `change` or `deletion`. |
+| `pr` | A positive pull request number, or `null`. |
+| `policy` | The policy in force after the entry; `deletions-only` in a `deletion` entry. |
+| `files` | One object per covered file, with the keys `path` and `change` (`modified` or `deleted`); a `deletion` entry lists at least one file, each `deleted`. |
+
+A `change` entry also carries the four migration-note keys `compatibility_issue`, `behavior_evidence`, `semantic_owner` and `retirement_condition`, each a non-empty string. A `deletion` entry carries none of them.
+
+## Guardrails
+
+| Boundary | Guardrail |
 | --- | --- |
 | Stringly semantic checks in compiler code | `loaves/toolchain/incan-cli/tests/vocab_guardrails.rs` and `loaves/toolchain/incan-cli/tests/fixtures/vocab_guardrails/semantic_string_audit.json`. |
 | The frozen emission tree | `scripts/check_emitter_freeze.py` and `loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json`. |
 | Import/package/facade identity | `loaves/compiler/incan_test_support/fixtures/boundary_parity/README.md` and its fixture families. |
 | Generated Rust public library artifacts | `loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs`, `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs`, and `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs`. |
-| Stdlib generated-Rust coverage | `workspaces/docs-site/docs/contributing/reference/generated_rust_stdlib_coverage.md` and `loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs`. |
+| Stdlib generated-Rust coverage | [Generated Rust stdlib coverage inventory](generated_rust_stdlib_coverage.md) and `loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs`. |
 | Rust interop call/coercion behavior | Focused `loaves/compiler/incan_emit/tests/codegen_snapshots/rfc041_*`, `loaves/compiler/incan_emit/tests/codegen_snapshots/rfc043_*`, and `loaves/compiler/incan_emit/tests/codegen_snapshots/rust_interop_*` fixtures. |
-
-## Review checklist
-
-Use this checklist when reviewing compiler/backend changes during 0.5:
-
-- Does the patch change source behavior or only generated artifact shape?
-- If it changes source behavior, is the behavior recorded before backend emission?
-- If it changes generated Rust, is the generated Rust a consumer of semantic facts or the source of the decision?
-- Does the test cover the boundary that can observe the behavior: direct, import, facade/reexport, package consumer, test batch, vocab, generated project, or downstream lane?
-- If it is a compatibility fix, is there a migration note and retirement condition?
-- Does it preserve the current Rust-source backend without making replacement harder?
-
-## Examples from current 0.5 bugs
-
-| Issue | Backend policy lesson |
-| --- | --- |
-| [#803](https://github.com/encero-systems/incan/issues/803) | Rust type identity must not depend on emitted Rust formatting. The `usize` identity fix lives in the boundary coercion matrix, with generated-project verification as the parity check. |
-| [#804](https://github.com/encero-systems/incan/issues/804) | `.into()` insertion is semantic call planning. It should be owned by Rust-boundary compatibility facts, not by a local emitter convenience. |
-| [#805](https://github.com/encero-systems/incan/issues/805) | Callback adaptation needs explicit callable and borrowed-parameter facts. Accepting source callbacks by value and hoping Rust rejects them is not a diagnostic strategy. |
-| [#806](https://github.com/encero-systems/incan/issues/806) | Receiver-side type arguments and method-level type arguments must be distinguished before emission. The emitter can realize the plan, but it should not invent it. |
-
-## Relationship to 0.6 cutover
-
-The 0.6 backend cutover should consume 0.5 facts rather than rediscover behavior from generated Rust. The old backend should still be useful as a parity oracle, but parity means "same supported source behavior," not "same emitted tokens."
-
-From the close of v0.6 slice 6 ([#1561](https://github.com/encero-systems/incan/issues/1561)) the emission tree `loaves/compiler/incan_emit/src/emit/**` is frozen. The freeze is enforced by `scripts/check_emitter_freeze.py` against the fingerprint manifest `loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json`, in `make pre-commit-fast`, in CI and in `cargo test -p incan_emit`: a change to the tree fails the gate until it is recorded there with this page's migration note (compatibility issue, behavior evidence, semantic owner, retirement condition), an added file is never recordable, and slice 7 switches the manifest to `deletions-only`, under which a deletion needs no note and is pruned from the manifest instead. The path set, the policy states, the manifest schema and the checker's modes are described in the checker's module docstring and recorded on [#1561](https://github.com/encero-systems/incan/issues/1561#issuecomment-5750178488).

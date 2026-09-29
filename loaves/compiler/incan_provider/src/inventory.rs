@@ -420,7 +420,11 @@ pub fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<Stri
                         && !path.is_absolute
                         && path.segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) =>
                 {
-                    Some(path.segments.clone())
+                    // A namespace's `prelude` path names the namespace's own module, which its provider claims.
+                    Some(
+                        stdlib::stdlib_prelude_module_namespace(&path.segments)
+                            .map_or_else(|| path.segments.clone(), <[String]>::to_vec),
+                    )
                 }
                 _ => None,
             };
@@ -530,6 +534,26 @@ mod tests {
         assert!(root_paths.contains(&vec!["std".to_string(), "math".to_string()]));
         assert!(root_paths.contains(&vec!["std".to_string(), "serde".to_string()]));
         assert!(!root_paths.contains(&vec!["std".to_string()]));
+        Ok(())
+    }
+
+    /// #1561: a namespace's `prelude` path uses the namespace's module, the one its provider claims.
+    #[test]
+    fn namespace_prelude_imports_select_the_namespace_provider_module() -> Result<(), Box<dyn std::error::Error>> {
+        let prelude = parsed_module_for_test(
+            "from std.async.prelude import sleep
+import std.traits.prelude
+",
+        )?;
+        let namespace = parsed_module_for_test(
+            "from std.async import sleep
+import std.traits
+",
+        )?;
+        let prelude_paths = provider_used_module_paths(&[prelude]);
+        assert_eq!(prelude_paths, provider_used_module_paths(&[namespace]));
+        assert!(prelude_paths.contains(&vec!["std".to_string(), "async".to_string()]));
+        assert!(!prelude_paths.contains(&vec!["std".to_string(), "async".to_string(), "prelude".to_string()]));
         Ok(())
     }
 

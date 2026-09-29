@@ -241,14 +241,14 @@ fn comparison_operator_derive(op: BinaryOp) -> Option<DeriveId> {
 impl TypeChecker {
     /// Give an unsuffixed integer literal operand the exact-width integer type of the other operand.
     ///
-    /// RFC 009 types an unsuffixed integer literal from its context, and for `+`, `-`, `*`, `//`, `%` and the
-    /// comparisons the other operand is that context: `n + 1` adds two `i8` values when `n` is an `i8`, and `n == 0`
-    /// compares two. The literal is checked again against that type as it is at a destination of that type, which
-    /// records the type for lowering; in arithmetic that refuses a value outside the type's range (`n + 300`, or
+    /// RFC 009 types an unsuffixed integer literal from its context, and for `+`, `-`, `*`, `//`, `%`, `&`, `|`, `^`
+    /// and the comparisons the other operand is that context: `n + 1` adds two `i8` values when `n` is an `i8`, and
+    /// `n == 0` compares two. The literal is checked again against that type as it is at a destination of that type,
+    /// which records the type for lowering; in arithmetic that refuses a value outside the type's range (`n + 300`, or
     /// `b - -1` for a `u8` `b`), while a comparison keeps such a literal an `int` and compares in a type holding both
-    /// (`b == -1` is `false`). `/` is left alone because it divides as floats whatever its operands are, and so is the
-    /// exponent of `**`, which counts rather than being a value of the base's type. Returns the operand types after
-    /// the literal has taken its partner's type.
+    /// (`b == -1` is `false`). `/` is left alone because it divides as floats whatever its operands are, and so are the
+    /// exponent of `**` and the right operand of `<<` and `>>`, which count rather than being values of the other
+    /// operand's type. Returns the operand types after the literal has taken its partner's type.
     fn integer_literal_operand_takes_partner_type(
         &mut self,
         (left, left_ty): (&Spanned<Expr>, &ResolvedType),
@@ -262,6 +262,9 @@ impl TypeChecker {
                 | BinaryOp::Mul
                 | BinaryOp::FloorDiv
                 | BinaryOp::Mod
+                | BinaryOp::BitAnd
+                | BinaryOp::BitOr
+                | BinaryOp::BitXor
                 | BinaryOp::Eq
                 | BinaryOp::NotEq
                 | BinaryOp::Lt
@@ -321,6 +324,28 @@ impl TypeChecker {
             span,
         ));
         ResolvedType::Unknown
+    }
+
+    /// Return the type of a bitwise operator over two integer operands, by the operator result table.
+    ///
+    /// RFC 009: same-type integer arithmetic yields that type, and bit arithmetic is integer arithmetic. `&`, `|` and
+    /// `^` keep their operands' one integer type, after an unsuffixed integer literal operand has taken the
+    /// exact-width type of the other operand, and operands of two different integer types are refused as they are for
+    /// `+`. `<<` and `>>` keep their left operand's type: the right operand counts bit positions, so it may be of any
+    /// integer type. The table's one home for `a op b` and for `x op= y`; a refusal is recorded and yields `Unknown`.
+    pub(in crate::typechecker) fn integer_bitwise_result_type(
+        &mut self,
+        (left, left_ty): (&Spanned<Expr>, &ResolvedType),
+        op: BinaryOp,
+        (right, right_ty): (&Spanned<Expr>, &ResolvedType),
+        span: Span,
+    ) -> ResolvedType {
+        if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+            return left_ty.clone();
+        }
+        let (left_ty, right_ty) =
+            self.integer_literal_operand_takes_partner_type((left, left_ty), op, (right, right_ty));
+        self.integer_arithmetic_result_type(&left_ty, op, &right_ty, span)
     }
 
     /// Return the result type of an arithmetic operator over two numeric operands, by the operator result table.
@@ -597,13 +622,21 @@ impl TypeChecker {
                     op,
                     BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
                 ) {
+                    // An unknown operand beside an integer one is treated as that integer's type, as it is for
+                    // arithmetic; a shift keeps its left operand's type whatever it counts with.
                     match (numeric_ty_from_resolved(&left_ty), numeric_ty_from_resolved(&right_ty)) {
-                        (Some(NumericTy::Int), Some(NumericTy::Int)) => return ResolvedType::Int,
+                        (Some(NumericTy::Int), Some(NumericTy::Int)) => {
+                            return self.integer_bitwise_result_type((left, &left_ty), op, (right, &right_ty), span);
+                        }
                         (Some(NumericTy::Int), None) if matches!(right_ty, ResolvedType::Unknown) => {
-                            return ResolvedType::Int;
+                            return left_ty.clone();
                         }
                         (None, Some(NumericTy::Int)) if matches!(left_ty, ResolvedType::Unknown) => {
-                            return ResolvedType::Int;
+                            return if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                                ResolvedType::Unknown
+                            } else {
+                                right_ty.clone()
+                            };
                         }
                         _ => {}
                     }
@@ -890,7 +923,10 @@ impl TypeChecker {
                 ResolvedType::Bool
             }
             UnaryOp::Invert => {
-                if self.types_compatible(&operand_ty, &ResolvedType::Int) {
+                // RFC 009: `~` keeps its integer operand's type, as the binary bitwise operators do.
+                if matches!(numeric_ty_from_resolved(&operand_ty), Some(NumericTy::Int)) {
+                    operand_ty
+                } else if self.types_compatible(&operand_ty, &ResolvedType::Int) {
                     ResolvedType::Int
                 } else {
                     let method = "__invert__";

@@ -27,11 +27,27 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 | Type | `T(p)` | A union value of member type `T` that matches `p` | The names `p` binds |
 | Alternation | <code>p1 &#124; p2 &#124; …</code> | The values any alternative matches | The names every alternative binds |
 
+## Binding and tuple patterns
+
+- A binding pattern binds its name to the matched value as an immutable binding.
+- A tuple pattern has one sub-pattern per element of the subject's tuple type, in order.
+
+Refused (`INCAN-T0001`): a binding pattern named `print` or `println`, and a tuple pattern with more or fewer sub-patterns than the subject's tuple type has elements.
+
+```incan
+def first(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, text) => return text        # accepted
+        (0, text, _) => return text     # refused: the tuple has two elements
+        print => return "other"         # refused: print is a protected builtin name
+        _ => return "none"
+```
+
 ## Literal patterns
 
 | Literal | Positions it matches | Additional rule |
 | --- | --- | --- |
-| Integer, such as `0`, `-1`, `255` | An integer type: `int` and every exact-width integer | The value lies in the type's range. |
+| Integer, such as `0`, `255` | An integer type: `int` and every exact-width integer | The value lies in the type's range. |
 | Float, such as `1.5` | A float type: `float` (`f64`) or `f32` | For `f32`, the value is finite in `f32`. |
 | String, such as `"a"` | `str` | |
 | `true`, `false` | `bool` | |
@@ -62,9 +78,9 @@ def ratio(value: float) -> str:
 
 - The subject is an enum declared in Incan, an `Option` (`Some(p)`; `None` is a literal), or a `Result` (`Ok(p)`, `Err(p)`).
 - `Variant` is a variant of the subject's type or a variant alias. `Enum.Variant` qualifies it with the subject's enum, and a variant without a payload is written `Enum.Variant`.
-- Sub-patterns are positional, one per payload value.
+- Sub-patterns are positional, one per payload value. `Some(p)`, `Ok(p)` and `Err(p)` have one sub-pattern.
 
-Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, and a named sub-pattern.
+Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, a named sub-pattern, more or fewer sub-patterns than the variant has payload values (`Enum.Variant` without parentheses has none), and a `Some`, `Ok` or `Err` pattern without exactly one sub-pattern.
 
 ```incan
 enum Shape:
@@ -77,6 +93,8 @@ def area(shape: Shape) -> float:
         Shape.Empty => return 0.0            # accepted
         Square(side) => return 0.0           # refused: Shape declares no Square
         Circle(radius=r) => return 0.0       # refused: named sub-pattern
+        Circle(r, s) => return 0.0           # refused: Circle has one payload value
+        Shape.Circle => return 0.0           # refused: Circle has one payload value
 ```
 
 ## Record patterns
@@ -141,6 +159,56 @@ def tag(pair: tuple[int, str]) -> str:
         _ => return "other"
 ```
 
+## Match values
+
+A `match` has one type, which every arm produces.
+
+- An arm whose body is an expression produces that expression's value. An arm whose body is a block produces no value, and a block whose last statement is `return`, `break` or `continue` takes no part.
+- A literal arm of a `match` written to a place of a declared type (an annotated binding, a `return`, an argument) takes that type. When the type is numeric or an `Option` that holds no union, each arm is assignable to it and the `match` has it. Otherwise the arms unify: an arm assignable to another arm's type takes that type, so `i8` and `int` arms make an `int` match, and `Some(1)` and `None` arms an `Option[int]` one, and the `match` is then assignable to the place as any value is.
+- A narrower numeric arm is widened, and a payload arm is wrapped in `Some`, in the arm itself (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)).
+
+Refused (`INCAN-T0001`): arms that share no type, in any position, a `match` used as a statement included.
+
+```incan
+def pick(n: int, small: i8, wide: int) -> int:
+    chosen = match n:               # accepted: an int
+        0 => small
+        _ => wide
+    return chosen
+
+def label(n: int) -> str:
+    text = match n:                 # refused: a str arm and an int arm
+        0 => "zero"
+        _ => 5
+    return text
+```
+
+## Changes through bound names
+
+A subject that names a place makes each name its pattern binds part of that place. A place is a binding, `self`, a field or list element of a place, or the variable of a `for` loop over a list of a place, written with or without parentheses. A change through a bound name is an assignment to its fields or elements, a call of a method that takes `mut self` or of a changing `list`, `dict` or `set` method, or an iteration of a `Generator`.
+
+| Place the subject names | A change through a bound name |
+| --- | --- |
+| A `mut` binding or parameter, `self` in a `mut self` method, or a field or list element of one | Changes the place. |
+| A binding or parameter declared without `mut`, a static, `self` in a plain `self` method, a dict value, or a field or element of one | Refused (`INCAN-T0001`). |
+| No place, such as a call result | Changes the subject's own value. |
+
+```incan
+def fill(mut box: Option[list[int]]) -> None:
+    match box:
+        Some(xs) => xs.append(1)    # accepted: changes the caller's box
+        None => pass
+
+def main() -> None:
+    mut rows = [Some([1]), None]
+    if let Some(xs) = rows[0]:
+        xs.append(2)                # accepted: rows is [Some([1, 2]), None]
+    fixed = Some([1])
+    match fixed:
+        Some(xs) => xs.append(3)    # refused: fixed is not declared mut
+        None => pass
+```
+
 ## Coverage
 
 The unguarded arms of a `match` cover its subject. A guarded arm never counts toward coverage, an alternation counts as one arm per alternative, and a group counts as the pattern it groups. An arm whose pattern is `_` or a binding covers any subject. Otherwise:
@@ -152,7 +220,7 @@ The unguarded arms of a `match` cover its subject. A guarded arm never counts to
 | A union | For each member type, the arms that name it cover every value of it. |
 | A tuple | They cover every combination of element values, element by element. |
 | A model or class | They cover every combination of field values, field by field. |
-| A number, `str`, `FrozenStr`, `bytes`, or `FrozenBytes` | One of them matches any value. |
+| A number, `str`, `FrozenStr`, `bytes`, or `FrozenBytes` | Never: literal arms do not cover it, and only an arm that is `_` or a binding does. |
 
 The same rules apply to a payload, element, or field at any depth.
 

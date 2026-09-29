@@ -70,7 +70,7 @@ def whole_feed(feed: bytes) -> Result[list[bytes], IoError]:
     `collect` is the terminal form of the same stream: it folds every poll into one `Result`, so the caller decides
     once whether the read succeeded rather than at each step.
     """
-    stream = BytesIO(feed).chunks(6)
+    mut stream = BytesIO(feed).chunks(6)
     return stream.collect()
 
 

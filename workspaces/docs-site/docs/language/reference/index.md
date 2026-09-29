@@ -10,16 +10,16 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 - [Feature inventory (generated)](feature_inventory.md): generated capability atlas for syntax, stdlib, interop, testing, async, tooling, and library surfaces
 - [Code style guide](code_style.md): layout, spacing, and readability rules for `.incn` source
 - [Assignments](assignments.md): bindings, reassignment, tuple unpacking, tuple assignment, and chained assignment
-- [Functions and calls](functions.md): function signatures, ordinary call binding, rest parameters, and call-site unpacking
-- [Computed properties](computed_properties.md): field-like derived members, trait requirements, and `property` vs `def`
+- [Functions and calls](functions.md): function signatures and function types, `mut` parameters, ordinary call binding, rest parameters, call-site unpacking, and collection literal spread
+- [Computed properties](computed_properties.md): field-like derived members, their declaration and reads, and trait requirements
 - [Newtypes](newtypes.md): nominal wrappers, validated construction, implicit coercion sites, and constraints
 - [Generators](generators.md): `Generator[T]`, `yield`, generator expressions, and generator methods
-- [Symbol aliases](symbol_aliases.md): top-level aliases, same-type method aliases, exports, and diagnostics
-- [Callable presets](callable_presets.md): RHS partial declarations, projected defaults, method presets, and diagnostics
-- [Conditional compilation](conditional_compilation.md): package-owned feature predicates and compile-time source projection
+- [Symbol aliases](symbol_aliases.md): top-level, method and enum variant aliases, and importing and re-exporting them
+- [Callable presets](callable_presets.md): top-level, method and local `partial` presets, their targets, signatures and preset values, and their refusals
+- [Conditional compilation](conditional_compilation.md): `when feature("name"):` blocks, their grammar, what they may condition, and their restrictions
 - [Glossary](glossary.md): the terms the docs use
 - [File I/O](file_io.md): the `std.fs` file and path surface
-- [Imports and modules](imports_and_modules.md): import syntax, module paths, and module resolution rules
+- [Imports and modules](imports_and_modules.md): import forms, module paths, bindings, exports and re-exports, package namespaces, and Rust crate imports
 - [Static storage](static_storage.md): `static`, `pub static`, initialization rules, and live shared module state
 - [Frozen collections](frozen_collections.md): the `FrozenList`, `FrozenSet` and `FrozenDict` types a `const` holds, and their reads
 - [Match patterns](match_patterns.md): the patterns of `match`, `if let`, and `while let`, and when the arms of a `match` cover its subject
@@ -27,7 +27,7 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 - [Reflection](reflection.md): reflection helpers of models and classes
 - [std.testing](stdlib/testing.md): assertions, markers, fixtures, and parametrization
 - [Standard library reference](stdlib/index.md): signatures for `std.*` modules (`std.math`, `std.async`, `std.collections`, ...)
-- [Numeric semantics](numeric_semantics.md): numeric operators, promotion rules, and edge cases
+- [Numeric semantics](numeric_semantics.md): numeric types and aliases, literals, assignment between numeric types, resizing methods, operators, and compound assignment
 - [Strings](strings.md): string types, formatting, and string operations
 - [Union types](union_types.md): anonymous closed unions, `A | B`, narrowing, and `match` type patterns
 - [Derives & traits](derives_and_traits.md): derives, trait authoring, method decorators, and generic instance methods

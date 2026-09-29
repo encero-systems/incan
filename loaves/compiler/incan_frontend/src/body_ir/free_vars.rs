@@ -35,7 +35,7 @@ pub(super) fn free_vars_in_generator_deferred_body(generator: &ast::GeneratorExp
 /// capture before lowering the body, so each one gets its own explicit Duckborrower read at the point the closure
 /// is constructed (see this module's docs on why Body IR cannot rely on a target backend's own closure syntax to
 /// auto-capture the way the existing Rust-emission backend does).
-pub(super) fn free_vars_in_closure_body(
+pub(crate) fn free_vars_in_closure_body(
     params: &[ast::Spanned<ast::Param>],
     body: &ast::Spanned<ast::Expr>,
 ) -> Vec<String> {
@@ -61,7 +61,7 @@ pub(super) fn push_free(name: &str, bound: &HashSet<String>, free: &mut Vec<Stri
 ///
 /// This mirrors [`BodyBuilder::lower_match_pattern`]'s and [`BodyBuilder::bind_for_pattern_fields`]' binding walks
 /// in spirit, though it only needs the names, not the locals/ownership facts those walks build.
-pub(super) fn bind_pattern_names(pattern: &ast::Pattern, bound: &mut HashSet<String>) {
+pub(crate) fn bind_pattern_names(pattern: &ast::Pattern, bound: &mut HashSet<String>) {
     match pattern {
         ast::Pattern::Wildcard | ast::Pattern::Literal(_) => {}
         ast::Pattern::Binding(name) => {

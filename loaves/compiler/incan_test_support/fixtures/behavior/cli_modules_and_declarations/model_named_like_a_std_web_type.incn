@@ -1,6 +1,8 @@
-# behavior: a model named Response, a name std.web also uses, is the return type of its own static method in a program that never imports std.web
+# behavior: models named Response and Html, names std.web also uses, keep their own fields and return types in a program that never imports std.web
+# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::a_local_type_named_html_is_not_the_web_response_issue1768
 # expect-stdout:
 #   ok
+#   local
 
 model Response:
     body: str
@@ -10,5 +12,14 @@ model Response:
         return Response(body=body)
 
 
+model Html:
+    body: str
+
+
+def render(value: str) -> Html:
+    return Html(body=value)
+
+
 def main() -> None:
     println(Response.make("ok").body)
+    println(render("local").body)

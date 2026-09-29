@@ -1,0 +1,48 @@
+# behavior: nested Option arguments and None payloads keep every layer, a str field assignment stores owned text, an Option list element can call unwrap_or, and an Error adopter displays its message through a generic Display bound
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::nested_option_call_argument_is_wrapped_in_each_layer_followups_a
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::some_none_at_nested_option_destination_has_the_inner_type_followups_a
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::string_literal_assigned_to_str_field_is_owned_followups_a
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::indexed_option_method_call_groups_the_lookup_followups_a
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::error_message_display_implements_rust_display_followups_a
+# expect-stdout:
+#   5
+#   0
+#   y
+#   1
+#   bad
+#   bad
+
+from std.traits.error import Error
+
+
+model Box:
+    label: str
+
+
+model Failure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+
+def nested(value: Option[Option[int]]) -> int:
+    return value.unwrap().unwrap_or(0)
+
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+
+def main() -> None:
+    println(nested(5))
+    value: Option[Option[int]] = Some(None)
+    println(value.unwrap_or(None).unwrap_or(0))
+    mut box = Box(label="x")
+    box.label = "y"
+    println(box.label)
+    slots: list[Option[int]] = [Some(1)]
+    println(slots[0].unwrap_or(0))
+    failure = Failure(detail="bad")
+    println(show(failure))
+    println(failure.message())

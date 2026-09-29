@@ -1169,3 +1169,46 @@ def main() -> Plain:
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
+
+/// RFC 024: `@derive(Trait)` of a trait imported by name adopts it only when its module lists it in `__derives__`; a
+/// trait the list leaves out, or one from a module that declares no `__derives__`, is not a derive.
+#[test]
+fn derive_of_an_imported_trait_needs_its_module_derives_listing() -> Result<(), String> {
+    let codec_source = r#"
+__derives__ = [Encode]
+
+pub trait Encode:
+  def encode(self) -> str:
+    return "encoded"
+
+pub trait Decode:
+  def decode(self) -> str:
+    return "decoded"
+"#;
+    let plain_source = r#"
+pub trait Tag:
+  def tag(self) -> str:
+    return "tag"
+"#;
+    let codec_ast = parse_program(codec_source, "codec module");
+    let plain_ast = parse_program(plain_source, "plain module");
+    let listed = parse_program(
+        "from codec import Encode\n\n@derive(Encode)\nmodel Item:\n  value: int\n\ndef main() -> str:\n  return Item(value=1).encode()\n",
+        "listed trait consumer",
+    );
+    TypeChecker::new()
+        .check_with_imports(&listed, &[("codec", &codec_ast), ("plain", &plain_ast)])
+        .map_err(|errs| format!("a trait its module lists in __derives__ must derive: {errs:?}"))?;
+    for (import, trait_name) in [("from codec import Decode", "Decode"), ("from plain import Tag", "Tag")] {
+        let source = format!("{import}\n\n@derive({trait_name})\nmodel Item:\n  value: int\n");
+        let consumer = parse_program(&source, "unlisted trait consumer");
+        let errors = TypeChecker::new()
+            .check_with_imports(&consumer, &[("codec", &codec_ast), ("plain", &plain_ast)])
+            .err()
+            .ok_or_else(|| format!("`@derive({trait_name})` of an unlisted trait must be refused"))?;
+        if !errors.iter().any(|error| error.message.contains(trait_name)) {
+            return Err(format!("expected the refusal to name {trait_name}, got: {errors:?}"));
+        }
+    }
+    Ok(())
+}

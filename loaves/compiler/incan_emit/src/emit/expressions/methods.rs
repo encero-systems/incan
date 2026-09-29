@@ -9,8 +9,9 @@ use quote::{format_ident, quote};
 use super::super::{EmitError, IrEmitter};
 use crate::ownership::{
     ArgumentPassingPlan, AssociatedFunctionArgumentContext, RegularMethodArgumentContext, ValueUseSite,
-    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_read_by_ref_receiver,
-    regular_method_argument_use_site,
+    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_consumed_option_receiver,
+    plan_consumed_receiver, plan_read_by_ref_receiver, regular_method_argument_use_site,
+    result_unwrap_or_default_use_site,
 };
 use crate::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
 use incan_ir::FunctionSignature;
@@ -24,6 +25,7 @@ use incan_lang::interop::{
     METADATA_FREE_METHOD_BORROW_RULES, MetadataFreeArgClass, MetadataFreeMethodArgBorrowPolicy,
     MetadataFreeReceiverClass, RustCollectionFamily,
 };
+use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
 use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
 use incan_lang::lang::{magic_methods, stdlib, trait_bounds::rust as tb};
 
@@ -191,7 +193,7 @@ impl<'a> IrEmitter<'a> {
     /// - Compatibility issue: #1718 -- `result.inspect(observe_int)` over a Copy payload passed the fn item `fn(i64)`
     ///   where the helper wants `fn(&i64)` (E0308); the pre-emission analysis and the adapter generator both skip Copy
     ///   payloads by design, so no recorded fact reached this site.
-    /// - Behavior evidence: `result_inspect_named_observer_copy_payload` (behaviour fixture, `snapshots_stdlib`),
+    /// - Behavior evidence: `result_inspect_named_observer_copy_payload` (behavior fixture, `snapshots_stdlib`),
     ///   `copy_payload_named_observer_is_borrowed_through_a_closure_issue1718` below, and the untouched non-Copy
     ///   adapter test `test_rfc070_result_inspect_non_copy_observer_borrows_payload`.
     /// - Semantic owner: the RFC 070 combinator's callable fact (the observer takes the payload by borrow); Body IR
@@ -969,6 +971,17 @@ impl<'a> IrEmitter<'a> {
             } else {
                 quote! { (#receiver) }
             }
+        } else if matches!(kind, MethodKind::Result(_)) {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `r.map(f)` then `r.and_then(g)` on one `Result` local moved `r` into the
+            //   first call (E0382): every Rust `Result` method takes its receiver by value.
+            // - Behavior evidence: `result_receivers_stay_usable_after_a_method_call_issue1561` and the behavior
+            //   fixture `result_methods_leave_their_receiver_usable`.
+            // - Semantic owner: the ownership planner's consumed-receiver plan (`plan_consumed_receiver`); this site
+            //   only applies it.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR plans the receiver copy from
+            //   the same use facts.
+            plan_consumed_receiver(receiver).apply(self.emit_expr(receiver)?)
         } else {
             self.emit_expr(receiver)?
         };
@@ -997,7 +1010,17 @@ impl<'a> IrEmitter<'a> {
                         "Result.unwrap_or expects one default argument".to_string(),
                     ));
                 };
-                let default_tokens = self.emit_expr(default)?;
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1561 -- `r.unwrap_or("z")` on a `Result[str, str]` passed a `&str` where
+                //   Rust's `unwrap_or` takes the `String` payload (E0308), and a default local read again was moved.
+                // - Behavior evidence: `option_and_result_unwrap_or_keep_their_values_issue1561` and the behavior
+                //   fixture `unwrap_or_keeps_its_receiver_and_default`.
+                // - Semantic owner: the ownership planner's default use site (`result_unwrap_or_default_use_site`);
+                //   this site only applies it.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR passes the default from
+                //   the same use facts.
+                let default_tokens =
+                    self.emit_expr_for_use(default, result_unwrap_or_default_use_site(&receiver.ty))?;
                 let receiver_tokens = &info.r;
                 Ok(quote! { #receiver_tokens.unwrap_or(#default_tokens) })
             }
@@ -1142,7 +1165,23 @@ impl<'a> IrEmitter<'a> {
 
         let inferred_receiver = self.receiver_with_known_field_type(receiver);
         let receiver = inferred_receiver.as_ref().unwrap_or(receiver);
-        let r0 = self.emit_expr(receiver)?;
+        let option_mut_receiver =
+            matches!(receiver.ty, IrType::Option(_)) && option_methods::from_str(method) == Some(OptionMethodId::AsMut);
+        let r0 = if option_mut_receiver {
+            self.emit_lvalue_expr(receiver)?
+        } else {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `o.unwrap_or("b")` twice on one `Option[str]` local moved `o` into the
+            //   first call (E0382), and `self.o.unwrap()` moved out of a borrowed `self` (E0507): Rust's `unwrap` and
+            //   `unwrap_or` take their receiver by value.
+            // - Behavior evidence: `option_and_result_unwrap_or_keep_their_values_issue1561` and the behavior fixture
+            //   `unwrap_or_keeps_its_receiver_and_default`.
+            // - Semantic owner: the ownership planner's consumed-receiver plan (`plan_consumed_option_receiver`); this
+            //   site only applies it.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR plans the receiver copy from
+            //   the same use facts.
+            plan_consumed_option_receiver(receiver, method).apply(self.emit_expr(receiver)?)
+        };
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
         if let Some(call) = emit_registered_method_fast_path(self, receiver, method, args, r)? {
@@ -1151,7 +1190,7 @@ impl<'a> IrEmitter<'a> {
         if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
             let predicate = self.emit_expr(&args[0].expr)?;
             return Ok(quote! {
-                #r.filter(move |__incan_gen_item| #predicate((*__incan_gen_item).clone()))
+                #r.filter(move |__incan_gen_item| (#predicate)((*__incan_gen_item).clone()))
             });
         }
         let method_turbofish = if type_args.is_empty() {

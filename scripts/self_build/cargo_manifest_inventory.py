@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -35,16 +36,8 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = Path(__file__).resolve().parent / "cargo_manifest_inventory.json"
 SCHEMA_VERSION = 1
 
-# Directories that hold build output, lane-private state or vendored trees rather than authored manifests.
-SKIPPED_DIRECTORIES = {
-    ".git",
-    ".incan",
-    ".lane",
-    ".ralph-cache",
-    "node_modules",
-    "target",
-    "incan_generated_shared_target",
-}
+# Directory names used to classify generated path dependencies.
+SKIPPED_DIRECTORIES = {".git", ".incan", ".lane", ".ralph-cache", "node_modules", "target", "incan_generated_shared_target"}
 
 # `[package]` keys that may be written `key.workspace = true` and inherited from `[workspace.package]`.
 INHERITABLE_PACKAGE_KEYS = (
@@ -76,21 +69,18 @@ INNER_ATTRIBUTE_RE = re.compile(r"^\s*#!\[(?P<body>.*)\]\s*$")
 
 
 def find_manifests() -> list[Path]:
-    """Every `Cargo.toml` below the repository root, in sorted portable order, skipping output and vendored trees."""
-    found: list[Path] = []
-    stack = [ROOT]
-    while stack:
-        directory = stack.pop()
-        for entry in sorted(directory.iterdir(), key=lambda item: item.name):
-            if entry.is_symlink():
-                continue
-            if entry.is_dir():
-                if entry.name in SKIPPED_DIRECTORIES:
-                    continue
-                stack.append(entry)
-            elif entry.name == "Cargo.toml":
-                found.append(entry)
-    return sorted(found, key=lambda path: path.relative_to(ROOT).as_posix())
+    """Every tracked `Cargo.toml`, in sorted portable order."""
+    result = subprocess.run(
+        ["git", "ls-files", "--", "Cargo.toml", "**/Cargo.toml"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        raise SystemExit(2)
+    return [ROOT / path for path in sorted(line for line in result.stdout.splitlines() if line)]
 
 
 def portable(path: Path) -> str:

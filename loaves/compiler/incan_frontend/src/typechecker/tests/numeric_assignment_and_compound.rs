@@ -497,3 +497,64 @@ def f(small: i8, byte: u8, count: int, wide: u64, big: u128) -> bool:
     );
     Ok(())
 }
+
+/// RFC 009: bit arithmetic over two values of one integer type keeps that type, a shift keeps its left operand's type,
+/// `~` keeps its operand's type, and an unsuffixed literal operand takes the exact-width type of the other operand.
+#[test]
+fn bitwise_operators_keep_the_integer_type_numeric_contract() -> Result<(), String> {
+    check_str(
+        r#"
+def masks(a: u8, b: u8, count: int, wide: u64) -> u8:
+    both: u8 = a & b
+    either: u8 = a | 1
+    flipped: u8 = ~(a ^ b)
+    shifted: u8 = a << count
+    back: u64 = wide >> 2
+    mut flags: u8 = 0
+    flags |= 1
+    flags &= b
+    flags ^= 3
+    flags <<= 1
+    flags >>= count
+    return both | either | flipped | shifted | flags
+"#,
+    )
+    .map_err(|errors| format!("{errors:?}"))?;
+    let messages = refusal_messages(
+        "def f(a: u64, b: u64, small: u8, count: int) -> int:\n    c: int = a | b\n    d = small & count\n    return c\n",
+    )?;
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("expected 'int', found 'u64'")),
+        "a u64 result is not assignable to int, got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Mixed-width integer arithmetic: 'u8 & int'")),
+        "two different integer types are refused, got {messages:?}"
+    );
+    Ok(())
+}
+
+/// RFC 009: a `yield` writes its value to the generator's element type as a `return` writes to the return type, so a
+/// narrower numeric value is recorded for widening.
+#[test]
+fn yield_of_a_narrower_numeric_is_recorded_for_widening_numeric_contract() -> Result<(), String> {
+    let source = "def numbers(small: i8) -> Generator[int]:\n    yield small\n    yield 2\n";
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let start = source.find("yield small").ok_or("yield missing")? + "yield ".len();
+    assert_eq!(
+        checker
+            .type_info()
+            .value_destination_type(Span::new(start, start + "small".len())),
+        Some(&ResolvedType::Int)
+    );
+    Ok(())
+}

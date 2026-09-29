@@ -1,4 +1,5 @@
 # behavior: each mutating collection method reaches a module static from a function and later readers of the same static see the change: extend, swap, pop and remove on a static list, insert on a static dict beside a get that only reads it, and add on a static set
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::dict_get_is_copied_when_only_the_guard_reads_it_while_changing_the_dict
 # retires: loaves/compiler/incan_emit/src/emit/statements.rs::storage_binding_analysis_matches_method_mutability_policy
 # expect-stdout:
 #   3

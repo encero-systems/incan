@@ -1,0 +1,34 @@
+# behavior: `int`, `i64`, `long` and `bigint` are one type, so a `mut` parameter of any of them is the function's own copy that its body may rebind, and every exact-width numeric value satisfies a Display bound
+# expect-stdout:
+#   4 10 2
+#   3 250 1.5 7
+#   5
+
+def bump(mut n: i64) -> i64:
+    n += 1
+    return n
+
+
+def double(mut n: long) -> int:
+    n = n * 2
+    return n
+
+
+def shrink(mut n: bigint) -> bigint:
+    n -= 1
+    return n
+
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+
+def main() -> None:
+    count: int = 3
+    println(f"{bump(count)} {double(5)} {shrink(count)}")
+    small: i32 = 3
+    byte: u8 = 250
+    single: f32 = 1.5
+    total: long = 7
+    println(f"{show(small)} {show(byte)} {show(single)} {show(total)}")
+    println(count + bump(1))

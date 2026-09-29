@@ -369,7 +369,8 @@ def field_assignment() -> Holder:
 }
 
 /// Issue #1840: taking a dependency function through its imported module binding is an ordinary first-class
-/// function reference, with the same canonical target as a direct call through that binding.
+/// function reference, with the same canonical target as a direct call through that binding, read through the
+/// dependency's path because no import brings the projection into the consumer's scope.
 #[test]
 fn pub_dependency_module_member_function_value_keeps_canonical_identity_issue1840() -> Result<(), String> {
     let index = provider_index(&[(
@@ -400,13 +401,19 @@ def main() -> int:
             IrStmtKind::Let {
                 name,
                 value: TypedExpr {
-                    kind: IrExprKind::Var { name: target, .. },
+                    kind: IrExprKind::Field { object, field },
                     ..
                 },
                 ..
-            } if name == "calculate" && target != "calculate"
+            } if name == "calculate"
+                && field != "calculate"
+                && matches!(
+                    &object.kind,
+                    IrExprKind::Var { name: dependency, ref_kind: VarRefKind::ExternalName, .. } if dependency == LIBRARY
+                )
         )),
-        "the local function value must name the dependency function's canonical projection: {:?}",
+        "the local function value must name the dependency function's canonical projection through the dependency: \
+         {:?}",
         main.body
     );
     Ok(())

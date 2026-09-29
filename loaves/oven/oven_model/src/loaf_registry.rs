@@ -37,6 +37,8 @@ pub struct LoafRegistryPackage {
     pub checksum: String,
     /// The verified manifest.
     pub manifest: ProjectManifest,
+    /// Content identity of the exact governing manifest bytes.
+    pub manifest_digest: String,
     /// Directory holding the manifest and its committed generated inputs.
     pub manifest_root: PathBuf,
     /// The exact index line this package was selected from.
@@ -284,6 +286,7 @@ impl LoafRegistry {
             version: version.to_string(),
             checksum,
             manifest,
+            manifest_digest: digest_bytes(text.as_bytes()),
             manifest_root,
             index_line,
             index_facts: entry.facts,

@@ -1,5 +1,5 @@
 # behavior: each resize policy follows its contract (lossless widening, checked, wrapping, saturating) and a decimal literal keeps its scale
-# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::test_rfc009_numeric_resize_and_decimal_codegen_smoke
+# retires: loaves/toolchain/incan-cli/tests/integration_codegen_constants_and_interop_tests.rs::test_rfc009_numeric_resize_and_decimal_codegen_smoke
 # expect-stdout:
 #   120
 #   none

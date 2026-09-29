@@ -456,6 +456,18 @@ impl AstLowering {
         }
         self.pop_callable_param_scope();
         self.pop_callable_return_type();
+        // A function-typed parameter the body only calls, and a function type the function returns a capturing
+        // closure through, hold any callable of their type (#1561).
+        for (param, source) in params.iter_mut().zip(&f.params) {
+            if self.is_closure_holding_param(source.span) {
+                param.ty = Self::closure_holding_type(std::mem::take(&mut param.ty));
+            }
+        }
+        let return_type = if self.is_closure_returning_type(f.return_type.span) {
+            Self::closure_holding_type(return_type)
+        } else {
+            return_type
+        };
         let body = match body_result {
             Ok(body) => body,
             Err(err) => {

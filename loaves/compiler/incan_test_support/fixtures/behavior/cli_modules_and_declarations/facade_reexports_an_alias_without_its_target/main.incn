@@ -1,20 +1,24 @@
-# behavior: a facade that re-exports an alias declaration without its target, a second facade renaming it again, a facade listing the alias before its target, and a facade that also imports the target for its own use all hand consumers callable names (#1750)
+# behavior: an imported alias keeps its callable name through direct private imports and through facades that re-export it without its target, rename it again, list it before its target or also import the target for their own use (#1710, #1750)
 # retires: loaves/compiler/incan_emit/src/tests/reexported_projections.rs::alias_declaration_facades_bind_the_projection_they_reexport_issue1750
 # retires: loaves/compiler/incan_emit/src/tests/reexported_projections.rs::private_import_beside_a_public_reexport_binds_the_projection_publicly_issue1750
 # retires: loaves/compiler/incan_ir/src/lower/tests/reexported_projections.rs::alias_declaration_reexported_without_its_target_binds_the_projection_issue1750
 # retires: loaves/compiler/incan_ir/src/lower/tests/reexported_projections.rs::private_import_before_a_public_reexport_stands_behind_it_issue1750
 # retires: loaves/compiler/incan_ir/src/lower/tests/reexported_projections.rs::target_reexported_beside_its_alias_binds_the_projection_first_issue1750
+# retires: loaves/compiler/incan_ir/src/lower/decl/imports.rs::imported_alias_declaration_keeps_its_spelling_issue1710
+# retires: loaves/compiler/incan_ir/src/lower/tests/reexported_projections.rs::private_imports_keep_their_order_and_spelling
 # expect-stdout:
 #   6
 #   42
 #   8
 #   10
 #   14
+#   6
 
 from both_names import scale
 from facade import scale_alias
 from private_then_public import doubled, scale_alias as mixed_scale
 from public_api import exported_scale
+from provider import scale as direct_scale, scale_alias as direct_alias
 
 
 def main() -> None:
@@ -23,3 +27,4 @@ def main() -> None:
     println(exported_scale(4))
     println(mixed_scale(5))
     println(doubled(7))
+    println(direct_scale(1) + direct_alias(2))

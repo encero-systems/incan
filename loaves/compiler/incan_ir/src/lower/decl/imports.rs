@@ -210,12 +210,25 @@ impl AstLowering {
             return Ok(None);
         }
 
+        // `import std.async.prelude` names the module `std.async` (the path above) but binds the name it spells, as the
+        // checker binds it (#1561).
+        let alias = i.alias.clone().or_else(|| match &i.kind {
+            ast::ImportKind::Module(p)
+                if p.parent_levels == 0
+                    && !p.is_absolute
+                    && stdlib::stdlib_prelude_module_namespace(&p.segments).is_some() =>
+            {
+                p.segments.last().cloned()
+            }
+            _ => None,
+        });
+
         Ok(Some(IrDeclKind::Import {
             visibility: Self::map_visibility(i.visibility),
             origin,
             qualifier,
             path,
-            alias: i.alias.clone(),
+            alias,
             items: ir_items,
         }))
     }

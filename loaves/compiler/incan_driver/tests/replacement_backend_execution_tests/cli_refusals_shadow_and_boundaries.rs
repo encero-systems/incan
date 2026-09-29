@@ -685,12 +685,9 @@ fn a_rust_interop_boundary_refuses_as_a_missing_host() -> Result<(), Box<dyn std
             "from rust::incan_std_core::text import normalize\n\ndef main() -> int:\n  return 42\n",
             "Rust interop item import of crate `incan_std_core`",
         ),
-        (
-            "python-import",
-            "import python \"os\"\n\ndef main() -> int:\n  return 42\n",
-            "Python interop import of `os`",
-        ),
     ];
+    // `import python` is refused by the check before any backend is selected (#1561); the profile's own refusal of it
+    // is covered by `source_profile::tests::every_refused_boundary_names_what_it_crosses`.
     for (name, source, expected_boundary) in cases {
         let temporary = tempfile::tempdir()?;
         let entrypoint = temporary.path().join(format!("{name}.incn"));

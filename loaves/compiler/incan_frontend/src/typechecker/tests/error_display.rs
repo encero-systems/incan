@@ -234,10 +234,11 @@ trait Labeled with Error:
     Ok(())
 }
 
-/// An enum that adopts `Error` and defines no `__str__` renders `message()` like a model does, and so does an adopter
-/// whose only claim to `Display` is `@derive(Display)`, which provides nothing (#1748).
+/// An enum that adopts `Error` and defines no `__str__` renders `message()` like a model does, while an adopter that
+/// derives `Display` has a `Display` of its own (RFC 000) and displays through it instead (#1748).
 #[test]
-fn enum_and_derived_display_error_adopters_are_recorded_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+fn enum_error_adopters_are_recorded_and_a_derived_display_adopter_displays_itself_issue1748()
+-> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from std.traits.error import Error
 
@@ -267,8 +268,8 @@ def main() -> None:
 "#;
     assert_eq!(
         recorded_error_displays(source)?,
-        ["{failure}", "failure", "failure", "{derived}"],
-        "each display of an Error adopter with no Display of its own renders `message()`"
+        ["{failure}", "failure", "failure"],
+        "each display of an Error adopter with no Display of its own renders `message()`, and no other"
     );
     Ok(())
 }

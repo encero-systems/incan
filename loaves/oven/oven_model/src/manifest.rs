@@ -1304,7 +1304,6 @@ fn manifest_parse_error<E: TomlSpanError>(path: &Path, content: &str, error: E) 
     }
 }
 
-/// Construct one semantic manifest error with an optional source location.
 /// Whether one text is a canonical `sha256:` identity.
 pub fn is_sha256_identity(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|digest| {
@@ -1478,6 +1477,7 @@ fn validate_rust_fact_records(
     Ok(())
 }
 
+/// Construct one semantic manifest error with an optional source location.
 fn manifest_invalid(path: &Path, location: Option<ManifestLocation>, message: impl Into<String>) -> ManifestError {
     ManifestError::Invalid {
         path: path.to_path_buf(),

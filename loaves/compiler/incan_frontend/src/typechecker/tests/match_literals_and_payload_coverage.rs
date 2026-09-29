@@ -386,3 +386,55 @@ def area(shape: Shape[int]) -> int:
 "#,
     )
 }
+
+/// A literal matches only a position of its own scalar family, so a literal in a position whose type no literal
+/// spells is refused with both types named: `bytes`, a tuple, a collection, a model, a newtype, a union, a decimal, a
+/// type parameter, and the payload of an `Option` of one of these.
+#[test]
+fn literal_pattern_in_a_position_no_literal_spells_is_refused() -> Result<(), String> {
+    let declarations = "model Point:\n    x: int\n\ntype UserId = newtype int\n\n";
+    for (signature, literal) in [
+        ("classify(value: bytes)", "\"a\""),
+        ("classify(value: tuple[int, int])", "0"),
+        ("classify(value: list[int])", "1"),
+        ("classify(value: dict[str, int])", "\"a\""),
+        ("classify(value: Point)", "1"),
+        ("classify(value: UserId)", "1"),
+        ("classify(value: int | str)", "1"),
+        ("classify(value: decimal[10, 2])", "true"),
+        ("classify[T](value: T)", "1"),
+        ("classify(value: Option[bytes])", "Some(\"a\")"),
+    ] {
+        let source = format!(
+            "{declarations}def {signature} -> str:\n    match value:\n        {literal} => return \"x\"\n        _ => return \"y\"\n"
+        );
+        let messages = refusal_messages(&source)?;
+        if !messages.iter().any(|message| message.contains("Pattern type mismatch")) {
+            return Err(format!(
+                "expected `{literal}` over `{signature}` to be refused, got: {messages:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A transparent type alias is its target type, so a literal of the target's family matches a position of the alias.
+#[test]
+fn literal_pattern_over_a_type_alias_of_a_scalar_is_accepted() -> Result<(), String> {
+    accepted(
+        r#"
+type Code = int
+type Label = str
+
+def describe_code(code: Code) -> str:
+    match code:
+        1 => return "one"
+        _ => return "other"
+
+def describe_label(label: Label) -> str:
+    match label:
+        "a" => return "a"
+        _ => return "other"
+"#,
+    )
+}

@@ -808,7 +808,11 @@ def activation_key(node: PolicyNode) -> str:
 
 
 pub def package_key(identity: SelectedPackageIdentity) -> str:
-    """Canonical internal key without treating package name alone as selected identity."""
+    """
+    Canonical internal key without treating package name alone as selected identity.
+
+    Each length prefix preserves field boundaries so distinct source, package, and version splits cannot collide.
+    """
     source = f"{len(identity.source)}:{identity.source}"
     package = f"{len(identity.package)}:{identity.package}"
     version = f"{len(identity.version)}:{identity.version}"

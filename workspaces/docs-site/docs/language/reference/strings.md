@@ -39,30 +39,37 @@ def frozen(value: str) -> FrozenStr:
 
 | Literal | Value |
 | --- | --- |
-| `"text"`, `'text'` | A `str`; the quote style does not change the value. |
-| `"""text"""` | A multi-line `str`; line breaks inside the quotes are part of the value. |
-| `f"…{expr}…"` | An f-string: a `str` with each `{expr}` replaced by the formatted value of `expr`. |
-| `b"…"` | A `bytes` literal. Only ASCII characters and the escapes below are accepted; a non-ASCII character is a compile-time error. |
+| `"text"`, `'text'` | A `str`; the quote style does not change the value. The literal ends on its line. |
+| `"""text"""`, `'''text'''` | A `str` that may span lines; line breaks inside the quotes are part of the value. |
+| `f"…{expr}…"`, `f'…{expr}…'` | An f-string: a `str` with each `{expr}` replaced by the formatted value of `expr` (see [F-strings](#f-strings)). `{{` and `}}` are a literal `{` and `}`. The literal ends on its line. |
+| `b"…"`, `b'…'` | A `bytes` literal of ASCII characters and the escapes below. The literal ends on its line. |
 
-Escape sequences in `bytes` literals:
+Escape sequences:
 
-| Escape | Byte |
-| --- | --- |
-| `\n` | 0x0A |
-| `\t` | 0x09 |
-| `\r` | 0x0D |
-| `\\` | 0x5C |
-| `\0` | 0x00 |
-| `\xNN` | The byte with hexadecimal value `NN` |
+| Escape | In `str` literals and f-strings | In `bytes` literals |
+| --- | --- | --- |
+| `\n` | U+000A | 0x0A |
+| `\t` | U+0009 | 0x09 |
+| `\r` | U+000D | 0x0D |
+| `\\` | `\` | 0x5C |
+| `\"` or `\'`, the literal's own quote | The quote | The quote's byte |
+| `\0` | Not an escape | 0x00 |
+| `\xNN` | Not an escape | The byte with hexadecimal value `NN` |
+
+A backslash followed by any other character is not an escape: the value holds the backslash and the character.
+
+Refused (`INCAN-P0001`): a line break inside a `"…"` or `'…'` string, an f-string or a `bytes` literal; a literal without its closing quote; a non-ASCII character in a `bytes` literal; a `\x` in a `bytes` literal that is not followed by two hexadecimal digits; a `}` in an f-string that neither closes an `{expr}` nor is part of `}}`.
 
 ## Indexing and slicing
 
 | Form | Result |
 | --- | --- |
-| `s[i]` | The Unicode scalar at position `i`; negative `i` counts from the end. Out of range raises `IndexError: string index out of range`. |
+| `s[i]` | A `str` holding the Unicode scalar at position `i`; negative `i` counts from the end. An index out of range raises `IndexError`. |
 | `s[start:end:step]` | A new `str` of the scalars from `start` up to but not including `end`, taking every `step`-th; a negative index counts from the end, each part is optional, and `step` defaults to `1`. A negative `step` walks backwards (`s[::-1]` reverses). `step == 0` fails with `ValueError`. |
 
-Positions and lengths count Unicode scalars, not bytes. The same forms apply to `list[T]`.
+Positions and lengths count Unicode scalars, not bytes. The same forms apply to `list[T]`, over its elements.
+
+Refused (`INCAN-T0001`): an index or slice part that is not an `int`, and an assignment to `s[i]`.
 
 ## `str` methods
 
@@ -70,19 +77,51 @@ Positions and lengths count Unicode scalars, not bytes. The same forms apply to 
 | --- | --- |
 | `upper() -> str` | Uppercase copy. |
 | `lower() -> str` | Lowercase copy. |
-| `strip() -> str` | Copy without leading and trailing whitespace. There is no `lstrip` or `rstrip`. |
+| `strip() -> str` | Copy without leading and trailing whitespace. |
 | `replace(old: str, new: str) -> str` | Copy with every occurrence of `old` replaced by `new`. |
-| `split(separator: str) -> list[str]` | Pieces between occurrences of `separator`, in order. Without a separator, the result is a one-item list holding the receiver. |
+| `split(separator: str) -> list[str]` | Pieces between occurrences of `separator`, in order. |
+| `split() -> list[str]` | A one-item list holding the receiver. |
 | `split_whitespace() -> list[str]` | Pieces separated by runs of Unicode whitespace; no empty pieces. |
 | `join(parts: list[str]) -> str` | `parts` concatenated with the receiver between each pair: `", ".join(names)`. |
 | `contains(needle: str) -> bool` | Whether `needle` occurs in the receiver. |
-| `startswith(prefix: str) -> bool` | Whether the receiver starts with `prefix`. |
-| `endswith(suffix: str) -> bool` | Whether the receiver ends with `suffix`. |
+| `startswith(prefix: str) -> bool`, `starts_with(prefix: str) -> bool` | Whether the receiver starts with `prefix`. |
+| `endswith(suffix: str) -> bool`, `ends_with(suffix: str) -> bool` | Whether the receiver ends with `suffix`. |
 | `len() -> int` | The number of Unicode scalars; `len(s)` is the same value. |
 | `to_string() -> str` | The receiver itself. |
-| `encode(encoding: str = "utf-8") -> bytes` | The text's UTF-8 bytes. `encoding` accepts `"utf-8"` and `"utf8"`, compared case-insensitively with `_` read as `-`. A literal label naming any other codec is a compile-time error; a run-time label naming another codec raises `ValueError`. |
+| `encode(encoding: str = "utf-8") -> bytes` | The text's UTF-8 bytes. `encoding` accepts `"utf-8"` and `"utf8"`, compared case-insensitively with `_` read as `-`. A literal label naming any other codec is refused (`INCAN-T0001`); a run-time label naming another codec raises `ValueError`. |
 
-Membership uses the method, not the `in` operator: `s.contains("x")`.
+Each method takes its arguments by position; `encoding` may also be passed by name: `s.encode(encoding="utf-8")`. Refused (`INCAN-T0001`): any other named argument, and an unpacked argument, on a `str` or `FrozenStr` receiver.
+
+```incan
+def main() -> None:
+    text = "a,b"
+    println(text.replace("a", "b"))              # accepted
+    data = text.encode(encoding="utf-8")         # accepted
+    println(text.replace(old="a", new="b"))      # refused: named argument (INCAN-T0001)
+```
+
+## `str` operators
+
+| Expression | Operands | Result |
+| --- | --- | --- |
+| `a + b` | Two `str` or `FrozenStr` values | A new `str`: `a` followed by `b` |
+| `a == b`, `a != b`, `a < b`, `a <= b`, `a > b`, `a >= b` | Two `str` or `FrozenStr` values | `bool`; ordering compares the texts by Unicode scalar value, scalar by scalar |
+| `needle in s`, `needle not in s` | A `str` or `FrozenStr` needle and receiver | `bool`: whether `needle` occurs in `s`, as `s.contains(needle)` |
+| `s += t` | A `str` target and a `str` or `FrozenStr` value | Writes `s + t` to the target (see [Compound assignment](numeric_semantics.md#compound-assignment)) |
+
+Refused (`INCAN-T0001`): `+` with one `str` operand and one of another type, `*` with a `str` operand, and `in` or `not in` with a `str` receiver and a needle of another type.
+
+```incan
+def main() -> None:
+    sentence = "the quick fox"
+    found: bool = "quick" in sentence       # accepted
+    missing: bool = "slow" not in sentence  # accepted
+    mut line = "a"
+    line += "b"                             # accepted
+    first: str = sentence[0]                # accepted
+    count = 1 in sentence                   # refused: the needle is not a str
+    twice = line * 2                        # refused: no * on str
+```
 
 ## `bytes` methods
 
@@ -90,7 +129,9 @@ Membership uses the method, not the `in` operator: `s.contains("x")`.
 
 | Signature | Contract |
 | --- | --- |
-| `decode(encoding: str = "utf-8", errors: str = "strict") -> Result[str, ValidationError]` | `Ok` of the bytes read as UTF-8 text. `encoding` follows the same rule as `str.encode`, except that a run-time label naming another codec returns `Err` with `code` `unknown-encoding`. `errors` is `"strict"`, which returns `Err` with `code` `invalid-utf8` at the first malformed sequence (the message names its byte offset), or `"replace"`, which substitutes U+FFFD for each malformed sequence and always returns `Ok`; any other literal policy is a compile-time error, any other run-time policy returns `Err` with `code` `unknown-errors-policy`. |
+| `decode(encoding: str = "utf-8", errors: str = "strict") -> Result[str, ValidationError]` | `Ok` of the bytes read as UTF-8 text. `encoding` follows the same rule as `str.encode`, except that a run-time label naming another codec returns `Err` with `code` `unknown-encoding`. `errors` is `"strict"`, which returns `Err` with `code` `invalid-utf8` at the first malformed sequence (the message names its byte offset), or `"replace"`, which substitutes U+FFFD for each malformed sequence and always returns `Ok`; any other literal policy is refused (`INCAN-T0001`), and any other run-time policy returns `Err` with `code` `unknown-errors-policy`. |
+
+`encoding` and `errors` may be passed by position or by name.
 
 ## F-strings
 
@@ -100,6 +141,19 @@ An f-string interpolates any expression between `{` and `}`; the value is format
 | --- | --- |
 | `{value}` | The value's display text (see [Display](#display)) |
 | `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
+
+Refused in a `{value:?}` part (`INCAN-T0103`): a `Generator`, a function, and a value whose type, or a type inside it, implements no `Debug`, such as a `JoinHandle[T]`.
+
+```incan
+def numbers() -> Generator[int]:
+    yield 1
+
+def main() -> None:
+    items = [1, 2]
+    println(f"{items:?}")         # accepted
+    gen = numbers()
+    println(f"{gen:?}")           # refused: a generator has no Debug form (INCAN-T0103)
+```
 
 See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
 
@@ -114,9 +168,12 @@ See [String representation](./derives/string_representation.md) for how a type p
 | `bool` | `true` or `false` |
 | `float` (`f64`) | Decimal digits with a decimal point or an exponent, below |
 | `f32` | The shortest digits that round-trip, below |
-| A `model`, `class`, `enum` or `newtype` that defines `__str__` | What `__str__` returns |
+| A `model`, `class`, `enum` or `newtype` that defines `__str__`, inherits it from a class it extends, or takes it from an adopted trait such as `Display` (`with Display`) | What `__str__` returns |
+| A `model`, `class`, `enum` or `newtype` that takes `Display` from a Rust derive macro named `Display`, written in `@rust.derive(...)` or imported from a Rust crate and named in `@derive(...)` | The text that derive writes |
 | An enum that declares values | The variant's value |
-| A type that adopts `Error` and has no `__str__` | What `message()` returns (see [Displaying an error](./stdlib_traits/error.md#displaying-an-error)) |
+| A `model`, `class`, `enum` or `newtype` that derives `Display` | Its `{value:?}` structure: `Point { x: 1, y: 2 }` |
+| A type that adopts `Error` and has no `Display` by the rows above | What `message()` returns (see [Displaying an error](./stdlib_traits/error.md#displaying-an-error)) |
+| A value of a type parameter bounded by `Display`, by `Error`, or by a trait that declares `__str__` | The display text of the type argument's value |
 | Tuple | `(10, 20)` |
 | `list` | `[1, 2, 3]` |
 | `dict` | `{"a": 1}` |
@@ -125,7 +182,7 @@ See [String representation](./derives/string_representation.md) for how a type p
 | `Result` | `Ok(2)` or `Err("bad")` |
 | `FrozenList`, `FrozenSet`, `FrozenDict` | As `list`, `set` and `dict`: `[1, 2, 3]`, `{1, 2}`, `{"a": 1}` |
 
-- Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), and an enum value shows its variant (`[Red]`). The entry order of a set or a dict is unspecified.
+- Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), an enum value shows its variant (`[Red]`), and a union value shows its member's structure. The entry order of a set or a dict is unspecified.
 - A `float` always shows a decimal point or an exponent. An integral value keeps its decimal point (`100.0`); the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`); positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`), and outside that range the value uses an exponent with an explicit sign and at least two digits (`1e+16`, `1.5e-07`); the non-finite values are `inf`, `-inf` and `nan`.
 - An `f32` displays the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`). An `f64` is a `float` and displays as one.
 
@@ -135,7 +192,10 @@ Refused in every display position (`INCAN-T0103`):
 - a `Generator`;
 - a function;
 - `bytes`, `FrozenBytes`;
-- a `model`, `class`, `enum` or `newtype` value whose type provides no `Display`: it defines no `__str__`, is not an enum that declares values, and does not adopt `Error`. `@derive(Display)` provides nothing.
+- a value of type `None`;
+- a `model`, `class`, `enum` or `newtype` value whose type provides no `Display` by a row above: it has no `__str__`, takes no `Display` from a Rust derive macro, is not an enum that declares values, does not derive `Display`, and does not adopt `Error`;
+- a tuple, list, dict, set, frozen collection, `Option` or `Result` that holds a `Generator`, a function, `bytes` or `FrozenBytes` at any depth;
+- a value of a type parameter that has no bound on `Display`, on `Error`, or on a trait that declares `__str__`.
 
 ```incan
 model Point:
@@ -167,7 +227,7 @@ def main() -> None:
 
 ### `Display` bounds
 
-A type argument for a type parameter bounded by `Display` (`def show[T with Display](value: T)`) satisfies the bound when it provides `Display` by the rule above. `int`, `float`, `bool`, `str` and `FrozenStr` satisfy it.
+A type argument for a type parameter bounded by `Display` (`def show[T with Display](value: T)`) satisfies the bound when it provides `Display` by the rule above. `int`, `float`, the exact-width numeric types, `bool`, `str` and `FrozenStr` satisfy it.
 
 - Refused (`INCAN-T0103`): a type argument whose values have no printed form, as listed above.
 - Refused (`INCAN-T0001`): a tuple, list, dict, set, `Option` or `Result` type argument. Each displays its structure in a display position but does not provide `Display`.
@@ -194,5 +254,5 @@ def main() -> None:
 - [String processing](../how-to/string_processing.md) — recipes for splitting, joining, cleaning and encoding text.
 - [Displaying a value with no printed form](../how-to/error_messages.md#displaying-a-value-with-no-printed-form) — what to display instead when a value is refused with `INCAN-T0103`.
 - [Binary-text encoding](../how-to/binary_text_encoding.md) — moving bytes through text formats and decoding at boundaries.
-- [Rust types for Python developers](../how-to/rust_types_for_python_devs.md) — how `str` and `bytes` differ from Python's.
+- [Rust types for Python developers](../how-to/rust_types_for_python_devs.md)
 - [Strings and formatting (tutorial)](../tutorials/book/07_strings_and_formatting.md)

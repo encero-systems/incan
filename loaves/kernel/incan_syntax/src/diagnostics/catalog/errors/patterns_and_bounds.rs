@@ -21,6 +21,27 @@ pub fn pattern_literal_type_mismatch(expected: &str, found: &str, span: Span) ->
     ))
 }
 
+/// Report a tuple or variant pattern whose sub-pattern count differs from what it matches (#1561).
+///
+/// A tuple pattern has one sub-pattern per element of the matched tuple, and a variant pattern one per payload value
+/// of its variant. `pattern` names the pattern (`A tuple pattern`, `The pattern 'Circle'`), `part` what each
+/// sub-pattern matches (`element`, `payload value`), `expected` their count and `found` the number of sub-patterns
+/// written.
+pub fn pattern_arity_mismatch(pattern: &str, part: &str, expected: usize, found: usize, span: Span) -> CompileError {
+    let plural = |count: usize| if count == 1 { "" } else { "s" };
+    CompileError::type_error(
+        format!(
+            "{pattern} has {found} sub-pattern{}, but the value it matches has {expected} {part}{}",
+            plural(found),
+            plural(expected)
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Write one sub-pattern per {part}, {expected} in all; use '_' for one the arm does not need"
+    ))
+}
+
 /// Report a literal that has no pattern form: a decimal or a bytes literal (#1741).
 ///
 /// `kind` names the literal (`decimal`, `bytes`). Such a value can only be compared, so the hint names the guard that

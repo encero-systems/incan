@@ -1,5 +1,5 @@
 # behavior: a consumer calling a dependency's pub helpers gets the omitted-argument default, the dependency-owned const default and union-typed parameters (#729)
-# retires: loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729
+# retires: loaves/toolchain/incan-cli/tests/rfc031_vocab_desugar_tests.rs::consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729
 # expect-stdout:
 #   adjusted=5
 #   order_count=__querykit_count_no_argument__

@@ -1,0 +1,37 @@
+const LIMIT: int = 7
+
+
+pub model Extent:
+    pub n: int
+
+
+pub class Frame:
+    pub n: int
+
+
+pub enum Corner:
+    Top
+    Bottom
+
+
+pub type Meters = newtype int
+
+
+pub trait Measured:
+    def extent(self) -> Extent:
+        return Extent(n=2)
+
+    def extent_size(self) -> int:
+        return self.extent().n
+
+    def frame(self) -> Frame:
+        return Frame(n=3)
+
+    def corner(self) -> Corner:
+        return Corner.Top
+
+    def distance(self) -> Meters:
+        return Meters(4)
+
+    def limit(self) -> int:
+        return LIMIT

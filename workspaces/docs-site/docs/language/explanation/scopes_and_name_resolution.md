@@ -94,6 +94,8 @@ For the exact alias syntax, supported target kinds, public export rules, and dia
 
 An alias adds a name, not behavior. A call through a function or method alias compiles to a call of its target, a public alias is re-exported rather than duplicated, and checked metadata keeps it as an alias, so tools see one declaration under two names.
 
+Diagnostics follow the name the source wrote: a diagnostic about a use of an alias names the alias at that use, and may also name its target. A library manifest and its checked API metadata record a public alias as an alias of its target, not as a separate declaration.
+
 That makes the choice between an alias and a wrapper a choice about the API. Use an alias when the new name is the same API as the target; the `alias` marker (`average = alias avg`) can make that intent easier to read among other declarations. Use a wrapper function or method when the new name changes behavior, adapts parameters, adds validation, carries its own docs, or should appear as an independent callable:
 
 ```incan
@@ -290,16 +292,16 @@ add1 = (x) => x + 1
 
 Closures introduce their own function scope (parameters are local to the closure body). Names from outer scopes can be **read** by normal lexical lookup.
 
-Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be `mut`). Use `let` for a new immutable closure-local binding or `mut` for a new mutable one.
+A closure body is a single expression, so a closure assigns no names of its own. It reads each outer local it names as the value that local held when the closure was constructed, and a later change to the outer binding does not reach it (see [Closure captures](../reference/functions.md#closure-captures)).
 
 Example:
 
 ```incan
 def closure_capture() -> int:
     mut x = 1
-    inc = () => x = x + 1  # reassigns outer x (so outer x must be mut)
-    inc()
-    return x  # 2
+    read_x = () => x
+    x = 5
+    return read_x()  # 1: the value x held when read_x was constructed
 ```
 
 > Note: Incan does not expose Python-style `global` / `nonlocal` declarations.

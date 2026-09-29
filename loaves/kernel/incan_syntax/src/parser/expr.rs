@@ -599,11 +599,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse index or slice expression inside brackets Handles: [expr], [start:end], [start:end:step], [:end],
-    /// [start:], [::step]
+    /// [start:], [::step], [start::step]
     fn index_or_slice(&mut self) -> Result<IndexOrSlice, CompileError> {
         // Check for immediate colon (slice starting with no start value)
         if self.check(&TokenKind::Punctuation(PunctuationId::Colon)) {
             return self.parse_slice(None);
+        }
+        if self.check(&TokenKind::Punctuation(PunctuationId::ColonColon)) {
+            return self.parse_slice_without_end(None);
         }
 
         // Check for immediate closing bracket (not valid, but let expression handle error)
@@ -617,6 +620,9 @@ impl<'a> Parser<'a> {
         // Check if this is a slice (has colon after first expression)
         if self.check(&TokenKind::Punctuation(PunctuationId::Colon)) {
             return self.parse_slice(Some(first));
+        }
+        if self.check(&TokenKind::Punctuation(PunctuationId::ColonColon)) {
+            return self.parse_slice_without_end(Some(first));
         }
 
         // Just a regular index
@@ -651,6 +657,25 @@ impl<'a> Parser<'a> {
         Ok(IndexOrSlice::Slice(SliceExpr {
             start: start.map(Box::new),
             end,
+            step,
+        }))
+    }
+
+    /// Parse a slice whose end is omitted and whose two colons the lexer reads as one `::` token (`[::step]`,
+    /// `[start::step]`, `[::]`); the start, if any, is already parsed.
+    fn parse_slice_without_end(&mut self, start: Option<Spanned<Expr>>) -> Result<IndexOrSlice, CompileError> {
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::ColonColon),
+            "Expected '::' in slice",
+        )?;
+        let step = if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+            None
+        } else {
+            Some(Box::new(self.expression()?))
+        };
+        Ok(IndexOrSlice::Slice(SliceExpr {
+            start: start.map(Box::new),
+            end: None,
             step,
         }))
     }

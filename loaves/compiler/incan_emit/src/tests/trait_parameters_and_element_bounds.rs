@@ -1,7 +1,7 @@
 //! What a generic element read and a trait method's `mut` parameter need from the generated Rust: an index read or a
 //! slice of type-parameter elements states the `Clone` capability its copy needs, on a function, a trait slot and its
-//! implementations (#1756), and a `mut` aggregate parameter keeps one Rust shape across the trait slot, every
-//! implementation and the recoverable wrapper (#1773).
+//! implementations (#1756), a `mut` aggregate parameter keeps one Rust shape across the trait slot, every
+//! implementation and the recoverable wrapper (#1773), and a trait default appending its own item copies it (#1561).
 
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{ast, lexer, parser};
@@ -10,6 +10,7 @@ use incan_ir::decl::{IrDeclKind, IrFunction, IrTraitBound};
 use incan_ir::lower::AstLowering;
 use incan_lang::lang::trait_bounds::rust as tb;
 
+use super::mut_ownership_regressions::run_generated_program;
 use crate::IrCodegen;
 
 /// Parse one source module, keeping fixture failures as ordinary test errors.
@@ -381,8 +382,9 @@ def main() -> None:
     println(handler(counter))
 "#,
     )?;
+    // `apply` only calls `step`, so the parameter holds any callable of its type (#1561).
     assert!(
-        rust.contains("step:fn(&mutCounter)->i64") && rust.contains("returnstep(counter);"),
+        rust.contains("step:implFn(&mutCounter)->i64") && rust.contains("returnstep(counter);"),
         "a callable-typed parameter takes and passes the caller's value: {rust}"
     );
     assert!(
@@ -444,5 +446,46 @@ def main() -> None:
             "`{argument}` is passed as a copy: {rust}"
         );
     }
+    Ok(())
+}
+
+/// #1561: a trait default that appends the item its own method returns copies it in each adopter, since the default is
+/// expanded into the adopter and a read inside its loop is copied. The checker therefore requires `Clone` of the item's
+/// type parameter (`list_append_of_a_trait_default_item_requires_clone_issue1561`); bounded by `Clone`, it builds and
+/// runs.
+#[test]
+fn trait_default_appending_its_own_item_copies_it_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+    let program = parse(
+        r#"
+trait Source[T with Clone]:
+    def pull(mut self) -> Option[T]: ...
+
+    def drain(mut self) -> list[T]:
+        mut items: list[T] = []
+        while true:
+            match self.pull():
+                Some(item) => items.append(item)
+                None => return items
+
+model Countdown with Source[list[int]]:
+    n: int
+
+    def pull(mut self) -> Option[list[int]]:
+        if self.n <= 0:
+            return None
+        self.n -= 1
+        return Some([self.n])
+
+def main() -> None:
+    mut c = Countdown(n=3)
+    items = c.drain()
+    println(len(items))
+    println(items[0][0] * 10 + items[2][0])
+"#,
+    )?;
+    let rust = IrCodegen::new().try_generate(&program)?;
+    let compact = rust.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(compact.contains("items.push(item.clone())"), "{rust}");
+    assert_eq!(run_generated_program(&rust)?, "3\n20\n");
     Ok(())
 }

@@ -331,3 +331,29 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// A name beside a place in a tuple assignment is declared when it has no binding, in a loop body too, as `name =
+/// value` declares it, and the generated Rust compiles.
+#[test]
+fn tuple_assignment_declares_an_unbound_name_beside_a_place() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def main() -> None:
+    mut items = [10, 20, 30]
+    items[0], fresh = (items[2], items[0])
+    for n in [1, 2]:
+        items[1], latest = (n, n + 1)
+        println(latest)
+    println(f"{items[0]} {items[1]} {fresh}")
+"#;
+    let code = generate_collapsed(source)?;
+    for expected in [
+        "let fresh = __incan_tuple_assign.1;",
+        "let latest = __incan_tuple_assign.1;",
+    ] {
+        assert!(code.contains(expected), "missing `{expected}` in:\n{code}");
+    }
+    let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+    let rust = IrCodegen::new().try_generate(&program)?;
+    super::mut_ownership_regressions::compile_generated_rust(&rust)
+}

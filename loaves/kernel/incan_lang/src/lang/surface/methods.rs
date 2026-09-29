@@ -336,6 +336,17 @@ pub mod set_methods {
         super::info_for_impl(SET_METHODS, id, "set method info missing")
     }
 
+    /// Whether calling the method changes the set it is called on: `add` does, `contains` only reads it.
+    ///
+    /// The checker reads this one fact wherever it asks whether a call changes its receiver. The match is exhaustive,
+    /// so a new method states its effect.
+    pub const fn changes_receiver(id: SetMethodId) -> bool {
+        match id {
+            SetMethodId::Add => true,
+            SetMethodId::Contains => false,
+        }
+    }
+
     const fn info(
         id: SetMethodId,
         canonical: &'static str,
@@ -490,6 +501,24 @@ pub mod list_methods {
         super::info_for_impl(LIST_METHODS, id, "list method info missing")
     }
 
+    /// Whether calling the method changes the list it is called on: the methods that add, remove or reorder elements,
+    /// or change the list's capacity, do; `clone`, `contains`, `count` and `index` only read it.
+    ///
+    /// The checker reads this one fact wherever it asks whether a call changes its receiver. The match is exhaustive,
+    /// so a new method states its effect.
+    pub const fn changes_receiver(id: ListMethodId) -> bool {
+        match id {
+            ListMethodId::Append
+            | ListMethodId::Extend
+            | ListMethodId::Pop
+            | ListMethodId::Swap
+            | ListMethodId::Reserve
+            | ListMethodId::ReserveExact
+            | ListMethodId::Remove => true,
+            ListMethodId::Clone | ListMethodId::Contains | ListMethodId::Count | ListMethodId::Index => false,
+        }
+    }
+
     const fn info(
         id: ListMethodId,
         canonical: &'static str,
@@ -551,7 +580,7 @@ pub mod dict_methods {
             DictMethodId::Get,
             "get",
             &[],
-            "`get(key)` returns `Some(value)` when the key is present and `None` otherwise; `get(key, default)` returns the value, or `default` when the key is absent. The result is a copy of the stored value, and a value type that cannot be copied is refused with `INCAN-T0118`.",
+            "`get(key)` returns `Some(value)` when the key is present and `None` otherwise; `get(key, default)` returns the value, or `default` when the key is absent. A kept lookup holds its own copy of the stored value, and one whose value type cannot be copied is refused with `INCAN-T0118`; see [Kept and in-place dict lookups](#kept-and-in-place-dict-lookups).",
             RFC::_009,
             Since(0, 1),
         ),
@@ -589,6 +618,18 @@ pub mod dict_methods {
     /// - If the registry is missing an entry for `id` (this indicates a programming error).
     pub fn info_for(id: DictMethodId) -> &'static DictMethodInfo {
         super::info_for_impl(DICT_METHODS, id, "dict method info missing")
+    }
+
+    /// Whether calling the method changes the dict it is called on: `insert` does; `keys`, `values`, `get` and
+    /// `contains_key` only read it.
+    ///
+    /// The checker reads this one fact wherever it asks whether a call changes its receiver. The match is exhaustive,
+    /// so a new method states its effect.
+    pub const fn changes_receiver(id: DictMethodId) -> bool {
+        match id {
+            DictMethodId::Insert => true,
+            DictMethodId::Keys | DictMethodId::Values | DictMethodId::Get | DictMethodId::ContainsKey => false,
+        }
     }
 
     const fn info(
@@ -1182,6 +1223,8 @@ pub mod option_methods {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum OptionMethodId {
+        /// Borrow the payload mutably without consuming the option.
+        AsMut,
         Copied,
         UnwrapOr,
         Unwrap,
@@ -1190,6 +1233,14 @@ pub mod option_methods {
     pub type OptionMethodInfo = LangItemInfo<OptionMethodId>;
 
     pub const OPTION_METHODS: &[OptionMethodInfo] = &[
+        info(
+            OptionMethodId::AsMut,
+            "as_mut",
+            &[],
+            "Borrow the contained value mutably without consuming the option.",
+            RFC::_000,
+            Since(0, 6),
+        ),
         info(
             OptionMethodId::Copied,
             "copied",

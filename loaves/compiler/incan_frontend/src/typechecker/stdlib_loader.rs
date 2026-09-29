@@ -190,6 +190,16 @@ impl StdlibAstCache {
             .map(|(_, info)| info.clone())
     }
 
+    /// Look up a trait in a stdlib module that is already loaded, without loading it.
+    pub fn loaded_trait(&self, module_path: &[String], trait_name: &str) -> Option<&TraitInfo> {
+        self.cache
+            .get(&module_path.join("."))?
+            .traits
+            .iter()
+            .find(|(name, _)| name == trait_name)
+            .map(|(_, info)| info)
+    }
+
     /// Look up a specific type in a stdlib module.
     pub fn lookup_type(&mut self, module_path: &[String], type_name: &str) -> Option<TypeInfo> {
         self.ensure_loaded(module_path);
@@ -1853,7 +1863,7 @@ fn ast_type_to_resolved_with_rust_imports(
 
             // Resolve through incan_lang registries (numerics, strings, unit).
             if let Some(id) = numeric_types::from_str(name) {
-                return ResolvedType::from_numeric_spelling(name, id);
+                return ResolvedType::from_numeric_id(id);
             }
             if let Some(id) = string_types::from_str(name) {
                 return match id {

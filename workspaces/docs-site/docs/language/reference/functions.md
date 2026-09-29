@@ -30,6 +30,20 @@ g: (int) -> int = (x) => x + 1    # accepted
 h: (str) -> int = double          # refused: INCAN-T0001
 ```
 
+A closure's parameters take their types from the function type the closure is checked against: the annotated type of the binding, field, element or return it is assigned to; the function type of the parameter it is passed to, with the callee's type parameters that the other arguments fix substituted; and the callback of an `Iterator[T]` method, whose parameter is `T`, a `fold` or `reduce` callback also taking the type of the first argument as its accumulator. An operation on a parameter that its type does not provide is refused (`INCAN-T0001`).
+
+```incan
+def apply_twice[T](f: (T) -> T, value: T) -> T:
+    return f(f(value))
+
+def main() -> None:
+    names = ["ada", "lin"]
+    shouted = names.iter().map((name) => name.upper()).collect()   # accepted: name is str
+    total = names.iter().fold(0, (acc, name) => acc + len(name))   # accepted: acc is int, name is str
+    four = apply_twice((x) => x + 1, 2)                              # accepted: x is int
+    bad = names.iter().map((name) => name + 1).collect()           # refused: str + int (INCAN-T0001)
+```
+
 ### `Callable[Params, R]`
 
 `Callable[Params, R]` is another spelling of a function type; the two spellings are the same type.
@@ -44,11 +58,58 @@ h: (str) -> int = double          # refused: INCAN-T0001
 
 ### Closure captures
 
-A closure reads an outer local from the value captured when the closure is constructed. When code after the closure also needs that local, the closure receives its own snapshot; a later mutation of the outer binding does not change the captured value.
+A closure reads each outer local it names as the value that local holds when the closure is constructed. A later change to the outer binding does not change the value the closure reads. How a closure captures a local: [Closures](../explanation/closures.md#how-a-closure-captures-outer-locals).
+
+A closure does not change an outer local it reads, a local bound to a static included: a call of a method that changes it, a write to a field or element of it, a loop, comprehension or pattern that changes its items, and passing it to a `mut` parameter the call changes are refused with `INCAN-T0001`, the argument with `INCAN-T0117`. A closure changes a static through the static's own name.
+
+```incan
+def main() -> None:
+    mut items: list[int] = []
+    add = () => items.append(1)         # refused: the closure changes a local it reads (INCAN-T0001)
+    count = () => len(items)            # accepted
+```
+
+### Closures that capture local values
+
+A closure that reads a local of an enclosing function, a parameter or `self`, captures it; a local partial holds its presets. Such a callable, a *capturing callable*, has a type of its own. It is accepted where it is called and where a slot keeps that type; a slot that holds a plain function pointer, which carries no captured values, refuses it with `INCAN-T0001`. A named function and a closure that captures nothing are accepted in every function-typed slot.
+
+These slots call a capturing callable or keep its type:
+
+| Slot | Contract |
+| --- | --- |
+| A new local binding | Accepted, annotated with a function type or not. The local is not reassigned afterwards. |
+| The callee of a call | Accepted. |
+| An argument for a parameter of function type | Accepted when the parameter is declared without `mut` and is not `*args`, and the function or method that declares it only calls it, outside any closure or generator expression, and qualifies (below). |
+| The callback of a `Result` combinator | Accepted: `map`, `map_err`, `and_then`, `or_else`, `inspect` and `inspect_err` call it before they return. |
+| A `return` value | Accepted when the function or method has one `return`, whose value is a closure that reads a parameter or a local of the function and not `self`, or a local partial, and qualifies (below). |
+
+A function qualifies when it is declared in the same module, is neither `pub`, `async`, generic, decorated nor a generator, and is not used as a decorator; its name is only called, never read as a value. A method qualifies when it is declared in a model, class, newtype or enum of the same module, takes `self` or `mut self`, is neither `async`, generic, decorated, overloaded nor a generator, and implements no method of a trait the type adopts; no member read without a call spells its name in the module, and its class neither extends nor is extended by another class.
+
+A function-typed slot that holds a plain function pointer refuses a capturing callable with `INCAN-T0001`, and so does an assignment to a local that holds one.
+
+```incan
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+def keep(f: (int) -> int) -> list[(int) -> int]:
+    return [f]
+
+def make_adder(n: int) -> (int) -> int:
+    return (x) => x + n                 # accepted
+
+def main() -> None:
+    n = 5
+    g: (int) -> int = (x) => x + n      # accepted
+    apply(g, 1)                         # accepted
+    r: Result[int, str] = Ok(1)
+    s = r.map((x) => x + n)             # accepted: map calls it
+    keep((x) => x + n)                  # refused: keep stores its parameter (INCAN-T0001)
+    fs: list[(int) -> int] = [g]        # refused: a list element (INCAN-T0001)
+```
 
 ### `mut` parameters
 
-`mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.
+`mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, under any spelling of the type (`i64`, `long` and `bigint` are `int`; `f64`, `double` and `fp64` are `float`) and also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.
 
 | Declaration                                     | Function type                  |
 | ----------------------------------------------- | ------------------------------ |
@@ -62,13 +123,13 @@ A closure reads an outer local from the value captured when the closure is const
 | Copied scalars      | On an `int`, `float` or `bool` parameter of a function type, also through a type alias, the marker is refused with `INCAN-T0001`. |
 | Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`. |
 | `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`. |
+| Parameters without `mut` | The body does not change a parameter declared without `mut`: a field or element write through it, a call of a method that changes it, and a change through the variable of a `for` loop over it are refused with `INCAN-T0001` (see [Assignments](assignments.md#rules)). |
 | Rebinding           | The body does not assign a new value to a marked parameter: `items = []` and `label += "!"` are refused with `INCAN-T0001`. |
 | Holding             | The body does not hold a marked parameter in another name or value. Each form in the table below is refused with `INCAN-T0001`. Passing the parameter as an argument to any other call is accepted, `rows.append(items)` included. |
 | Changing calls      | A call changes a marked parameter in the cases that [Changing calls](#changing-calls) lists. |
-| Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted. |
+| Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted, except one of those whose type cannot be copied, such as a `Generator`, which is refused with `INCAN-T0117`. |
 | Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked. |
 | Closures            | A closure checked against a function type has each parameter that type marks marked in its own type. |
-| Display             | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`. |
 
 A marked parameter is held, and refused with `INCAN-T0001`, by each of these:
 
@@ -86,8 +147,10 @@ A marked parameter is held, and refused with `INCAN-T0001`, by each of these:
 
 A call changes a marked parameter when:
 
-- the body that runs assigns to the parameter's elements or fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self`, a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
+- the body that runs assigns to the parameter's elements or fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self` (declared by the parameter's type, named through a method alias, or provided by a trait the type adopts), a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
+- the parameter is a `Generator`, and the body that runs uses it: iterating it, calling one of its methods and passing it to a call each advance it;
 - the body that runs changes an element through the variable of a `for` loop over the parameter, over a field of it, or over the variable of an enclosing such loop, for a list whose elements are not `int`, `float` or `bool` (`for row in items: row.append(3)`);
+- the body that runs changes a value through a name that a `match`, `if let` or `while let` pattern binds from the parameter, from a field of it, or from such a loop variable or name (`match box: Some(xs) => xs.append(1)`);
 - the call is a method call through a type parameter's bound, on `self` in a trait's default method, or on a trait-typed value;
 - the callee is known only by a function type that marks the parameter, such as a parameter of function type or a function of a compiled library;
 - the call goes through a local bound to a function, and the local is reassigned in the module.
@@ -288,9 +351,8 @@ Within one parameter list:
 
 - At most one `*name: T` parameter is allowed.
 - At most one `**name: T` parameter is allowed.
-- Normal parameters must appear before any rest parameter.
-- `*name: T`, when present, appears after normal parameters.
-- `**name: T`, when present, must be the last parameter.
+- Every normal parameter comes before the rest parameters.
+- `**name: T`, when present, is the last parameter.
 - Rest parameters cannot have default values.
 
 Breaking one of these rules is error `INCAN-T0001`.
@@ -322,7 +384,7 @@ def main() -> int:
     return sum_all(1, *extra, 4)
 ```
 
-The unpacked expression must typecheck as `List[T]` for the callee's `*name: T` parameter.
+For the callee's `*name: T` parameter, the unpacked expression has type `List[T]`.
 
 `**expr` extends the callee's keyword rest parameter with the entries of a dictionary:
 
@@ -335,7 +397,7 @@ def main() -> int:
     return request("/status", **defaults, trace="enabled")
 ```
 
-The unpacked expression must typecheck as `Dict[str, T]` for the callee's `**name: T` parameter.
+For the callee's `**name: T` parameter, the unpacked expression has type `Dict[str, T]`.
 
 Unpacking also binds ordinary fixed parameters when the unpacked expression's length or key set is known from the expression itself:
 

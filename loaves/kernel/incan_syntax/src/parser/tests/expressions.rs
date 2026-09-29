@@ -766,3 +766,33 @@ class Tensor:
     assert!(matches!(expr.node, Expr::Binary(_, BinaryOp::MatMul, _)));
     Ok(())
 }
+
+/// A slice whose end is omitted may write its two colons together, which the lexer reads as one `::` token: `[::2]`,
+/// `[1::2]`, `[::]` and `[::-1]` parse as the slices `[:<none>:2]`, `[1:<none>:2]`, `[:]` and `[:<none>:-1]` (#1561).
+#[test]
+fn slice_with_an_omitted_end_parses_through_a_double_colon_issue1561() -> Result<(), Vec<CompileError>> {
+    let source = "def f(xs: list[int]) -> None:\n  a = xs[::2]\n  b = xs[1::2]\n  c = xs[::]\n  d = xs[::-1]\n";
+    let program = parse_str(source)?;
+    let func = require_function_decl(&program.declarations[0])?;
+    let shapes = func
+        .body
+        .iter()
+        .filter_map(|stmt| match &stmt.node {
+            Statement::Assignment(assign) => match &assign.value.node {
+                Expr::Slice(_, slice) => Some((slice.start.is_some(), slice.end.is_some(), slice.step.is_some())),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        shapes,
+        [
+            (false, false, true),
+            (true, false, true),
+            (false, false, false),
+            (false, false, true)
+        ]
+    );
+    Ok(())
+}

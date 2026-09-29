@@ -1,0 +1,12 @@
+# behavior: a match whose arms share no type is refused at check time, since a match has one type across its arms
+# expect-diagnostic: INCAN-T0001
+
+def label(n: int) -> str:
+    text = match n:
+        0 => "zero"
+        _ => 5
+    return text
+
+
+def main() -> None:
+    println(label(0))

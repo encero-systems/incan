@@ -196,10 +196,10 @@ impl StdlibFromImportContext {
         let allowed = match expected_module_path {
             "std.web" => self.is_web_namespace,
             "std.reflection" => self.is_reflection_module,
+            // A `std.async.prelude` import arrives here as `std.async`, the module it names.
             _ if expected_module_path.starts_with("std.async.") => {
-                let async_root_or_prelude =
-                    self.module_path_str == "std.async" || self.module_path_str == "std.async.prelude";
-                self.is_async_namespace && (async_root_or_prelude || self.module_path_str == expected_module_path)
+                self.is_async_namespace
+                    && (self.module_path_str == "std.async" || self.module_path_str == expected_module_path)
             }
             _ => false,
         };
@@ -233,6 +233,9 @@ impl TypeChecker {
                 self.collect_pub_imports(library, path, items, span);
             }
             ImportKind::Python(pkg) => {
+                // The grammar reserves the form, but nothing provides a Python module (#1561). The name is still bound
+                // so its uses do not add unknown-symbol errors to the refusal.
+                self.errors.push(errors::python_import_unsupported(pkg, span));
                 let name = import.alias.clone().unwrap_or_else(|| pkg.clone());
                 self.validate_root_namespace(&name, span);
                 self.define_import_symbol(name, vec![pkg.clone()], true, None, span);
@@ -251,8 +254,29 @@ impl TypeChecker {
         }
     }
 
+    /// Return the import path of the namespace a `std.<namespace>.prelude` import path names, or `None` for any other
+    /// path.
+    ///
+    /// A namespace's `prelude` is the namespace's own module (see [`stdlib::stdlib_prelude_module_namespace`]), so the
+    /// import resolves through the namespace, the path its provider claims and lowering emits (#1561).
+    fn stdlib_prelude_import_namespace(path: &ImportPath) -> Option<ImportPath> {
+        if path.parent_levels != 0 || path.is_absolute {
+            return None;
+        }
+        stdlib::stdlib_prelude_module_namespace(&path.segments).map(|segments| ImportPath {
+            segments: segments.to_vec(),
+            is_absolute: false,
+            parent_levels: 0,
+        })
+    }
+
     /// Collect a plain module import, including stdlib namespace validation.
-    fn collect_module_import(&mut self, path: &ImportPath, alias: Option<&Ident>, span: Span) {
+    ///
+    /// The import binds the last segment it spells (or its alias); a `std.<namespace>.prelude` path resolves as the
+    /// namespace's module.
+    fn collect_module_import(&mut self, written_path: &ImportPath, alias: Option<&Ident>, span: Span) {
+        let prelude_namespace = Self::stdlib_prelude_import_namespace(written_path);
+        let path = prelude_namespace.as_ref().unwrap_or(written_path);
         if let Some(error) = self.sdk_provider_module_error(&path.segments, span) {
             self.errors.push(error);
             return;
@@ -263,9 +287,13 @@ impl TypeChecker {
                 .push(errors::unknown_stdlib_module(&path.segments.join("."), span));
         }
 
-        let name = alias
-            .cloned()
-            .unwrap_or_else(|| path.segments.last().cloned().unwrap_or_else(|| "module".to_string()));
+        let name = alias.cloned().unwrap_or_else(|| {
+            written_path
+                .segments
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "module".to_string())
+        });
         // Allow `import std.web as std` (alias matches source root), but reject `import std.web as rust` (alias is a
         // different reserved root).
         let same_root = path.segments.first().map(|segment| segment.as_str()) == Some(&name);
@@ -384,7 +412,11 @@ impl TypeChecker {
 
     /// Collect a `from module import item, ...` declaration as concrete stdlib/dependency symbols when possible,
     /// otherwise as module-path placeholders.
-    fn collect_from_imports(&mut self, module: &ImportPath, items: &[ImportItem], span: Span) {
+    ///
+    /// A `std.<namespace>.prelude` path resolves as the namespace's module.
+    fn collect_from_imports(&mut self, written_module: &ImportPath, items: &[ImportItem], span: Span) {
+        let prelude_namespace = Self::stdlib_prelude_import_namespace(written_module);
+        let module = prelude_namespace.as_ref().unwrap_or(written_module);
         if let Some(error) = self.sdk_provider_module_error(&module.segments, span) {
             self.errors.push(error);
             return;
@@ -482,6 +514,10 @@ impl TypeChecker {
     }
 
     /// Resolve module ownership from the active SDK catalog, retaining only explicit compiler-owned legacy surfaces.
+    ///
+    /// A namespace whose modules the catalog claims is known although it has no module of its own (`std.derives`), as
+    /// the stdlib registry knows it when no catalog is active: `from std.derives import comparison` imports a
+    /// submodule, and any other item imported from it is refused as not exported.
     fn is_known_stdlib_module(&self, module: &[String]) -> bool {
         match self.provider_plan.resolve_module(module) {
             ProviderModuleResolution::Active(_)
@@ -490,6 +526,7 @@ impl TypeChecker {
             ProviderModuleResolution::Unknown if self.provider_plan.has_sdk_catalog() => {
                 is_typechecker_only_stdlib(module)
                     || (self.provider_plan.bootstrap_owns_sdk_module(module) && stdlib::is_known_stdlib_module(module))
+                    || (module.len() > 1 && self.provider_plan.catalogs_modules_below(module))
             }
             ProviderModuleResolution::Unknown => stdlib::is_known_stdlib_module(module),
         }
@@ -3791,6 +3828,18 @@ impl TypeChecker {
                     .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
                     .collect::<Option<Vec<_>>>()?,
             ),
+            PresetValueExport::Set(values) => CheckedPresetValue::Set(
+                values
+                    .iter()
+                    .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::Tuple(values) => CheckedPresetValue::Tuple(
+                values
+                    .iter()
+                    .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
             PresetValueExport::Dict(entries) => CheckedPresetValue::Dict(
                 entries
                     .iter()
@@ -3853,6 +3902,18 @@ impl TypeChecker {
                     .map(|item| {
                         Self::manifest_preset_value_expr(item, imported_type_aliases, span).map(ListEntry::Element)
                     })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::Set(values) => Expr::Set(
+                values
+                    .iter()
+                    .map(|item| Self::manifest_preset_value_expr(item, imported_type_aliases, span))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::Tuple(values) => Expr::Tuple(
+                values
+                    .iter()
+                    .map(|item| Self::manifest_preset_value_expr(item, imported_type_aliases, span))
                     .collect::<Option<Vec<_>>>()?,
             ),
             PresetValueExport::Dict(entries) => Expr::Dict(
@@ -4621,10 +4682,32 @@ impl TypeChecker {
     }
 
     /// Ensure imported items are public in the dependency module.
+    ///
+    /// `from M import X` and `import M::X` of a declaration `X` (a path that names no module) bind the same item, so
+    /// both require `M` to export it (#1561).
     fn validate_import_visibility(&mut self, import: &ImportDecl, span: Span) {
-        let ImportKind::From { module, items } = &import.kind else {
-            return;
+        let (module, item_names) = match &import.kind {
+            ImportKind::From { module, items } => (
+                module.clone(),
+                items.iter().map(|item| item.name.clone()).collect::<Vec<_>>(),
+            ),
+            ImportKind::Module(path) if !self.full_path_names_a_module(path) => {
+                let Some((item_name, parent_segments)) = path.segments.split_last() else {
+                    return;
+                };
+                if parent_segments.is_empty() {
+                    return;
+                }
+                let parent = ImportPath {
+                    segments: parent_segments.to_vec(),
+                    is_absolute: path.is_absolute,
+                    parent_levels: path.parent_levels,
+                };
+                (parent, vec![item_name.clone()])
+            }
+            _ => return,
         };
+        let module = &module;
 
         // Only check modules that were pre-imported; skip std and unresolved ones.
         let module_name = canonicalize_source_module_segments(&module.segments).join("_");
@@ -4652,12 +4735,12 @@ impl TypeChecker {
 
         let exported_list: Vec<String> = exported_names.iter().cloned().collect();
 
-        for item in items {
-            if !exported_names.contains(&item.name)
-                && self.dependency_member_symbol_for_path(module, &item.name).is_none()
+        for item_name in &item_names {
+            if !exported_names.contains(item_name)
+                && self.dependency_member_symbol_for_path(module, item_name).is_none()
             {
                 self.errors.push(errors::import_not_exported(
-                    &item.name,
+                    item_name,
                     &module.to_rust_path(),
                     &exported_list,
                     span,

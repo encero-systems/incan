@@ -19,7 +19,7 @@ Every entry in an area is one of those three shapes. A stray file is refused, an
 
 Two areas ship with the harness: `smoke/`, the first twins (each retires `codegen.rs` unit tests), and `harness/`, the harness proving itself with one fixture per shape of the format (a refused program with one code and with two, a non-zero exit code, an exit code as the only observable, an empty stdout, contained lines, a module directory, a project directory). The `harness/` fixtures twin nothing; a change to the runner or to the route underneath it fails there before it fails in a twin. The header *refusals* are unit tests of `parse_header` in `incan_test_support`, not fixtures: an area fixture must pass, so a fixture cannot prove that a malformed header is refused.
 
-The `<family>_dependencies/` areas (`cli_dependencies/`, `codegen_dependencies/`) are set apart by what their programs need from the runner: project fixtures with in-fixture path dependencies, whose providers the runner bakes before the run (see *Project fixtures with dependencies* and *Provider bakes and Cargo*). No behavior root, those included, is registered for a compiler-suite Cargo capability: every bake the runner performs under the suite is Cargo-guarded.
+The `<family>_dependencies/` areas (`cli_dependencies/`, `codegen_dependencies/`, `lowering_dependencies/`) are set apart by what their programs need from the runner: project fixtures with in-fixture path dependencies, whose providers the runner bakes before the run (see *Project fixtures with dependencies* and *Provider bakes and Cargo*). No behavior root, those included, is registered for a compiler-suite Cargo capability: every bake the runner performs under the suite is Cargo-guarded.
 
 ### Area size
 

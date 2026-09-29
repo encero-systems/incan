@@ -8,11 +8,6 @@
 //! records no package version and no physical path: a coordinate-only change that leaves every compiler input alone
 //! must resolve to the same closure, and a closure published on one machine must select on another.
 
-#![allow(
-    dead_code,
-    reason = "normal-build selection consumes this published closure in the hot-path gate"
-)]
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -341,6 +336,7 @@ pub fn admit_declared_runtime_closure(
 ///
 /// The foundation exposes no identity of its own, so this digests exactly the three facts that define it: the
 /// compiler closure it is bound to, its sealed artifact catalog, and its selected source graph.
+#[cfg(test)]
 pub fn runtime_foundation_identity(foundation: &ValidatedOvenRuntimeFoundation) -> Result<String, OvenRustcError> {
     let binding = (
         foundation.compiler_closure_digest(),
@@ -475,6 +471,7 @@ pub fn publish_runtime_closure(
 ///
 /// The caller supplies an owner it already leased. Every path is derived from the payload's own compiled identities,
 /// so a file the closure does not name stays unreachable even if it exists below the same artifact root.
+#[cfg(test)]
 pub fn admit_runtime_closure(
     owner: OvenStoreExecutionPayload,
     expected: &OvenRuntimeClosurePayload,
@@ -530,6 +527,7 @@ pub fn admit_runtime_closure(
 /// This is a content-addressed store lookup and nothing else. It does not bake, does not read a Cargo manifest, and
 /// does not list a target directory: a closure either exists under the identity its compiler inputs imply, or it does
 /// not. `Ok(None)` is the honest miss, which the caller turns into a terminal typed refusal.
+#[cfg(test)]
 pub fn select_runtime_closure(
     store: &OvenStore,
     expected: &OvenRuntimeClosurePayload,
@@ -555,6 +553,7 @@ pub fn select_runtime_closure(
 ///
 /// The refusal reuses the existing normal-command vocabulary so a missing closure reads the same as any other absent
 /// selected native plan. Explicit bake intent is what publishes a closure; a normal build never escalates to one.
+#[cfg(test)]
 pub fn require_runtime_closure(
     store: &OvenStore,
     receipt: &OvenReceipt,

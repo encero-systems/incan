@@ -3,6 +3,7 @@
 # retires: loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs::generic_and_trait_default_adopters_display_through_trait_dispatch_issue1778
 # retires: loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs::self_in_an_error_trait_default_displays_per_adopter_issue1778
 # retires: loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs::namespaced_builtins_display_error_adopters_through_message_issue1778
+# retires: loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs::stdlib_io_error_interpolation_names_the_written_message_method_issue1778
 # expect-stdout:
 #   1
 #   error buffer ended before read_exact size

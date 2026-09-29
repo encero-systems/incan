@@ -1,0 +1,10 @@
+# behavior: json_stringify over a model that neither derives nor adopts Serialize, alone or inside a list, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Plain:
+    x: int
+
+
+def main() -> None:
+    println(json_stringify(Plain(x=1)))
+    println(json_stringify([Plain(x=2)]))

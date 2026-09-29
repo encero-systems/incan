@@ -112,12 +112,12 @@ pub trait Hash:
     model UserId:
         value: int
 
-    ids: Set[UserId] = Set()
+    mut ids: Set[UserId] = Set()
     ids.add(UserId(value=1))
     ids.add(UserId(value=2))
     
     # Also required for Dict keys:
-    names: Dict[UserId, str] = Dict()
+    mut names: Dict[UserId, str] = Dict()
     names[UserId(value=1)] = "Alice"
     ```
     

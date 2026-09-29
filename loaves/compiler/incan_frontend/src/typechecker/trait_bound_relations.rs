@@ -324,8 +324,8 @@ impl TypeChecker {
         {
             return satisfies;
         }
-        // A `Display` bound asks for the display rule's `Display`, which a `__str__`, an enum's declared values or an
-        // `Error` adoption provides and `@derive(Display)` does not (#1748).
+        // A `Display` bound asks for the display rule's `Display`, which a `__str__`, an enum's declared values,
+        // `@derive(Display)` or an `Error` adoption provides (#1748).
         if builtin_traits::from_str(bound) == Some(TraitId::Display)
             && let Some(satisfies) = self.display_bound_satisfied(ty)
         {
@@ -400,8 +400,18 @@ impl TypeChecker {
     /// Equality`) is.
     pub(in crate::typechecker) fn builtin_derive_bound(&self, bound: &str) -> Option<DeriveId> {
         let names_builtin_trait = |name: &str| stdlib::trait_method_module_segments(name).is_some();
-        let Some(path) = self.import_binding_path(bound) else {
-            return derives::from_str(bound).filter(|_| names_builtin_trait(bound));
+        let path = match self.import_binding_path(bound) {
+            Some(path) => path.to_vec(),
+            // A module-qualified spelling (`comparison.Ord` after `from std.derives import comparison`) names the
+            // trait through its module's import (#1561).
+            None => match bound.rsplit_once('.') {
+                Some((module_spelling, trait_name)) => {
+                    let mut path = self.module_path_for_imported_name(module_spelling)?;
+                    path.push(trait_name.to_string());
+                    path
+                }
+                None => return derives::from_str(bound).filter(|_| names_builtin_trait(bound)),
+            },
         };
         let (trait_name, module_path) = path.split_last()?;
         let derive = derives::from_str(trait_name).filter(|_| names_builtin_trait(trait_name))?;
@@ -489,6 +499,29 @@ impl TypeChecker {
             .source_name
             .as_deref()
             .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(bound.name.as_str()))
+    }
+
+    /// Return whether a checked bound names the builtin trait `trait_id`: the stdlib declaration, imported under any
+    /// spelling, or the builtin's own name with no import or local trait claiming it.
+    pub(in crate::typechecker) fn bound_is_builtin_trait(&self, bound: &TypeBoundInfo, trait_id: TraitId) -> bool {
+        let is_builtin_name = |name: &str| builtin_traits::from_str(name) == Some(trait_id);
+        if let Some(module_path) = &bound.module_path {
+            return is_builtin_name(Self::type_bound_source_name(bound))
+                && module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT);
+        }
+        match self.import_binding_path(&bound.name) {
+            Some(path) => {
+                path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+                    && path.last().is_some_and(|name| is_builtin_name(name))
+            }
+            None => {
+                is_builtin_name(Self::type_bound_source_name(bound))
+                    && !matches!(
+                        self.lookup_symbol(&bound.name).map(|symbol| &symbol.kind),
+                        Some(SymbolKind::Trait(_))
+                    )
+            }
+        }
     }
 
     /// Return the canonical source identity for a checked trait bound when it can be resolved.
@@ -770,51 +803,68 @@ impl TypeChecker {
             return satisfies;
         }
 
+        // Every exact-width numeric type provides what its Rust primitive does: each one clones, copies, displays,
+        // debugs, defaults and compares, and the integer types also have total equality, ordering and hashing, which
+        // `f32` lacks as `float` does. A value that displays satisfies `Display` (see the display rule).
+        let exact_numeric = matches!(ty, ResolvedType::Numeric(_));
+        let exact_integer = matches!(ty, ResolvedType::Numeric(id) if numerics::is_integer(*id));
         match builtin_traits::from_str(bound) {
-            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::Default) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
+            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
+            Some(TraitId::Default) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
             Some(TraitId::Awaitable) => self.type_satisfies_awaitable_bound(ty, None),
-            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::PartialEq | TraitId::PartialOrd) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
+            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => {
+                exact_integer
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
+            Some(TraitId::PartialEq | TraitId::PartialOrd) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
             _ => false,
         }
     }

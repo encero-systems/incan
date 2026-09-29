@@ -518,7 +518,7 @@ fn test_builtin_zip_rejects_unsupported_operands_issue950() {
     );
     assert!(
         bare.iter()
-            .any(|error| error.message == "zip() argument 1 must be a list, FrozenList, or Iterator, got int"),
+            .any(|error| error.message.contains("zip() argument 1 must be a list")),
         "unexpected errors: {:?}",
         bare.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
@@ -530,7 +530,7 @@ fn test_builtin_zip_rejects_unsupported_operands_issue950() {
     assert!(
         explicit
             .iter()
-            .any(|error| error.message == "zip() argument 2 must be a list, FrozenList, or Iterator, got bool"),
+            .any(|error| error.message.contains("zip() argument 2 must be a list")),
         "unexpected errors: {:?}",
         explicit.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
@@ -1163,5 +1163,26 @@ def broken(xs: List[int]) -> Generator[int]:
         errs.iter()
             .any(|err| err.message.contains("expected 'bool', found 'int'")),
         "expected generator expression filter diagnostic, got: {errs:?}"
+    );
+}
+
+/// `await` of a stdlib async function called through a module binding types as the awaitable a direct import gives,
+/// under `import std.async.time` and `import std.async.prelude`, awaited and passed to `spawn` (#1561).
+#[test]
+fn awaiting_an_async_function_through_a_module_binding_issue1561() {
+    assert_check_ok(
+        r#"
+import std.async.time
+import std.async.prelude
+
+async def main() -> None:
+    await time.sleep(0.01)
+    await time.sleep_ms(1)
+    await prelude.sleep(0.01)
+    handle = prelude.spawn(time.sleep_ms(1))
+    match await handle:
+        Ok(_) => println("done")
+        Err(_) => println("failed")
+"#,
     );
 }

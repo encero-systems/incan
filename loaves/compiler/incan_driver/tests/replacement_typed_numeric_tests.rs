@@ -280,7 +280,8 @@ def called_f64() -> f64:
     Ok(())
 }
 
-/// Every sized integer carrier must admit its exact endpoints and reject a wrong-family or out-of-range payload.
+/// Every sized integer carrier must admit its exact endpoints and reject a wrong-family or out-of-range payload; an
+/// `i64` parameter is an `int` (RFC 009) and takes the int value.
 #[test]
 fn sized_integer_carrier_validation_covers_every_width_and_family() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
@@ -329,12 +330,6 @@ def identity_usize(value: usize) -> usize:
             i128::from(i32::MIN),
             i128::from(i32::MAX),
         ),
-        (
-            "identity_i64",
-            NumericTypeId::I64,
-            i128::from(i64::MIN),
-            i128::from(i64::MAX),
-        ),
         ("identity_i128", NumericTypeId::I128, i128::MIN, i128::MAX),
         (
             "identity_isize",
@@ -368,6 +363,14 @@ def identity_usize(value: usize) -> usize:
             )?;
             assert!(error.to_string().contains("malformed typed numeric carrier"), "{error}");
         }
+    }
+
+    for value in [i64::MIN, i64::MAX] {
+        let int = ReplacementValue::Int(value);
+        assert_eq!(
+            execute_free_function(&module, "identity_i64", std::slice::from_ref(&int))?.value,
+            int
+        );
     }
 
     let unsigned_cases = [

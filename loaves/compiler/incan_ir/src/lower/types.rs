@@ -712,9 +712,14 @@ impl AstLowering {
 
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
     /// placeholders that the typechecker may have normalized to nominal names.
+    ///
+    /// A value lowering bound to the owner of the impl it lowers (`self`, a `Self` parameter) keeps that owner where
+    /// the typechecker says `Self`: inside the impl the two name the same type, and only the owner lets a method call
+    /// on the value and an argument passed from it resolve as they do for the owner's other values (#1561).
     pub fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
         match (existing, inferred) {
             (existing, IrType::Unknown) => existing.clone(),
+            (IrType::Struct(_) | IrType::NamedGeneric(_, _), IrType::SelfType) => existing.clone(),
             (IrType::Generic(existing_name), IrType::Struct(inferred_name)) if existing_name == &inferred_name => {
                 existing.clone()
             }
@@ -817,7 +822,7 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return IrType::from_numeric_spelling(n, id);
+                    return IrType::from_numeric_id(id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -1264,7 +1269,7 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return IrType::from_numeric_spelling(n, id);
+                    return IrType::from_numeric_id(id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -1535,15 +1540,19 @@ impl AstLowering {
             | ast::BinaryOp::NotIn
             | ast::BinaryOp::Is
             | ast::BinaryOp::IsNot => IrType::Bool,
-            ast::BinaryOp::BitAnd
-            | ast::BinaryOp::BitOr
-            | ast::BinaryOp::BitXor
-            | ast::BinaryOp::Shl
-            | ast::BinaryOp::Shr => {
-                if matches!((left, right), (IrType::Int, IrType::Int)) {
-                    IrType::Int
-                } else {
-                    IrType::Unknown
+            // RFC 009: bit arithmetic keeps its operands' one integer type, and a shift its left operand's type.
+            ast::BinaryOp::BitAnd | ast::BinaryOp::BitOr | ast::BinaryOp::BitXor => {
+                match (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) {
+                    (Some(NumericTy::Int), Some(NumericTy::Int)) => {
+                        exact_integer_arithmetic_type(left, right).unwrap_or(IrType::Int)
+                    }
+                    _ => IrType::Unknown,
+                }
+            }
+            ast::BinaryOp::Shl | ast::BinaryOp::Shr => {
+                match (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) {
+                    (Some(NumericTy::Int), Some(NumericTy::Int)) => left.clone(),
+                    _ => IrType::Unknown,
                 }
             }
             ast::BinaryOp::MatMul | ast::BinaryOp::PipeForward | ast::BinaryOp::PipeBackward => IrType::Unknown,

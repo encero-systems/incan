@@ -1,0 +1,44 @@
+# behavior: a dependency's trait named through a module binding, as the trait or as the dependency's alias of it, is the dependency's own trait, so the dependency's model reached through the binding meets a bound on either spelling and a consumer's model adopts it with its own methods
+# retires: loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs::dependency_trait_through_a_module_binding_bounds_and_adopts_issue1561
+# expect-stdout:
+#   dep!
+#   dep
+#   MINE
+#   yours
+
+import pub::tags as t
+
+
+def shout[T with t.Tag](value: T) -> str:
+    return value.loud()
+
+
+def name_of[T with t.Tagging](value: T) -> str:
+    return value.tag()
+
+
+model Mine with t.Tag:
+    id: int
+
+    def tag(self) -> str:
+        return "mine"
+
+    def loud(self) -> str:
+        return "MINE"
+
+
+model Yours with t.Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "yours"
+
+    def loud(self) -> str:
+        return "YOURS"
+
+
+def main() -> None:
+    println(shout(t.Label(name="dep")))
+    println(name_of(t.Label(name="dep")))
+    println(shout(Mine(id=1)))
+    println(name_of(Yours(id=2)))

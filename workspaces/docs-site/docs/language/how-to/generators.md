@@ -45,7 +45,7 @@ Generators support the same adapter and consumer surface as other iterator value
 
 Use the builtin `zip(left, right)` to pair two lists or iterators directly, and the method form `left.iter().zip(right.iter())` when `zip` is one stage in an existing iterator pipeline. Neither form builds a list by itself: iterate the result directly, or call `.collect()` when an owned `list[tuple[T, U]]` is required.
 
-A terminal call such as `count()` or `collect()` consumes the iterator. Clone the iterator before a terminal call when the original iterator must still be used later.
+A terminal call such as `count()` or `collect()` consumes the iterator, and an iterator cannot be cloned. When the values are needed more than once, `collect()` them into a list and read the list, or build a second iterator from the source, such as another `.iter()` call on the list or another call of the generator function.
 
 ## Limit an unbounded producer
 

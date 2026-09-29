@@ -24,6 +24,9 @@ use super::{
     retire_unreferenced_loaf_generations, rustc_identity, validate_stored_loaf_for_reuse,
 };
 
+/// Compatibility-evidence key for the exact Loaf registry authority adopted by a release bake.
+pub(crate) const OVEN_LOAF_REGISTRY_AUTHORITY_EVIDENCE: &str = "loaf_registry_authority_digest";
+
 /// Result for one checked fixture in a built-in Loaf envelope.
 #[derive(Debug, Serialize)]
 pub(crate) struct OvenLoafBakeEntryReport {
@@ -68,6 +71,9 @@ pub(crate) struct OvenLoafBakeReport {
     /// consumer lock will carry under `semantic.registry_records` once the resolver records adoptions (RFC 125).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) registry_records: Vec<oven_model::lock::RegistryRecord>,
+    /// One warning per selected package whose discovered build script was inert.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) warnings: Vec<String>,
 }
 
 /// Where the release bake wrote its harvest and what it held.
@@ -159,6 +165,7 @@ pub(crate) fn loaf_envelope_compatibility_map(evidence: &OvenLoafEnvelopeEvidenc
 pub(crate) fn loaf_envelope_compatibility_map_with_release_member(
     evidence: &OvenLoafEnvelopeEvidence,
     release_store_member: Option<&OvenReleaseStoreMember>,
+    loaf_registry_evidence: Option<&str>,
 ) -> CliResult<BTreeMap<String, String>> {
     let mut compatibility = loaf_envelope_compatibility_map(evidence);
     if let Some(member) = release_store_member {
@@ -172,6 +179,9 @@ pub(crate) fn loaf_envelope_compatibility_map_with_release_member(
                 CliError::failure(format!("could not encode release store member evidence: {error}"))
             })?),
         );
+    }
+    if let Some(digest) = loaf_registry_evidence {
+        compatibility.insert(OVEN_LOAF_REGISTRY_AUTHORITY_EVIDENCE.to_string(), digest.to_string());
     }
     Ok(compatibility)
 }
@@ -235,6 +245,7 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     release_store_member: Option<&OvenReleaseStoreMember>,
     runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
     runtime_closure: Option<&OvenReleaseRuntimeClosureMember>,
+    loaf_registry_evidence: Option<&str>,
 ) -> CliResult<()> {
     if output.join("envelope.json").is_file() {
         return Ok(());
@@ -251,6 +262,7 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
         release_store_member,
         runtime_foundation,
         runtime_closure,
+        loaf_registry_evidence,
         &mirrors,
     )
 }
@@ -268,10 +280,11 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
     release_store_member: Option<&OvenReleaseStoreMember>,
     runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
     runtime_closure: Option<&OvenReleaseRuntimeClosureMember>,
+    loaf_registry_evidence: Option<&str>,
     mirrors: &[PathBuf],
 ) -> CliResult<()> {
     let mut compatibility_evidence =
-        loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+        loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member, loaf_registry_evidence)?;
     if let Some(member) = runtime_foundation {
         bind_release_runtime_foundation_evidence(&mut compatibility_evidence, member).map_err(oven_error)?;
     }
@@ -424,6 +437,7 @@ pub(crate) struct CompleteLoafEnvelopeReuseInput<'a> {
     pub(crate) release_store_member: Option<&'a OvenReleaseStoreMember>,
     pub(crate) runtime_foundation: Option<&'a OvenReleaseRuntimeFoundationMember>,
     pub(crate) runtime_closure: Option<&'a OvenReleaseRuntimeClosureMember>,
+    pub(crate) loaf_registry_evidence: Option<&'a str>,
     pub(crate) limits: OvenStoreLimits,
     pub(crate) started: Instant,
 }
@@ -440,6 +454,7 @@ pub(crate) fn reuse_complete_loaf_envelope(
         release_store_member,
         runtime_foundation,
         runtime_closure,
+        loaf_registry_evidence,
         limits,
         started,
     } = input;
@@ -459,7 +474,8 @@ pub(crate) fn reuse_complete_loaf_envelope(
             manifest_path.display()
         ))
     })?;
-    let mut expected_evidence = loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    let mut expected_evidence =
+        loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member, loaf_registry_evidence)?;
     if let Some(member) = runtime_foundation {
         bind_release_runtime_foundation_evidence(&mut expected_evidence, member).map_err(oven_error)?;
     }
@@ -611,6 +627,7 @@ pub(crate) fn reuse_complete_loaf_envelope(
         compiler_suite: None,
         harvest: None,
         registry_records: Vec::new(),
+        warnings: Vec::new(),
     }))
 }
 

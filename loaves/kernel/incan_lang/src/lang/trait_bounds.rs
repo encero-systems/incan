@@ -148,6 +148,9 @@ pub mod rust {
 
     // Cloning and construction
     pub const CLONE: &str = "Clone";
+    /// The method of Rust's `Clone` trait: a `.clone()` call on a value that holds a type parameter requires [`CLONE`]
+    /// of it.
+    pub const CLONE_METHOD: &str = "clone";
     pub const DEFAULT: &str = "std::default::Default";
 
     // Formatting

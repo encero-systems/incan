@@ -1,4 +1,5 @@
 # behavior: a model field holding a JoinHandle is refused at check time because a model always derives Clone and Debug and a task handle supports neither
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::task_handle_field_is_refused_before_loop_lowering_issue1853
 # expect-diagnostic: INCAN-T0113
 
 import std.async

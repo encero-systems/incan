@@ -30,6 +30,147 @@ pub(super) fn compile_generated_rust(source: &str) -> TestResult {
     let input = directory.path().join("fixture.rs");
     let output = directory.path().join("libfixture.rlib");
     std::fs::write(&input, source)?;
+    let mut command = generated_rust_rustc("lib")?;
+    let result = command.arg(&input).arg("-o").arg(output).output()?;
+    assert!(
+        result.status.success(),
+        "{}\n{source}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}
+
+/// Build generated Rust as a program against the runtime this test binary links, run it, and return its standard
+/// output, so a behavior assertion is the program's own.
+pub(super) fn run_generated_program(source: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let input = directory.path().join("fixture.rs");
+    let program = directory.path().join("fixture");
+    std::fs::write(&input, source)?;
+    let mut command = generated_rust_rustc("bin")?;
+    let built = command.arg(&input).arg("-o").arg(&program).output()?;
+    if !built.status.success() {
+        return Err(format!("{}\n{source}", String::from_utf8_lossy(&built.stderr)).into());
+    }
+    let ran = std::process::Command::new(&program).output()?;
+    if !ran.status.success() {
+        return Err(format!("program failed: {}\n{source}", String::from_utf8_lossy(&ran.stderr)).into());
+    }
+    Ok(String::from_utf8(ran.stdout)?)
+}
+
+/// Build a generated dependency crate as a library named `dependency`, then build generated Rust against it as a
+/// program, run it, and return its standard output, so a consumer of a `pub::` dependency is proved by rustc and by
+/// what it prints.
+pub(super) fn run_generated_program_with_dependency(
+    dependency: &str,
+    dependency_source: &str,
+    source: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let dependency_input = directory.path().join("dependency.rs");
+    let library = directory.path().join(format!("lib{dependency}.rlib"));
+    std::fs::write(&dependency_input, dependency_source)?;
+    let mut command = generated_rust_rustc_named("lib", dependency)?;
+    let built = command.arg(&dependency_input).arg("-o").arg(&library).output()?;
+    if !built.status.success() {
+        return Err(format!("{}\n{dependency_source}", String::from_utf8_lossy(&built.stderr)).into());
+    }
+    let input = directory.path().join("fixture.rs");
+    let program = directory.path().join("fixture");
+    std::fs::write(&input, source)?;
+    let mut command = generated_rust_rustc("bin")?;
+    let built = command
+        .arg("--extern")
+        .arg(format!("{dependency}={}", library.display()))
+        .arg(&input)
+        .arg("-o")
+        .arg(&program)
+        .output()?;
+    if !built.status.success() {
+        return Err(format!("{}\n{source}", String::from_utf8_lossy(&built.stderr)).into());
+    }
+    let ran = std::process::Command::new(&program).output()?;
+    if !ran.status.success() {
+        return Err(format!("program failed: {}\n{source}", String::from_utf8_lossy(&ran.stderr)).into());
+    }
+    Ok(String::from_utf8(ran.stdout)?)
+}
+
+/// Build a generated program of several source modules, its root and each module at its module path, run it, and
+/// return its standard output.
+///
+/// Each module is written where Rust looks for it, and every module directory declares the modules below it, as a
+/// generated project does.
+pub(super) fn run_generated_modules(
+    root: &str,
+    modules: &std::collections::HashMap<Vec<String>, String>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let mut children: std::collections::BTreeMap<Vec<String>, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for (path, source) in modules {
+        let Some((leaf, parent)) = path.split_last() else {
+            continue;
+        };
+        let mut file = directory.path().to_path_buf();
+        file.extend(parent);
+        std::fs::create_dir_all(&file)?;
+        std::fs::write(file.join(format!("{leaf}.rs")), source)?;
+        for depth in 0..path.len() {
+            children
+                .entry(path[..depth].to_vec())
+                .or_default()
+                .insert(path[depth].clone());
+        }
+    }
+    let declarations = |parent: &[String]| {
+        children
+            .get(parent)
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|name| format!("pub mod {name};\n"))
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    };
+    for parent in children.keys().filter(|parent| !parent.is_empty()) {
+        if modules.contains_key(parent) {
+            continue;
+        }
+        let mut file = directory.path().to_path_buf();
+        file.extend(parent);
+        std::fs::write(file.join("mod.rs"), declarations(parent))?;
+    }
+    let input = directory.path().join("main.rs");
+    let program = directory.path().join("program");
+    let root = root.replacen("// __INCAN_INSERT_MODS__", &declarations(&[]), 1);
+    std::fs::write(&input, &root)?;
+    let mut command = generated_rust_rustc("bin")?;
+    let built = command.arg(&input).arg("-o").arg(&program).output()?;
+    if !built.status.success() {
+        return Err(format!("{}\n{root}\n{modules:?}", String::from_utf8_lossy(&built.stderr)).into());
+    }
+    let ran = std::process::Command::new(&program).output()?;
+    if !ran.status.success() {
+        return Err(format!("program failed: {}\n{root}", String::from_utf8_lossy(&ran.stderr)).into());
+    }
+    Ok(String::from_utf8(ran.stdout)?)
+}
+
+/// Return a `rustc` invocation for one generated crate of `crate_type`, with the runtime crates the generated code
+/// names in scope.
+fn generated_rust_rustc(crate_type: &str) -> Result<std::process::Command, Box<dyn std::error::Error>> {
+    generated_rust_rustc_named(crate_type, "mut_ownership_fixture")
+}
+
+/// Return a `rustc` invocation for one generated crate of `crate_type` named `crate_name`, with the runtime crates
+/// the generated code names in scope.
+fn generated_rust_rustc_named(
+    crate_type: &str,
+    crate_name: &str,
+) -> Result<std::process::Command, Box<dyn std::error::Error>> {
     let capability = compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
         compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
     )?;
@@ -42,11 +183,8 @@ pub(super) fn compile_generated_rust(source: &str) -> TestResult {
                 .unwrap_or_else(|| "rustc".into())
         });
     let mut command = std::process::Command::new(rustc);
-    command.args([
-        "--edition=2024",
-        "--crate-type=lib",
-        "--crate-name=mut_ownership_fixture",
-    ]);
+    command.arg("--edition=2024").arg(format!("--crate-name={crate_name}"));
+    command.arg(format!("--crate-type={crate_type}"));
     if let Some(capability) = capability {
         for path in capability.dependency_search_paths {
             command.arg("-L").arg(format!("dependency={}", path.display()));
@@ -85,13 +223,7 @@ pub(super) fn compile_generated_rust(source: &str) -> TestResult {
             .arg("--extern")
             .arg(format!("incan_derive={}", derive.display()));
     }
-    let result = command.arg(&input).arg("-o").arg(output).output()?;
-    assert!(
-        result.status.success(),
-        "{}\n{source}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    Ok(())
+    Ok(command)
 }
 
 /// Find the newest matching dependency artifact beside the current test binary.
@@ -132,22 +264,73 @@ fn build_output_directories(build_directory: &std::path::Path) -> Result<Vec<std
     Ok(outputs)
 }
 
+/// #1852: `dict(source)`, `set(source)`, `list(source)` and `[*source]` copy a collection, owned or reached through a
+/// `mut` parameter, and a change to the copy leaves the source as it was. The program is built and run, so the
+/// copies are what rustc accepts and what the program prints.
 #[test]
 fn collection_copies_from_mut_parameters_are_owned_issue1852() -> TestResult {
     let rust = generated_rust(
         r#"
 def copies(mut table: dict[str, int], mut tags: set[str], mut items: list[int]) -> int:
-    b = dict(table)
+    mut b = dict(table)
+    b["z"] = 9
     c = set(tags)
     d = [*items]
-    return len(b) + len(c) + len(d)
+    e = set(items)
+    f = list(items)
+    return len(b) + len(c) + len(d) + len(e) + len(f) + len(table)
+
+
+def owned(table: dict[str, int], tags: set[str]) -> int:
+    b = dict(table)
+    c = set(tags)
+    return len(b) + len(c) + len(table) + len(tags)
+
+
+def main() -> None:
+    mut table = {"a": 1, "b": 2}
+    mut tags = {"x", "y"}
+    mut items = [1, 2, 2]
+    println(copies(table, tags, items))
+    println(owned({"a": 1}, {"x"}))
+    println(len(table))
 "#,
     )?;
-    compile_generated_rust(&rust)?;
-    let rust = compact(&rust);
-    assert!(!rust.contains("dict(table.clone())"), "{rust}");
-    assert!(!rust.contains("(tags).into_iter()"), "{rust}");
-    assert!(!rust.contains("(items).into_iter()"), "{rust}");
+    assert_eq!(run_generated_program(&rust)?, "15\n4\n2\n");
+    Ok(())
+}
+
+/// #1852: a `*` or `**` spread in a literal copies a list or dict the program reads again, whether it is a binding, a
+/// field or a `mut` parameter, and consumes it only at its last use.
+#[test]
+fn spread_literals_copy_a_collection_read_again_issue1852() -> TestResult {
+    let rust = generated_rust(
+        r#"
+class Bag:
+    items: list[int]
+
+    def doubled(self) -> int:
+        more = [*self.items, *self.items]
+        return len(more) + len(self.items)
+
+
+def literal_spreads(table: dict[str, int], items: list[int], mut extra: list[int]) -> int:
+    mut both = {**table, "z": 9}
+    both["y"] = 8
+    mut joined = [*items, *extra, 4]
+    joined.append(5)
+    last = [*items]
+    return len(both) + len(joined) + len(table) + len(extra) + len(last)
+
+
+def main() -> None:
+    mut extra = [7]
+    println(literal_spreads({"a": 1}, [1, 2], extra))
+    println(Bag(items=[1, 2]).doubled())
+    println(len(extra))
+"#,
+    )?;
+    assert_eq!(run_generated_program(&rust)?, "12\n6\n1\n");
     Ok(())
 }
 
@@ -259,7 +442,10 @@ def main() -> None:
     compile_generated_rust(&rust)?;
     let rust = compact(&rust);
     assert!(rust.contains("iter_mut()).map(|mutrow|"), "{rust}");
-    assert!(rust.contains("mutxs=>"), "{rust}");
+    // The arm changes the element through `xs`, so the element is matched in place and the change reaches `rows`
+    // (#1561).
+    assert!(rust.contains("list_get_mut(&mutrows,"), "{rust}");
+    assert!(rust.contains("__incan_in_place_xs=>"), "{rust}");
     assert!(rust.contains("letitems=items.clone();move||"), "{rust}");
     Ok(())
 }
@@ -400,5 +586,106 @@ pub def total[T](grid: list[list[T]]) -> int:
     compile_generated_rust(&rust)?;
     let rust = compact(&rust);
     assert!(rust.contains("<T:Clone,>"), "{rust}");
+    Ok(())
+}
+
+/// A loop over `zip(left, right)` that changes only the items of one operand iterates only that operand in place; the
+/// other operand is read as a loop over it alone reads it, so an immutable list, a list of `int`, a list of `str` and a
+/// `range` all build beside it, on either side.
+#[test]
+fn zip_loop_iterates_only_the_changed_operand_in_place() -> TestResult {
+    let rust = generated_rust(
+        r#"
+def main() -> None:
+    mut rows: list[list[int]] = [[1], [2]]
+    extra: list[int] = [3, 4]
+    for row, n in zip(rows, extra):
+        row.append(n)
+    mut more: list[int] = [5, 6]
+    for row, n in zip(rows, more):
+        row.append(n)
+    for row, i in zip(rows, range(2)):
+        row.append(i)
+    names: list[str] = ["a", "bc"]
+    for row, name in zip(rows, names):
+        row.append(len(name))
+    for i, row in zip(range(2), rows):
+        row.append(i)
+    println(len(rows[0]) + len(more) + len(extra))
+"#,
+    )?;
+    compile_generated_rust(&rust)?;
+    let rust = compact(&rust);
+    assert!(!rust.contains("extra).iter_mut()"), "{rust}");
+    assert!(!rust.contains(".iter_mut()).iter_mut()"), "{rust}");
+    Ok(())
+}
+
+/// A loop whose derived items are changed in place reads each `Copy` element of a tuple item by value, as a loop over
+/// the list alone does (#1869): over a dict's values and over a list read out of another list. A list of tuples zipped
+/// beside a changed list is read as a loop over it alone reads it.
+#[test]
+fn in_place_derived_loop_items_copy_their_copy_tuple_elements() -> TestResult {
+    let rust = generated_rust(
+        r#"
+def main() -> None:
+    mut table: dict[str, tuple[list[int], int]] = {"x": ([1], 2)}
+    for xs, n in table.values():
+        xs.append(n)
+    mut groups: list[list[tuple[list[int], int]]] = [[([1], 2)]]
+    for xs, n in groups[0]:
+        xs.append(n)
+    pairs: list[tuple[list[int], int]] = [([1], 2)]
+    mut rows: list[list[int]] = [[3]]
+    for pair, row in zip(pairs, rows):
+        row.append(pair[1])
+    println(len(rows[0]) + len(groups[0][0][0]) + len(pairs))
+"#,
+    )?;
+    compile_generated_rust(&rust)
+}
+
+/// A `mut self` method called on a loop item inside a larger expression (a call argument, a list element, an
+/// f-string, a field of the item) iterates the list in place, as the same call written as its own statement does.
+#[test]
+fn mut_self_call_inside_a_larger_expression_iterates_in_place() -> TestResult {
+    let rust = generated_rust(
+        r#"
+class Cell:
+    pub value: int
+
+    def bump(mut self) -> int:
+        self.value += 1
+        return self.value
+
+class Grid:
+    pub inner: Cell
+
+def show(n: int) -> int:
+    return n
+
+def main() -> None:
+    mut cells: list[Cell] = [Cell(value=1)]
+    for c in cells:
+        println(c.bump())
+    for c in cells:
+        show(c.bump())
+    for c in cells:
+        values = [c.bump()]
+        println(len(values))
+    for c in cells:
+        println(f"{c.bump()}")
+    for i, c in enumerate(cells):
+        println(i + c.bump())
+    mut grids: list[Grid] = [Grid(inner=Cell(value=2))]
+    for g in grids:
+        println(g.inner.bump())
+    println(cells[0].value + grids[0].inner.value)
+"#,
+    )?;
+    compile_generated_rust(&rust)?;
+    let rust = compact(&rust);
+    assert!(!rust.contains("incells.iter()"), "{rust}");
+    assert!(!rust.contains("ingrids.iter()"), "{rust}");
     Ok(())
 }

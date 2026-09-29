@@ -1151,3 +1151,61 @@ def explicit_call() -> int:
 "#;
     assert_check_ok(source);
 }
+
+/// #1852: `dict(source)` copies a dict. It records the canonical Dict constructor, so lowering never treats the call
+/// as an ordinary function named `dict`, and takes the source's key and value types; a source that is not a dict, and
+/// a second source, are refused before lowering.
+#[test]
+fn dict_constructor_copies_a_dict_and_refuses_other_sources_issue1852() -> Result<(), String> {
+    let source = r#"
+def main(values: Dict[str, int]) -> None:
+  copied = dict(values)
+  empty: dict[str, int] = dict()
+"#;
+    let ast = parse_program(source, "issue1852 dict constructor");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("dict constructors should typecheck: {errors:?}"))?;
+    let constructors = checker
+        .type_info()
+        .calls
+        .resolved_collection_constructors
+        .values()
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(constructors, vec![CollectionTypeId::Dict; 2]);
+    let start = source.find("dict(values)").ok_or("missing `dict(values)`")?;
+    assert_eq!(
+        checker
+            .type_info()
+            .expr_type(Span::new(start, start + "dict(values)".len()))
+            .cloned(),
+        Some(crate::typechecker::helpers::dict_ty(
+            ResolvedType::Str,
+            ResolvedType::Int
+        ))
+    );
+
+    let errors = check_str_err(
+        r#"
+def main(names: list[str], values: Dict[str, int]) -> None:
+  from_list = dict(names)
+  from_two = dict(values, values)
+"#,
+        "dict() should refuse a source that is not a dict",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected 'Dict[K, V]', found 'List[str]'")),
+        "expected a source diagnostic before lowering, got {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("dict() expects at most 1 argument(s), got 2")),
+        "expected an arity diagnostic before lowering, got {errors:?}"
+    );
+    Ok(())
+}

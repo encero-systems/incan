@@ -77,6 +77,49 @@ fn empty_trait_stub_recovers_its_method_contract_from_provider_metadata() {
     );
 }
 
+/// A type the module declares is what its name spells, although the standard library has a trait of that name that
+/// the module never imported (`std.traits.indexing.Index`): the name annotates a local, a type argument in a local and
+/// a parameter without the checker taking it for the trait.
+#[test]
+fn a_declared_type_shadows_an_unimported_stdlib_trait_of_its_name() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Index[K, V]:
+    entries: dict[K, V]
+
+    def size(self) -> int:
+        return len(self.entries)
+
+
+def fill[K, V](index: Index[K, V]) -> int:
+    return index.size()
+
+
+def main() -> None:
+    index: Index[str, int] = Index(entries={})
+    nested: list[Index[str, int]] = [Index(entries={})]
+    println(fill(index) + len(nested))
+"#;
+    let tokens = lexer::lex(source)?;
+    let program = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.transitive_stdlib_stub_traits.insert(
+        "Index".to_string(),
+        TraitInfo {
+            type_params: vec!["K".to_string(), "V".to_string()],
+            supertraits: Vec::new(),
+            methods: HashMap::new(),
+            method_aliases: HashMap::new(),
+            properties: HashMap::new(),
+            requires: Vec::new(),
+        },
+    );
+    assert!(
+        checker.lookup_semantic_trait_info("Index").is_some(),
+        "the stdlib trait must be known to the checker, or this test proves nothing"
+    );
+    checker.check_program(&program)
+}
+
 #[test]
 fn test_ellipsis_abstract_method_outside_trait_is_type_error() {
     let source = r#"
@@ -219,7 +262,7 @@ class CounterImpl with Counter:
   count: int
 
 def main() -> None:
-  c = CounterImpl(count=1)
+  mut c = CounterImpl(count=1)
   c.bump()
 "#;
     assert_check_ok(source);
@@ -1243,4 +1286,91 @@ trait Countable:
         .map(|error| error.message.as_str())
         .collect::<Vec<_>>();
     assert_eq!(refused, vec!["Method 'bump' assigns to 'self.count' but takes 'self'"]);
+}
+
+/// In a trait's own default method, a method the trait or a supertrait declares, called on `self` or on another `Self`
+/// value, has its declared signature: its result is a `str` that `+ "!"`, `len` and `upper()` accept, a generic
+/// trait's method returns the trait's type parameter, and an operation its result does not provide is refused (#1561).
+#[test]
+fn trait_default_calls_on_self_take_the_declared_signature_issue1561() -> Result<(), String> {
+    check_str(
+        r#"
+trait Named:
+    def name(self) -> str: ...
+
+trait Tag with Named:
+    def tag(self) -> str: ...
+
+    def loud(self) -> str:
+        return self.tag() + "!"
+
+    def size(self) -> int:
+        return len(self.tag()) + len(self.name())
+
+    def greet(self, other: Self) -> str:
+        return "hi " + other.name().upper()
+
+trait Holder[T]:
+    def get(self) -> T: ...
+
+    def pair(self) -> list[T]:
+        return [self.get(), self.get()]
+"#,
+    )
+    .map_err(|errors| format!("expected the trait defaults to check, got: {:?}", messages(&errors)))?;
+    let errors = check_str(
+        r#"
+trait Tag:
+    def tag(self) -> str: ...
+
+    def bad(self) -> str:
+        return self.tag() + 1
+"#,
+    )
+    .err()
+    .ok_or("a str plus an int in a trait default must be refused")?;
+    if errors.iter().any(|error| error.message.contains("str + int")) {
+        return Ok(());
+    }
+    Err(format!("expected the str + int refusal, got: {:?}", messages(&errors)))
+}
+
+/// #1561: a trait default that appends the item its own `__next__`-style method returns reads a binding the generated
+/// code copies (the default is expanded into each adopter, where a read inside a loop is copied), so the item's type
+/// parameter needs `Clone`: unbounded it is refused, bounded by `Clone` it checks.
+#[test]
+fn list_append_of_a_trait_default_item_requires_clone_issue1561() -> Result<(), String> {
+    let source = |bound: &str| {
+        format!(
+            r#"
+trait Source[T{bound}]:
+  def pull(mut self) -> Option[T]: ...
+
+  def drain(mut self) -> list[T]:
+    mut items: list[T] = []
+    while true:
+      match self.pull():
+        Some(item) => items.append(item)
+        None => return items
+"#
+        )
+    };
+    let unbounded = source("");
+    let Err(errors) = check_str(&unbounded) else {
+        return Err(format!(
+            "appending an unbounded trait item should be refused:\n{unbounded}"
+        ));
+    };
+    if !errors
+        .iter()
+        .any(|error| error.message == "List.append requires element type 'T' to be Clone")
+    {
+        return Err(format!("expected the List.append Clone refusal, got {errors:?}"));
+    }
+    check_str(&source(" with Clone")).map_err(|errors| format!("a Clone-bounded trait item should append: {errors:?}"))
+}
+
+/// Return the messages of `errors`.
+fn messages(errors: &[CompileError]) -> Vec<&str> {
+    errors.iter().map(|error| error.message.as_str()).collect()
 }

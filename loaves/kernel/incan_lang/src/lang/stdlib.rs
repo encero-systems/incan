@@ -8,6 +8,9 @@ use super::{
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
 
+/// The file stem of a namespace's own module (`std.async` is `async/prelude.incn`).
+pub const STDLIB_PRELUDE_SEGMENT: &str = "prelude";
+
 /// RFC 023: Rust module namespace for compiled `std.*` modules.
 ///
 /// Compiled stdlib `.incn` files are emitted as submodules under `crate::__incan_std::*` to avoid shadowing Rust's
@@ -925,6 +928,20 @@ pub fn is_known_stdlib_module(path: &[String]) -> bool {
     ns.submodules.contains(&submodule.as_str())
 }
 
+/// Return the module a `std.<namespace>...prelude` path names, or `None` for any other path.
+///
+/// A namespace's `prelude` source file is the namespace's own module, the way a directory's `mod` file is, so
+/// `std.async.prelude` and `std.async` name one module: the checker resolves the import through the namespace and a
+/// provider claims it once, as `std.async`. The root-level `std.prelude` is a module of its own and is left alone.
+pub fn stdlib_prelude_module_namespace(path: &[String]) -> Option<&[String]> {
+    match path {
+        [root, .., last] if path.len() >= 3 && root == STDLIB_ROOT && last == STDLIB_PRELUDE_SEGMENT => {
+            Some(&path[..path.len() - 1])
+        }
+        _ => None,
+    }
+}
+
 /// Human-friendly list of known stdlib modules for diagnostics.
 ///
 /// Includes top-level namespaces and registered submodules.
@@ -1060,6 +1077,25 @@ mod tests {
         assert!(is_graph_constructor_type("MultiDiGraph"));
         assert!(!is_graph_constructor_type("NodeId"));
         assert!(!is_graph_constructor_type("EdgeId"));
+    }
+
+    /// #1561: a namespace's `prelude` path names the namespace; `std.prelude` stays a module of its own.
+    #[test]
+    fn a_namespace_prelude_path_names_the_namespace() {
+        assert_eq!(
+            stdlib_prelude_module_namespace(&segs(&["std", "async", "prelude"])),
+            Some(segs(&["std", "async"]).as_slice())
+        );
+        assert_eq!(
+            stdlib_prelude_module_namespace(&segs(&["std", "traits", "prelude"])),
+            Some(segs(&["std", "traits"]).as_slice())
+        );
+        assert_eq!(stdlib_prelude_module_namespace(&segs(&["std", "prelude"])), None);
+        assert_eq!(stdlib_prelude_module_namespace(&segs(&["std", "async", "time"])), None);
+        assert_eq!(
+            stdlib_prelude_module_namespace(&segs(&["app", "models", "prelude"])),
+            None
+        );
     }
 
     #[test]

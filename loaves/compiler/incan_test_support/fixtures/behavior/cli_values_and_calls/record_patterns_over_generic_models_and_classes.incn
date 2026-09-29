@@ -1,0 +1,56 @@
+# behavior: a record pattern over a generic model or class matches the instantiated fields, literal and binding sub-patterns selecting the arm and unnamed fields matching any value, and a generic enum's payload literal matches the instantiated payload
+# retires: loaves/compiler/incan_emit/src/tests/record_pattern_emission.rs::record_patterns_over_a_generic_model_and_class_compile
+# expect-stdout:
+#   -1
+#   5
+#   8
+#   a
+#   b
+#   zero
+#   7
+#   empty
+
+model Box[T]:
+    value: T
+    label: str
+
+
+class Pair[A, B]:
+    pub first: A
+    pub second: B
+
+
+enum Shape[T]:
+    Filled(T)
+    Empty
+
+
+def unbox(b: Box[int]) -> int:
+    match b:
+        Box(value=0) => return -1
+        Box(value=v, label="x") => return v
+        Box(value=v) => return v + 1
+
+
+def first(p: Pair[str, int]) -> str:
+    match p:
+        Pair(second=2, first=f) => return f
+        Pair(first=f) => return f
+
+
+def area(shape: Shape[int]) -> str:
+    match shape:
+        Shape.Filled(0) => return "zero"
+        Shape.Filled(n) => return f"{n}"
+        Shape.Empty => return "empty"
+
+
+def main() -> None:
+    println(unbox(Box(value=0, label="y")))
+    println(unbox(Box(value=5, label="x")))
+    println(unbox(Box(value=7, label="y")))
+    println(first(Pair(first="a", second=2)))
+    println(first(Pair(first="b", second=3)))
+    println(area(Shape.Filled(0)))
+    println(area(Shape.Filled(7)))
+    println(area(Shape.Empty))

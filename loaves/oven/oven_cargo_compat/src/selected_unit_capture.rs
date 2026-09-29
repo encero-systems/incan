@@ -3,6 +3,9 @@
 //! This capture preserves Cargo facts without assigning Incan dependency intent. A later Oven adapter joins these
 //! units to staged source inventories, cfg snapshots, toolchain ownership and the sealed project inspection authority
 //! before constructing a selected Rust facet graph.
+//!
+//! TODO(#1561): this Cargo-selected physical capture retires once all release units resolve from governed Loaf
+//! registry records.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -632,6 +635,7 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
     Some(digest_bytes(&encoded))
 }
 
+/// Whether one trace-supplied probe digest is a canonical SHA-256 identity.
 fn valid_probe_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|hex| {
         hex.len() == 64
@@ -1068,17 +1072,22 @@ struct PortableSelectedUnitKey<'a> {
 #[derive(Serialize)]
 struct PortableBuildScriptKey<'a> {
     cfgs: &'a [String],
-    environment: &'a BTreeMap<String, String>,
+    environment: BTreeMap<&'a str, String>,
     linked_libraries: &'a [String],
     linked_path_count: usize,
     output: Option<(&'a str, &'a [OvenLegacyCargoInspectionSourceMember])>,
 }
 
 impl<'a> PortableBuildScriptKey<'a> {
+    /// Remove capture-only staging coordinates from retained build-script facts.
     fn new(facts: &'a OvenLegacyCargoBuildScriptFacts) -> Self {
         Self {
             cfgs: &facts.cfgs,
-            environment: &facts.environment,
+            environment: facts
+                .environment
+                .iter()
+                .map(|(name, value)| (name.as_str(), portable_build_script_value(value, &facts.out_dir)))
+                .collect(),
             linked_libraries: &facts.linked_libraries,
             linked_path_count: facts.linked_paths.len(),
             output: facts
@@ -1086,6 +1095,16 @@ impl<'a> PortableBuildScriptKey<'a> {
                 .as_ref()
                 .map(|output| (output.digest.as_str(), output.members.as_slice())),
         }
+    }
+}
+
+/// Replace the capture-only OUT_DIR prefix in one build-script value with its portable coordinate.
+fn portable_build_script_value(value: &str, out_dir: &Path) -> String {
+    let staging = out_dir.to_string_lossy();
+    if staging.is_empty() {
+        value.to_string()
+    } else {
+        value.replace(staging.as_ref(), "@oven-out-dir")
     }
 }
 
@@ -1099,17 +1118,7 @@ pub fn legacy_cargo_selected_unit_capture_identity(
     selected_unit_portable_identity(capture, index, &mut memo, &mut visiting)
 }
 
-/// The portable identity of every unit in capture order.
-pub fn legacy_cargo_selected_unit_capture_identities(
-    capture: &OvenLegacyCargoSelectedUnitCapture,
-) -> Result<Vec<String>, OvenLegacyCargoError> {
-    let mut memo = BTreeMap::new();
-    let mut visiting = BTreeSet::new();
-    (0..capture.units.len())
-        .map(|index| selected_unit_portable_identity(capture, index, &mut memo, &mut visiting))
-        .collect()
-}
-
+/// Recursively derive one portable unit identity while memoizing dependency identities and refusing cycles.
 fn selected_unit_portable_identity(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     index: usize,

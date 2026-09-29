@@ -2,8 +2,6 @@
 
 This page specifies `Generator[T]`, generator functions, generator expressions, the generator methods, and how a generator is consumed. Refusals are reported with `INCAN-T0001`.
 
-For the mental model, see [Generators explained](../explanation/generators.md). For practical recipes, see [Use generators for lazy pipelines](../how-to/generators.md).
-
 ## Type
 
 `Generator[T]` is the type of a lazy producer that yields values of type `T`.
@@ -22,12 +20,24 @@ def numbers() -> Generator[int]:
 
 Rules:
 
-- `yield expr` requires `expr` to type-check as `T`.
+- `yield expr` requires the type of `expr` to be assignable to `T` as a returned value's type is to a return type; a value of a narrower numeric type is widened to `T` (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)).
+- A bare `yield`, without a value, is refused in a generator function.
 - `yield` is valid only in the body of a generator function or a fixture.
 - A bare `return` ends the generator.
 - `return value` is refused in a generator function.
 - A function declared `-> Generator[T]` without a reachable `yield` is refused, unless it returns an existing generator value.
 - Calling a generator function does not run its body. The body runs when a consumer asks for the first item, and each `yield` suspends it until the next item is asked for.
+
+```incan
+def words() -> Generator[str]:
+    yield "a"                    # accepted
+    yield                        # refused: a bare yield has no value
+    yield 1                      # refused: 1 is not a str
+
+def count() -> int:
+    yield 1                      # refused: count is not a generator function
+    return 1
+```
 
 ## Returning an existing generator
 
@@ -67,7 +77,7 @@ def collect(self) -> list[T]
 - `map`, `filter` and `take` are lazy: each returns a generator and produces no item until that generator is consumed.
 - `collect` consumes the generator.
 
-`Generator[T]` also satisfies `Iterator[T]`, so a generator value supports the whole iterator adapter and consumer surface of [Collection protocols](stdlib_traits/collection_protocols.md), such as `flat_map`, `skip`, `enumerate`, `zip` and `batch`. Terminal consumers, such as `count`, `fold`, `reduce`, `any`, `all`, `find`, `for_each` and `sum`, consume the generator.
+`Generator[T]` satisfies `Iterator[T]`: a generator value has every iterator adapter and consumer of [Collection protocols](stdlib_traits/collection_protocols.md), such as `flat_map`, `skip`, `enumerate`, `zip` and `batch`. Terminal consumers, such as `count`, `fold`, `reduce`, `any`, `all`, `find`, `for_each` and `sum`, consume the generator.
 
 ## Consumption
 
@@ -85,3 +95,8 @@ def main() -> None:
     every: list[int] = list(parities(4))      # accepted
     distinct: set[int] = set(parities(4))     # accepted
 ```
+
+## See also
+
+- [Generators explained](../explanation/generators.md)
+- [Use generators for lazy pipelines](../how-to/generators.md)

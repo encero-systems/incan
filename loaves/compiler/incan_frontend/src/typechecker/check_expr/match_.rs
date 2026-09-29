@@ -7,12 +7,16 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diagnostics::errors;
+use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use incan_lang::interop::RustItemKind;
+use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics;
+use incan_semantics_core::SymbolOrigin;
 
 use super::TypeChecker;
 use super::match_coverage::{coverage_row_head_is_wild, expand_coverage_heads};
@@ -75,7 +79,7 @@ enum LiteralPatternFamily {
 }
 
 impl LiteralPatternFamily {
-    /// Return the family of a position type, or `None` when a literal cannot be judged against it here.
+    /// Return the family of a position type, or `None` when the type is of no literal family.
     fn of_position(ty: &ResolvedType) -> Option<Self> {
         match ty {
             ResolvedType::Int => Some(Self::Integer),
@@ -87,6 +91,23 @@ impl LiteralPatternFamily {
             _ if ty.is_option() => Some(Self::Option),
             _ => None,
         }
+    }
+
+    /// Whether a position type of no literal family is known well enough to say that no literal matches a value of it:
+    /// `bytes`, a tuple, a collection, a model, class, enum or newtype, a union, a decimal and a type parameter are. An
+    /// unresolved type, a Rust type the checker does not see into and `Self` are not, and are left to the checks that
+    /// own them.
+    fn position_is_known(ty: &ResolvedType) -> bool {
+        !matches!(
+            ty,
+            ResolvedType::Unknown
+                | ResolvedType::CallSiteInfer
+                | ResolvedType::Never
+                | ResolvedType::RustPath(_)
+                | ResolvedType::SelfType
+                | ResolvedType::Ref(_)
+                | ResolvedType::RefMut(_)
+        )
     }
 
     /// Whether a literal of this spelling can match a value of this family.
@@ -169,12 +190,23 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a `match` expression and return its resolved type.
+    /// Type-check a `match` expression and return its resolved type: the one type its arms unify to.
+    ///
+    /// Every arm produces the match's value, in statement position too, since the generated match needs one type
+    /// across its arms. An expression arm is checked against `expected`, the type of the place the match is written to
+    /// when there is one, so a literal arm takes that type as it does at the place itself. A block arm produces no
+    /// value (`None`): it takes part only when it can complete, and a block that ends in `return`, `break` or
+    /// `continue` cannot. The arm types unify as [`Self::unify_branch_value_types`] states: a narrower numeric arm is
+    /// widened and a payload arm is wrapped in `Some` in the arm itself, and arms that share no type are refused with
+    /// a type mismatch. Each arm is written to the expected type directly when that type is numeric or an `Option`
+    /// that holds no union, the adaptations lowering makes in an arm; otherwise the arms unify among themselves and
+    /// the whole match is written to the place, since an arm is not made a union member or any other type in place.
     pub(in crate::typechecker::check_expr) fn check_match(
         &mut self,
         subject: &Spanned<Expr>,
         arms: &[Spanned<MatchArm>],
         _span: Span,
+        expected: Option<&ResolvedType>,
     ) -> ResolvedType {
         let subject_ty = self.check_expr(subject);
         let subject_binding = if let Expr::Ident(name) = &subject.node {
@@ -185,10 +217,11 @@ impl TypeChecker {
             None
         };
         let mut remaining_union_members = subject_ty.union_members().map(|members| members.to_vec());
+        let view_param = self.pattern_view_param(subject);
 
         self.check_match_exhaustiveness(&subject_ty, arms, _span);
 
-        let mut arm_types = Vec::new();
+        let mut arm_values = Vec::new();
 
         for arm in arms {
             let narrowed_subject_ty = remaining_union_members
@@ -198,6 +231,7 @@ impl TypeChecker {
 
             self.symbols.enter_scope(ScopeKind::Block);
             self.check_pattern(&arm.node.pattern, expected_ty);
+            let views = self.enter_pattern_views(&arm.node.pattern.node, view_param.clone());
             if let (Some((name, info, span)), Some(ty)) = (&subject_binding, narrowed_subject_ty.clone()) {
                 self.symbols.define_refined_binding(Symbol {
                     name: name.clone(),
@@ -219,15 +253,23 @@ impl TypeChecker {
                 self.validate_truthiness_condition(&guard_ty, guard.span);
             }
 
-            let arm_ty = match &arm.node.body {
-                MatchBody::Expr(e) => self.check_expr(e),
+            match &arm.node.body {
+                MatchBody::Expr(e) => {
+                    let arm_ty = match expected {
+                        Some(expected) => self.check_expr_with_expected(e, Some(expected)),
+                        None => self.check_expr(e),
+                    };
+                    arm_values.push((arm_ty, e.span));
+                }
                 MatchBody::Block(stmts) => {
                     self.check_statement_block(stmts);
-                    ResolvedType::Unit
+                    if !block_cannot_complete(stmts) {
+                        arm_values.push((ResolvedType::Unit, arm.span));
+                    }
                 }
-            };
-            arm_types.push(arm_ty);
+            }
 
+            self.exit_pattern_views(views);
             self.symbols.exit_scope();
 
             if arm.node.guard.is_none()
@@ -238,7 +280,15 @@ impl TypeChecker {
         }
         self.note_dict_lookup_match(subject, arms);
 
-        arm_types.first().cloned().unwrap_or(ResolvedType::Unit)
+        let arm_destination = expected
+            .map(|expected| self.expand_type_aliases(expected.clone()))
+            .filter(|expected| {
+                (expected.is_option() || crate::typechecker::numeric_type_id_for_compat(expected).is_some())
+                    && !Self::type_holds_union(expected)
+            });
+        self.unify_branch_value_types(&arm_values, arm_destination.as_ref())
+            .or_else(|| arm_values.first().map(|(ty, _)| ty.clone()))
+            .unwrap_or(ResolvedType::Unit)
     }
 
     /// Return the type represented by the as-yet-uncovered union members for wildcard and binding arms.
@@ -457,6 +507,43 @@ impl TypeChecker {
         }
     }
 
+    /// Record the enum-qualified canonical variant a checked variant pattern over an Incan enum names.
+    ///
+    /// The subject's enum qualifies the variant, and a variant alias resolves to the variant it names, so a bare
+    /// `Filled(n)` and an aliased `Full(n)` or `Shape.Full(n)` are spelled `Shape::Filled` by lowering, as a qualified
+    /// pattern over the canonical variant is. A module that matches a value of an enum another project module declares
+    /// without binding the enum's name spells it from the crate root (`crate::shapes::Shape::Filled`).
+    fn record_incan_enum_pattern_path(&mut self, expected_ty: &ResolvedType, variant: &str, span: Span) {
+        let enum_name = match expected_ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return,
+        };
+        let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name) else {
+            return;
+        };
+        let canonical = info.variant_aliases.get(variant).map_or(variant, String::as_str);
+        let enum_binds_here = self
+            .lookup_symbol(enum_name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Enum(_))));
+        let owner = match info.variant_identities.get(canonical).map(|identity| &identity.origin) {
+            Some(SymbolOrigin::Module(module_path))
+                if !enum_binds_here && module_path.first().is_some_and(|root| root != stdlib::STDLIB_ROOT) =>
+            {
+                format!(
+                    "{}::{}::{enum_name}",
+                    keywords::as_str(KeywordId::Crate),
+                    module_path.join("::")
+                )
+            }
+            _ => enum_name.clone(),
+        };
+        let path = format!("{owner}::{canonical}");
+        self.type_info
+            .expressions
+            .pattern_variant_paths
+            .insert((span.start, span.end), path);
+    }
+
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
     ///
     /// Every pattern node's checked type is recorded at its own span before it is dispatched on, the way a `for`
@@ -568,23 +655,34 @@ impl TypeChecker {
                     name.node.as_str()
                 };
 
-                let model_or_class_fields = match expected_ty {
-                    ResolvedType::Named(type_name) if ctor_name == type_name => self
-                        .lookup_type_info(type_name)
-                        .and_then(|type_info| match type_info {
-                            TypeInfo::Model(model_info) => {
-                                Some((model_info.fields.clone(), model_info.field_order.clone()))
-                            }
-                            TypeInfo::Class(class_info) => {
-                                Some((class_info.fields.clone(), class_info.field_order.clone()))
-                            }
-                            _ => None,
-                        })
-                        .map(|(fields, field_order)| (type_name, fields, field_order)),
+                // A record pattern names the subject's model or class, generic ones included: each field it names
+                // is checked against the field's type under the subject's type arguments.
+                let model_or_class_fields = match subject_ty {
+                    ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) if ctor_name == type_name => {
+                        let type_args = match subject_ty {
+                            ResolvedType::Generic(_, type_args) => type_args.as_slice(),
+                            _ => &[],
+                        };
+                        self.lookup_type_info(type_name)
+                            .and_then(|type_info| match type_info {
+                                TypeInfo::Model(model_info) => Some((
+                                    model_info.fields.clone(),
+                                    model_info.field_order.clone(),
+                                    type_param_subst_map(&model_info.type_params, type_args),
+                                )),
+                                TypeInfo::Class(class_info) => Some((
+                                    class_info.fields.clone(),
+                                    class_info.field_order.clone(),
+                                    type_param_subst_map(&class_info.type_params, type_args),
+                                )),
+                                _ => None,
+                            })
+                            .map(|(fields, field_order, substitutions)| (type_name, fields, field_order, substitutions))
+                    }
                     _ => None,
                 };
 
-                if let Some((type_name, fields, field_order)) = model_or_class_fields {
+                if let Some((type_name, fields, field_order, substitutions)) = model_or_class_fields {
                     self.record_pattern_lexical_identity(type_name, name.span);
                     let mut provided = HashSet::new();
                     for arg in sub_patterns {
@@ -626,7 +724,8 @@ impl TypeChecker {
                                     ));
                                     continue;
                                 }
-                                self.check_pattern(pat, &info.ty);
+                                let field_ty = substitute_resolved_type(&info.ty, &substitutions);
+                                self.check_pattern(pat, &borrowed_pattern_payload(field_ty, borrow));
                             }
                         }
                     }
@@ -641,12 +740,8 @@ impl TypeChecker {
                     .filter(|a| matches!(a, PatternArg::Positional(_)))
                     .count();
 
-                let incan_resolution = self.incan_enum_constructor_payload_types(
-                    expected_ty,
-                    variant_name,
-                    positional_count,
-                    enum_qualifier_opt,
-                );
+                let incan_resolution =
+                    self.incan_enum_constructor_payload_types(expected_ty, variant_name, enum_qualifier_opt);
                 let rust_resolution =
                     self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), positional_count);
                 let field_types: Option<Vec<ResolvedType>> =
@@ -659,6 +754,19 @@ impl TypeChecker {
                     Some(fields) => {
                         if incan_resolution.is_some() {
                             self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
+                            self.record_incan_enum_pattern_path(expected_ty, variant_name, name.span);
+                            // One sub-pattern per payload value (#1561); a named sub-pattern is refused on its own.
+                            let all_positional =
+                                sub_patterns.iter().all(|arg| matches!(arg, PatternArg::Positional(_)));
+                            if all_positional && positional_count != fields.len() {
+                                self.errors.push(errors::pattern_arity_mismatch(
+                                    &format!("The pattern '{}'", name.node),
+                                    "payload value",
+                                    fields.len(),
+                                    positional_count,
+                                    pattern.span,
+                                ));
+                            }
                         }
                         self.check_constructor_subpatterns_enum_like(
                             name.node.as_str(),
@@ -697,6 +805,16 @@ impl TypeChecker {
                 // second unvisited, so their names were never bound (#1714).
                 let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
                 if let TupleShape::Tuple(elem_types) = classify_tuple_shape(subject_ty) {
+                    // One sub-pattern per element (#1561).
+                    if sub_patterns.len() != elem_types.len() {
+                        self.errors.push(errors::pattern_arity_mismatch(
+                            "A tuple pattern",
+                            "element",
+                            elem_types.len(),
+                            sub_patterns.len(),
+                            pattern.span,
+                        ));
+                    }
                     for (pat, elem_ty) in sub_patterns.iter().zip(elem_types.iter()) {
                         self.check_pattern(pat, &borrowed_pattern_payload(elem_ty.clone(), borrow));
                     }
@@ -709,11 +827,11 @@ impl TypeChecker {
     ///
     /// A decimal or bytes literal has no pattern form at all. Any other literal is compared with the position's type
     /// (the scrutinee, a tuple element, a variant payload or a field) after peeling the borrow wrappers match
-    /// ergonomics add; only the families a literal can spell are judged (`LiteralPatternFamily`), and any other
-    /// position type (a type parameter, a union, a nominal, an unresolved type) is left to the checks that own it. A
-    /// numeric literal that has the position's family is then held to the position's width and range by the same rules
-    /// a value literal of that type follows; a suffixed one is held to its suffix's range, and its suffix must name the
-    /// position's exact type.
+    /// ergonomics add: a literal matches only a position of its own family (`LiteralPatternFamily`), so one in a known
+    /// position of no family (a type parameter, a union, a nominal, a collection, a tuple) is refused too, and only an
+    /// unresolved or Rust-only position type is left to the checks that own it. A numeric literal that has the
+    /// position's family is then held to the position's width and range by the same rules a value literal of that type
+    /// follows; a suffixed one is held to its suffix's range, and its suffix must name the position's exact type.
     fn check_literal_pattern(&mut self, literal: &Literal, expected_ty: &ResolvedType, span: Span) {
         let unmatchable = match literal {
             Literal::Decimal(_) => Some("decimal"),
@@ -725,10 +843,11 @@ impl TypeChecker {
             return;
         }
         let (position_ty, _) = borrowed_pattern_subject(expected_ty);
-        let Some(family) = LiteralPatternFamily::of_position(position_ty) else {
+        let family = LiteralPatternFamily::of_position(position_ty);
+        if family.is_none() && !LiteralPatternFamily::position_is_known(position_ty) {
             return;
-        };
-        if !family.admits(literal) {
+        }
+        if !family.is_some_and(|family| family.admits(literal)) {
             let found = match literal {
                 Literal::None => constructors::as_str(ConstructorId::None).to_string(),
                 _ => self.check_literal(literal, span).to_string(),
@@ -953,16 +1072,16 @@ impl TypeChecker {
         }
     }
 
-    /// Payload types for a source-defined enum variant, using the enum type's own metadata.
+    /// Payload types for a source-defined enum variant, using the enum type's own metadata under the subject's type
+    /// arguments.
     ///
     /// Qualified patterns such as `Color.Red` should not depend on a module-level `Red` symbol being importable or
     /// winning same-scope shadowing. The scrutinee already tells us which enum is being matched, so resolve the
-    /// variant from that enum's table.
+    /// variant from that enum's table. The caller compares the pattern's sub-pattern count with the payload count.
     fn incan_enum_constructor_payload_types(
         &self,
         expected_ty: &ResolvedType,
         variant_name: &str,
-        positional_count: usize,
         enum_qualifier_opt: Option<&str>,
     ) -> Option<Vec<ResolvedType>> {
         let enum_name = match expected_ty {
@@ -983,15 +1102,23 @@ impl TypeChecker {
         if !enum_info.variants.iter().any(|variant| variant == canonical_variant) {
             return None;
         }
-        let fields = enum_info
-            .variant_fields
-            .get(canonical_variant)
-            .cloned()
-            .unwrap_or_default();
-        if positional_count > fields.len() {
-            return None;
-        }
-        Some(fields)
+        // A generic enum's payloads are typed under the subject's type arguments, as a generic record's fields are.
+        let substitutions = match expected_ty {
+            ResolvedType::Generic(_, type_args) => type_param_subst_map(&enum_info.type_params, type_args),
+            _ => HashMap::new(),
+        };
+        Some(
+            enum_info
+                .variant_fields
+                .get(canonical_variant)
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .map(|field| substitute_resolved_type(field, &substitutions))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )
     }
 
     /// Tuple-variant payload types for `match` patterns on Rust-backed enum surfaces.
@@ -1172,5 +1299,34 @@ enum RustEnumPatternResolution {
 impl RustEnumPatternResolution {
     fn payloads(fields: Vec<ResolvedType>) -> Self {
         Self::PayloadTypes(fields)
+    }
+}
+
+/// Whether a statement block cannot complete, because its last statement leaves it: a `return`, `break` or `continue`.
+///
+/// A `match` arm with such a body produces no value of its own, so it does not take part in unifying the arm types.
+fn block_cannot_complete(stmts: &[Spanned<Statement>]) -> bool {
+    stmts.last().is_some_and(|stmt| {
+        matches!(
+            stmt.node,
+            Statement::Return(_) | Statement::Break(_) | Statement::Continue
+        )
+    })
+}
+
+impl TypeChecker {
+    /// Whether a type is or holds an anonymous union anywhere inside it, as an `Option` payload, a collection element
+    /// or a tuple item.
+    fn type_holds_union(ty: &ResolvedType) -> bool {
+        match ty {
+            _ if ty.is_union() => true,
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => args.iter().any(Self::type_holds_union),
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => Self::type_holds_union(inner),
+            ResolvedType::FrozenDict(key, value) => Self::type_holds_union(key) || Self::type_holds_union(value),
+            _ => false,
+        }
     }
 }

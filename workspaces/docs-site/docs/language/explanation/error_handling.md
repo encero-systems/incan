@@ -200,6 +200,8 @@ trait Reported with Error:
 
 See [Error trait](../reference/stdlib_traits/error.md) for the trait's methods.
 
+A `__str__` is not the only `Display` an error type can have of its own. An enum that declares values, such as `enum Code(str)`, displays each variant's value even when it adopts `Error`, and so does a type that adopts `Display` or takes a Rust `Display` derive; `@derive(Display)` provides none. The full rule is in [Displaying an error](../reference/stdlib_traits/error.md#displaying-an-error).
+
 ## Common helpers
 
 ### Transform errors with `map_err`

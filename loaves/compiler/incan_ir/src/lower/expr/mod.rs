@@ -11,15 +11,19 @@ mod comprehensions;
 mod default_owner_paths;
 mod destination_literals;
 mod display_operands;
+mod dunder_operators;
 mod error_display;
 mod frozen_reads;
 mod helpers;
+mod in_place_matches;
 mod pattern_alternatives;
 mod patterns;
 mod pub_default_constructions;
 mod static_method_args;
 mod stdlib_defaults;
 mod union_owner;
+
+pub(in crate::lower) use in_place_matches::InPlaceArmBindings;
 
 use std::collections::HashMap;
 
@@ -43,6 +47,7 @@ use incan_frontend::typechecker::{
 };
 use incan_lang::interop::RustCollectionFamily;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
@@ -50,7 +55,7 @@ use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
-use incan_lang::lang::types::numerics::NumericTypeId;
+use incan_lang::lang::types::numerics::{self as numerics, NumericTypeId};
 use incan_lang::lang::{stdlib, trait_bounds};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
@@ -208,6 +213,48 @@ fn grouped_index_method_receiver(receiver: TypedExpr) -> TypedExpr {
     )
 }
 
+/// Mark the binding at the root of a method receiver place (`c`, `c.inner`, `rows[i]`) as borrowed mutably.
+///
+/// A call to a `mut self` source method changes that binding. Every later question about whether a body changes a
+/// binding, such as whether a `for` loop must reach its items in place, reads a change from a mutable borrow of the
+/// binding, so the call is seen wherever it sits: its own statement, a call argument, a list element or an f-string
+/// (#1561). A receiver that is not a place rooted at a value binding, such as a call result or a static, is left as it
+/// is.
+fn borrow_receiver_root_mutably(receiver: &mut TypedExpr) {
+    match &mut receiver.kind {
+        IrExprKind::Var {
+            access,
+            ref_kind: VarRefKind::Value,
+            ..
+        } => *access = VarAccess::BorrowMut,
+        IrExprKind::Field { object, .. } | IrExprKind::Index { object, .. } => borrow_receiver_root_mutably(object),
+        IrExprKind::Block {
+            stmts,
+            value: Some(value),
+        } if stmts.is_empty() => borrow_receiver_root_mutably(value),
+        _ => {}
+    }
+}
+
+/// Return whether a method receiver place reaches its value through a list element or a dict value (`rows[0]`,
+/// `table["k"]`, `rows[0].inner`), which a read of the receiver copies out of its collection.
+///
+/// A `mut self` call on such a receiver borrows it mutably as a place instead, so the change lands in the collection
+/// (#1561).
+fn receiver_reaches_a_collection_element(receiver: &TypedExpr) -> bool {
+    match &receiver.kind {
+        IrExprKind::Index { object, .. } => {
+            let collection = match &object.ty {
+                IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+                other => other,
+            };
+            matches!(collection, IrType::List(_) | IrType::Dict(_, _)) || receiver_reaches_a_collection_element(object)
+        }
+        IrExprKind::Field { object, .. } => receiver_reaches_a_collection_element(object),
+        _ => false,
+    }
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -223,8 +270,7 @@ impl AstLowering {
         )
         .then(|| self.current_impl_type.as_deref())
         .flatten()
-        .and_then(|owner| self.class_decls.get(owner))
-        .and_then(|class| class.methods.iter().find(|method| method.node.name == source_method))
+        .and_then(|owner| self.nearest_class_method(owner, source_method))
         .and_then(|method| {
             self.type_info.as_ref().and_then(|info| {
                 info.declarations
@@ -253,8 +299,9 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
-        if !can_use_source_method_projection(receiver, dispatch.as_ref())
-            || self.method_belongs_to_an_imported_type(identity)
+        let adopts_builtin_source_trait = self.receiver_adopts_the_builtin_source_trait(receiver, dispatch.as_ref());
+        if !(can_use_source_method_projection(receiver, dispatch.as_ref()) || adopts_builtin_source_trait)
+            || (!adopts_builtin_source_trait && self.method_belongs_to_an_imported_type(identity))
             || !self.receiver_adopts_the_dispatched_trait(receiver, dispatch.as_ref())
         {
             return (source_method.to_string(), dispatch);
@@ -273,6 +320,48 @@ impl AstLowering {
             other => other,
         };
         (projection, dispatch)
+    }
+
+    /// Whether a call dispatched through the builtin `Eq` or `Ord`, which map to Rust traits, reaches a local type that
+    /// adopts the builtin's stdlib source trait (`model Score with Ord`) rather than deriving it.
+    ///
+    /// Such a call names a dunder of the source trait's impl (`__ge__`), which the Rust trait has no slot for, so it
+    /// reaches the adopter's recoverable projection as a call of any other adopted trait's method does (#1561). The
+    /// projection is emitted beside the adopter's impl in this compilation, every expanded default included, so it is
+    /// the target even when the checked identity of a default it reaches is the compiled SDK provider's
+    /// (`incan_stdlib_core`'s `Ord.__ge__`): declining it left `score.__ge__(other)` to the Rust trait, which has no
+    /// such method.
+    ///
+    /// The trait is compared by the declaration each spelling names, so an adopter that names it through an import
+    /// alias (`with Ordered` after `from std.derives.comparison import Ord as Ordered`) or its module (`with
+    /// comparison.Ord`) is one too.
+    fn receiver_adopts_the_builtin_source_trait(
+        &self,
+        receiver: &TypedExpr,
+        dispatch: Option<&IrMethodDispatch>,
+    ) -> bool {
+        let Some(IrMethodDispatch::Trait(trait_dispatch)) = dispatch else {
+            return false;
+        };
+        let Some(trait_name) = self.canonical_trait_identity(&trait_dispatch.trait_source_name).1 else {
+            return false;
+        };
+        if !matches!(builtin_traits::from_str(&trait_name), Some(TraitId::Eq | TraitId::Ord)) {
+            return false;
+        }
+        let mut receiver_ty = &receiver.ty;
+        while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+            receiver_ty = inner.as_ref();
+        }
+        let (IrType::Struct(type_name) | IrType::Enum(type_name) | IrType::NamedGeneric(type_name, _)) = receiver_ty
+        else {
+            return false;
+        };
+        self.adopted_traits_by_type.get(type_name).is_some_and(|adopted| {
+            adopted
+                .iter()
+                .any(|spelled| self.canonical_trait_identity(spelled).1.as_deref() == Some(trait_name.as_str()))
+        })
     }
 
     /// Whether a trait-dispatched call reaches a trait the receiver's own type adopts.
@@ -849,6 +938,9 @@ impl AstLowering {
                     rust_path.to_string()
                 } else if let Some(segments) = stdlib_module {
                     self.lower_stdlib_trait_dispatch_path(segments, &declaration_name, receiver)
+                } else if let Some(dependency_path) = self.unimported_dependency_trait_path(&declaration_name, receiver)
+                {
+                    dependency_path
                 } else {
                     trait_name
                 };
@@ -865,6 +957,36 @@ impl AstLowering {
                 }))
             }
         }
+    }
+
+    /// Return the Rust path of a trait that a `pub::` dependency declares and exports, for a call on one of that
+    /// dependency's types when the consumer has not imported the trait (`bounds::Picker`).
+    ///
+    /// A method a dependency's type gets through an adopted trait is a Rust trait method, callable only with the trait
+    /// in scope. A consumer may call it without importing the trait, so the dispatch names the trait by its path, and
+    /// the call is emitted fully qualified. A trait the consumer imported, under any name, is in scope and keeps its
+    /// spelling.
+    fn unimported_dependency_trait_path(&self, declaration_name: &str, receiver: &TypedExpr) -> Option<String> {
+        let library = self.public_library_for_method_receiver(receiver)?;
+        let imported = self.import_aliases.values().any(|path| {
+            path.first()
+                .is_some_and(|root| root == keywords::as_str(KeywordId::Pub))
+                && path.get(1) == Some(&library)
+                && path.last().is_some_and(|name| name == declaration_name)
+        });
+        if imported {
+            return None;
+        }
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
+        let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = manifest_index.get(&library) else {
+            return None;
+        };
+        manifest
+            .exports
+            .traits
+            .iter()
+            .any(|exported| exported.name == declaration_name)
+            .then(|| format!("{library}::{declaration_name}"))
     }
 
     /// Lower checked implementation-header parameters into dispatch-owned IR metadata.
@@ -1216,6 +1338,22 @@ impl AstLowering {
         Ok(lowered)
     }
 
+    /// Return whether the checker dispatched a method call to the standard library's `Iterator[T]` trait, under any
+    /// spelling of it (`Iterator`, an import alias, `collection.Iterator`).
+    ///
+    /// The generated `Iterator` trait declares only `__next__` and `sum`; its RFC 088 adapters and terminals are the
+    /// iterator protocol's own methods, which an adopter reaches as an `Iterator[T]` value reaches them (#1561).
+    fn dispatches_to_stdlib_iterator(&self, dispatch: Option<&IrMethodDispatch>) -> bool {
+        let Some(IrMethodDispatch::Trait(dispatch) | IrMethodDispatch::SourceProjection(dispatch)) = dispatch else {
+            return false;
+        };
+        let (resolved_module_path, declaration_name) = self.canonical_trait_identity(&dispatch.trait_source_name);
+        let module_path = dispatch.trait_module_path.clone().or(resolved_module_path);
+        let declaration_name = declaration_name.unwrap_or_else(|| trait_declaration_name(dispatch).to_string());
+        module_path.is_some_and(|path| path == [stdlib::STDLIB_ROOT, "derives", "collection"])
+            && declaration_name == builtin_traits::as_str(TraitId::Iterator)
+    }
+
     /// Return whether a concrete receiver type explicitly adopts the Incan `Iterator` protocol.
     fn receiver_adopts_iterator_protocol(&self, ty: &IrType) -> bool {
         let mut ty = ty;
@@ -1313,6 +1451,42 @@ impl AstLowering {
         }
     }
 
+    /// Take a spread operand the new collection may not consume as an owned copy: a list, set or dict reached through
+    /// a reference, such as a `mut` parameter, or a binding or field the program reads again.
+    ///
+    /// A spread collects the operand's items into the new collection. Through a reference those items are references,
+    /// which the new collection cannot own; and a collection the program still reads must keep its items. A copy of
+    /// the collection hands over owned items and leaves the source as it was (#1852). A temporary, or a binding at its
+    /// last use, is consumed as it is.
+    pub(in crate::lower) fn owned_spread_operand(value: TypedExpr) -> TypedExpr {
+        /// Whether `ty` is a list, set or dict, the collections a spread copies.
+        fn is_collection(ty: &IrType) -> bool {
+            matches!(ty, IrType::List(_) | IrType::Set(_) | IrType::Dict(_, _))
+        }
+        let kept_place = match &value.kind {
+            IrExprKind::Var { access, .. } => !matches!(access, VarAccess::Move),
+            IrExprKind::Field { .. } | IrExprKind::Index { .. } => true,
+            _ => false,
+        };
+        let owned_ty = match &value.ty {
+            IrType::Ref(inner) | IrType::RefMut(inner) if is_collection(inner) => inner.as_ref().clone(),
+            ty if kept_place && is_collection(ty) => ty.clone(),
+            _ => return value,
+        };
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(value),
+                method: "clone".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            owned_ty,
+        )
+    }
+
     /// Return the key/value types carried by a lowered dict spread operand.
     fn lowered_dict_spread_entry_types(ty: &IrType) -> Option<(IrType, IrType)> {
         match ty {
@@ -1334,9 +1508,10 @@ impl AstLowering {
 
     /// Return the ordinary argument policy for a method call.
     ///
-    /// The fallback of `unwrap_or` on an `Option[str]` is the owned `str` the call returns, so it takes Incan value
-    /// semantics rather than the borrowed shape a Rust method argument otherwise takes (`d.unwrap_or(missing)` passes
-    /// `missing`, not `&missing`) (#1875).
+    /// The fallback of `unwrap_or` on an `Option` is the owned payload the call returns, so it takes Incan value
+    /// semantics rather than the borrowed shape a Rust method argument otherwise takes: `d.unwrap_or(missing)` passes
+    /// `missing`, not `&missing` (#1875), and copies a `missing` the program reads again (#1561). A `Copy` payload,
+    /// which needs neither, a Rust reference and an unknown type keep the Rust argument shape.
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: incan_frontend::ast::Span,
@@ -1352,8 +1527,12 @@ impl AstLowering {
             return MethodCallArgPolicy::PreserveShape;
         }
 
-        if matches!(&receiver.ty, IrType::Option(payload) if matches!(payload.as_ref(), IrType::String))
-            && option_methods::from_str(method) == Some(OptionMethodId::UnwrapOr)
+        if matches!(
+            &receiver.ty,
+            IrType::Option(payload)
+                if !payload.is_copy()
+                    && !matches!(payload.as_ref(), IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::Unknown)
+        ) && option_methods::from_str(method) == Some(OptionMethodId::UnwrapOr)
         {
             return MethodCallArgPolicy::SourceOwned;
         }
@@ -1413,6 +1592,7 @@ impl AstLowering {
             lowered.ty = match &lowered.ty {
                 IrType::StaticStr => IrType::StaticStr,
                 IrType::StaticBytes => IrType::StaticBytes,
+                existing if self.is_inherited_self_receiver(&expr.node, existing, &inferred) => existing.clone(),
                 existing => Self::merge_inferred_ir_type(existing, inferred),
             };
         }
@@ -1428,9 +1608,16 @@ impl AstLowering {
         if let Some(kind) = self.ident_kind_for_lowering(expr) {
             match (&expr.node, &mut lowered.kind) {
                 (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {
+                    // A static read in a parameter default reaches callers in other modules through the module that
+                    // declares the static.
+                    let (name, owner_module_path) = match self.default_owner_static(name, expr.span) {
+                        Some((module_path, projection)) => (projection, Some(module_path)),
+                        None => (name.clone(), None),
+                    };
                     lowered.kind = IrExprKind::StaticRead {
-                        name: name.clone(),
+                        name,
                         reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+                        owner_module_path,
                     };
                 }
                 (ast::Expr::Ident(name), IrExprKind::Var { ref_kind, .. }) => {
@@ -1594,6 +1781,22 @@ impl AstLowering {
             return Some(IdentKind::TypeName);
         }
         None
+    }
+
+    /// Whether `expr` is `self` in a method a class inherits, lowered again for the subclass whose impl is being built.
+    ///
+    /// The checker typed that `self` once, as the class that declares the method. In the subclass's copy it is the
+    /// subclass: its `self` calls reach the subclass's overrides (#1841), and the backend keeps those overrides only
+    /// when it sees them called on the subclass.
+    fn is_inherited_self_receiver(&self, expr: &ast::Expr, lowered: &IrType, inferred: &IrType) -> bool {
+        let (ast::Expr::SelfExpr, IrType::Struct(owner), Some(declaring)) =
+            (expr, lowered, inferred.nominal_type_name())
+        else {
+            return false;
+        };
+        self.current_impl_type.as_deref() == Some(owner.as_str())
+            && declaring != owner
+            && self.class_extends(owner, declaring)
     }
 
     /// Build a read of `member` on the Rust path `path` (`crate::shapes::Corner` and `Top`).
@@ -2135,9 +2338,21 @@ impl AstLowering {
                     self.lower_expr_spanned(o)?
                 };
                 let receiver = grouped_index_method_receiver(receiver);
-                let mut args_ir = self.lower_call_args(args)?;
+                let observer_closure = self.result_observer_closure_payload(expr_span, &receiver, m, args);
+                if let Some((closure_span, payload)) = &observer_closure {
+                    self.result_observer_closure_payloads
+                        .insert(*closure_span, payload.clone());
+                }
+                let lowered_args = self.lower_call_args(args);
+                if let Some((closure_span, _)) = &observer_closure {
+                    self.result_observer_closure_payloads.remove(closure_span);
+                }
+                let mut args_ir = lowered_args?;
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
-                let method_name = self.resolve_method_rebinding(&receiver.ty, m);
+                let resolved_method_name = self.resolve_method_rebinding(&receiver.ty, m);
+                let method_name = numerics::integer_helper_from_str(&resolved_method_name)
+                    .map(|helper| helper.canonical.to_string())
+                    .unwrap_or(resolved_method_name);
                 let arg_policy = self.regular_method_call_arg_policy(o.span, &receiver, &method_name, &args_ir);
                 for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
                     let arg_span = match arg_ast {
@@ -2191,6 +2406,11 @@ impl AstLowering {
                             })
                     });
 
+                let (receiver, mut args_ir) =
+                    match self.lower_dunder_as_operation(&method_name, receiver, dispatch.as_ref(), args_ir) {
+                        Ok((kind, ty)) => return Ok(TypedExpr::new(kind, ty)),
+                        Err(unchanged) => unchanged,
+                    };
                 if dispatch.is_none()
                     && args_ir.is_empty()
                     && frozen_reads::is_frozen_len_call(&receiver.ty, &method_name)
@@ -2205,7 +2425,6 @@ impl AstLowering {
                     )
                 } else if let Some(policy) = numeric_resize_policy(&method_name)
                     && args_ir.is_empty()
-                    && lowered_type_args.is_empty()
                 {
                     let target_ty = match (policy, &expr_ty) {
                         (NumericResizePolicy::Try, IrType::Option(inner)) => (**inner).clone(),
@@ -2219,24 +2438,29 @@ impl AstLowering {
                         },
                         expr_ty,
                     )
-                } else if let Some(kind) = dispatch
-                    .is_none()
-                    .then(|| {
-                        MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
-                            if self.receiver_adopts_iterator_protocol(&receiver.ty) {
-                                MethodKind::for_iterator_method_name(&method_name)
-                            } else if matches!(
-                                MethodKind::for_result_method_name(&method_name),
-                                Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
-                            ) {
-                                MethodKind::for_result_method_name(&method_name)
-                            } else {
-                                None
-                            }
+                } else if let Some(kind) = if self.dispatches_to_stdlib_iterator(dispatch.as_ref()) {
+                    // An adopter of the standard library's `Iterator[T]` reaches the iterator protocol's adapters and
+                    // terminals, which no generated trait method provides (#1561).
+                    MethodKind::for_iterator_method_name(&method_name)
+                } else {
+                    dispatch
+                        .is_none()
+                        .then(|| {
+                            MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
+                                if self.receiver_adopts_iterator_protocol(&receiver.ty) {
+                                    MethodKind::for_iterator_method_name(&method_name)
+                                } else if matches!(
+                                    MethodKind::for_result_method_name(&method_name),
+                                    Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
+                                ) {
+                                    MethodKind::for_result_method_name(&method_name)
+                                } else {
+                                    None
+                                }
+                            })
                         })
-                    })
-                    .flatten()
-                {
+                        .flatten()
+                } {
                     if kind == MethodKind::Collection(CollectionMethodKind::Count) && args_ir.is_empty() {
                         (Self::lower_list_item_count(receiver), expr_ty)
                     } else {
@@ -2258,6 +2482,13 @@ impl AstLowering {
                                     arg
                                 })
                                 .collect()
+                        } else if let MethodKind::Result(method) = kind {
+                            // A `Result` combinator's closure returns its `Ok(...)` or `Err(...)` with both types.
+                            let mut args_ir = args_ir;
+                            if let Some(callback) = args_ir.first_mut() {
+                                Self::pin_result_combinator_callback(&mut callback.expr, method, &receiver.ty);
+                            }
+                            args_ir
                         } else {
                             args_ir
                         };
@@ -2341,6 +2572,21 @@ impl AstLowering {
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
                     Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
                     Self::keep_rust_collection_static_args_readable(&receiver, &mut args_ir);
+                    // A `mut self` source method borrows the binding its receiver is rooted at mutably. The checker
+                    // fact is keyed by span in the module being lowered, so an imported trait default, whose spans
+                    // belong to another file, does not consult it.
+                    let mut receiver = receiver;
+                    if !self.active_imported_trait_defaults.last().copied().unwrap_or(false)
+                        && self
+                            .type_info
+                            .as_ref()
+                            .is_some_and(|info| info.method_call_takes_mutable_receiver(expr_span))
+                    {
+                        borrow_receiver_root_mutably(&mut receiver);
+                        if receiver_reaches_a_collection_element(&receiver) {
+                            receiver = Self::in_place_scrutinee(receiver);
+                        }
+                    }
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
@@ -2395,7 +2641,11 @@ impl AstLowering {
                         },
                         result_ty,
                     )
-                } else if let IrType::Tuple(items) = &obj.ty {
+                } else if let IrType::Tuple(items) = match &obj.ty {
+                    // A `mut` tuple parameter is a reference to the caller's tuple; its elements are still fields.
+                    IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+                    other => other,
+                } {
                     let index = Self::extract_int_literal(i)
                         .and_then(|raw| {
                             let len = i64::try_from(items.len()).ok()?;
@@ -2411,13 +2661,8 @@ impl AstLowering {
                         message: "typechecked tuple index did not resolve to a tuple field".to_string(),
                         span: super::super::IrSpan::default(),
                     })?;
-                    (
-                        IrExprKind::Field {
-                            object: Box::new(obj),
-                            field: index.to_string(),
-                        },
-                        elem_ty,
-                    )
+                    let element = TypedExpr::tuple_element(obj, index, elem_ty);
+                    (element.kind, element.ty)
                 } else if let Some(value_ty) = frozen_dict_value_type(&obj.ty) {
                     // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757), a `'static` text or bytes
                     // value converted to the owned `str` or `bytes` the checker typed.
@@ -2466,8 +2711,10 @@ impl AstLowering {
             ast::Expr::Field(o, f) => {
                 // A dependency function reached through a module binding is a reference to the declaration, not a
                 // field read from a runtime module value. Calls already project this checked identity; taking the
-                // member as a first-class value must use the same compiler-owned projection (#1840). A function of a
-                // module of this crate is spelled through its module path below, which reaches the same declaration.
+                // member as a first-class value must use the same compiler-owned projection (#1840), read through the
+                // dependency's path the binding names, since no import brings the projection into scope. A function
+                // of a module of this crate is spelled through its module path below, which reaches the same
+                // declaration.
                 let names_dependency_function = self
                     .type_info
                     .as_ref()
@@ -2475,21 +2722,18 @@ impl AstLowering {
                     .is_some_and(|identity| {
                         matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. })
                     });
-                if names_dependency_function && let Some(name) = self.emitted_function_reference_name(expr_span) {
-                    let ty = self
+                if names_dependency_function
+                    && let Some(name) = self.emitted_function_reference_name(expr_span)
+                    && let Some(dependency_path) = self.pub_dependency_binding_rust_path(&o.node)
+                {
+                    let mut reference = Self::external_path_member_expr(&dependency_path, &name);
+                    reference.ty = self
                         .type_info
                         .as_ref()
                         .and_then(|info| info.expr_type(expr_span))
                         .map(|ty| self.lower_resolved_type(ty))
                         .unwrap_or(IrType::Unknown);
-                    return Ok(TypedExpr::new(
-                        IrExprKind::Var {
-                            name,
-                            access: VarAccess::Copy,
-                            ref_kind: VarRefKind::Value,
-                        },
-                        ty,
-                    ));
+                    return Ok(reference);
                 }
                 if let Some(value) = self
                     .type_info
@@ -2675,7 +2919,13 @@ impl AstLowering {
             // ---- Match expressions (delegated to patterns submodule) ----
             ast::Expr::Match(s, arms) => {
                 let scrutinee = self.lower_expr_spanned(s)?;
-                let arms_ir = self.lower_match_arms(arms, &scrutinee)?;
+                let in_place = self.match_is_in_place(s.span, &scrutinee);
+                let scrutinee = if in_place {
+                    Self::in_place_scrutinee(scrutinee)
+                } else {
+                    scrutinee
+                };
+                let arms_ir = self.lower_match_arms(arms, &scrutinee, in_place)?;
                 let ty = arms_ir.first().map(|a| a.body.ty.clone()).unwrap_or(IrType::Unknown);
                 (
                     IrExprKind::Match {
@@ -2754,7 +3004,7 @@ impl AstLowering {
                             .map(|display| IrType::RustDisplay(display.clone()))
                             .collect::<Vec<_>>()
                     });
-                let param_pairs: Vec<(String, IrType)> = params
+                let mut param_pairs: Vec<(String, IrType)> = params
                     .iter()
                     .enumerate()
                     .map(|(idx, p)| {
@@ -2766,6 +3016,20 @@ impl AstLowering {
                         (p.node.name.clone(), ty)
                     })
                     .collect();
+                // A `Result` observer's parameter is the payload it observes in place: a borrow of a non-`Copy`
+                // payload, a copy of a `Copy` one (#1561).
+                let observed_payload = self
+                    .result_observer_closure_payloads
+                    .get(&(expr_span.start, expr_span.end))
+                    .filter(|_| param_pairs.len() == 1)
+                    .cloned();
+                if let (Some(payload), Some((_, param_ty))) = (&observed_payload, param_pairs.first_mut()) {
+                    *param_ty = if payload.is_copy() {
+                        payload.clone()
+                    } else {
+                        IrType::Ref(Box::new(payload.clone()))
+                    };
+                }
                 let mut closure_read_counts = HashMap::new();
                 self.count_expr_ident_reads(&body.node, &mut closure_read_counts);
                 let parameter_names = param_pairs
@@ -2777,9 +3041,16 @@ impl AstLowering {
                 // functions, consts and statics, which the closure reaches by path, so it is not searched. Each
                 // block's read counters still include this closure's own reads, so a count above them is a later
                 // read.
+                // A closure its function returns outlives the call that built it, so it holds its own copy of every
+                // outer local it reads (#1561).
+                let returned = self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.is_returned_closure(expr_span));
                 let read_after_construction = |name: &str| {
                     let own_reads = closure_read_counts.get(name).copied().unwrap_or(0);
-                    self.non_linear_context_depth > 0
+                    returned
+                        || self.non_linear_context_depth > 0
                         || self
                             .remaining_ident_reads
                             .iter()
@@ -2815,13 +3086,15 @@ impl AstLowering {
                 self.pop_scope();
                 self.non_linear_context_depth -= 1;
                 let _ = self.remaining_ident_reads.pop();
-                let body_ir = body_ir_result?;
+                let mut body_ir = body_ir_result?;
+                self.pin_settled_closure_result_constructor(expr_span, &mut body_ir);
                 let ret_ty = body_ir.ty.clone();
                 let param_tys: Vec<IrType> = param_pairs.iter().map(|(_, t)| t.clone()).collect();
-                let annotate_param_types = self
-                    .type_info
-                    .as_ref()
-                    .is_some_and(|info| info.is_source_callable_closure(expr_span));
+                let annotate_param_types = observed_payload.is_some()
+                    || self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| info.is_source_callable_closure(expr_span));
                 let closure = TypedExpr::new(
                     IrExprKind::Closure {
                         params: param_pairs,
@@ -2883,7 +3156,9 @@ impl AstLowering {
                     .iter()
                     .map(|i| match i {
                         ast::ListEntry::Element(value) => self.lower_expr_spanned(value).map(IrListEntry::Element),
-                        ast::ListEntry::Spread(value) => self.lower_expr_spanned(value).map(IrListEntry::Spread),
+                        ast::ListEntry::Spread(value) => self
+                            .lower_expr_spanned(value)
+                            .map(|value| IrListEntry::Spread(Self::owned_spread_operand(value))),
                     })
                     .collect::<Result<_, _>>()?;
                 let elem = items_ir
@@ -2904,7 +3179,9 @@ impl AstLowering {
                             self.lower_expr_spanned(k)?,
                             Box::new(self.lower_expr_spanned(v)?),
                         )),
-                        ast::DictEntry::Spread(value) => self.lower_expr_spanned(value).map(IrDictEntry::Spread),
+                        ast::DictEntry::Spread(value) => self
+                            .lower_expr_spanned(value)
+                            .map(|value| IrDictEntry::Spread(Self::owned_spread_operand(value))),
                     })
                     .collect::<Result<_, LoweringError>>()?;
                 let (k, v) = pairs_ir
@@ -3005,6 +3282,11 @@ impl AstLowering {
                     .map(|st| Ok(Box::new(self.lower_expr_spanned(st)?)))
                     .transpose()?;
 
+                // A user type's slice calls its `__getslice__` hook with each part as an `Option[int]` (#1561).
+                if let Some(method) = self.resolved_slice_hook(expr_span) {
+                    return Ok(self.lower_slice_hook_call(expr_span, &method, target_expr, [start, end, step]));
+                }
+
                 let result_ty = match &target_expr.ty {
                     IrType::List(inner) => IrType::List(inner.clone()),
                     IrType::String => IrType::String,
@@ -3024,188 +3306,406 @@ impl AstLowering {
 
             // ---- Comprehensions (delegated to comprehensions submodule) ----
             ast::Expr::Generator(generator) => self.lower_generator_expr(generator)?,
-            ast::Expr::ListComp(comp) => self.lower_list_comp(comp)?,
+            ast::Expr::ListComp(comp) => self.lower_list_comp(comp, expr_span)?,
             ast::Expr::DictComp(comp) => self.lower_dict_comp(comp)?,
 
             // ---- Yield (placeholder) ----
             ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown),
-            ast::Expr::Partial(partial) => {
-                let Some(incan_frontend::symbols::ResolvedType::Function(target_params, _)) = self
-                    .type_info
-                    .as_ref()
-                    .and_then(|info| info.expr_type(partial.target.span).cloned())
-                else {
-                    return Err(LoweringError {
-                        message: "Partial callable target is missing typechecker signature metadata".to_string(),
-                        span: partial.target.span.into(),
-                    });
-                };
-                let signature = self
-                    .partial_expr_callable_signature(partial, expr_span)?
-                    .ok_or_else(|| LoweringError {
-                        message: "Partial callable preset expression is missing typechecker projection metadata"
-                            .to_string(),
-                        span: expr_span.into(),
-                    })?;
-                let target = self.lower_expr_spanned(&partial.target)?;
+            ast::Expr::Partial(partial) => self.lower_local_partial(partial, expr_span)?,
+        };
+        Ok(TypedExpr::new(kind, ty))
+    }
 
-                // Evaluate every preset exactly once before the closure is constructed. The generated closure is
-                // `move`, so a later mutation of the source local cannot change an omitted preset argument.
-                let mut capture_stmts = Vec::with_capacity(partial.args.len());
-                let mut captures = HashMap::with_capacity(partial.args.len());
-                let mut capture_names = Vec::with_capacity(partial.args.len());
-                for (index, preset) in partial.args.iter().enumerate() {
-                    let value = self.lower_expr_spanned(&preset.value)?;
-                    let ty = value.ty.clone();
-                    let capture_name = format!("__incan_partial_preset_{index}_{}", preset.name);
-                    capture_stmts.push(IrStmt::new(IrStmtKind::Let {
-                        name: capture_name.clone(),
-                        ty: ty.clone(),
-                        type_annotation: None,
-                        mutability: Mutability::Immutable,
-                        value,
-                    }));
-                    captures.insert(preset.name.clone(), (capture_name.clone(), ty));
-                    capture_names.push(capture_name);
-                }
+    /// Lower a local partial expression (RFC 084) to the closure that calls its target with the presets it holds.
+    ///
+    /// Every preset, and the receiver of a method target, is evaluated once, before the closure is constructed. Each
+    /// preset parameter of the closure is optional and falls back to its preset.
+    fn lower_local_partial(
+        &mut self,
+        partial: &ast::PartialExpr,
+        expr_span: ast::Span,
+    ) -> Result<(IrExprKind, IrType), LoweringError> {
+        let Some(incan_frontend::symbols::ResolvedType::Function(target_params, _)) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(partial.target.span).cloned())
+        else {
+            return Err(LoweringError {
+                message: "Partial callable target is missing typechecker signature metadata".to_string(),
+                span: partial.target.span.into(),
+            });
+        };
+        let signature = self
+            .partial_expr_callable_signature(partial, expr_span)?
+            .ok_or_else(|| LoweringError {
+                message: "Partial callable preset expression is missing typechecker projection metadata".to_string(),
+                span: expr_span.into(),
+            })?;
+        // A model, class or newtype named as the target is its constructor: the closure constructs the value
+        // the way a direct call does, instead of calling the type name.
+        let constructor_target = match &partial.target.node {
+            ast::Expr::Ident(name) if self.ident_kind_for_lowering(&partial.target) == Some(IdentKind::TypeName) => {
+                Some(name.clone())
+            }
+            _ => None,
+        };
+        // A method of a value named as the target (`partial user.label(prefix="x")`) is called on the receiver the
+        // partial holds, evaluated once when the partial is built (RFC 084).
+        let method_receiver = self.lower_partial_method_receiver(partial)?;
+        let target = match (&constructor_target, &method_receiver) {
+            (None, None) => Some(self.lower_expr_spanned(&partial.target)?),
+            _ => None,
+        };
 
-                let closure_params: Vec<(String, IrType)> = signature
-                    .params
-                    .iter()
-                    .map(|param| (param.name.clone(), param.ty.clone()))
-                    .collect();
-                let mut forward_args = Vec::with_capacity(target_params.len());
-                for (idx, target_param) in target_params.iter().enumerate() {
-                    let Some(name) = target_param.name.as_ref() else {
-                        return Err(LoweringError {
-                            message: format!(
-                                "Partial callable target has unsupported anonymous parameter at index {idx}"
-                            ),
-                            span: partial.target.span.into(),
-                        });
-                    };
-                    let target_ty =
-                        Self::lower_param_container_type(target_param.kind, self.lower_resolved_type(&target_param.ty));
-                    let parameter = signature.params.get(idx).ok_or_else(|| LoweringError {
-                        message: format!(
-                            "Partial callable target parameter '{name}' is absent from its callable signature"
-                        ),
-                        span: partial.target.span.into(),
-                    })?;
-                    let value = if matches!(
-                        parameter.default.as_ref(),
-                        Some(FunctionParamDefault::CapturedPartialPreset)
-                    ) {
-                        let (capture_name, capture_ty) = captures.get(name).ok_or_else(|| LoweringError {
-                            message: format!("Partial callable preset '{name}' has no construction-time capture"),
-                            span: expr_span.into(),
-                        })?;
-                        let fallback = TypedExpr::new(
-                            IrExprKind::Closure {
-                                params: Vec::new(),
-                                body: Box::new(TypedExpr::new(
-                                    IrExprKind::MethodCall {
-                                        receiver: Box::new(TypedExpr::new(
-                                            IrExprKind::Var {
-                                                name: capture_name.clone(),
-                                                access: VarAccess::Read,
-                                                ref_kind: VarRefKind::Value,
-                                            },
-                                            capture_ty.clone(),
-                                        )),
-                                        method: "clone".to_string(),
-                                        dispatch: None,
-                                        type_args: Vec::new(),
-                                        args: Vec::new(),
-                                        callable_signature: None,
-                                        arg_policy: MethodCallArgPolicy::Default,
-                                    },
-                                    capture_ty.clone(),
-                                )),
-                                captures: Vec::new(),
-                                annotate_param_types: false,
-                            },
-                            IrType::Function {
-                                params: Vec::new(),
-                                ret: Box::new(capture_ty.clone()),
-                            },
-                        );
-                        TypedExpr::new(
+        // Evaluate every preset exactly once before the closure is constructed. The generated closure is
+        // `move`, so a later mutation of the source local cannot change an omitted preset argument.
+        let mut capture_stmts = Vec::with_capacity(partial.args.len() + 1);
+        let mut captures = HashMap::with_capacity(partial.args.len());
+        let mut capture_names = Vec::with_capacity(partial.args.len() + 1);
+        if let Some(receiver) = &method_receiver {
+            capture_stmts.push(receiver.binding.clone());
+            capture_names.push(PartialMethodReceiver::NAME.to_string());
+        }
+        for (index, preset) in partial.args.iter().enumerate() {
+            let value = self.lower_expr_spanned(&preset.value)?;
+            let ty = value.ty.clone();
+            let capture_name = format!("__incan_partial_preset_{index}_{}", preset.name);
+            capture_stmts.push(IrStmt::new(IrStmtKind::Let {
+                name: capture_name.clone(),
+                ty: ty.clone(),
+                type_annotation: None,
+                mutability: Mutability::Immutable,
+                value,
+            }));
+            captures.insert(preset.name.clone(), (capture_name.clone(), ty));
+            capture_names.push(capture_name);
+        }
+
+        let closure_params: Vec<(String, IrType)> = signature
+            .params
+            .iter()
+            .map(|param| (param.name.clone(), param.ty.clone()))
+            .collect();
+        let mut forward_args = Vec::with_capacity(target_params.len());
+        for (idx, target_param) in target_params.iter().enumerate() {
+            let Some(name) = target_param.name.as_ref() else {
+                return Err(LoweringError {
+                    message: format!("Partial callable target has unsupported anonymous parameter at index {idx}"),
+                    span: partial.target.span.into(),
+                });
+            };
+            let target_ty =
+                Self::lower_param_container_type(target_param.kind, self.lower_resolved_type(&target_param.ty));
+            let parameter = signature.params.get(idx).ok_or_else(|| LoweringError {
+                message: format!("Partial callable target parameter '{name}' is absent from its callable signature"),
+                span: partial.target.span.into(),
+            })?;
+            let value = if matches!(
+                parameter.default.as_ref(),
+                Some(FunctionParamDefault::CapturedPartialPreset)
+            ) {
+                let (capture_name, capture_ty) = captures.get(name).ok_or_else(|| LoweringError {
+                    message: format!("Partial callable preset '{name}' has no construction-time capture"),
+                    span: expr_span.into(),
+                })?;
+                let fallback = TypedExpr::new(
+                    IrExprKind::Closure {
+                        params: Vec::new(),
+                        body: Box::new(TypedExpr::new(
                             IrExprKind::MethodCall {
                                 receiver: Box::new(TypedExpr::new(
                                     IrExprKind::Var {
-                                        name: name.clone(),
+                                        name: capture_name.clone(),
                                         access: VarAccess::Read,
                                         ref_kind: VarRefKind::Value,
                                     },
-                                    parameter.ty.clone(),
+                                    capture_ty.clone(),
                                 )),
-                                method: "unwrap_or_else".to_string(),
+                                method: "clone".to_string(),
                                 dispatch: None,
                                 type_args: Vec::new(),
-                                args: vec![IrCallArg {
-                                    name: None,
-                                    kind: IrCallArgKind::Positional,
-                                    expr: fallback,
-                                }],
+                                args: Vec::new(),
                                 callable_signature: None,
                                 arg_policy: MethodCallArgPolicy::Default,
                             },
-                            target_ty,
-                        )
-                    } else {
-                        TypedExpr::new(
+                            capture_ty.clone(),
+                        )),
+                        captures: Vec::new(),
+                        annotate_param_types: false,
+                    },
+                    IrType::Function {
+                        params: Vec::new(),
+                        ret: Box::new(capture_ty.clone()),
+                    },
+                );
+                TypedExpr::new(
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
                             IrExprKind::Var {
                                 name: name.clone(),
                                 access: VarAccess::Read,
                                 ref_kind: VarRefKind::Value,
                             },
-                            target_ty,
-                        )
-                    };
-                    forward_args.push(IrCallArg {
-                        name: Some(name.clone()),
-                        kind: IrCallArgKind::Named,
-                        expr: value,
-                    });
-                }
-                let body = TypedExpr::new(
-                    IrExprKind::Call {
-                        func: Box::new(target),
-                        type_args: self.lower_call_site_type_args(expr_span, &partial.type_args),
-                        args: forward_args,
+                            parameter.ty.clone(),
+                        )),
+                        method: "unwrap_or_else".to_string(),
+                        dispatch: None,
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: fallback,
+                        }],
                         callable_signature: None,
-                        canonical_path: None,
+                        arg_policy: MethodCallArgPolicy::Default,
                     },
-                    signature.return_type.clone(),
-                );
-                let closure = TypedExpr::new(
-                    IrExprKind::Closure {
-                        params: closure_params.clone(),
-                        body: Box::new(body),
-                        captures: capture_names,
-                        // A local partial has no surrounding Rust callable type to infer its parameters. Emit their
-                        // source-checked IR types, including `Option<T>` for overrideable preset slots.
-                        annotate_param_types: true,
-                    },
-                    IrType::Function {
-                        params: closure_params.into_iter().map(|(_, ty)| ty).collect(),
-                        ret: Box::new(signature.return_type.clone()),
-                    },
-                );
-                (
-                    IrExprKind::Block {
-                        stmts: capture_stmts,
-                        value: Some(Box::new(closure)),
-                    },
-                    IrType::Function {
-                        params: signature.params.into_iter().map(|param| param.ty).collect(),
-                        ret: Box::new(signature.return_type),
-                    },
+                    target_ty,
                 )
+            } else {
+                TypedExpr::new(
+                    IrExprKind::Var {
+                        name: name.clone(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    target_ty,
+                )
+            };
+            forward_args.push(IrCallArg {
+                name: Some(name.clone()),
+                kind: IrCallArgKind::Named,
+                expr: value,
+            });
+        }
+        let body = match (constructor_target, target) {
+            (Some(constructor), _) => {
+                self.local_partial_constructor_body(&constructor, forward_args, &signature.return_type)?
+            }
+            // An imported target is called through its canonical path, as a direct call of it is, so the
+            // call binds its named arguments against the imported declaration's signature.
+            (None, Some(target)) => TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(target),
+                    type_args: self.lower_call_site_type_args(expr_span, &partial.type_args),
+                    args: forward_args,
+                    callable_signature: None,
+                    canonical_path: self.imported_callee_path_for_expr(&partial.target),
+                },
+                signature.return_type.clone(),
+            ),
+            (None, None) => {
+                let Some(receiver) = method_receiver else {
+                    return Err(LoweringError {
+                        message: "Partial callable target was neither a constructor nor lowered".to_string(),
+                        span: partial.target.span.into(),
+                    });
+                };
+                self.partial_method_call(partial.target.span, receiver, forward_args, &signature.return_type)
             }
         };
-        Ok(TypedExpr::new(kind, ty))
+        let closure = TypedExpr::new(
+            IrExprKind::Closure {
+                params: closure_params.clone(),
+                body: Box::new(body),
+                captures: capture_names,
+                // A local partial has no surrounding Rust callable type to infer its parameters. Emit their
+                // source-checked IR types, including `Option<T>` for overrideable preset slots.
+                annotate_param_types: true,
+            },
+            IrType::Function {
+                params: closure_params.into_iter().map(|(_, ty)| ty).collect(),
+                ret: Box::new(signature.return_type.clone()),
+            },
+        );
+        Ok((
+            IrExprKind::Block {
+                stmts: capture_stmts,
+                value: Some(Box::new(closure)),
+            },
+            IrType::Function {
+                params: signature.params.into_iter().map(|param| param.ty).collect(),
+                ret: Box::new(signature.return_type),
+            },
+        ))
+    }
+
+    /// Lower the receiver of a local partial whose target is a method of a value (`partial user.label(...)`), bound to
+    /// the local the partial's closure holds; `None` when the target is no such method (RFC 084).
+    fn lower_partial_method_receiver(
+        &mut self,
+        partial: &ast::PartialExpr,
+    ) -> Result<Option<PartialMethodReceiver>, LoweringError> {
+        let Some(method) = self.type_info.as_ref().and_then(|info| {
+            info.expressions
+                .local_partial_method_targets
+                .get(&(partial.target.span.start, partial.target.span.end))
+                .cloned()
+        }) else {
+            return Ok(None);
+        };
+        let ast::Expr::Field(base, _) = &partial.target.node else {
+            return Ok(None);
+        };
+        let receiver = self.lower_expr_spanned(base)?;
+        let ty = receiver.ty.clone();
+        let binding = IrStmt::new(IrStmtKind::Let {
+            name: PartialMethodReceiver::NAME.to_string(),
+            ty: ty.clone(),
+            type_annotation: None,
+            mutability: Mutability::Immutable,
+            value: receiver,
+        });
+        Ok(Some(PartialMethodReceiver { method, binding, ty }))
+    }
+
+    /// Build the call a local partial of a method of a value makes: the method, called on the receiver the partial
+    /// holds, with the forwarded arguments in the method's parameter order (RFC 084).
+    fn partial_method_call(
+        &self,
+        target_span: ast::Span,
+        receiver: PartialMethodReceiver,
+        forward_args: Vec<IrCallArg>,
+        return_type: &IrType,
+    ) -> TypedExpr {
+        let held = TypedExpr::new(
+            IrExprKind::Var {
+                name: PartialMethodReceiver::NAME.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            receiver.ty,
+        );
+        let (method, dispatch) = self.project_resolved_method_target(target_span, &receiver.method, &held, None);
+        let args = forward_args
+            .into_iter()
+            .map(|arg| IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: arg.expr,
+            })
+            .collect();
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(held),
+                method,
+                dispatch,
+                type_args: Vec::new(),
+                args,
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            return_type.clone(),
+        )
+    }
+
+    /// Return the hook the checker resolved `obj[start:end:step]` at `expr_span` to, when `obj`'s type defines
+    /// `__getslice__` (#1561).
+    fn resolved_slice_hook(&self, expr_span: ast::Span) -> Option<String> {
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.resolved_operator_call(expr_span))
+            .filter(|resolved_operator| resolved_operator.kind == ResolvedOperatorKind::Slice)
+            .map(|resolved_operator| resolved_operator.method.clone())
+    }
+
+    /// Lower a slice on a user type to the call of its `__getslice__` hook `method`, passing each part as an
+    /// `Option[int]`: `Some` of a written part, `None` for an omitted one (#1561).
+    fn lower_slice_hook_call(
+        &self,
+        expr_span: ast::Span,
+        method: &str,
+        target: TypedExpr,
+        parts: [Option<Box<TypedExpr>>; 3],
+    ) -> TypedExpr {
+        let args = parts
+            .into_iter()
+            .map(|part| {
+                let option_ty = IrType::Option(Box::new(IrType::Int));
+                let expr = match part {
+                    Some(value) => Self::some_constructor_call(*value, option_ty),
+                    None => TypedExpr::new(IrExprKind::None, option_ty),
+                };
+                IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr,
+                }
+            })
+            .collect();
+        let dispatch = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_method_call(expr_span).cloned())
+            .map(|resolved| self.lower_resolved_method_dispatch(resolved.dispatch, &target));
+        let result_ty = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(expr_span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .unwrap_or(IrType::Unknown);
+        let (method, dispatch) = self.project_resolved_method_target(expr_span, method, &target, dispatch);
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(target),
+                method,
+                dispatch,
+                type_args: Vec::new(),
+                args,
+                callable_signature: self.callable_signature_for_call_span(expr_span),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        )
+    }
+
+    /// Build the construction a local partial of a model, class or newtype constructor forwards to.
+    ///
+    /// Each forwarded argument, a closure parameter or its preset, is bound to a temporary of the closure body, and the
+    /// constructor is lowered as a call naming each parameter by its temporary, so the value is constructed exactly as
+    /// a direct call constructs it (a newtype's checks included).
+    fn local_partial_constructor_body(
+        &mut self,
+        constructor: &str,
+        forward_args: Vec<IrCallArg>,
+        return_type: &IrType,
+    ) -> Result<TypedExpr, LoweringError> {
+        let mut stmts = Vec::with_capacity(forward_args.len());
+        let mut args = Vec::with_capacity(forward_args.len());
+        for arg in forward_args {
+            let Some(parameter) = arg.name else {
+                return Err(LoweringError {
+                    message: format!("Partial constructor '{constructor}' forwards an unnamed argument"),
+                    span: ast::Span::default().into(),
+                });
+            };
+            let temporary = format!("__incan_partial_arg_{parameter}");
+            let ty = arg.expr.ty.clone();
+            self.define_local_binding(temporary.clone(), ty.clone(), false);
+            stmts.push(IrStmt::new(IrStmtKind::Let {
+                name: temporary.clone(),
+                ty,
+                type_annotation: None,
+                mutability: Mutability::Immutable,
+                value: arg.expr,
+            }));
+            args.push(ast::CallArg::Named(
+                Spanned::new(parameter, ast::Span::default()),
+                Spanned::new(ast::Expr::Ident(temporary), ast::Span::default()),
+            ));
+        }
+        let (construction, constructed_ty) =
+            self.lower_constructor_call(constructor, &[], &args, ast::Span::default())?;
+        let ty = match constructed_ty {
+            IrType::Unknown => return_type.clone(),
+            known => known,
+        };
+        Ok(TypedExpr::new(
+            IrExprKind::Block {
+                stmts,
+                value: Some(Box::new(TypedExpr::new(construction, ty.clone()))),
+            },
+            ty,
+        ))
     }
 
     /// Recursively lower every expression hole nested inside one embedded-fragment node, appending each lowered
@@ -3269,6 +3769,19 @@ fn numeric_resize_policy(method: &str) -> Option<NumericResizePolicy> {
         "saturating_resize" => Some(NumericResizePolicy::Saturating),
         _ => None,
     }
+}
+
+/// The receiver a local partial of a method of a value holds (RFC 084): the method it calls, the binding of the
+/// receiver's value, evaluated once when the partial is built, and the receiver's type.
+struct PartialMethodReceiver {
+    method: String,
+    binding: IrStmt,
+    ty: IrType,
+}
+
+impl PartialMethodReceiver {
+    /// The local the partial's closure holds the receiver in.
+    const NAME: &'static str = "__incan_partial_receiver";
 }
 
 #[cfg(test)]
@@ -3377,6 +3890,44 @@ mod tests {
             lowering.method_belongs_to_an_imported_type(recorded_method_identity(&lowering, call_span)),
             "a dependency's method has no wrapper here, dispatched or not"
         );
+    }
+
+    /// A dunder of the builtin `Ord` source trait, called on a local adopter, reaches the projection emitted beside the
+    /// adopter's impl even when the checked identity of the default it reaches is the compiled SDK provider's (#1561).
+    ///
+    /// Against the compiled SDK, `Score(points=2).__ge__(other)` resolves to `incan_stdlib_core`'s `Ord.__ge__`, a
+    /// package identity. The adopter's impl, every expanded default included, is lowered in this compilation, so its
+    /// projection is nameable; declining it left the call to Rust's `Ord`, which has no `__ge__` (E0599). A type that
+    /// does not adopt the trait here keeps the source spelling.
+    #[test]
+    fn a_local_adopters_ord_default_keeps_its_projection_under_an_sdk_identity_issue1561() {
+        let identity = incan_semantics_core::CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::Member,
+            origin: incan_semantics_core::SymbolOrigin::Package {
+                library: "incan_stdlib_core".to_string(),
+                module_path: vec!["derives".to_string(), "comparison".to_string()],
+            },
+            declaration_name: "__ge__".to_string(),
+            kind: incan_semantics_core::SemanticSourceTargetKind::Method,
+            scope_discriminant: None,
+            declaration_span: incan_semantics_core::HirSourceSpan::new(2044, 2141),
+        };
+        let ord = builtin_traits::as_str(TraitId::Ord);
+        let mut lowering = AstLowering::new_with_type_info(incan_frontend::typechecker::TypeCheckInfo::default());
+        lowering
+            .adopted_traits_by_type
+            .insert("Score".to_string(), std::collections::HashSet::from([ord.to_string()]));
+
+        let adopter = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Score".to_string()));
+        let (method, dispatch) =
+            lowering.project_method_target_for_identity(Some(&identity), "__ge__", &adopter, Some(trait_dispatch(ord)));
+        assert_eq!(method, AstLowering::emitted_source_identity_name(&identity, false));
+        assert!(matches!(dispatch, Some(IrMethodDispatch::SourceProjection(_))));
+
+        let other = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Other".to_string()));
+        let (method, _) =
+            lowering.project_method_target_for_identity(Some(&identity), "__ge__", &other, Some(trait_dispatch(ord)));
+        assert_eq!(method, "__ge__");
     }
 
     #[test]

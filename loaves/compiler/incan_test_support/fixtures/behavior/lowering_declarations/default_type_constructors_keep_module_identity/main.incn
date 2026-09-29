@@ -1,0 +1,13 @@
+# behavior: omitted defaults in two modules construct the same-named model declared by each function's own module
+# retires: loaves/compiler/incan_ir/src/lower/tests/default_owner_paths.rs::default_type_constructors_follow_their_declaring_modules_issue1843
+# expect-stdout:
+#   1
+#   2
+
+from a import make as make_a
+from b import make as make_b
+
+
+def main() -> None:
+    println(make_a())
+    println(make_b())

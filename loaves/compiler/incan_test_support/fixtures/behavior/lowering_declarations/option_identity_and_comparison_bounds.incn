@@ -1,0 +1,42 @@
+# behavior: `Eq`- and `Ord`-bounded generic functions compare and sort the values they are given, and Option identity tests report presence without comparing payloads
+# retires: loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs::followups_b_option_none_identity_lowers_to_presence_methods
+# retires: loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs::followups_b_ord_type_parameter_bound_lowers_to_rust_ord
+# expect-stdout:
+#   true
+#   true
+#   false
+#   true
+#   true
+#   1
+
+from std.derives.comparison import Eq, Ord
+
+
+def equal[T with Eq](left: T, right: T) -> bool:
+    return left == right
+
+
+def before[T with Ord](left: T, right: T) -> bool:
+    return left < right
+
+
+def absent[T](value: Option[T]) -> bool:
+    return value is None
+
+
+def present[T](value: Option[T]) -> bool:
+    return value is not None
+
+
+def ordered[T with Ord](items: list[T]) -> list[T]:
+    return sorted(items)
+
+
+def main() -> None:
+    println(equal("a", "a"))
+    println(before(1, 2))
+    println(before("b", "a"))
+    missing: Option[int] = None
+    println(absent(missing))
+    println(present(Some(1)))
+    println(ordered([3, 1, 2])[0])

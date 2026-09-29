@@ -139,9 +139,10 @@ def main() -> None:
 }
 
 /// RFC 009: every lossless numeric widening the checker accepts builds. The value reaches a binding, a reassignment,
-/// an argument, a return, a model field, a class field, a collection element and slot, an `Option` payload and a
-/// union member widened to the destination's type, a lookup probe is widened to the element or key type, and two
-/// integer types compare in the narrowest type holding both. Each program is compiled by rustc.
+/// an argument, a return, a `yield`, a model field, a class field, a collection element and slot, an `Option` payload
+/// and a union member widened to the destination's type, the arms of a `match` and the `break` values of a `loop:`
+/// are widened to their one type, a lookup probe is widened to the element or key type, and two integer types compare
+/// in the narrowest type holding both. Each program is compiled by rustc.
 #[test]
 fn accepted_numeric_widenings_build() -> Result<(), Box<dyn std::error::Error>> {
     for (case, source) in [
@@ -158,6 +159,18 @@ fn accepted_numeric_widenings_build() -> Result<(), Box<dyn std::error::Error>> 
             "def take(value: int) -> int:\n    return value\n\npub def f(small: u8) -> int:\n    return take(small)\n",
         ),
         ("return", "pub def f(small: i16) -> i64:\n    return small\n"),
+        (
+            "yield",
+            "pub def f(small: i8) -> Generator[int]:\n    yield small\n    yield 2\n",
+        ),
+        (
+            "match arms",
+            "pub def f(n: int, small: i8, wide: int) -> int:\n    chosen = match n:\n        0 => small\n        _ => wide\n    maybe: Option[int] = match n:\n        0 => 5\n        _ => None\n    return chosen + maybe.unwrap_or(0)\n",
+        ),
+        (
+            "loop break values",
+            "pub def f(n: int, small: i8, wide: int) -> int:\n    x = loop:\n        if n > 0:\n            break small\n        break wide\n    return x\n",
+        ),
         (
             "unsigned into signed",
             "pub def f(value: u64) -> i128:\n    return value\n",
@@ -193,6 +206,35 @@ fn accepted_numeric_widenings_build() -> Result<(), Box<dyn std::error::Error>> 
         (
             "comparisons",
             "pub def f(small: i8, byte: u8, count: int, big: u128) -> bool:\n    return small < byte and small == count and byte != -1 and big == 0\n",
+        ),
+    ] {
+        let code = crate::IrCodegen::new().try_generate(
+            &parser::parse(&lexer::lex(source).map_err(|errors| format!("{case}: lex failed: {errors:?}"))?)
+                .map_err(|errors| format!("{case}: parse failed: {errors:?}"))?,
+        )?;
+        super::mut_ownership_regressions::compile_generated_rust(&code)
+            .map_err(|error| format!("{case} did not build: {error}"))?;
+    }
+    Ok(())
+}
+
+/// RFC 009: bit arithmetic keeps its operands' one integer type (`u8 & u8` is a `u8`, also in `|=`), a shift keeps its
+/// left operand's type whatever integer type it counts with, and `~` keeps its operand's type, so each result reaches
+/// a destination of that type or widens to a wider one. Each program is compiled by rustc.
+#[test]
+fn bitwise_operators_keep_the_integer_type_build() -> Result<(), Box<dyn std::error::Error>> {
+    for (case, source) in [
+        (
+            "same-type operands",
+            "pub def f(a: u8, b: u8) -> u8:\n    both: u8 = a & b\n    either: u8 = a | 1\n    return ~(both ^ either)\n",
+        ),
+        (
+            "shifts",
+            "pub def f(a: i16, count: int, byte: u8) -> int:\n    wide: int = a << 2\n    narrow: i16 = a >> count\n    widened: int = narrow\n    return wide + (1 << byte) + widened\n",
+        ),
+        (
+            "compound assignment",
+            "pub def f(mask: u8, count: int) -> u8:\n    mut flags: u8 = 0\n    flags |= 1\n    flags &= mask\n    flags ^= 3\n    flags <<= 1\n    flags >>= count\n    return flags\n",
         ),
     ] {
         let code = crate::IrCodegen::new().try_generate(

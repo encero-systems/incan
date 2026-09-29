@@ -1,22 +1,26 @@
 //! Which type parameters a generic function or method hashes, read from its declaration when it is collected (#1758).
 //!
-//! The generated program bounds a type parameter by `Eq` and `Hash` when the callable's body stores its values in a
-//! hashed collection: a set literal element or dict literal key of that type, a dict comprehension key of that type, a
-//! `set(...)` call over a collection of it, or a call that passes it on to a callable that hashes it. A call that binds
-//! such a parameter to a type without `Eq` and `Hash` then fails the build. The requirement is part of the callable's
-//! signature, so it is inferred at collection: for this module's declarations before any body is checked, and for a
-//! source module's public declarations when they are imported, so calls through an import see it too. A compiled
-//! library carries it in its exported bounds ([`TypeChecker::export_inferred_hash_key_bounds`]).
+//! The generated program bounds a type parameter by `Eq` and `Hash` when the callable hashes its values: a `dict` or
+//! `set` type whose key or element mentions it (in a parameter, the return type, or a local's annotation or inferred
+//! type), a set literal element or dict literal key of that type, a dict comprehension key of that type, a `set(...)`
+//! call over a collection of it, an index write `d[x] = v` into a dict, a method call such as `s.add(x)` or
+//! `d.insert(x, v)` whose first argument is the key or element of a set or dict, or a call that passes it on to a
+//! callable that hashes it. A call that binds such a parameter to a type without `Eq` and `Hash` then fails the build.
+//! The requirement is part of the callable's signature, so it is inferred at collection: for this module's
+//! declarations before any body is checked, and for a source module's public declarations when they are imported, so
+//! calls through an import see it too. A compiled library carries it in its exported bounds
+//! ([`TypeChecker::export_inferred_hash_key_bounds`]).
 //!
-//! The inference types the body only as far as its declaration says: parameters, `for` targets and plain assignments
-//! over them, and comprehension targets. A use it cannot type is not a requirement, so it never refuses a call the
-//! build would accept.
+//! The inference types the body only as far as its declaration says: parameters, `for` targets, annotated locals and
+//! plain assignments over them, and comprehension targets. A use it cannot type is not a requirement, so it never
+//! refuses a call the build would accept.
 
 use std::collections::{BTreeSet, HashMap};
 
 use super::TypeChecker;
 use crate::ast::{
-    CallArg, Declaration, DictEntry, Expr, ListEntry, MethodDecl, ParamKind, Pattern, Spanned, Statement, TypeParam,
+    CallArg, Declaration, DictEntry, Expr, IndexAssignmentStmt, ListEntry, MethodDecl, ParamKind, Pattern, Spanned,
+    Statement, TypeParam,
 };
 use crate::ast_walk::any_expr_in_body;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo, resolve_type};
@@ -45,6 +49,7 @@ struct ScanTarget<'a> {
     callable: HashKeyCallable,
     type_params: Vec<String>,
     params: Vec<(String, ParamKind, ResolvedType)>,
+    return_type: ResolvedType,
     body: &'a [Spanned<Statement>],
 }
 
@@ -104,6 +109,7 @@ impl TypeChecker {
                         callable: HashKeyCallable::Function(function.name.clone()),
                         type_params: self.hash_key_candidate_type_params(&function.type_params),
                         params: self.hash_key_scan_params(&function.params),
+                        return_type: resolve_type(&function.return_type.node, &self.symbols),
                         body: &function.body,
                     });
                 }
@@ -137,6 +143,7 @@ impl TypeChecker {
                 },
                 type_params: self.hash_key_candidate_type_params(&method.node.type_params),
                 params: self.hash_key_scan_params(&method.node.params),
+                return_type: resolve_type(&method.node.return_type.node, &self.symbols),
                 body,
             });
         }
@@ -214,8 +221,23 @@ impl TypeChecker {
             .iter()
             .map(|(name, _, ty)| (name.clone(), ty.clone()))
             .collect::<HashMap<_, _>>();
-        Self::bind_statement_locals(target.body, &mut env);
+        self.bind_statement_locals(target.body, &mut env);
         let mut hashed = Vec::new();
+
+        // ---- A dict or set type whose key or element mentions the type parameter ----
+        for ty in env.values().chain(std::iter::once(&target.return_type)) {
+            Self::collect_hashed_key_type_params(ty, &target.type_params, &mut hashed);
+        }
+
+        // ---- An index write into a dict ----
+        let mut index_writes = Vec::new();
+        Self::collect_index_writes(target.body, &mut index_writes);
+        for write in index_writes {
+            if Self::scan_type(&write.object, &env).is_some_and(|ty| Self::is_hashed_collection(&ty)) {
+                Self::collect_direct_type_param(Self::scan_type(&write.index, &env), &target.type_params, &mut hashed);
+            }
+        }
+
         let owner = match &target.callable {
             HashKeyCallable::Method { owner, .. } => Some(owner.as_str()),
             HashKeyCallable::Function(_) => None,
@@ -242,6 +264,13 @@ impl TypeChecker {
                     }
                 }
                 Expr::MethodCall(receiver, method, _, args) => {
+                    // `s.add(x)`, `d.insert(x, v)`, `d.get(x)` and the other keyed methods of a set or dict hash
+                    // their first argument.
+                    if Self::scan_type(receiver, &env).is_some_and(|ty| Self::is_hashed_collection(&ty))
+                        && let Some(CallArg::Positional(key)) = args.first()
+                    {
+                        Self::collect_direct_type_param(Self::scan_type(key, &env), &target.type_params, &mut hashed);
+                    }
                     if let (Expr::SelfExpr, Some(owner)) = (&receiver.node, owner) {
                         let callable = HashKeyCallable::Method {
                             owner: owner.to_string(),
@@ -367,16 +396,19 @@ impl TypeChecker {
         }
     }
 
-    /// Bind `for` targets and plain assignments whose value the scan can type, in source order, into `env`.
-    fn bind_statement_locals(body: &[Spanned<Statement>], env: &mut HashMap<String, ResolvedType>) {
+    /// Bind `for` targets, annotated locals and plain assignments whose value the scan can type, in source order, into
+    /// `env`.
+    ///
+    /// An annotated local takes its annotation's type, resolved without reporting anything: the body is checked on its
+    /// own later.
+    fn bind_statement_locals(&self, body: &[Spanned<Statement>], env: &mut HashMap<String, ResolvedType>) {
         for statement in body {
             match &statement.node {
                 Statement::Assignment(assignment) => {
-                    let declared = assignment
-                        .ty
-                        .is_none()
-                        .then(|| Self::scan_type(&assignment.value, env))
-                        .flatten();
+                    let declared = match &assignment.ty {
+                        Some(annotation) => Some(resolve_type(&annotation.node, &self.symbols)),
+                        None => Self::scan_type(&assignment.value, env),
+                    };
                     if let Some(ty) = declared {
                         env.entry(assignment.name.clone()).or_insert(ty);
                     }
@@ -390,26 +422,106 @@ impl TypeChecker {
                     ) {
                         env.entry(name.clone()).or_insert(item);
                     }
-                    Self::bind_statement_locals(&for_stmt.body, env);
+                    self.bind_statement_locals(&for_stmt.body, env);
                 }
                 Statement::If(if_stmt) => {
-                    Self::bind_statement_locals(&if_stmt.then_body, env);
+                    self.bind_statement_locals(&if_stmt.then_body, env);
                     for (_, branch) in &if_stmt.elif_branches {
-                        Self::bind_statement_locals(branch, env);
+                        self.bind_statement_locals(branch, env);
                     }
                     if let Some(else_body) = &if_stmt.else_body {
-                        Self::bind_statement_locals(else_body, env);
+                        self.bind_statement_locals(else_body, env);
                     }
                 }
-                Statement::While(while_stmt) => Self::bind_statement_locals(&while_stmt.body, env),
-                Statement::Loop(loop_stmt) => Self::bind_statement_locals(&loop_stmt.body, env),
-                Statement::Unsafe(unsafe_stmt) => Self::bind_statement_locals(&unsafe_stmt.body, env),
+                Statement::While(while_stmt) => self.bind_statement_locals(&while_stmt.body, env),
+                Statement::Loop(loop_stmt) => self.bind_statement_locals(&loop_stmt.body, env),
+                Statement::Unsafe(unsafe_stmt) => self.bind_statement_locals(&unsafe_stmt.body, env),
                 _ => {}
             }
         }
     }
 
-    /// Type an expression as far as the declaration says: a known name, an element of one, or a list built from one.
+    /// Collect the index writes `object[index] = value` of `body`, in its nested statement blocks too.
+    fn collect_index_writes<'a>(body: &'a [Spanned<Statement>], out: &mut Vec<&'a IndexAssignmentStmt>) {
+        for statement in body {
+            match &statement.node {
+                Statement::IndexAssignment(write) => out.push(write),
+                Statement::For(for_stmt) => Self::collect_index_writes(&for_stmt.body, out),
+                Statement::If(if_stmt) => {
+                    Self::collect_index_writes(&if_stmt.then_body, out);
+                    for (_, branch) in &if_stmt.elif_branches {
+                        Self::collect_index_writes(branch, out);
+                    }
+                    if let Some(else_body) = &if_stmt.else_body {
+                        Self::collect_index_writes(else_body, out);
+                    }
+                }
+                Statement::While(while_stmt) => Self::collect_index_writes(&while_stmt.body, out),
+                Statement::Loop(loop_stmt) => Self::collect_index_writes(&loop_stmt.body, out),
+                Statement::Unsafe(unsafe_stmt) => Self::collect_index_writes(&unsafe_stmt.body, out),
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether a scanned type is a hashed collection, a `set` or a `dict`, whatever its key or element type.
+    fn is_hashed_collection(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Generic(name, _) => {
+                matches!(
+                    collection_type_id(name),
+                    Some(CollectionTypeId::Set | CollectionTypeId::Dict)
+                ) || surface_types::from_str(name) == Some(SurfaceTypeId::HashMap)
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::is_hashed_collection(inner),
+            _ => false,
+        }
+    }
+
+    /// Add the type parameters a type hashes: every one mentioned by the key of a `dict` (or `HashMap`) or the element
+    /// of a `set` anywhere inside it. A frozen collection is a static slice that hashes nothing, but it may hold a
+    /// type that does.
+    fn collect_hashed_key_type_params(ty: &ResolvedType, type_params: &[String], hashed: &mut Vec<String>) {
+        match ty {
+            ResolvedType::Generic(name, args) => {
+                let hashes_first = matches!(
+                    collection_type_id(name),
+                    Some(CollectionTypeId::Set | CollectionTypeId::Dict)
+                ) || surface_types::from_str(name) == Some(SurfaceTypeId::HashMap);
+                if hashes_first && let Some(key) = args.first() {
+                    Self::collect_named_type_params(key, type_params, hashed);
+                }
+                for arg in args {
+                    Self::collect_hashed_key_type_params(arg, type_params, hashed);
+                }
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                Self::collect_hashed_key_type_params(key, type_params, hashed);
+                Self::collect_hashed_key_type_params(value, type_params, hashed);
+            }
+            ResolvedType::Tuple(items) => {
+                for item in items {
+                    Self::collect_hashed_key_type_params(item, type_params, hashed);
+                }
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => {
+                Self::collect_hashed_key_type_params(inner, type_params, hashed);
+            }
+            ResolvedType::Function(params, ret) => {
+                for param in params {
+                    Self::collect_hashed_key_type_params(&param.ty, type_params, hashed);
+                }
+                Self::collect_hashed_key_type_params(ret, type_params, hashed);
+            }
+            _ => {}
+        }
+    }
+
+    /// Type an expression as far as the declaration says: a known name, an element of one, a list or set built from
+    /// one, or an empty `dict`/`set` whose key or element is not known yet.
     fn scan_type(expr: &Spanned<Expr>, env: &HashMap<String, ResolvedType>) -> Option<ResolvedType> {
         match &expr.node {
             Expr::Ident(name) => env.get(name).cloned(),
@@ -430,6 +542,34 @@ impl TypeChecker {
                 )),
                 _ => None,
             },
+            Expr::Dict(entries) if entries.is_empty() => Some(ResolvedType::Generic(
+                "Dict".to_string(),
+                vec![ResolvedType::Unknown, ResolvedType::Unknown],
+            )),
+            Expr::Set(elements) => Some(ResolvedType::Generic(
+                "Set".to_string(),
+                vec![
+                    elements
+                        .first()
+                        .and_then(|first| Self::scan_type(first, env))
+                        .unwrap_or(ResolvedType::Unknown),
+                ],
+            )),
+            Expr::Call(callee, _, args) if args.is_empty() => {
+                let Expr::Ident(name) = &callee.node else {
+                    return None;
+                };
+                match collection_type_id(name) {
+                    Some(CollectionTypeId::Set) => {
+                        Some(ResolvedType::Generic("Set".to_string(), vec![ResolvedType::Unknown]))
+                    }
+                    Some(CollectionTypeId::Dict) => Some(ResolvedType::Generic(
+                        "Dict".to_string(),
+                        vec![ResolvedType::Unknown, ResolvedType::Unknown],
+                    )),
+                    _ => None,
+                }
+            }
             Expr::Call(callee, _, args) => {
                 let (Expr::Ident(name), [CallArg::Positional(source)]) = (&callee.node, args.as_slice()) else {
                     return None;

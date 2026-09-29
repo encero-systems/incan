@@ -48,9 +48,13 @@ impl AstLowering {
     }
 
     /// Lower a list comprehension `[expr for var in iter if cond]`.
+    ///
+    /// An `Ok(...)` or `Err(...)` element is built with the element type the checker settled for the comprehension
+    /// (#1561).
     pub(in crate::lower) fn lower_list_comp(
         &mut self,
         comp: &ast::ListComp,
+        span: ast::Span,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
         let iter_expr = owned_frozen_iteration_source(self.lower_expr_spanned(&comp.iter)?);
         let pattern = self.lower_pattern(&comp.pattern.node);
@@ -67,7 +71,8 @@ impl AstLowering {
         let map_expr_result = self.lower_expr_spanned(&comp.expr);
         self.non_linear_context_depth -= 1;
         let filter_tokens = filter_tokens_result?;
-        let map_expr = map_expr_result?;
+        let mut map_expr = map_expr_result?;
+        self.pin_settled_comprehension_result_constructor(span, &mut map_expr);
 
         // Determine element type from map expression
         let elem_ty = map_expr.ty.clone();

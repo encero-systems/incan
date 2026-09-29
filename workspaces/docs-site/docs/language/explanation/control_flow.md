@@ -198,6 +198,11 @@ for name in items:
 A `for` loop over a list normally reads each item where it stays, and the list keeps its items. A task handle can be neither copied nor cloned, and awaiting it uses it up, so a loop that awaits the handles of a list has to take them out of it:
 
 ```incan
+from std.async import spawn
+
+async def work() -> int:
+    return 1
+
 async def main() -> None:
     handles = [spawn(work()), spawn(work())]
     for handle in handles:
@@ -206,7 +211,7 @@ async def main() -> None:
             Err(_) => println("join failed")
 ```
 
-The compiler takes a list's items when three things hold. The list is a local binding, the binding of an enclosing `for` loop that itself takes its list's items, or a parameter not marked `mut`. Each item is a handle, or a tuple or collection that contains one. And the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, or puts it in a new tuple, list or set, or as a value in a new dict. A binding that holds a list of handles, as in a list of lists of handles, is also used by value when a nested `for` loop over it takes its items, so each group is emptied in turn:
+The compiler takes a list's items when three things hold. The list is a local binding, the binding of an enclosing `for` loop that owns its items (it takes them out of its own list, or iterates a list literal, a comprehension or a call result), or a parameter not marked `mut`. Each item is a handle, or a tuple or collection that contains one. And the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, or puts it in a new tuple, list or set, or as a value in a new dict. A binding that holds a list of handles, as in a list of lists of handles, is also used by value when a nested `for` loop over it takes its items, so each group is emptied in turn:
 
 ```incan
 async def main() -> None:
@@ -217,6 +222,8 @@ async def main() -> None:
                 Ok(value) => println(value)
                 Err(_) => println("join failed")
 ```
+
+A loop over a list literal, a list comprehension or the result of a call receives each handle by value already: nothing else holds that list. Any other iterable can give up neither its handles nor copies of them. A list element or a field stays where it is stored, `values()`, `enumerate(...)` and `zip(...)` read the collection in place, a `mut` parameter's items belong to the caller, and the variable of a loop that reads its items in place is one of those items. The compiler refuses such a loop (`INCAN-T0119`); iterate a local list that holds the handles instead, or take them out one at a time with `pop()`.
 
 Once the loop has taken the items, the list is empty, so the compiler refuses whatever could still see it (`INCAN-T0119`):
 

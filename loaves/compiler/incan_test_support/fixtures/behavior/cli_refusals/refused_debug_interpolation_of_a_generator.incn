@@ -1,0 +1,10 @@
+# behavior: interpolating a generator with the :? format spec is refused at check time, since a generator has no Debug form
+# expect-diagnostic: INCAN-T0103
+
+def numbers() -> Generator[int]:
+    yield 1
+
+
+def main() -> None:
+    items = numbers()
+    println(f"{items:?}")

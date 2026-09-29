@@ -474,3 +474,95 @@ def main() -> None:
     check_str(accepted)
         .map_err(|errs| format!("satisfied bounds and serializable underlying types stay accepted: {errs:?}"))
 }
+
+/// `json_stringify(value)` writes its argument as JSON, so the argument's type must have a `Serialize` form: a model
+/// or class that does not provide `Serialize` is refused at the top level and inside a collection, `Option` or tuple,
+/// and so are a type parameter and a trait-typed parameter whose bounds do not provide it.
+#[test]
+fn json_stringify_refuses_a_value_without_a_serialize_form() -> Result<(), String> {
+    let declarations = r#"
+from std.serde import json
+
+model Plain:
+    x: int
+
+class Account:
+    id: int
+
+trait Named:
+    def name(self) -> str:
+        return "named"
+"#;
+    for (signature, argument) in [
+        ("encode()", "Plain(x=1)"),
+        ("encode()", "Account(id=1)"),
+        ("encode()", "[Plain(x=1)]"),
+        ("encode()", "(1, Plain(x=1))"),
+        ("encode(maybe: Option[Plain])", "maybe"),
+        ("encode(items: dict[str, list[Plain]])", "items"),
+        ("encode[T](value: T)", "value"),
+        ("encode[T](values: list[T])", "values"),
+        ("encode(value: Named)", "value"),
+    ] {
+        let source = format!("{declarations}\ndef {signature} -> str:\n    return json_stringify({argument})\n");
+        let errors = match check_str(&source) {
+            Ok(()) => return Err(format!("json_stringify({argument}) in {signature} must be refused")),
+            Err(errors) => errors,
+        };
+        if !errors.iter().any(|error| error.message.contains("Serialize")) {
+            return Err(format!(
+                "expected json_stringify({argument}) in {signature} to be refused for Serialize, got: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A value whose type has a `Serialize` form stays accepted: the scalars and collections of the type mapping, a model
+/// that derives or adopts `Serialize`, a type parameter or trait bounded by it (directly or through a supertrait), and
+/// a trait-typed parameter.
+#[test]
+fn json_stringify_accepts_values_with_a_serialize_form() -> Result<(), String> {
+    check_str(
+        r#"
+from std.serde import json
+from std.serde.json import Serialize
+
+@derive(json)
+model Payload:
+    value: int
+
+model Adopted with Serialize:
+    value: int
+
+trait Loggable with Serialize:
+    def tag(self) -> str:
+        return "log"
+
+def scalars() -> str:
+    return json_stringify(1) + json_stringify("a") + json_stringify(true) + json_stringify(None)
+
+def collections(items: list[int], names: dict[str, list[str]], pair: tuple[int, str]) -> str:
+    return json_stringify(items) + json_stringify(names) + json_stringify(pair)
+
+def models() -> str:
+    return json_stringify(Payload(value=1)) + json_stringify([Payload(value=2)]) + json_stringify(Adopted(value=3))
+
+def bounded[T with Serialize](value: T, values: list[T]) -> str:
+    return json_stringify(value) + json_stringify(values)
+
+def through_supertrait[T with Loggable](value: T) -> str:
+    return json_stringify(value)
+
+def trait_typed(value: Serialize) -> str:
+    return json_stringify(value)
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "values with a Serialize form must stay accepted, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}

@@ -1,0 +1,8 @@
+# behavior: import module::item of a declaration without pub is refused at check time, as from module import item is
+# expect-diagnostic: INCAN-I0001
+
+import helpers::hidden
+
+
+def main() -> None:
+    println(hidden())

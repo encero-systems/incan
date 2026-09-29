@@ -66,6 +66,31 @@ impl TypedExpr {
         self.span = span;
         self
     }
+
+    /// Build the place of element `position` of the tuple `object`, typed `ty`.
+    ///
+    /// The place is an [`IrExprKind::Field`] whose field is the element's decimal position, so `pair[0]` is field `"0"`
+    /// of `pair`; [`positional_field_index`] reads the position back.
+    pub fn tuple_element(object: TypedExpr, position: usize, ty: IrType) -> Self {
+        Self::new(
+            IrExprKind::Field {
+                object: Box::new(object),
+                field: position.to_string(),
+            },
+            ty,
+        )
+    }
+}
+
+/// Return the position a field access names when it reaches a tuple element or a tuple-struct field by position.
+///
+/// A position is not an identifier: a place whose field has a position is spelled as a positional member (`pair.0`),
+/// and a field without one is a declared field's name.
+pub fn positional_field_index(field: &str) -> Option<usize> {
+    if field.is_empty() || !field.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    field.parse().ok()
 }
 
 /// IR expression (alias for TypedExpr for convenience)
@@ -145,6 +170,14 @@ pub enum IrExprKind {
     StaticRead {
         name: String,
         reference_kind: IrStaticReferenceKind,
+        /// Rust module path below the crate root of the module that declares the static, when the read names the
+        /// static through that module rather than through a binding of the module it is emitted in; `name` is then
+        /// the static's canonical projection.
+        ///
+        /// A parameter default is evaluated at every caller that omits the argument, which can be another module with
+        /// no binding of the static, or with a static of the same name of its own, so a static the default reads is
+        /// spelled through its declaring module, as a const it reads is (#1771, #1842).
+        owner_module_path: Option<Vec<String>>,
     },
 
     /// Create a live local binding wrapper from a compiler-managed module static.
@@ -250,7 +283,8 @@ pub enum IrExprKind {
         args: Vec<IrCallArg>,
     },
 
-    // Field access
+    // Field access: a declared field by name, or a tuple element or tuple-struct field by its decimal position (see
+    // [`positional_field_index`]).
     Field {
         object: Box<IrExpr>,
         field: String,

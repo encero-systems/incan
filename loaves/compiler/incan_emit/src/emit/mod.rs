@@ -205,7 +205,7 @@ struct SourceConstructorReexport {
 #[derive(Clone)]
 struct ManifestConstructorShape {
     kind: IrStructKind,
-    /// Declared type parameter names in declaration order, so phantom parameters can be recognised (#1370).
+    /// Declared type parameter names in declaration order, so phantom parameters can be recognized (#1370).
     type_params: Vec<String>,
     fields: Vec<FieldExport>,
 }
@@ -272,17 +272,17 @@ pub struct StructConstructorMetadata {
     ///
     /// For a source declaration this is `IrStruct::phantom_type_params` as lowering recorded it; for a compiled
     /// dependency it is the same rule applied to the manifest's recorded type parameters and field types, so a
-    /// consumer's struct literal initialises the marker the provider's crate declared. See #1370.
+    /// consumer's struct literal initializes the marker the provider's crate declared. See #1370.
     phantom_type_params: Vec<String>,
     constructor_surface: StructConstructorSurface,
 }
 
 impl StructConstructorMetadata {
-    /// The marker-field initialiser a Rust struct literal for this type must carry, or none when every type
+    /// The marker-field initializer a Rust struct literal for this type must carry, or none when every type
     /// parameter is stored by a source field.
     ///
-    /// A generated constructor function initialises the marker inside its own body, so its call sites pass source
-    /// fields only; this initialiser is for the struct-literal surfaces.
+    /// A generated constructor function initializes the marker inside its own body, so its call sites pass source
+    /// fields only; this initializer is for the struct-literal surfaces.
     pub(in crate::emit) fn phantom_marker_initializer(&self) -> Option<TokenStream> {
         if self.phantom_type_params.is_empty() {
             return None;
@@ -636,8 +636,6 @@ pub struct IrEmitter<'a> {
     newtype_backing_type_names: HashMap<String, HashSet<String>>,
     /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
     method_signatures: HashMap<(String, String), FunctionSignature>,
-    /// Source methods whose declared receiver is `mut self`, keyed by nominal owner and emitted method name.
-    mutable_method_receivers: HashSet<(String, String)>,
     /// Exact emitted projections for source members keyed by nominal owner and source declaration name.
     member_projections: HashMap<(String, String), CanonicalSymbolId>,
     /// Member keys that resolve to more than one distinct declaration identity.
@@ -811,7 +809,6 @@ impl<'a> IrEmitter<'a> {
             rusttype_alias_names: HashSet::new(),
             newtype_backing_type_names: HashMap::new(),
             method_signatures: HashMap::new(),
-            mutable_method_receivers: HashSet::new(),
             member_projections: HashMap::new(),
             ambiguous_member_projections: HashSet::new(),
             method_signature_type_params: HashMap::new(),
@@ -2893,13 +2890,6 @@ impl<'a> IrEmitter<'a> {
                     for method in &i.methods {
                         let params = method.params.iter().filter(|param| !param.is_self).cloned().collect();
                         let key = (i.target_type.clone(), method.name.clone());
-                        if method
-                            .params
-                            .first()
-                            .is_some_and(|param| param.is_self && matches!(param.mutability, Mutability::Mutable))
-                        {
-                            self.mutable_method_receivers.insert(key.clone());
-                        }
                         self.method_signatures.insert(
                             key.clone(),
                             FunctionSignature {
@@ -2913,17 +2903,6 @@ impl<'a> IrEmitter<'a> {
                 }
                 _ => {}
             }
-        }
-    }
-
-    /// Return whether a source method declares a mutable receiver for the nominal receiver type.
-    pub(in crate::emit) fn method_receiver_is_mutable(&self, receiver_ty: &IrType, method: &str) -> bool {
-        match receiver_ty {
-            IrType::Struct(owner) | IrType::NamedGeneric(owner, _) => self
-                .mutable_method_receivers
-                .contains(&(owner.clone(), method.to_string())),
-            IrType::Ref(inner) | IrType::RefMut(inner) => self.method_receiver_is_mutable(inner, method),
-            _ => false,
         }
     }
 
@@ -4261,6 +4240,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "missing".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::Int,
         ))));

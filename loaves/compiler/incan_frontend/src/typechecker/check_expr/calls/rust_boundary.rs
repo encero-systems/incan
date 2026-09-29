@@ -1342,6 +1342,38 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// #1561: a `mut` parameter or local belongs to the body that declares it. Once a module whose function declares a
+    /// `mut header` parameter and a `mut` local is checked, neither name is mutable anywhere else, so an immutable
+    /// `header` passed to a Rust `&mut` parameter is still refused.
+    #[test]
+    fn mutable_bindings_of_one_body_do_not_reach_another_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def first(mut header: list[int]) -> None:\n    mut local: list[int] = [1]\n    local.append(1)\n    header.append(1)\n\nclass Writer:\n    lines: list[int]\n\n    def write(mut self, mut header: list[int]) -> None:\n        header.append(1)\n        self.lines.append(1)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("the module must check: {errors:?}"))?;
+        assert!(
+            checker.mutable_bindings.is_empty(),
+            "each body's `mut` bindings end with the body, got {:?}",
+            checker.mutable_bindings
+        );
+
+        let span = Span::new(10, 16);
+        let header = ResolvedType::RustPath("demo::Header".to_string());
+        let argument = Spanned::new(Expr::Ident("header".to_string()), span);
+        checker.validate_rust_boundary_value("demo::Writer", "&mut demo::Header", &argument, &header, false);
+        assert!(
+            checker.errors.iter().any(|error| error
+                .message
+                .contains("Rust parameter requires a mutable borrow of 'header'")),
+            "another body's `mut header` does not make this `header` mutable, got {:?}",
+            checker.errors
+        );
+        Ok(())
+    }
+
     #[test]
     fn rust_method_mutable_reference_rejects_an_immutable_binding() {
         let span = Span::new(10, 16);

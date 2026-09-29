@@ -165,11 +165,11 @@ headers = ["interop/include/bridge.h"]
 output = "bridge_shim"
 ```
 
-The section currently has one field:
+The section has one field:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `schema` | integer | Oven interop declaration schema. The current value is `1`. |
+| `schema` | integer | Oven interop declaration schema; accepted value: `1`. |
 
 Each `[[interop.c.targets]]` entry accepts:
 
@@ -221,7 +221,7 @@ Each `[[interop.c.targets.shims]]` entry accepts:
 
 All declared paths must be normalized relative paths to regular package files. Absolute paths, parent traversal, symlinks, directories, backslashes, and ambient search paths are rejected.
 
-`incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. The lock keeps its own key there because it records Oven's *resolved* facts rather than echoing the authored table; the two names are independent, and the lock's is versioned by the lockfile format. Locking itself does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The separate explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
+`incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. This key contains resolved Oven facts and is versioned by the lockfile format. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies the lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it does not invoke Cargo or search host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
 
 For an end-to-end binding example, see [Checked C bindings](../../language/how-to/checked_c_bindings.md#freeze-oven-interop-requirements-for-a-target).
 
@@ -258,7 +258,7 @@ Fields:
 
 Env-level `requires-incan` narrows the project requirement for that environment. `incan env show <env>` and `incan env run <env> <script> --dry-run` display the effective requirement and whether the active compiler satisfies it; actual `incan env run` execution rejects unsatisfied constraints before spawning the script.
 
-Environment matrices from RFC 073 remain deferred beyond `0.3`; ordinary named envs may declare `requires-incan`, but matrix expansion is not available yet.
+Environment matrices are unsupported. Named environments may declare `requires-incan`.
 
 Use the environment with:
 
@@ -336,6 +336,23 @@ Incan dependency table fields:
 
 Feature requests are unified additively across every active dependency edge. They are Incan package features, not Cargo features; Rust crates continue to use the explicitly separate `[rust-dependencies]` and `--cargo-*` surfaces.
 
+## `[[rust.bin]]`
+
+Each `[[rust.bin]]` table declares one executable role for the Loaf's own Rust unit.
+
+```toml
+[[rust.bin]]
+name = "incan"
+path = "src/main.rs"
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | Executable name; unique among the Loaf's binary roles and limited to ASCII letters, digits, `-`, and `_`. |
+| `path` | string | Relative `.rs` source path inside the project and inside `[rust.source].root` when that root is declared; unique among the Loaf's binary roles. |
+
+A project with at least one `[[rust.bin]]` entry and no `[project.scripts].main` uses these roles for a plain `incan build`. A project with a `main` script builds that Incan entrypoint instead.
+
 ## `[rust-dependencies]`
 
 Rust crate dependencies available in all contexts (build, run, test).
@@ -385,12 +402,7 @@ criterion = "0.5"
 test_helpers = { path = "../test-helpers" }
 ```
 
-Importing a dev-only crate from production code is a compile-time error:
-
-```text
-error: Rust crate `criterion` is dev-only and cannot be imported from production code
-hint: Move the dependency to [rust-dependencies], or import it only from tests.
-```
+Importing a dev-only crate from production code is refused at compile time.
 
 **Overlap rules**: If the same crate appears in both `[rust-dependencies]` and `[rust-dev-dependencies]`, the version, source, and default-features must match. Features are unioned, and the crate is treated as a normal dependency.
 
@@ -416,7 +428,7 @@ These declarations are Cargo-compatibility inputs, not public Incan package feat
 
 ## Legacy alias tables
 
-`[rust.dependencies]` and `[rust.dev-dependencies]` remain supported as backward-compatible aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`. Prefer the non-nested table names in new manifests.
+`[rust.dependencies]` and `[rust.dev-dependencies]` are aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`.
 
 ## Dependency sources
 
@@ -442,7 +454,7 @@ pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 ```
 
 !!! warning "Strict mode and git branches"
-    When building with `--locked` or `--frozen`, git dependencies using `branch = "..."` are rejected because branches are not reproducible. Use `tag` or `rev` instead.
+    `--locked` and `--frozen` reject git dependencies using `branch = "..."`. Git dependencies in these modes require `tag` or `rev`.
 
 ### Path
 

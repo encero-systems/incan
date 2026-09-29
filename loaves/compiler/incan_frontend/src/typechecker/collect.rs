@@ -70,7 +70,7 @@ type InheritedMembers = (
     HashMap<String, Vec<MethodInfo>>,
 );
 
-type PartialCallableSignature = (
+pub(in crate::typechecker) type PartialCallableSignature = (
     Vec<CallableParam>,
     ResolvedType,
     bool,
@@ -488,7 +488,10 @@ impl TypeChecker {
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
-    fn partial_callable_signature_from_kind(segments: &[String], kind: SymbolKind) -> Option<PartialCallableSignature> {
+    pub(in crate::typechecker) fn partial_callable_signature_from_kind(
+        segments: &[String],
+        kind: SymbolKind,
+    ) -> Option<PartialCallableSignature> {
         match kind {
             SymbolKind::Function(info) => Some((
                 info.params,
@@ -925,6 +928,12 @@ impl TypeChecker {
     }
 
     /// Return the source module that owns a trait bound, including direct imports and module-qualified spellings.
+    ///
+    /// A trait the name reaches through no import is declared in the current module, unless it is a builtin trait: the
+    /// compiler's root-scope stub for `Display` or `Eq` is declared in no module of this compilation, so a bound on it
+    /// has no owning module here and its methods resolve through the builtin's standard-library declaration, as they
+    /// do for a module checked without a module path. Giving it the current module left `value.__str__()` through
+    /// `T with Display` without a dispatch in every project module (#1561).
     pub fn trait_bound_module_path(&self, name: &str) -> Option<Vec<String>> {
         if let Some(path) = self.import_binding_path(name) {
             return path
@@ -939,8 +948,16 @@ impl TypeChecker {
         if let Some(target) = self.source_import_targets.get(name) {
             return Some(target.module_path.clone());
         }
-        let symbol = self.lookup_symbol(name)?;
+        let symbol_id = self.symbols.lookup(name)?;
+        let symbol = self.symbols.get(symbol_id)?;
         if !matches!(&symbol.kind, SymbolKind::Trait(_)) {
+            return None;
+        }
+        if self
+            .symbols
+            .identity_of(symbol_id)
+            .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin)
+        {
             return None;
         }
         self.current_module_path.clone()
@@ -959,14 +976,39 @@ impl TypeChecker {
     }
 
     /// Resolve a trait bound name, installing hidden symbols for module-qualified imported traits.
+    ///
+    /// A trait named through a `pub::` package module binding (`t.Tag` after `import pub::tags as t`) keeps the
+    /// package declaration's identity, so a bound on it is met by the package's own adopters as it is under
+    /// `from pub::tags import Tag` (#1561).
     pub fn resolve_trait_bound_name(&mut self, name: &str, span: Span) -> String {
         if name.contains('.')
             && let Some((canonical, info)) = self.resolve_qualified_trait(name)
         {
-            self.define_hidden_trait_symbol(&canonical, info, span);
+            let identity = self.package_module_trait_identity(name);
+            self.define_hidden_trait_symbol_with_identity(&canonical, info, identity, span);
             return canonical;
         }
         name.to_string()
+    }
+
+    /// Return the checked identity of the trait a module-qualified name names through a `pub::` package module
+    /// binding, or `None` for any other spelling.
+    fn package_module_trait_identity(&mut self, name: &str) -> Option<CanonicalSymbolId> {
+        let (module_name, trait_name) = name.rsplit_once('.')?;
+        let module_path = self.module_path_for_imported_name(module_name)?;
+        let [root, library, rest @ ..] = module_path.as_slice() else {
+            return None;
+        };
+        if root != super::PUBLIC_LIBRARY_NAMESPACE {
+            return None;
+        }
+        let resolved = self
+            .resolve_pub_library_module_symbol_member(library, rest, trait_name)
+            .ok()
+            .flatten()?;
+        matches!(resolved.kind, SymbolKind::Trait(_))
+            .then_some(resolved.canonical)
+            .flatten()
     }
 
     /// Retain a generic bound's foreign identity before its declaring module's imports leave scope.
@@ -1118,6 +1160,9 @@ impl TypeChecker {
     }
 
     /// Look up a trait declared by an imported module, falling back to the current scope for direct imports.
+    ///
+    /// The module is a project module, a standard-library module or a `pub::` package module, so `with t.Tag` after
+    /// `import pub::tags as t` names the package's own trait, or the trait a package alias of it names.
     pub fn lookup_imported_module_trait(&mut self, module_path: &[String], trait_name: &str) -> Option<TraitInfo> {
         let module_key = module_path.join(".");
         if let Some(info) = self.dependency_module_traits.get(&format!("{module_key}.{trait_name}")) {
@@ -1130,9 +1175,20 @@ impl TypeChecker {
         {
             return None;
         }
-        self.stdlib_cache
-            .lookup_trait(module_path, trait_name)
-            .or_else(|| self.lookup_trait_info(trait_name).cloned())
+        if let Some(SymbolKind::Trait(info)) = self.source_dependency_member_symbol_kind(module_path, trait_name) {
+            return Some(info);
+        }
+        if let Some(info) = self.stdlib_cache.lookup_trait(module_path, trait_name) {
+            return Some(info);
+        }
+        if let [root, library, rest @ ..] = module_path
+            && root == super::PUBLIC_LIBRARY_NAMESPACE
+            && let Some((SymbolKind::Trait(info), _)) =
+                self.lookup_pub_library_module_symbol_member(library, rest, trait_name)
+        {
+            return Some(info);
+        }
+        self.lookup_trait_info(trait_name).cloned()
     }
 
     /// Return whether a module-qualified trait may be adopted through `@derive(...)`.
@@ -1191,11 +1247,23 @@ impl TypeChecker {
 
     /// Define a compiler-internal trait symbol used for qualified imported trait references.
     pub fn define_hidden_trait_symbol(&mut self, name: &str, info: TraitInfo, span: Span) {
+        // RFC 120: this binding names a dependency's trait declaration; its identity is unproven here rather than
+        // minted from the referencing module.
+        self.define_hidden_trait_symbol_with_identity(name, info, None, span);
+    }
+
+    /// Define a compiler-internal trait symbol for a qualified imported trait reference, with the declaration's
+    /// checked identity when the referenced module proves one.
+    fn define_hidden_trait_symbol_with_identity(
+        &mut self,
+        name: &str,
+        info: TraitInfo,
+        identity: Option<CanonicalSymbolId>,
+        span: Span,
+    ) {
         if self.symbols.lookup(name).is_some() {
             return;
         }
-        // RFC 120: this binding names a dependency's trait declaration; its identity is unproven here rather than
-        // minted from the referencing module.
         self.symbols.define_import_binding(
             Symbol {
                 name: name.to_string(),
@@ -1203,7 +1271,7 @@ impl TypeChecker {
                 span,
                 scope: 0,
             },
-            None,
+            identity,
         );
     }
 
@@ -1326,7 +1394,8 @@ impl TypeChecker {
             .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name).to_string());
         let info = self.lookup_imported_module_trait(&module_path, &trait_name)?;
         let symbol_name = name.to_string();
-        self.define_hidden_trait_symbol(&symbol_name, info.clone(), span);
+        let identity = self.package_module_trait_identity(name);
+        self.define_hidden_trait_symbol_with_identity(&symbol_name, info.clone(), identity, span);
         Some((symbol_name, info))
     }
 

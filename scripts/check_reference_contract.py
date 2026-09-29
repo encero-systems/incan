@@ -33,7 +33,9 @@ ALLOW_FILE = ROOT / "scripts" / "check_reference_contract.allow"
 
 # Pages generated from another source; their prose is fixed where it is generated.
 GENERATED_PAGES = {
+    "contributing/reference/replacement_compatibility_inventory.md",
     "contributing/reference/test_corpus_inventory.md",
+    "language/reference/feature_inventory.md",
     "language/reference/language.md",
 }
 
@@ -156,7 +158,11 @@ def changed_pages(base: str | None) -> list[str]:
     commands = (
         [["git", "diff", "--name-only", f"{base}...HEAD"], ["git", "diff", "--name-only", "HEAD"]]
         if base
-        else [["git", "diff", "--name-only"], ["git", "diff", "--cached", "--name-only"]]
+        else [
+            ["git", "diff", "--name-only"],
+            ["git", "diff", "--cached", "--name-only"],
+            ["git", "ls-files", "--others", "--exclude-standard"],
+        ]
     )
     names: set[str] = set()
     for command in commands:

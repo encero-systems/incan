@@ -1287,3 +1287,189 @@ def main() -> None:
         );
     }
 }
+
+// ---- A `match` has one type across its arms ----
+
+/// Return the span of the value of the arm spelled `arm` (`0 => small`) in `source`.
+fn arm_value_span(source: &str, arm: &str) -> Result<Span, String> {
+    let start = source
+        .find(arm)
+        .ok_or_else(|| format!("`{arm}` is not in the program"))?;
+    let value = arm.find("=> ").ok_or_else(|| format!("`{arm}` is not an arm"))? + "=> ".len();
+    Ok(Span::new(start + value, start + arm.len()))
+}
+
+/// The arms of a `match` unify to one type in every position (a value, a trailing statement, an effect statement), so
+/// arms that share no type are refused at the arm, `i8` beside `u8` included.
+#[test]
+fn match_arms_of_different_types_are_refused_in_every_position() -> Result<(), String> {
+    let errors = check_str(
+        r#"
+def label(n: int) -> str:
+    text = match n:
+        0 => "zero"
+        _ => 5
+    return text
+
+def last(n: int) -> str:
+    match n:
+        1 => "one"
+        _ => 2
+
+def effect(n: int, mut values: list[int]) -> None:
+    match n:
+        0 => values.pop()
+        _ => println("none")
+
+def mixed(n: int, small: i8, byte: u8) -> int:
+    chosen = match n:
+        0 => small
+        _ => byte
+    return 0
+"#,
+    )
+    .err()
+    .ok_or("arms of different types must be refused")?;
+    let mismatches = errors
+        .iter()
+        .filter(|error| error.message.starts_with("Type mismatch"))
+        .map(|error| error.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        mismatches,
+        vec![
+            "Type mismatch: expected 'str', found 'int'",
+            "Type mismatch: expected 'str', found 'int'",
+            "Type mismatch: expected 'int', found 'Unit'",
+            "Type mismatch: expected 'i8', found 'u8'",
+        ],
+        "one refusal per arm that does not share the match's type, got: {errors:?}"
+    );
+    Ok(())
+}
+
+/// Arms of two numeric types unify to the wider one and the narrower arm is widened in place; an arm is written to the
+/// type of the place the match is written to, so a literal arm takes it and a payload arm is wrapped for an `Option`
+/// place; and an arm that returns takes no part.
+#[test]
+fn match_arms_unify_to_one_type_and_adapt_in_the_arm() -> Result<(), String> {
+    let source = r#"
+def pick(n: int, small: i8, wide: int) -> int:
+    chosen = match n:
+        0 => small
+        _ => wide
+    return chosen
+
+def byte(n: int) -> u8:
+    value: u8 = match n:
+        0 => 1
+        _ => 255
+    return value
+
+def maybe(n: int) -> Option[int]:
+    found: Option[int] = match n:
+        0 => 5
+        _ => None
+    return found
+
+def early(n: int) -> int:
+    value = match n:
+        0 => 7
+        _ =>
+            return 0
+    return value
+"#;
+    let program = parse_program(source, "match arm program");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("the arms must unify, got {errors:?}"))?;
+    let info = checker.type_info();
+    assert_eq!(
+        info.value_destination_type(arm_value_span(source, "0 => small")?),
+        Some(&ResolvedType::Int),
+        "the i8 arm is widened to the int arm's type"
+    );
+    assert_eq!(info.value_destination_type(arm_value_span(source, "_ => wide")?), None);
+    assert_eq!(
+        info.expr_type(arm_value_span(source, "0 => 1")?),
+        Some(&ResolvedType::Numeric(NumericTypeId::U8)),
+        "a literal arm takes the type of the place the match is written to"
+    );
+    assert_eq!(
+        info.value_destination_type(arm_value_span(source, "0 => 5")?),
+        Some(&ResolvedType::Generic("Option".to_string(), vec![ResolvedType::Int])),
+        "a payload arm is wrapped for the Option place"
+    );
+    Ok(())
+}
+
+/// A record pattern over a generic model or class names the subject's type, and each named field's sub-pattern is
+/// checked against that field under the subject's type arguments; a pattern naming every field, or leaving the rest
+/// to match any value, covers the subject.
+#[test]
+fn record_pattern_over_a_generic_model_or_class_checks_the_instantiated_fields() -> Result<(), String> {
+    check_str(
+        r#"
+model Box[T]:
+    value: T
+    label: str
+
+class Pair[A, B]:
+    pub first: A
+    pub second: B
+
+def unbox(b: Box[int]) -> int:
+    match b:
+        Box(value=0) => return -1
+        Box(value=v, label="x") => return v
+        Box(value=v) => return v + 1
+
+def first(p: Pair[str, int]) -> str:
+    match p:
+        Pair(second=2, first=f) => return f
+        Pair(first=f) => return f
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "record patterns over a generic model and class must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A record pattern over a generic model holds its fields to their instantiated types and refuses a field the model
+/// does not declare and a positional sub-pattern, as over a model without type parameters.
+#[test]
+fn record_pattern_over_a_generic_model_refuses_mistyped_unknown_and_positional_fields() -> Result<(), String> {
+    for (arm, needle) in [
+        ("Box(value=\"a\")", "Pattern type mismatch"),
+        ("Box(size=1)", "size"),
+        ("Box(1)", "Box"),
+    ] {
+        let source = format!(
+            "model Box[T]:\n    value: T\n\ndef unbox(b: Box[int]) -> int:\n    match b:\n        {arm} => return 1\n        _ => return 0\n"
+        );
+        let errors = match check_str(&source) {
+            Ok(()) => return Err(format!("`{arm}` over Box[int] must be refused")),
+            Err(errors) => errors,
+        };
+        if !errors.iter().any(|error| error.message.contains(needle)) {
+            return Err(format!(
+                "expected `{arm}` to be refused naming `{needle}`, got: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+        if errors
+            .iter()
+            .any(|error| error.message.contains("does not resolve for this match"))
+        {
+            return Err(format!(
+                "`{arm}` must resolve as a record pattern of Box, got: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}

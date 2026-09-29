@@ -353,6 +353,44 @@ impl AstLowering {
         Ok(())
     }
 
+    /// Return the declaration of `method_name` that `class_name` dispatches to: its own, else the one of the nearest
+    /// parent class that declares it.
+    ///
+    /// An inherited method is lowered again for each subclass, and a `self` call in it reaches the override closest to
+    /// that subclass (#1841), which may be declared by a class between the subclass and the method's own class.
+    pub(in crate::lower) fn nearest_class_method(
+        &self,
+        class_name: &str,
+        method_name: &str,
+    ) -> Option<&Spanned<ast::MethodDecl>> {
+        let mut visited = std::collections::HashSet::new();
+        let mut current = class_name;
+        while visited.insert(current) {
+            let class = self.class_decls.get(current)?;
+            if let Some(method) = class.methods.iter().find(|method| method.node.name == method_name) {
+                return Some(method);
+            }
+            current = class.extends.as_deref()?;
+        }
+        None
+    }
+
+    /// Whether `class_name` extends `ancestor`, directly or through its parent classes.
+    pub(in crate::lower) fn class_extends(&self, class_name: &str, ancestor: &str) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        let mut current = class_name;
+        while visited.insert(current) {
+            let Some(parent) = self.class_decls.get(current).and_then(|class| class.extends.as_deref()) else {
+                return false;
+            };
+            if parent == ancestor {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
     /// Recursively collect all computed properties from this class and parent classes.
     pub(in crate::lower) fn collect_inherited_properties(
         &self,

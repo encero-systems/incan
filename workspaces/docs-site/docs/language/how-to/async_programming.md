@@ -41,7 +41,7 @@ def main() -> None:
     println("Starting...")
 ```
 
-Import the individual `std.async` modules you use, such as `std.async.time` or `std.async.task`, for narrow dependencies, or `std.async.prelude` for the common surface.
+Import each name from the `std.async` module that declares it, such as `std.async.time` or `std.async.task`, for narrow dependencies, or import the common surface from `std.async` itself; `std.async.prelude` is another path to that same root module.
 
 ## Core Concepts
 
@@ -327,9 +327,6 @@ async def cooperative_loop() -> None:
 ## Channels
 
 Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.
-
-!!! warning "Current compiler limitation"
-    The channel declarations exist in `std.async.channel`, but the current compiler rejects the documented typed constructor and imported `Sender`/`Receiver` methods. Treat the channel material below as the intended library contract, not as a currently runnable authoring path. Task spawning, joining, and timeouts are runnable in [Build an asynchronous worker pipeline](../tutorials/async_worker_pipeline.md). Call the constructors without type arguments, such as `channel(32)`, and let subsequent sends, receives, or annotations infer `T`.
 
 ### MPSC Channel (Multi-Producer, Single-Consumer)
 

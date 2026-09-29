@@ -1,4 +1,5 @@
 # behavior: Some(member) whose destination is a dependency's Option[union] is wrapped into the union the dependency declares, as a call argument, a list element, a model field at construction and by assignment, an annotated binding, a match arm and a returned value, and Ok(member) and Err(message) fill a dependency's Result[union, str]
+# retires: loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs::dependency_optional_union_results_convert_into_consumer_options_issue1835
 # retires: loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs::some_member_takes_the_dependency_owned_union_at_every_destination_issue1743
 # expect-stdout:
 #   PLAIN

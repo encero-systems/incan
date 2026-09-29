@@ -144,6 +144,103 @@ def main() -> None:
 }
 
 #[test]
+fn rfc009_explicit_resize_targets_work_with_or_without_context() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 240
+  maybe = wide.try_resize[i8]()
+  wrapped = wide.wrapping_resize[i8]()
+  capped: i8 = wide.saturating_resize[i8]()
+  contextual: Option[i8] = wide.try_resize()
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_explicit_resize_target_must_match_context() {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 240
+  wrong: Option[i16] = wide.try_resize[i8]()
+"#;
+    let errors = check_str_err(source, "expected explicit resize target conflict to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("explicit resize target") && err.message.contains("Option[i16]")),
+        "expected explicit target conflict diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_integer_overflow_helpers_typecheck() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  ordinary: int = 2
+  ordinary_checked: Option[int] = ordinary.checked_add(3)
+  value: i8 = 120
+  checked: Option[i8] = value.checked_add(10i8)
+  checked_sub: Option[i8] = value.checked_sub(10i8)
+  checked_mul: Option[i8] = value.checked_mul(2i8)
+  checked_pow: Option[i8] = value.checked_pow(2u32)
+  wrapped: i8 = value.wrapping_add(10i8)
+  wrapped_sub: i8 = value.wrapping_sub(10i8)
+  wrapped_mul: i8 = value.wrapping_mul(2i8)
+  wrapped_pow: i8 = value.wrapping_pow(2u32)
+  saturated: i8 = value.saturating_add(10i8)
+  saturated_sub: i8 = value.saturating_sub(10i8)
+  saturated_mul: i8 = value.saturating_mul(2i8)
+  saturated_pow: i8 = value.saturating_pow(2u32)
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_integer_overflow_helpers_refuse_mixed_width_operands() {
+    let source = r#"
+def main() -> None:
+  left: i8 = 120
+  right: i16 = 10
+  wrong = left.checked_add(right)
+  also_wrong = right.saturating_mul(left)
+  wrong_power = right.checked_pow(left)
+"#;
+    let errors = check_str_err(source, "expected mixed-width overflow helper to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'i8', found 'i16'")),
+        "expected same-type operand diagnostic, got: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'i16', found 'i8'")),
+        "expected widening operand to require an explicit resize, got: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'u32', found 'i8'")),
+        "expected pow to require a u32 exponent, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_integer_overflow_helpers_refuse_float_receivers() {
+    let source = r#"
+def main() -> None:
+  value: f32 = 1.5
+  wrong = value.checked_add(1.0f32)
+"#;
+    let errors = check_str_err(source, "expected overflow helper on float to fail");
+    assert!(
+        errors.iter().any(|err| err.message.contains("checked_add")),
+        "expected unknown float helper diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn rfc009_binary_float_literals_are_checked_for_f32_targets() -> Result<(), String> {
     let ok = r#"
 def main() -> None:

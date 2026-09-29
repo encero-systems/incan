@@ -1,0 +1,59 @@
+# behavior: an Ord adopter that imports only Ord, under the trait's own or its module-qualified spelling, an enum adopter and a type parameter bounded by Ord reach the __ne__ default of the Eq supertrait, which is not __eq__
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::ne_reaches_the_eq_default_of_an_ord_only_adopter_issue1561
+# expect-stdout:
+#   true
+#   false
+#   false
+#   true
+#   false
+
+from std.derives.comparison import Ord
+from std.derives import comparison
+
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+model Qualified with comparison.Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+enum Level with Ord:
+    Low
+    High
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+
+def differ[T with Ord](a: T, b: T) -> bool:
+    return a.__ne__(b)
+
+
+def main() -> None:
+    println(Ordered(v=1).__ne__(Ordered(v=2)))
+    println(Ordered(v=1).__ne__(Ordered(v=1)))
+    println(Qualified(v=1).__ne__(Qualified(v=1)))
+    println(Level.Low.__ne__(Level.High))
+    println(differ(Ordered(v=3), Ordered(v=3)))

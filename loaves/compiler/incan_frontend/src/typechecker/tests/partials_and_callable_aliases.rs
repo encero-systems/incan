@@ -4,7 +4,7 @@
 use super::*;
 
 #[test]
-fn test_partial_function_presets_project_as_defaults() {
+fn test_partial_function_presets_project_as_defaults() -> Result<(), String> {
     let source = r#"
 def route(method: str, path: str, content_type: str = "text") -> str:
   return method
@@ -20,23 +20,32 @@ def use() -> str:
     let mut checker = TypeChecker::new();
     checker
         .check_program(&ast)
-        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+        .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
     let sym = checker
         .lookup_symbol("get")
-        .unwrap_or_else(|| panic!("missing projected partial symbol"));
+        .ok_or_else(|| "missing projected partial symbol".to_string())?;
     let SymbolKind::Function(info) = &sym.kind else {
-        panic!("expected function symbol for partial, got {:?}", sym.kind);
+        return Err(format!("expected function symbol for partial, got {:?}", sym.kind));
     };
-    let method = info.params.iter().find(|param| param.name() == Some("method")).unwrap();
-    let path = info.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let method = info
+        .params
+        .iter()
+        .find(|param| param.name() == Some("method"))
+        .ok_or_else(|| "missing method parameter".to_string())?;
+    let path = info
+        .params
+        .iter()
+        .find(|param| param.name() == Some("path"))
+        .ok_or_else(|| "missing path parameter".to_string())?;
     let content_type = info
         .params
         .iter()
         .find(|param| param.name() == Some("content_type"))
-        .unwrap();
+        .ok_or_else(|| "missing content_type parameter".to_string())?;
     assert!(method.has_default, "{info:?}");
     assert!(!path.has_default, "{info:?}");
     assert!(content_type.has_default, "{info:?}");
+    Ok(())
 }
 
 #[test]
@@ -125,7 +134,7 @@ def use() -> int:
 }
 
 #[test]
-fn test_public_partial_exports_projected_defaults() {
+fn test_public_partial_exports_projected_defaults() -> Result<(), String> {
     let source = r#"
 pub def route(method: str, path: str, content_type: str = "text") -> str:
   return method
@@ -136,7 +145,7 @@ pub get = partial route(method="GET")
     let mut checker = TypeChecker::new();
     checker
         .check_program(&ast)
-        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+        .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
 
     let exports = collect_checked_public_exports(&ast, &checker);
     let get = exports
@@ -145,18 +154,26 @@ pub get = partial route(method="GET")
             CheckedExportKind::Partial(partial) if partial.name == "get" => Some(partial),
             _ => None,
         })
-        .unwrap_or_else(|| panic!("missing public partial export: {exports:?}"));
+        .ok_or_else(|| format!("missing public partial export: {exports:?}"))?;
     assert_eq!(get.target_path, vec!["route"]);
     assert_eq!(get.target_kind, CheckedPartialTargetKind::Function);
     assert_eq!(get.presets[0].name, "method");
     assert_eq!(get.presets[0].value, CheckedPresetValue::String("GET".to_string()));
-    let method = get.params.iter().find(|param| param.name() == Some("method")).unwrap();
-    let path = get.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let method = get
+        .params
+        .iter()
+        .find(|param| param.name() == Some("method"))
+        .ok_or_else(|| "missing method parameter".to_string())?;
+    let path = get
+        .params
+        .iter()
+        .find(|param| param.name() == Some("path"))
+        .ok_or_else(|| "missing path parameter".to_string())?;
     let content_type = get
         .params
         .iter()
         .find(|param| param.name() == Some("content_type"))
-        .unwrap();
+        .ok_or_else(|| "missing content_type parameter".to_string())?;
     assert!(method.has_default, "{get:?}");
     assert!(!path.has_default, "{get:?}");
     assert!(content_type.has_default, "{get:?}");
@@ -171,6 +188,7 @@ pub get = partial route(method="GET")
         manifest.exports.partials[0].presets[0].value,
         PresetValueExport::String("GET".to_string())
     );
+    Ok(())
 }
 
 #[test]
@@ -1112,5 +1130,343 @@ fn a_same_module_public_alias_publishes_its_target_callable_metadata() -> Result
         vec!["provider".to_string(), "helper".to_string()],
         "the projection must point at the declaration the alias targets"
     );
+    Ok(())
+}
+
+/// RFC 084 admits scalar literals, consts named by identifier or qualified path, and collection literals as top-level
+/// preset values: a negative number, a const imported from another module, a module-qualified const, and tuple and
+/// set literals of such values are each declaration-safe.
+#[test]
+fn top_level_partial_accepts_negative_numbers_imported_consts_tuples_and_sets() -> Result<(), String> {
+    let source = r#"
+from std import hash
+from std.hash import DEFAULT_CHUNK_SIZE
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+def shift(by: float, x: float) -> float:
+    return x + by
+
+def pair_sum(p: tuple[int, int], n: int) -> int:
+    return p[0] + p[1] + n
+
+def count_tags(tags: set[str], extra: int) -> int:
+    return len(tags) + extra
+
+negative = partial scale(k=-2)
+negative_float = partial shift(by=-0.5)
+chunked = partial scale(k=DEFAULT_CHUNK_SIZE)
+qualified = partial scale(k=hash.DEFAULT_CHUNK_SIZE)
+paired = partial pair_sum(p=(1, -2))
+tagged = partial count_tags(tags={"a", "b"})
+
+def main() -> None:
+    println(negative(n=3) + chunked(n=1) + qualified(n=1) + paired(n=1) + tagged(extra=1))
+    println(negative_float(x=1.0))
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "declaration-safe presets must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A const from a sibling module, imported by name or read through its module, is a declaration-safe preset, while a
+/// non-const binding of that module is not.
+#[test]
+fn top_level_partial_accepts_a_const_of_another_module() -> Result<(), String> {
+    let limits = parse_program("pub const LIMIT: int = 3\npub static hits: int = 0\n", "limits module");
+    let accepted = parse_program(
+        r#"
+import limits
+from limits import LIMIT
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+by_name = partial scale(k=LIMIT)
+by_path = partial scale(k=limits.LIMIT)
+"#,
+        "const preset consumer",
+    );
+    TypeChecker::new()
+        .check_with_imports(&accepted, &[("limits", &limits)])
+        .map_err(|errors| format!("a sibling module's const must be a declaration-safe preset: {errors:?}"))?;
+
+    let refused = parse_program(
+        r#"
+from limits import hits
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+by_static = partial scale(k=hits)
+"#,
+        "static preset consumer",
+    );
+    let errors = TypeChecker::new()
+        .check_with_imports(&refused, &[("limits", &limits)])
+        .err()
+        .ok_or("a static of another module is not a declaration-safe preset")?;
+    if errors
+        .iter()
+        .any(|error| error.message.contains("must be declaration-safe"))
+    {
+        Ok(())
+    } else {
+        Err(format!("expected the declaration-safe refusal, got: {errors:?}"))
+    }
+}
+
+/// A public partial publishes a negative number and tuple and set literals as preset metadata.
+#[test]
+fn public_partial_exports_negative_tuple_and_set_presets() -> Result<(), String> {
+    let source = r#"
+pub def configure(offset: int, ratio: float, pair: tuple[int, str], tags: set[str]) -> int:
+    return offset
+
+pub tuned = partial configure(offset=-2, ratio=-0.5, pair=(1, "a"), tags={"x"})
+"#;
+    let ast = parse_program(source, "public partial presets");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let tuned = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "tuned" => Some(partial),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing partial export: {exports:?}"))?;
+    let value = |name: &str| {
+        tuned
+            .presets
+            .iter()
+            .find(|preset| preset.name == name)
+            .map(|preset| preset.value.clone())
+    };
+    assert_eq!(value("offset"), Some(CheckedPresetValue::Int(-2)));
+    assert_eq!(value("ratio"), Some(CheckedPresetValue::Float(-0.5)));
+    assert_eq!(
+        value("pair"),
+        Some(CheckedPresetValue::Tuple(vec![
+            CheckedPresetValue::Int(1),
+            CheckedPresetValue::String("a".to_string()),
+        ]))
+    );
+    assert_eq!(
+        value("tags"),
+        Some(CheckedPresetValue::Set(vec![CheckedPresetValue::String(
+            "x".to_string()
+        )]))
+    );
+    Ok(())
+}
+
+/// RFC 084 makes constructor presets first-class: a local partial expression over a model, class or newtype
+/// constructor is a callable of the constructor's parameters with the presets as overridable defaults.
+#[test]
+fn local_partial_expression_accepts_model_class_and_newtype_constructors() -> Result<(), String> {
+    let source = r#"
+model Reader:
+    layer: str
+    format: str
+    path: str
+
+class Counter:
+    pub start: int
+    pub step: int
+
+type UserId = newtype int
+
+def main() -> None:
+    layer = "bronze"
+    make = partial Reader(layer=layer, format="delta")
+    reader = make(path="orders")
+    csv = make(path="orders", format="csv")
+    counter = partial Counter(step=2)
+    c: Counter = counter(start=1)
+    user = partial UserId(value=7)
+    u: UserId = user()
+    println(f"{reader.path} {csv.format} {c.step}")
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a local partial of a constructor must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// RFC 084 admits generic callables as partial targets: a local partial of a generic function or of a generic model or
+/// class constructor instantiates its target with the type arguments its presets fix or that it writes, and is a
+/// callable of the instantiated parameters.
+#[test]
+fn local_partial_of_a_generic_function_or_constructor_is_instantiated() -> Result<(), String> {
+    let source = r#"
+def pair[T](a: T, b: T) -> list[T]:
+    return [a, b]
+
+def tagged[T with Display](value: T, prefix: str) -> str:
+    return f"{prefix}{value}"
+
+model Box[T]:
+    value: T
+    label: str
+
+class Slot[T]:
+    pub item: T
+    pub count: int
+
+def main() -> None:
+    first = partial pair(a=1)
+    items: list[int] = first(b=2)
+    more: list[int] = first(3)
+    hash_tag = partial tagged[int](prefix="no.")
+    text: str = hash_tag(value=4)
+    boxed = partial Box(value=5)
+    b: Box[int] = boxed(label="five")
+    labeled = partial Box[str](label="named")
+    c: Box[str] = labeled(value="six")
+    slot = partial Slot(item="s")
+    s: Slot[str] = slot(count=7)
+    println(f"{items} {more} {text} {b.value} {c.value} {s.item}")
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a local partial of a generic callable must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A local partial is a value, so it is not generic: a type parameter that neither its presets nor its written type
+/// arguments fix is refused, as are a preset of the wrong type, a written type argument list of the wrong length and a
+/// type argument that misses its bound.
+#[test]
+fn local_partial_of_a_generic_callable_refuses_a_free_type_parameter_and_bad_type_arguments() -> Result<(), String> {
+    let cases: [(&str, &str); 4] = [
+        (
+            "model Box[T]:\n    value: T\n    label: str\n\ndef main() -> None:\n    make = partial Box(label=\"x\")\n",
+            "leaves type parameter 'T'",
+        ),
+        (
+            "def pair[T](a: T, b: T) -> list[T]:\n    return [a, b]\n\ndef main() -> None:\n    p = partial pair[int](a=\"s\")\n",
+            "expected 'int', found 'str'",
+        ),
+        (
+            "def pair[T](a: T, b: T) -> list[T]:\n    return [a, b]\n\ndef main() -> None:\n    p = partial pair[int, str](a=1)\n",
+            "expects 1 explicit type argument(s), got 2",
+        ),
+        (
+            "model Plain:\n    x: int\n\ndef tagged[T with Display](value: T, prefix: str) -> str:\n    return prefix\n\ndef main() -> None:\n    p = partial tagged(value=Plain(x=1))\n",
+            "requires 'Display'",
+        ),
+    ];
+    for (source, needle) in cases {
+        let errors = check_str(source)
+            .err()
+            .ok_or_else(|| format!("expected a refusal for:\n{source}"))?;
+        if !errors
+            .iter()
+            .any(|error| error.message.to_lowercase().contains(&needle.to_lowercase()))
+        {
+            return Err(format!(
+                "expected an error containing {needle:?} for:\n{source}\ngot: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A local partial may name a method of a value, `partial user.label(prefix="x")` (RFC 084): of a local, of `self`, of
+/// a field, through a method alias and on a generic type, whose type parameters take the receiver's type arguments. The
+/// partial has the method's parameters, each preset one defaulted, and its return type (#1561).
+#[test]
+fn local_partial_of_a_method_of_a_value_is_accepted_issue1561() -> Result<(), String> {
+    let source = r#"
+model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+    tag = label
+
+model Box[T]:
+    value: T
+
+    def pair(self, other: T, sep: str) -> list[T]:
+        return [self.value, other]
+
+class Team:
+    pub lead: User
+
+    def banner(self) -> str:
+        shout = partial self.lead.label(suffix="!")
+        return shout("> ")
+
+def main() -> None:
+    user = User(name="ann")
+    tag = partial user.label(prefix="x")
+    text: str = tag(suffix="!")
+    other: str = tag("?", prefix="y")
+    aliased = partial user.tag(suffix=".")
+    dotted: str = aliased("<")
+    b = Box(value=1)
+    joined = partial b.pair(sep="-")
+    items: list[int] = joined(2)
+    println(f"{text} {other} {dotted} {items}")
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a local partial of a method of a value must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A local partial of a method of a value holds its own copy of the receiver, so a method that takes `mut self` is
+/// refused, as a closure's change to a capture is; so are an overloaded method and a generic method, and a preset of
+/// the wrong type (#1561).
+#[test]
+fn local_partial_of_a_method_of_a_value_refuses_what_it_cannot_hold_issue1561() -> Result<(), String> {
+    let cases: [(&str, &str); 4] = [
+        (
+            "class Counter:\n    pub count: int\n\n    def add(mut self, by: int) -> None:\n        self.count += by\n\ndef main() -> None:\n    mut c = Counter(count=0)\n    step = partial c.add(by=1)\n",
+            "a local partial of the method 'add' is not supported: it takes 'mut self'",
+        ),
+        (
+            "model M:\n    x: int\n\n    def get[T](self, value: T, n: int) -> T:\n        return value\n\ndef main() -> None:\n    m = M(x=1)\n    g = partial m.get(n=1)\n",
+            "a local partial of the method 'get' is not supported: it is generic",
+        ),
+        (
+            "model M:\n    x: int\n\n    def show(self, n: int) -> str:\n        return str(n)\n\n    def show(self, n: str) -> str:\n        return n\n\ndef main() -> None:\n    m = M(x=1)\n    g = partial m.show(n=1)\n",
+            "a local partial of the method 'show' is not supported: it is overloaded",
+        ),
+        (
+            "model M:\n    x: int\n\n    def scale(self, by: int, extra: int) -> int:\n        return self.x * by\n\ndef main() -> None:\n    m = M(x=1)\n    g = partial m.scale(by=\"two\")\n",
+            "expected 'int', found 'str'",
+        ),
+    ];
+    for (source, needle) in cases {
+        let errors = check_str(source)
+            .err()
+            .ok_or_else(|| format!("expected a refusal for:\n{source}"))?;
+        if !errors
+            .iter()
+            .any(|error| error.message.to_lowercase().contains(&needle.to_lowercase()))
+        {
+            return Err(format!(
+                "expected an error containing {needle:?} for:\n{source}\ngot: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+    }
     Ok(())
 }

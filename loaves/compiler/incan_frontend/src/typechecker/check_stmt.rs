@@ -141,10 +141,10 @@ impl TypeChecker {
     /// Check the value of a compound assignment `x op= y` against the type `var_ty` of the local or static it writes.
     ///
     /// Numeric operands are checked as `x = x op y`: the operator's result type from the operator result table, then
-    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32` and `n += 1` on an `i32` binding adds two `i32`
-    /// values, and both are accepted, while `x /= 2` on an `int` binding stays refused because its `float` result is
-    /// not assignable to `int` (#1812). A user operator receiver resolves through its in-place or binary hook, and any
-    /// other value must be assignable to the binding.
+    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32`, and `n += 1` and `n |= 1` on an `i32` binding
+    /// combine two `i32` values, and all are accepted, while `x /= 2` on an `int` binding stays refused because its
+    /// `float` result is not assignable to `int` (#1812). A user operator receiver resolves through its in-place or
+    /// binary hook, and any other value must be assignable to the binding.
     fn check_compound_assignment_value(
         &mut self,
         compound: &CompoundAssignmentStmt,
@@ -167,7 +167,13 @@ impl TypeChecker {
                 BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
             ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
             {
-                ResolvedType::Int
+                let target = Spanned::new(Expr::Ident(compound.name.clone()), compound.name_span);
+                self.integer_bitwise_result_type(
+                    (&target, var_ty),
+                    binop,
+                    (&compound.value, value_ty),
+                    compound.value.span,
+                )
             } else {
                 self.errors.push(errors::type_mismatch(
                     "supported compound operator operands",
@@ -274,8 +280,14 @@ impl TypeChecker {
     pub fn check_statement(&mut self, stmt: &Spanned<Statement>) {
         match &stmt.node {
             Statement::Assignment(assign) => self.check_assignment(assign, stmt.span),
-            Statement::FieldAssignment(field_assign) => self.check_field_assignment(field_assign, stmt.span),
-            Statement::IndexAssignment(index_assign) => self.check_index_assignment(index_assign, stmt.span),
+            Statement::FieldAssignment(field_assign) => {
+                self.check_field_assignment(field_assign, stmt.span);
+                self.refuse_capturing_reassignment(None, &field_assign.value, field_assign.value.span);
+            }
+            Statement::IndexAssignment(index_assign) => {
+                self.check_index_assignment(index_assign, stmt.span);
+                self.refuse_capturing_reassignment(None, &index_assign.value, index_assign.value.span);
+            }
             Statement::Return(expr) => self.check_return(expr.as_ref(), stmt.span),
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
             Statement::Loop(loop_stmt) => self.check_loop_stmt(loop_stmt, stmt.span),
@@ -335,6 +347,7 @@ impl TypeChecker {
                     }
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);
+                    self.refuse_capturing_reassignment(Some(&compound.name), &compound.value, compound.name_span);
 
                     self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if let Some(static_info) = self.lookup_static_info(&compound.name).cloned() {
@@ -380,36 +393,46 @@ impl TypeChecker {
 
                 // Check each target expression - must be a valid lvalue
                 for (i, target) in assign.targets.iter().enumerate() {
-                    let target_ty = self.check_expr(target);
                     let expected_ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
+
+                    // A name target follows the rule `name = value` follows, as in a tuple unpacking: a bound name is
+                    // reassigned (it must be `mut`, and a caller-visible `mut` parameter is changed in place, never
+                    // rebound, #1773), and a name with no binding is declared with its element's type.
+                    if let Expr::Ident(name) = &target.node {
+                        self.check_unannotated_assignment_target(
+                            name,
+                            BindingKind::Inferred,
+                            expected_ty,
+                            target.span,
+                            assign.value.span,
+                        );
+                        continue;
+                    }
+                    let target_ty = self.check_expr(target);
 
                     // Check that target is a valid lvalue
                     match &target.node {
-                        Expr::Ident(name) => {
-                            self.record_write_target_identity(target.span, name);
-                            // Check that the variable is mutable; a caller-visible `mut` parameter is changed in
-                            // place, never rebound (#1773).
-                            if self.refuse_caller_visible_mut_param_rebinding(name, target.span) {
-                                // Reported by the refusal itself.
-                            } else if let Some(var_info) = self.lookup_local_variable_info(name)
-                                && !var_info.is_mutable
-                            {
-                                self.errors.push(errors::mutation_without_mut(name, target.span));
-                            } else if let Some(static_info) = self.lookup_static_info(name) {
-                                if static_info.is_imported {
-                                    self.errors
-                                        .push(errors::imported_static_reassignment_not_allowed(name, target.span));
-                                }
-                            } else if self.const_decls.contains_key(name) {
-                                self.errors
-                                    .push(errors::const_reassignment_suggests_static(name, target.span));
-                            }
-                        }
-                        Expr::Index(_, _) | Expr::Field(_, _) => {
+                        Expr::Index(object, _) | Expr::Field(object, _) => {
                             // Index and field expressions are valid lvalues; type compatibility is checked below.
-                            // A place rooted at the receiver is a write through `self` like any other (#1723).
+                            // An element target is refused where `x[i] = value` is: a tuple's or a string's element,
+                            // for one. A place rooted at the receiver is a write through `self` like any other
+                            // (#1723), and a place rooted at a read-only binding is refused like a single field or
+                            // element write.
+                            if matches!(target.node, Expr::Index(_, _))
+                                && let Some(object_ty) = self.type_info.expr_type(object.span).cloned()
+                            {
+                                self.refuse_unassignable_element_receiver(&object_ty, target.span);
+                            }
                             if let Some(place) = Self::self_rooted_place(target) {
                                 self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
+                            }
+                            let writes_builtin_slot = matches!(target.node, Expr::Field(_, _))
+                                || self
+                                    .type_info
+                                    .expr_type(object.span)
+                                    .is_some_and(|ty| Self::index_assignment_slot_types(ty).is_some());
+                            if writes_builtin_slot {
+                                self.refuse_write_through_read_only_binding(object, target.span);
                             }
                             self.note_mut_param_write(target);
                         }
@@ -432,9 +455,11 @@ impl TypeChecker {
                 // The value is refused before the chain's targets are bound, so a target cannot shadow the parameter.
                 self.refuse_mut_param_held_by(&ca.value);
                 self.check_chained_assignment(ca, stmt.span);
+                self.refuse_capturing_reassignment(None, &ca.value, ca.value.span);
             }
         }
         self.reject_unbound_c_abi_span_constructors();
+        self.reject_unbound_scoped_c_string_views(&stmt.node);
         // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
         // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
         self.open_rust_generic_calls.clear();
@@ -454,6 +479,99 @@ impl TypeChecker {
             Expr::Index(base, _) => Self::self_rooted_place(base).map(|place| format!("{place}[...]")),
             _ => None,
         }
+    }
+
+    /// Remember the declaration span of a binding declared without `mut`, whose place a field or element write may not
+    /// go through (see [`Self::refuse_write_through_read_only_binding`]).
+    pub(in crate::typechecker) fn record_read_only_binding(&mut self, is_mutable: bool, declaration_span: Span) {
+        if !is_mutable {
+            self.read_only_binding_spans
+                .insert((declaration_span.start, declaration_span.end));
+        }
+    }
+
+    /// Return the name a written place is rooted at, `items` for `items[0].count`, or `None` for a place rooted at
+    /// anything else, such as `self` or a call result.
+    fn written_place_root(expr: &Spanned<Expr>) -> Option<&str> {
+        match &expr.node {
+            Expr::Ident(name) => Some(name),
+            Expr::Paren(inner) | Expr::Field(inner, _) | Expr::Index(inner, _) => Self::written_place_root(inner),
+            _ => None,
+        }
+    }
+
+    /// Refuse a change at `span`, inside a closure, through the local `symbol_id` (named `name`) that the closure
+    /// captures from its enclosing callable (#1561). Returns whether it was refused.
+    ///
+    /// A closure reads each outer local it names as the value the local holds when the closure is constructed, so a
+    /// change the closure makes through one would change the closure's own copy, which the local never sees. A
+    /// caller-visible `mut` parameter, and a view into one, are refused as held by the closure instead (see
+    /// `note_param_change`).
+    pub(in crate::typechecker) fn refuse_change_through_closure_capture(
+        &mut self,
+        symbol_id: SymbolId,
+        name: &str,
+        span: Span,
+    ) -> bool {
+        if !self.local_is_captured_by_closure(symbol_id) || self.reaches_caller_visible_param(name) {
+            return false;
+        }
+        let error = errors::change_through_closure_capture(name, span);
+        let already_reported = self
+            .errors
+            .iter()
+            .any(|existing| existing.span == error.span && existing.message == error.message);
+        if !already_reported {
+            self.errors.push(error);
+        }
+        true
+    }
+
+    /// Return whether the local `symbol_id` resolves to is held by a callable enclosing the closure being checked, so
+    /// that the closure captures it.
+    pub(in crate::typechecker) fn local_is_captured_by_closure(&self, symbol_id: SymbolId) -> bool {
+        !self.checks_standard_library_source()
+            && self.symbols.get(symbol_id).is_some_and(|symbol| {
+                matches!(symbol.kind, SymbolKind::Variable(_)) && self.symbols.read_crosses_callable_scope(symbol.scope)
+            })
+    }
+
+    /// Refuse a field or element write through a binding declared without `mut` (#1561).
+    ///
+    /// A binding is immutable unless declared `mut`, and that covers what it holds: a local declared by `let` or a
+    /// first plain assignment, or a parameter not marked `mut`, gives no write access to its fields and elements. A
+    /// local bound directly to a module static is an alias of the static's storage and writes through to it, and a
+    /// loop or pattern binding follows the place it binds, so neither is refused here. A change through a local a
+    /// closure captures is refused (see [`Self::refuse_change_through_closure_capture`]). `object` is the place whose
+    /// field or element is written.
+    pub(in crate::typechecker) fn refuse_write_through_read_only_binding(
+        &mut self,
+        object: &Spanned<Expr>,
+        span: Span,
+    ) {
+        let Some(root) = Self::written_place_root(object) else {
+            return;
+        };
+        let Some(symbol_id) = self.symbols.lookup(root) else {
+            return;
+        };
+        if self.refuse_change_through_closure_capture(symbol_id, root, span) {
+            return;
+        }
+        if self.static_alias_bindings.contains_key(&symbol_id) {
+            return;
+        }
+        let Some(symbol) = self.symbols.get(symbol_id) else {
+            return;
+        };
+        if !matches!(symbol.kind, SymbolKind::Variable(_))
+            || !self
+                .read_only_binding_spans
+                .contains(&(symbol.span.start, symbol.span.end))
+        {
+            return;
+        }
+        self.errors.push(errors::mutation_without_mut(root, span));
     }
 
     /// Refuse a write to `place`, a place rooted at `self`, when the enclosing method takes a plain `self` (#1723).
@@ -480,6 +598,7 @@ impl TypeChecker {
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
+        self.refuse_write_through_read_only_binding(&field_assign.object, field_assign.target_span);
         self.note_mut_param_write(&field_assign.object);
         self.refuse_mut_param_held_by(&field_assign.value);
         let field = &field_assign.field;
@@ -616,6 +735,9 @@ impl TypeChecker {
             self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
         }
         let slot_types = Self::index_assignment_slot_types(&obj_ty);
+        if slot_types.is_some() {
+            self.refuse_write_through_read_only_binding(&index_assign.object, span);
+        }
         // Check the index expression
         let index_ty = self.check_expr_with_expected(&index_assign.index, slot_types.as_ref().map(|(key, _)| key));
         // Check the value expression
@@ -625,81 +747,55 @@ impl TypeChecker {
         }
 
         // Verify object is indexable and types match
+        if self.refuse_unassignable_element_receiver(&obj_ty, span) {
+            return;
+        }
         match &obj_ty {
-            ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
-                Some(CollectionTypeId::List) => {
-                    // List[T] - index must be int, value must be T
-                    if !matches!(index_ty, ResolvedType::Int) {
-                        self.errors.push(errors::index_type_mismatch(
-                            "int",
-                            &index_ty.to_string(),
-                            index_assign.index.span,
-                        ));
-                    }
-                    if let Some(elem_ty) = args.first()
-                        && !self.types_compatible(&value_ty, elem_ty)
-                    {
-                        self.errors.push(errors::index_value_type_mismatch(
-                            &elem_ty.to_string(),
-                            &value_ty.to_string(),
-                            index_assign.value.span,
-                        ));
-                    }
+            ResolvedType::Generic(name, args) if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) => {
+                // List[T] - index must be int, value must be T
+                if !matches!(index_ty, ResolvedType::Int) {
+                    self.errors.push(errors::index_type_mismatch(
+                        "int",
+                        &index_ty.to_string(),
+                        index_assign.index.span,
+                    ));
                 }
-                Some(CollectionTypeId::Dict) => {
-                    // Dict[K, V] - index must be K, value must be V
-                    if let Some(key_ty) = args.first()
-                        && !self.types_compatible(&index_ty, key_ty)
-                    {
-                        self.errors.push(errors::index_type_mismatch(
-                            &key_ty.to_string(),
-                            &index_ty.to_string(),
-                            index_assign.index.span,
-                        ));
-                    }
-                    if let Some(val_ty) = args.get(1)
-                        && !self.types_compatible(&value_ty, val_ty)
-                    {
-                        self.errors.push(errors::index_value_type_mismatch(
-                            &val_ty.to_string(),
-                            &value_ty.to_string(),
-                            index_assign.value.span,
-                        ));
-                    }
+                if let Some(elem_ty) = args.first()
+                    && !self.types_compatible(&value_ty, elem_ty)
+                {
+                    self.errors.push(errors::index_value_type_mismatch(
+                        &elem_ty.to_string(),
+                        &value_ty.to_string(),
+                        index_assign.value.span,
+                    ));
                 }
-                _ => {
-                    if self.is_user_operator_receiver(&obj_ty) {
-                        if self
-                            .resolve_index_set_dunder(
-                                &obj_ty,
-                                &index_assign.index,
-                                &index_ty,
-                                &index_assign.value,
-                                &value_ty,
-                                span,
-                            )
-                            .is_none()
-                        {
-                            self.errors
-                                .push(errors::missing_method(&obj_ty.to_string(), "__setitem__", span));
-                        }
-                    } else {
-                        self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
-                    }
-                }
-            },
-            ResolvedType::Tuple(_) => {
-                // Tuples are immutable - cannot assign to index
-                self.errors.push(errors::tuple_field_assignment(span));
             }
-            ResolvedType::Str => {
-                // Strings are immutable in Incan
-                self.errors.push(errors::string_index_assignment_not_allowed(span));
+            ResolvedType::Generic(name, args) if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) => {
+                // Dict[K, V] - index must be K, value must be V
+                if let Some(key_ty) = args.first()
+                    && !self.types_compatible(&index_ty, key_ty)
+                {
+                    self.errors.push(errors::index_type_mismatch(
+                        &key_ty.to_string(),
+                        &index_ty.to_string(),
+                        index_assign.index.span,
+                    ));
+                }
+                if let Some(val_ty) = args.get(1)
+                    && !self.types_compatible(&value_ty, val_ty)
+                {
+                    self.errors.push(errors::index_value_type_mismatch(
+                        &val_ty.to_string(),
+                        &value_ty.to_string(),
+                        index_assign.value.span,
+                    ));
+                }
             }
             ResolvedType::Unknown => {
                 // Don't report additional errors on unknown types
             }
-            ty if self.is_user_operator_receiver(ty) => {
+            // Every other receiver left by the refusal above is a type that defines its own element write.
+            ty => {
                 if self
                     .resolve_index_set_dunder(ty, &index_assign.index, &index_ty, &index_assign.value, &value_ty, span)
                     .is_none()
@@ -708,17 +804,52 @@ impl TypeChecker {
                         .push(errors::missing_method(&ty.to_string(), "__setitem__", span));
                 }
             }
-            _ => {
-                self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
-            }
         }
+    }
+
+    /// Refuse a write to an element of a value of type `obj_ty` when no element of such a value is assignable, and
+    /// return whether the write was refused.
+    ///
+    /// A list, a dict, a type that defines its own element write and an unknown type are left to the caller. A tuple in
+    /// either spelling and a string are immutable, and any other type, such as a frozen collection, is not indexable
+    /// for a write. `x[i] = value` and an element target of `a, x[i] = value` share this rule, so a tuple
+    /// assignment never writes an element that a single assignment refuses (#1561).
+    fn refuse_unassignable_element_receiver(&mut self, obj_ty: &ResolvedType, span: Span) -> bool {
+        let refusal = match obj_ty {
+            ResolvedType::Generic(name, _) => match collection_type_id(name.as_str()) {
+                Some(CollectionTypeId::List | CollectionTypeId::Dict) => None,
+                // A written `tuple[A, B]` is immutable like a tuple literal's type below.
+                Some(CollectionTypeId::Tuple) => Some(errors::tuple_field_assignment(span)),
+                _ if self.is_user_operator_receiver(obj_ty) => None,
+                _ => Some(errors::not_indexable(&obj_ty.to_string(), span)),
+            },
+            ResolvedType::Tuple(_) => Some(errors::tuple_field_assignment(span)),
+            ResolvedType::Str => Some(errors::string_index_assignment_not_allowed(span)),
+            ResolvedType::Unknown => None,
+            ty if self.is_user_operator_receiver(ty) => None,
+            _ => Some(errors::not_indexable(&obj_ty.to_string(), span)),
+        };
+        let refused = refusal.is_some();
+        self.errors.extend(refusal);
+        refused
     }
 
     /// Validate an assignment statement, then remember a local bound directly to a module static (see
     /// [`Self::note_static_alias_binding`]).
+    ///
+    /// A new binding of a capturing callable takes the callable's own type, and a reassignment of one, or to one, is
+    /// refused (see `capturing_callables.rs`).
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
         self.check_assignment_binding(assign, span);
         self.note_static_alias_binding(assign);
+        let declares = self
+            .lookup_symbol(&assign.name)
+            .is_some_and(|symbol| symbol.span == assign.name_span);
+        if declares {
+            self.note_capturing_binding(&assign.value, assign.name_span, span);
+        } else {
+            self.refuse_capturing_reassignment(Some(&assign.name), &assign.value, assign.name_span);
+        }
     }
 
     /// Validate assignment statements, including declarations, reassignments, and local annotation compatibility.
@@ -812,11 +943,6 @@ impl TypeChecker {
         // New binding
         let is_mutable = matches!(assign.binding, BindingKind::Mutable);
 
-        // Tuples are immutable - disallow `mut` on tuple bindings
-        if is_mutable && matches!(value_ty, ResolvedType::Tuple(_)) {
-            self.errors.push(errors::mutable_tuple(span));
-        }
-
         if is_mutable {
             self.mutable_bindings.insert(assign.name.clone());
         }
@@ -845,7 +971,7 @@ impl TypeChecker {
             }
             if trait_typed_local { value_ty } else { ann_ty }
         } else {
-            value_ty
+            self.settle_open_constructor_side(&assign.value, value_ty)
         };
 
         self.record_assignment_binding_type(span, ty.clone());
@@ -866,11 +992,13 @@ impl TypeChecker {
         } else {
             self.symbols.define(symbol);
         }
+        self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, &assign.name);
         self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_raw_result_assignment(&assign.name, assign.value.span);
+        self.bind_scoped_c_string_view_assignment(target_span, assign.value.span);
         if assign.ty.is_none() {
             // An annotation is itself what fixes the arguments; only an unannotated binding is watched (#1720).
             self.bind_open_rust_generic_assignment(&assign.name, assign.value.span);
@@ -976,6 +1104,7 @@ impl TypeChecker {
         } else {
             self.symbols.define(symbol);
         }
+        self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, name);
         if is_mutable {
             self.mutable_bindings.insert(name.to_string());
@@ -1041,6 +1170,38 @@ impl TypeChecker {
                     .to_string(),
                 Span::new(start, end),
             ));
+        }
+    }
+
+    /// Bind a scoped C text view to the new local whose value it is, at the current closure depth (RFC 116).
+    ///
+    /// The local may then be read as the receiver of `copy_utf8` only; see `check_ident`.
+    fn bind_scoped_c_string_view_assignment(&mut self, binding_span: Span, value_span: Span) {
+        if self
+            .unbound_scoped_c_string_views
+            .remove(&(value_span.start, value_span.end))
+        {
+            self.scoped_c_string_view_bindings
+                .insert((binding_span.start, binding_span.end), self.closure_depth);
+        }
+    }
+
+    /// Refuse each scoped C text view the statement just checked neither bound to a local nor copied (RFC 116).
+    ///
+    /// A view that is returned, stored, passed on or placed in a value would outlive the memory it points into. A bare
+    /// expression statement that only discards the view is not an escape.
+    fn reject_unbound_scoped_c_string_views(&mut self, statement: &Statement) {
+        if let Statement::Expr(expr) = statement {
+            self.unbound_scoped_c_string_views
+                .remove(&(expr.span.start, expr.span.end));
+        }
+        let mut escaped = std::mem::take(&mut self.unbound_scoped_c_string_views)
+            .into_iter()
+            .collect::<Vec<_>>();
+        escaped.sort_unstable();
+        for (start, end) in escaped {
+            self.errors
+                .push(errors::scoped_c_string_view_escapes(Span::new(start, end)));
         }
     }
 
@@ -1166,6 +1327,9 @@ impl TypeChecker {
         }
         if let (Some(e), Some(expected)) = (expr, self.symbols.current_return_type().cloned()) {
             self.record_value_destination_if_compatible(e.span, &return_ty, &expected);
+            if matches!(expected, ResolvedType::Function(..)) {
+                self.check_capturing_return(e);
+            }
         }
     }
 
@@ -1570,11 +1734,14 @@ impl TypeChecker {
             // ---- Context: pattern-driven `while let` loop ----
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
+                let views = self.enter_pattern_views(&pattern.node, view_param);
                 self.push_loop_context(LoopContextKind::Statement, None, span.start);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
+                self.exit_pattern_views(views);
                 self.symbols.exit_scope();
                 self.note_dict_lookup_let(value, pattern, &while_stmt.body);
             }
@@ -1622,10 +1789,15 @@ impl TypeChecker {
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };
-        let takes_items = self.plan_for_item_taking(for_stmt, &elem_ty);
+        let owns_items = self.plan_for_item_taking(for_stmt, &elem_ty);
 
-        // The iterated parameter is resolved before the loop's bindings shadow it (`for items in items:`).
+        // The iterated place is resolved before the loop's bindings shadow it (`for items in items:`).
         let loop_view_param = self.loop_view_param(&for_stmt.iter);
+        let derived_views = if loop_view_param.is_none() {
+            self.read_only_derived_loop_views(&for_stmt.iter, &for_stmt.pattern.node)
+        } else {
+            Vec::new()
+        };
         self.symbols.enter_scope(ScopeKind::Block);
         // Record the resolved element type at the pattern's own span. Body IR's `lower_for` already reads the loop
         // pattern's type back through `TypeCheckInfo::expr_type`, and every binding the pattern introduces -- one
@@ -1633,9 +1805,9 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
-        self.remember_for_pattern_bindings(&for_stmt.pattern.node, takes_items);
+        self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
         self.push_loop_context(LoopContextKind::Statement, None, span.start);
-        let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param);
+        let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);
         self.exit_for_loop_body(loop_body);
@@ -1841,10 +2013,13 @@ impl TypeChecker {
             Condition::Expr(expr) => self.check_expr_condition_body(expr, body, incoming_refinements),
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.apply_branch_refinements(incoming_refinements);
                 self.check_pattern(pattern, &value_ty);
+                let views = self.enter_pattern_views(&pattern.node, view_param);
                 self.check_statement_block(body);
+                self.exit_pattern_views(views);
                 self.symbols.exit_scope();
                 self.note_dict_lookup_let(value, pattern, body);
                 None
@@ -2085,11 +2260,15 @@ impl TypeChecker {
     }
 
     /// Infer a loop item type from an iterable expression, falling back to structural `__iter__` / `__next__` hooks.
+    ///
+    /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
+    /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
         iter_ty: &ResolvedType,
     ) -> ResolvedType {
+        self.note_mut_param_iteration(iter_expr, iter_ty);
         if iter_ty.iterator_item_type().is_some()
             && let Expr::Ident(name) = &iter_expr.node
         {

@@ -13,12 +13,6 @@
 //! inspecting metadata — a unit is substituted only when every `--extern` it names resolves to a unit already
 //! substituted in the same target directory. Cargo compiles in topological order, so by the time a unit is requested
 //! each of its dependencies is either a path this wrapper wrote or a path it did not, and one lookup decides.
-#![allow(
-    dead_code,
-    reason = "the wrapper entry point and the manifest producer land in the following increments; this pure core \
-              is exercised by its own tests first"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};

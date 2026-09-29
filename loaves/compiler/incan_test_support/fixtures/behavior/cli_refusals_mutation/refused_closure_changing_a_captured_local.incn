@@ -1,0 +1,17 @@
+# behavior: a closure that changes a local it captures, through a changing method, an element of it, a comprehension over it or a mut parameter a call changes, is refused at check time, whether the local is declared mut or not
+# expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0117
+
+def extend(mut xs: list[int]) -> None:
+    xs.append(1)
+
+
+def main() -> None:
+    mut items: list[int] = []
+    add = () => items.append(1)
+    mut rows: list[list[int]] = [[1]]
+    first = () => rows[0].append(2)
+    popped = () => [row.pop() for row in rows]
+    grow = () => extend(items)
+    add()
+    println(items)

@@ -37,6 +37,18 @@ fn generate_rust(source: &str) -> String {
 
 /// Generate Rust while retaining RFC 120's exact physical symbol projections.
 fn generate_projected_rust(source: &str) -> String {
+    generate_projected_rust_as(source, false)
+}
+
+/// Generate Rust code for one standard-library source module, which the checker checks as the standard library's own
+/// source, as a project build does.
+fn generate_standard_library_module_rust(source: &str) -> String {
+    normalize_projected_symbols_for_readable_codegen(&generate_projected_rust_as(source, true))
+}
+
+/// Generate Rust while retaining RFC 120's exact physical symbol projections; `standard_library_source` says whether
+/// the source is a module of the standard library.
+fn generate_projected_rust_as(source: &str, standard_library_source: bool) -> String {
     let source = source.to_string();
     incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let Ok(tokens) = lexer::lex(&source) else {
@@ -45,7 +57,9 @@ fn generate_projected_rust(source: &str) -> String {
         let Ok(ast) = parser::parse(&tokens) else {
             panic!("parser failed");
         };
-        let code = match codegen_with_builtin_stdlib_inventory().try_generate(&ast) {
+        let mut codegen = codegen_with_builtin_stdlib_inventory();
+        codegen.set_standard_library_source(standard_library_source);
+        let code = match codegen.try_generate(&ast) {
             Ok(code) => code,
             Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
         };
@@ -2745,7 +2759,7 @@ pub def consume[R with BinaryReader](reader: R) -> Result[None, str]:
 #[test]
 fn test_fallible_iterator_adapter_chain_codegen() {
     let source = r#"
-trait FallibleStream[T, E]:
+trait FallibleStream[T with Clone, E]:
   def __next__(mut self) -> Result[Option[T], E]: ...
 
   def map[U with Clone](self, f: (T) -> U) -> FallibleStream[U, E]:
@@ -2782,7 +2796,7 @@ model NumberStream with FallibleStream[int, str]:
     self.index += 1
     return Ok(Some(item))
 
-model MappedStream[T, E, Source with FallibleStream[T, E], Output] with FallibleStream[Output, E]:
+model MappedStream[T with Clone, E, Source with FallibleStream[T, E], Output with Clone] with FallibleStream[Output, E]:
   source: Source
   f: (T) -> Output
   error_marker: Option[E] = None
@@ -2795,7 +2809,7 @@ model MappedStream[T, E, Source with FallibleStream[T, E], Output] with Fallible
       Ok(None) => return Ok(None)
       Err(error) => return Err(error)
 
-model ErrorMappedStream[T, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
+model ErrorMappedStream[T with Clone, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
   source: Source
   f: (E) -> MappedError
   item_marker: Option[T] = None
@@ -5714,7 +5728,7 @@ fn test_std_derives_collection_compiled_codegen() {
     let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
-    let rust_code = generate_rust(&source);
+    let rust_code = generate_standard_library_module_rust(&source);
     assert!(
         rust_code.contains("StoredMapFn: Clone + Callable1<T, Output>"),
         "fallible adapter storage must retain the nominal source callable bound:\n{rust_code}"

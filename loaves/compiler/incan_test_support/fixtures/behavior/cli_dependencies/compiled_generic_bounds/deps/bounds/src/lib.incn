@@ -1,0 +1,51 @@
+from std.traits.callable import Callable1
+from std.traits.callable import Callable1 as Mapper
+
+
+pub model Holder[V]:
+    pub value: V
+
+    def get(self) -> V:
+        return self.value
+
+    def first[T](self, items: list[T]) -> T:
+        return items[0]
+
+
+pub def first[K](items: list[K]) -> K:
+    return items[0]
+
+
+pub trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+
+    def plain(self) -> int:
+        return 1
+
+    def required(self) -> int: ...
+
+
+pub model Selector with Picker:
+    pub id: int
+
+    def required(self) -> int:
+        return self.id
+
+
+pub def apply[F with Mapper[int, int]](f: F, value: int) -> int:
+    return f(value)
+
+
+pub trait Failing[E]:
+    def failure(self) -> E: ...
+
+    def describe[F with Clone, Describe with (Clone, Callable1[E, F])](self, f: Describe) -> F:
+        return f(self.failure())
+
+
+pub model Lookup with Failing[str]:
+    pub key: str
+
+    def failure(self) -> str:
+        return self.key

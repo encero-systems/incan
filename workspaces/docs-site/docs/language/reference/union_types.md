@@ -114,7 +114,7 @@ def show(value: int | str) -> None:
 
 - A type pattern `T(p)` matches a value of member type `T` (see [Match patterns](match_patterns.md#type-patterns)).
 - The unguarded arms of a `match` over a union cover every member type, or include `_` (see [Coverage](match_patterns.md#coverage)).
-- An alternation of type patterns binds a name only when every alternative binds it at the same type.
+- An alternation of type patterns binds a name only when every alternative binds it at the same type. An alternation whose alternatives bind a name at different types is refused (`INCAN-T0001`).
 
 ```incan
 def classify(value: int | str | None) -> str:

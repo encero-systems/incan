@@ -1,5 +1,5 @@
 # behavior: bindings annotated Option[int], List[str] and Dict[str, float] accept their literal values and read back
-# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::test_rfc041_structural_coercion_codegen_smoke
+# retires: loaves/toolchain/incan-cli/tests/integration_codegen_constants_and_interop_tests.rs::test_rfc041_structural_coercion_codegen_smoke
 # expect-stdout:
 #   1
 #   a b 2

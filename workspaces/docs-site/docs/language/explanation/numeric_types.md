@@ -28,7 +28,7 @@ Incan is not copying either system wholesale. Arrow is a memory format and Subst
 
 ## Lossless conversion is the implicit line
 
-The conversion rule is deliberately simple: implicit numeric movement is allowed when it is exact or provably lossless within one family (signed integers, unsigned integers, binary floats) or from an unsigned integer to a wider signed one, and rejected when it may lose data. Integer-to-float movement is never implicit, even where every value would fit.
+The conversion rule is deliberately simple: implicit numeric movement is allowed when it is exact or provably lossless within one family (signed integers, unsigned integers, binary floats) or from an unsigned integer to a wider signed one, and rejected when it may lose data. An integer value never moves to a float type implicitly, even where every value would fit. Arithmetic is a separate rule: an arithmetic operator over a float operand and an integer operand gives a `float`.
 
 This admits common safe cases without user friction:
 
@@ -96,6 +96,6 @@ Decimal arithmetic is a separate language-design problem. Addition, multiplicati
 
 ## What this design does not claim
 
-This design does not make every numeric operation maximally precise, does not define arbitrary-precision integers, and does not turn `usize` into a general positive integer type. It also does not claim that aliases are always better than canonical names. Integer overflow in general exact-width arithmetic is not yet a separately documented language contract, and neither is a shift by a negative amount or by at least the bit width of its left operand, or an integer literal beyond the `int` range where no wider type is expected. The range of an `isize` or `usize` literal is checked against the pointer width of the machine that runs the compiler, which can differ from the target's.
+This design does not make every numeric operation maximally precise, does not define arbitrary-precision integers, and does not turn `usize` into a general positive integer type. It also does not claim that aliases are always better than canonical names. Ordinary exact-width integer overflow follows Rust's generated-code behavior: debug builds trap and release builds wrap; `checked_*`, `wrapping_*` and `saturating_*` helpers select a stable policy explicitly. A shift by a negative amount or by at least the bit width of its left operand, and an integer literal beyond the `int` range where no wider type is expected, remain outside this explanation. The range of an `isize` or `usize` literal is checked against the pointer width of the machine that runs the compiler, which can differ from the target's.
 
 The rule of thumb is: use ordinary names for ordinary code, exact names for exact boundaries, aliases for schema vocabulary, and explicit resize methods whenever data loss is possible.

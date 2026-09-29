@@ -66,10 +66,11 @@ use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
 pub enum StorageRoot {
-    /// A module-level static storage slot.
+    /// A module-level static storage slot, named through its declaring module when `owner_module_path` is set.
     Static {
         name: String,
         reference_kind: IrStaticReferenceKind,
+        owner_module_path: Option<Vec<String>>,
     },
     /// A local alias that wraps static storage in the current emitted statement slice.
     Binding(String),
@@ -931,9 +932,14 @@ impl<'a> IrEmitter<'a> {
     /// Recover the source static or local binding at the root of an assignable expression.
     pub fn expr_storage_root(expr: &TypedExpr) -> Option<StorageRoot> {
         match &expr.kind {
-            IrExprKind::StaticRead { name, reference_kind } => Some(StorageRoot::Static {
+            IrExprKind::StaticRead {
+                name,
+                reference_kind,
+                owner_module_path,
+            } => Some(StorageRoot::Static {
                 name: name.clone(),
                 reference_kind: *reference_kind,
+                owner_module_path: owner_module_path.clone(),
             }),
             IrExprKind::Var {
                 name,
@@ -1005,11 +1011,45 @@ impl<'a> IrEmitter<'a> {
         rewritten
     }
 
+    /// Return the Rust path of a static named through its declaring module, with the call that initializes that
+    /// module's statics before the read.
+    ///
+    /// Lowering names a static this way when a parameter default reads it: the default is evaluated at callers that
+    /// may have no binding of the static, or a static of the same name of their own. The module's initializer guards
+    /// against re-entry, so the call is also sound inside that module's own static initializers.
+    fn owner_module_static_access(owner_module_path: &[String], projection: &str) -> (TokenStream, TokenStream) {
+        let segments = owner_module_path
+            .iter()
+            .map(|segment| Self::rust_ident(segment))
+            .collect::<Vec<_>>();
+        let static_ident = Self::rust_ident(projection);
+        let init_fn = Self::rust_ident("__incan_init_module_statics");
+        (
+            quote! { crate #(:: #segments)* :: #static_ident },
+            quote! { crate #(:: #segments)* :: #init_fn(); },
+        )
+    }
+
     /// Emit storage access while preserving a shared reference.
     pub fn emit_storage_with_ref(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
-            Some(StorageRoot::Static { name, reference_kind }) => {
+            Some(StorageRoot::Static {
+                name,
+                owner_module_path: Some(owner_module_path),
+                ..
+            }) => {
+                let (path, init_call) = Self::owner_module_static_access(&owner_module_path, &name);
+                Ok(quote! {{
+                    #init_call
+                    #path.with_ref(|#local_name| { #body })
+                }})
+            }
+            Some(StorageRoot::Static {
+                name,
+                reference_kind,
+                owner_module_path: None,
+            }) => {
                 let ident = self.rust_static_reference_ident(&name, reference_kind)?;
                 let init_call = if *self.in_static_initializer.borrow()
                     && !self.static_reference_needs_imported_init_call(&name, reference_kind)
@@ -1035,7 +1075,22 @@ impl<'a> IrEmitter<'a> {
     pub fn emit_storage_with_mut(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
-            Some(StorageRoot::Static { name, reference_kind }) => {
+            Some(StorageRoot::Static {
+                name,
+                owner_module_path: Some(owner_module_path),
+                ..
+            }) => {
+                let (path, init_call) = Self::owner_module_static_access(&owner_module_path, &name);
+                Ok(quote! {{
+                    #init_call
+                    #path.with_mut(|#local_name| { #body })
+                }})
+            }
+            Some(StorageRoot::Static {
+                name,
+                reference_kind,
+                owner_module_path: None,
+            }) => {
                 let ident = self.rust_static_reference_ident(&name, reference_kind)?;
                 let init_call = if *self.in_static_initializer.borrow()
                     && !self.static_reference_needs_imported_init_call(&name, reference_kind)
@@ -1148,7 +1203,23 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { incan_std_core::reflection::TypeToken::<#token_ty>::new() })
             }
 
-            IrExprKind::StaticRead { name, reference_kind } => {
+            IrExprKind::StaticRead {
+                name,
+                owner_module_path: Some(owner_module_path),
+                ..
+            } => {
+                let (path, init_call) = Self::owner_module_static_access(owner_module_path, name);
+                Ok(quote! {{
+                    #init_call
+                    #path.get()
+                }})
+            }
+
+            IrExprKind::StaticRead {
+                name,
+                reference_kind,
+                owner_module_path: None,
+            } => {
                 let n = self.rust_static_reference_ident(name, *reference_kind)?;
                 if *self.in_static_initializer.borrow()
                     && !self.static_reference_needs_imported_init_call(name, *reference_kind)
@@ -1214,6 +1285,15 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::BinOp { op, left, right } => self.emit_binop_expr(op, left, right),
 
+            // A mutable borrow borrows its operand as a place, so a list element is reached through `list_get_mut`
+            // rather than read out (#1561).
+            IrExprKind::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } => {
+                let o = self.emit_lvalue_expr(operand)?;
+                Ok(quote! { (&mut #o) })
+            }
             IrExprKind::UnaryOp { op, operand } => {
                 let o = self.emit_expr(operand)?;
                 match op {
@@ -3990,8 +4070,7 @@ mod tests {
 
         let flat_map_rendered = render(IteratorMethodKind::FlatMap, callback())?;
         assert!(
-            flat_map_rendered.contains("collection :: FlatMapIterator")
-                && flat_map_rendered.contains("current : Vec :: new ()"),
+            flat_map_rendered.contains("collection :: FlatMapIterator") && flat_map_rendered.contains("current : None"),
             "unexpected flat_map emission: {flat_map_rendered}"
         );
 

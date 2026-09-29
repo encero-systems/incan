@@ -407,6 +407,8 @@ pub enum CheckedPresetValue {
     Bytes(Vec<u8>),
     None,
     List(Vec<CheckedPresetValue>),
+    Set(Vec<CheckedPresetValue>),
+    Tuple(Vec<CheckedPresetValue>),
     Dict(Vec<(CheckedPresetValue, CheckedPresetValue)>),
     ConstRef(Vec<String>),
     ModelLiteral {
@@ -1053,6 +1055,28 @@ fn checked_partial_target_kind(partial: &PartialDecl, checker: &TypeChecker) -> 
 fn checked_preset_value(expr: &Expr, context: DefaultPathContext<'_>) -> CheckedPresetValue {
     match expr {
         Expr::Literal(literal) => checked_preset_literal(literal),
+        Expr::Unary(UnaryOp::Neg, value) => match &value.node {
+            Expr::Literal(Literal::Int(value)) => value
+                .value
+                .checked_neg()
+                .map(CheckedPresetValue::Int)
+                .unwrap_or(CheckedPresetValue::Unsupported),
+            Expr::Literal(Literal::Float(value)) => CheckedPresetValue::Float(-value.value),
+            _ => CheckedPresetValue::Unsupported,
+        },
+        Expr::Paren(inner) => checked_preset_value(&inner.node, context),
+        Expr::Set(items) => CheckedPresetValue::Set(
+            items
+                .iter()
+                .map(|item| checked_preset_value(&item.node, context))
+                .collect(),
+        ),
+        Expr::Tuple(items) => CheckedPresetValue::Tuple(
+            items
+                .iter()
+                .map(|item| checked_preset_value(&item.node, context))
+                .collect(),
+        ),
         Expr::Ident(name) => CheckedPresetValue::ConstRef(context.canonical_value_path(vec![name.clone()])),
         Expr::Field(base, field) => {
             let mut path = checked_preset_path(&base.node);

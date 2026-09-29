@@ -42,6 +42,7 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
+mod capturing_callables;
 mod check_decl;
 mod check_expr;
 mod check_stmt;
@@ -59,6 +60,7 @@ mod mut_arguments;
 mod mut_marker;
 mod nominal_type_param_bounds;
 mod reachability;
+mod receiver_change;
 mod reserved_names;
 pub mod stdlib_loader;
 mod trait_bound_relations;
@@ -479,7 +481,8 @@ pub struct TypeChecker {
     ///
     /// These are produced during typechecking but do not cause `check_*` to fail.
     pub warnings: Vec<CompileError>,
-    /// Track which bindings are mutable for mutation checks.
+    /// The `mut` bindings of the body being checked, by name, which a Rust or C boundary that needs a mutable argument
+    /// admits. Each function and method body starts with an empty set and restores the enclosing one when it ends.
     pub mutable_bindings: HashSet<String>,
     /// Caller-visible `mut` parameters: which callables declare them, which the checked bodies change, and the call
     /// arguments waiting to be decided once the module's bodies are known (#1773, `INCAN-T0117`).
@@ -494,12 +497,31 @@ pub struct TypeChecker {
     /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
     pending_uncopyable_dict_lookups: Vec<(Span, String)>,
     /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
-    /// itself does.
-    static_alias_bindings: HashSet<SymbolId>,
+    /// itself does, with the name of the static each one aliases.
+    static_alias_bindings: HashMap<SymbolId, String>,
+    /// Declaration spans of the read-only bindings a field or element write may not go through (#1561): a local
+    /// declared without `mut`, by `let` or by a first plain assignment, and a parameter not marked `mut`. Loop and
+    /// pattern bindings are not recorded; a write through one follows the place it binds.
+    read_only_binding_spans: HashSet<(usize, usize)>,
+    /// How many closure bodies enclose the expression being checked.
+    closure_depth: usize,
+    /// Spans of the expressions being checked as the receiver of `copy_utf8(max_bytes=...)`, the one position a scoped
+    /// C text view may be read in (RFC 116).
+    scoped_c_string_view_receivers: HashSet<(usize, usize)>,
+    /// Calls that returned a scoped C text view in the statement being checked and are neither bound to a local nor
+    /// the receiver of `copy_utf8`; each one left at the end of the statement escapes (RFC 116).
+    unbound_scoped_c_string_views: HashSet<(usize, usize)>,
+    /// Locals bound to a scoped C text view, by declaration span, with the closure depth they were bound at: a read
+    /// from a deeper closure captures the view (RFC 116).
+    scoped_c_string_view_bindings: HashMap<(usize, usize), usize>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
     /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
     for_item_taking: for_item_taking::ForItemTaking,
+    /// Closures that capture local values, and the parameters and returns of this module that hold them (#1561).
+    capturing_callables: capturing_callables::CapturingCallables,
+    /// Whether the program being checked is a module of the standard library, whatever its module path.
+    standard_library_source: bool,
     /// Checked span constructors waiting for the enclosing direct assignment to name their only legal owner.
     pub unbound_c_abi_span_constructors: HashMap<(usize, usize), CAbiSpanKind>,
     /// Opaque checked typed span carriers keyed by their direct source local.
@@ -544,6 +566,12 @@ pub struct TypeChecker {
     pub type_receiver_spans: Vec<(usize, usize)>,
     /// Expression spans where type-like identifiers are valid value-level `Type[T]` tokens.
     pub type_token_value_spans: Vec<(usize, usize)>,
+    /// The target span of the local partial expression being checked, where a generic function may be named as a value
+    /// so the partial can instantiate it (RFC 084).
+    pub(in crate::typechecker) generic_partial_target_span: Option<(usize, usize)>,
+    /// The generic function a local partial's target named at [`Self::generic_partial_target_span`], taken by the
+    /// partial expression check to instantiate it.
+    pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
     /// Stack of active loop contexts, innermost last.
     pub loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
@@ -867,9 +895,16 @@ impl TypeChecker {
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             pending_uncopyable_dict_lookups: Vec::new(),
-            static_alias_bindings: HashSet::new(),
+            static_alias_bindings: HashMap::new(),
+            read_only_binding_spans: HashSet::new(),
+            closure_depth: 0,
+            scoped_c_string_view_receivers: HashSet::new(),
+            unbound_scoped_c_string_views: HashSet::new(),
+            scoped_c_string_view_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
             for_item_taking: for_item_taking::ForItemTaking::default(),
+            capturing_callables: capturing_callables::CapturingCallables::default(),
+            standard_library_source: false,
             unbound_c_abi_span_constructors: HashMap::new(),
             c_abi_span_bindings: HashMap::new(),
             consumed_c_abi_span_bindings: HashMap::new(),
@@ -891,6 +926,8 @@ impl TypeChecker {
             unsafe_depth: 0,
             type_receiver_spans: Vec::new(),
             type_token_value_spans: Vec::new(),
+            generic_partial_target_span: None,
+            generic_partial_target: None,
             loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,
@@ -1029,48 +1066,77 @@ impl TypeChecker {
 
     /// Resolve the final type of a `loop:` expression from the `break` types observed in its body.
     ///
-    /// When an outer expected type exists, every `break` must be compatible with it. Otherwise this picks the
-    /// narrowest compatible type seen across all `break` statements and emits a type mismatch when no single result
-    /// type can satisfy every branch.
+    /// The `break` values unify as [`Self::unify_branch_value_types`] states, against the outer expected type when
+    /// one exists; a loop with no `break` has no value and is refused.
     pub fn resolve_loop_break_result_type(
         &mut self,
         loop_span: Span,
         expected_break_ty: Option<&ResolvedType>,
         break_types: &[(ResolvedType, Span)],
     ) -> ResolvedType {
-        let Some((first_ty, _)) = break_types.first() else {
+        if break_types.is_empty() {
             self.errors.push(errors::loop_expression_requires_break(loop_span));
             return ResolvedType::Unknown;
-        };
+        }
+        self.unify_branch_value_types(break_types, expected_break_ty)
+            .unwrap_or(ResolvedType::Unknown)
+    }
 
-        // ---- Context: outer expression already constrains the loop result type ----
-        if let Some(expected) = expected_break_ty {
-            for (ty, span) in break_types {
-                if !self.types_compatible(ty, expected) {
+    /// Return the one type the values of the branches of a value-producing construct unify to: the `break` values of
+    /// a `loop:` expression, or the arms of a `match` expression.
+    ///
+    /// With `expected`, the type of the place the construct is written to, every value must be assignable to it and
+    /// the construct yields it. Without it, each value either is assignable to the type unified so far, or the type
+    /// unified so far is assignable to it and it becomes the result, so `i8` and `int` values unify to `int` and
+    /// `Some(5)` and `None` to `Option[int]`. A value that fits neither way is refused with a type mismatch at its span
+    /// and the construct yields `Unknown`. An `Unknown` value has already been refused or is not yet known and a
+    /// `Never` value does not complete, so neither takes part; `None` means no value took part.
+    ///
+    /// Every value whose type is not the result is recorded as written to a place of the result type
+    /// ([`Self::record_value_destination_if_compatible`]), so lowering widens a narrower numeric value and wraps an
+    /// `Option` payload in that branch itself. The branches of the generated construct then share one type, as Rust
+    /// requires of the arms of a `match` and the values of a `loop`.
+    pub(in crate::typechecker) fn unify_branch_value_types(
+        &mut self,
+        values: &[(ResolvedType, Span)],
+        expected: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let mut participating = values
+            .iter()
+            .filter(|(ty, _)| !matches!(ty, ResolvedType::Unknown | ResolvedType::Never));
+        let result_ty = match expected {
+            Some(expected) => {
+                if let Some((ty, span)) = participating.find(|(ty, _)| !self.types_compatible(ty, expected)) {
                     self.errors
                         .push(errors::type_mismatch(&expected.to_string(), &ty.to_string(), *span));
-                    return ResolvedType::Unknown;
+                    return Some(ResolvedType::Unknown);
                 }
+                expected.clone()
             }
-            return expected.clone();
+            None => {
+                let (first_ty, _) = participating.next()?;
+                let mut result_ty = first_ty.clone();
+                for (ty, span) in participating {
+                    if self.types_compatible(ty, &result_ty) {
+                        continue;
+                    }
+                    if self.types_compatible(&result_ty, ty) {
+                        result_ty = ty.clone();
+                        continue;
+                    }
+                    self.errors
+                        .push(errors::type_mismatch(&result_ty.to_string(), &ty.to_string(), *span));
+                    return Some(ResolvedType::Unknown);
+                }
+                result_ty
+            }
+        };
+        for (ty, span) in values {
+            if *ty != result_ty {
+                self.record_value_destination_if_compatible(*span, ty, &result_ty);
+            }
         }
-
-        // ---- Context: infer a common result type from the observed `break` values ----
-        let mut result_ty = first_ty.clone();
-        for (ty, span) in break_types.iter().skip(1) {
-            if self.types_compatible(ty, &result_ty) {
-                continue;
-            }
-            if self.types_compatible(&result_ty, ty) {
-                result_ty = ty.clone();
-                continue;
-            }
-            self.errors
-                .push(errors::type_mismatch(&result_ty.to_string(), &ty.to_string(), *span));
-            return ResolvedType::Unknown;
-        }
-
-        result_ty
+        Some(result_ty)
     }
 
     /// Opt into semantic rust-inspect extraction for this checker.
@@ -2559,6 +2625,12 @@ impl TypeChecker {
         self.set_provider_plan(Arc::new(plan));
     }
 
+    /// Mark the program being checked as a module of the standard library, which a module path under `std` and an SDK
+    /// bootstrap grant in the provider plan also mark.
+    pub fn set_standard_library_source(&mut self, standard_library_source: bool) {
+        self.standard_library_source = standard_library_source;
+    }
+
     /// Record the module path owning this checker's declarations.
     ///
     /// Also forwarded to the symbol table, whose RFC 120 identity minting uses it as the [`SymbolOrigin`] of every
@@ -2664,10 +2736,11 @@ impl TypeChecker {
     /// compatible with it and the destination is an `Option` (after alias expansion) or the value is numeric (#1858,
     /// RFC 009).
     ///
-    /// The write sites that record this (field and index assignment, a model or class constructor field, `return`)
-    /// accept a value of the `Option`'s payload type, and a numeric value whose type losslessly widens to the numeric
-    /// type or union member the destination holds. Lowering wraps that value in the `Some` layers the destination adds
-    /// and widens it. A value already of an `Option` destination's type is recorded too; lowering leaves it as it is.
+    /// The write sites that record this (field and index assignment, a model or class constructor field, `return`,
+    /// `yield`, and a `match` arm or `break` value of the construct's type) accept a value of the `Option`'s payload
+    /// type, and a numeric value whose type losslessly widens to the numeric type or union member the destination
+    /// holds. Lowering wraps that value in the `Some` layers the destination adds and widens it. A value already of an
+    /// `Option` destination's type is recorded too; lowering leaves it as it is.
     pub(in crate::typechecker) fn record_value_destination_if_compatible(
         &mut self,
         value_span: Span,
@@ -3063,12 +3136,25 @@ impl TypeChecker {
         // compared by that identity, so a type declared in another module satisfies `serde.json.Serialize` whatever the
         // declaring module called the trait (`json.Serialize` through its own import, #1887).
         let bound_identity = self.resolve_bound_trait_path(trait_name);
+        let package_trait = self.package_trait_identity_of_type(type_name, trait_name);
+        // A `pub::` package trait is one declaration under every spelling a consumer gives it (an import alias, a
+        // package alias export, a module binding), so an adoption and a bound that name it under different spellings
+        // meet through the package's checked identity of each (#1561).
+        let bound_package_trait = bound_identity
+            .as_ref()
+            .and_then(|(module_path, name)| self.package_trait_declaration(module_path, name));
         for t in adopted {
             if self.trait_name_matches(&t.name, trait_name)
                 || t.source_name
                     .as_deref()
                     .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name))
                 || adoption_names_bound_identity(t, bound_identity.as_ref())
+                || package_trait
+                    .as_ref()
+                    .is_some_and(|(module_path, name)| adoption_names_declaration(t, module_path, name))
+                || bound_package_trait
+                    .as_ref()
+                    .is_some_and(|bound| self.adopted_package_trait(t).as_ref() == Some(bound))
             {
                 return true;
             }
@@ -3088,6 +3174,70 @@ impl TypeChecker {
             return true;
         }
         false
+    }
+
+    /// Return the declaring module and name of the trait `trait_name` binds when it and the type `type_name` come from
+    /// the same compiled package, in the package's own module paths, which its types' adoptions record.
+    ///
+    /// A consumer binds the trait under its own spelling (`Picker as Chooser`, a package alias `pub Chooser =
+    /// Picker`, or `t.Picker` through `import pub::pickers as t`) and under the package's public namespace, while the
+    /// package's types recorded their adoptions in the package's modules (#1561). A type the consumer reaches through
+    /// the package's namespace rather than an import of its own (`t.Label(...)`) is named by its public spelling.
+    fn package_trait_identity_of_type(&self, type_name: &str, trait_name: &str) -> Option<(Vec<String>, String)> {
+        let package_of = |name: &str| {
+            let identity = self
+                .symbols
+                .lookup(name)
+                .and_then(|id| self.symbols.identity_of(id))
+                .or_else(|| self.public_library_type_identities.get(name)?.canonical.as_ref())?;
+            match &identity.origin {
+                SymbolOrigin::Package { library, module_path } => {
+                    Some((identity, library.clone(), module_path.clone()))
+                }
+                _ => None,
+            }
+        };
+        let (trait_identity, trait_library, trait_module) = package_of(trait_name)?;
+        let (_, type_library, _) = package_of(type_name)?;
+        (trait_identity.kind == SemanticSourceTargetKind::Trait && trait_library == type_library)
+            .then(|| (trait_module, trait_identity.declaration_name.clone()))
+    }
+
+    /// Return the checked identity of the trait `name` names in the `pub::` package module `module_path`
+    /// (`["pub", library, ...]`), as the package's identity graph publishes it: an alias export (`pub Tagging = Tag`)
+    /// has the identity of the trait it names. `None` for any other module or member.
+    fn package_trait_declaration(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
+        let [root, library, rest @ ..] = module_path else {
+            return None;
+        };
+        if root != PUBLIC_LIBRARY_NAMESPACE {
+            return None;
+        }
+        let crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. } =
+            self.provider_plan.library_manifest_index().get(library)?
+        else {
+            return None;
+        };
+        let public_path = std::iter::once(manifest.name.clone())
+            .chain(rest.iter().cloned())
+            .chain(std::iter::once(name.to_string()))
+            .collect::<Vec<_>>();
+        manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_path(&public_path)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+    }
+
+    /// Return the checked identity of the `pub::` package trait an adoption names, from the package module and the
+    /// source name it recorded where the adopting type was declared.
+    fn adopted_package_trait(&self, adoption: &TypeBoundInfo) -> Option<CanonicalSymbolId> {
+        let module_path = adoption.module_path.as_deref()?;
+        let name = adoption
+            .source_name
+            .as_deref()
+            .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
+        self.package_trait_declaration(module_path, name)
     }
 
     /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries and the automatic `Clone` of a `model`,
@@ -3257,10 +3407,17 @@ impl TypeChecker {
     /// signatures.
     ///
     /// This keeps imported trait contracts available for internal compatibility checks without widening source-visible
-    /// name resolution.
+    /// name resolution. A name the module binds to a declared type or a type parameter names that type: a stdlib or
+    /// dependency trait that shares the name, and that the module did not import, is not what the name spells
+    /// (`class Index` beside the stdlib's `Index` trait).
     pub fn lookup_semantic_trait_info(&self, name: &str) -> Option<&TraitInfo> {
-        if let Some(info) = self.lookup_trait_info(name) {
-            return Some(info);
+        if let Some(symbol) = self.lookup_symbol(name) {
+            match &symbol.kind {
+                SymbolKind::Trait(info) => return Some(info),
+                SymbolKind::Type(TypeInfo::Builtin) if symbol.scope == 0 => {}
+                SymbolKind::Type(_) => return None,
+                _ => {}
+            }
         }
         if let Some(info) = self.transitive_stdlib_stub_traits.get(name) {
             return Some(info);
@@ -6739,7 +6896,13 @@ impl TypeChecker {
         self.warnings.clear();
         self.errors.clear();
         self.pending_uncopyable_dict_lookups.clear();
+        self.mutable_bindings.clear();
         self.static_alias_bindings.clear();
+        self.read_only_binding_spans.clear();
+        self.closure_depth = 0;
+        self.scoped_c_string_view_receivers.clear();
+        self.unbound_scoped_c_string_views.clear();
+        self.scoped_c_string_view_bindings.clear();
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
@@ -6793,6 +6956,9 @@ impl TypeChecker {
         self.merge_supertrait_requires_into_traits();
         self.validate_static_dependencies();
         self.collect_testing_fixture_names(program);
+        // Every signature is collected, so the function-typed parameters and returns that hold capturing closures
+        // can be decided before any call or body is checked (#1561).
+        self.plan_closure_holding_callables(program);
 
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;
@@ -9024,6 +9190,15 @@ fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -
 /// name when it has one (`Serialize` for an adoption the declaring module spelled `json.Serialize`), so the comparison
 /// does not depend on which names the checking module has imported. An adoption without a recorded module, or a bound
 /// that does not resolve, answers `false` and is left to the name comparisons.
+/// Whether an adoption a compiled package's type recorded names the package trait declared in `module_path` as `name`.
+fn adoption_names_declaration(adoption: &TypeBoundInfo, module_path: &[String], name: &str) -> bool {
+    let trait_name = adoption
+        .source_name
+        .as_deref()
+        .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
+    adoption.module_path.as_deref() == Some(module_path) && trait_name == name
+}
+
 fn adoption_names_bound_identity(adoption: &TypeBoundInfo, bound: Option<&(Vec<String>, String)>) -> bool {
     let (Some(module_path), Some((bound_module, bound_trait))) = (adoption.module_path.as_ref(), bound) else {
         return false;

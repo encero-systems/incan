@@ -52,6 +52,8 @@ model User with Eq:
         return self.id == other.id
 ```
 
+If such a type also derives `Hash` to be a set element or dict key, keep `__eq__` consistent with the hash: two values that `__eq__` calls equal must hash alike. A derived hash covers every field, so pair it only with an `__eq__` that compares every field. For equality by a subset of fields, key the collection by that subset instead (see [Key a set or dict by a custom identity](#key-a-set-or-dict-by-a-custom-identity)).
+
 ---
 
 ## Custom ordering (`<`, `<=`, `>`, `>=`)
@@ -97,7 +99,7 @@ Use values as set elements or dict keys by one part of them (for example, by `id
 
 1. Key the collection by the field that carries the identity: a `dict[int, User]` keyed by `user.id`, or a `set[int]` of ids.
 2. When every field is part of the identity, add `@derive(Eq, Hash)` to the type and use it as the key directly.
-3. Do not rely on a `__hash__` method: a set or dict does not call it, and a type that defines `__eq__` is refused as a set element or dict key (`INCAN-T0114`).
+3. Do not rely on a `__hash__` method: a set or dict does not call it. A set element or dict key implements `Eq` and `Hash`, so a type that defines `__eq__` is a key only when it also adopts `Eq` (`model User with Eq`) and derives `Hash`, and is refused otherwise (`INCAN-T0114`). A derived `Hash` covers every field, so when `__eq__` compares only part of the value, key the collection by that part as in step 1.
 
 ```incan
 model User:

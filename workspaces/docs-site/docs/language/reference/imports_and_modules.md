@@ -1,6 +1,6 @@
 # Imports and modules (reference)
 
-This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
+This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the `std` root, soft keywords, Rust crate imports, `import python`, and `import this`. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
 
 ## Import forms
 
@@ -61,7 +61,7 @@ from ...db.schema import Database         # accepted
 
 `import models` binds the module. Its public functions are called through the binding, `models.parse(path)`, and its public types and traits are named through it in any annotation: `models.Config` is the declaration `from models import Config` binds.
 
-Refused (`INCAN-T0001`): a qualified annotation whose root is not a module binding, or whose member is not a type or trait the module declares. The C namespace bound by `from std.interop import c` is not a module binding; its spellings, such as `c.i32`, follow [Checked C bindings](../how-to/checked_c_bindings.md).
+Refused (`INCAN-T0001`): a qualified annotation whose root is not a module binding, or whose member is not a type or trait the module declares. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
 
 ```incan
 import models
@@ -73,7 +73,7 @@ def load(path: str) -> models.Config:     # accepted
 ### Collisions
 
 - An import binds its local name in the module scope, beside the module's declarations.
-- A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous. The first binding stays in effect.
+- A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous.
 - `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). The exception is an import that binds the root of its own path, such as `import std.web as std`. `import rust::std` without `as` binds `std` and is refused.
 
 ```incan
@@ -101,7 +101,7 @@ model Response:
 
 - An import with the name of a builtin function, such as `sum`, is what an unqualified call of that name calls.
 - `std.builtins.<name>` always calls the builtin function `name`.
-- `print` and `println` cannot be bound by a declaration, an import, a local, a parameter or a type parameter. Fields and methods may use those names.
+- `print` and `println` cannot be bound by a declaration, a local, a parameter or a type parameter (`INCAN-T0001`), or by an import (`INCAN-I0001`). Fields and methods may use those names.
 
 ```incan
 # report.incn
@@ -139,6 +139,37 @@ class Counter:
     @staticmethod
     def __incan_new() -> Self:                # accepted
         return Counter(value=5)
+```
+
+## Exports
+
+A module exports:
+
+- each module-level declaration marked `pub`, and each variant and variant alias of a `pub` enum;
+- each name that a `from M import ...` of the module binds, with or without `pub`, and each name a `from rust::... import ...` binds.
+
+`from M import X`, and `import M::X` where `M::X` is not a module, bind `X` only when `M` exports it. Refused (`INCAN-I0001`): a name `M` does not export, such as a declaration without `pub`, or a module that `M` binds with `import`.
+
+```incan
+# a.incn
+pub def f() -> int:
+    return 1
+
+def hidden() -> int:
+    return 2
+```
+
+```incan
+# b.incn
+from a import f
+```
+
+```incan
+# main.incn
+from b import f          # accepted
+import a::f              # accepted
+from a import hidden     # refused: hidden is not pub (INCAN-I0001)
+import a::hidden         # refused: hidden is not pub (INCAN-I0001)
 ```
 
 ## Re-exports
@@ -193,15 +224,19 @@ from pub::codecs.encoding import encode                        # refused: base64
 
 ## The `std` root
 
-- `from std import name` binds the standard-library module `std.name`. A name that is not a standard-library module is refused, naming the module that declares it when that is known.
+- `from std import name` binds the standard-library module `std.name`. A name that is not a standard-library module is refused.
 - `import std.fs` and every other bare `std...` path name the Incan standard library; the Rust standard library is `rust::std`.
+- `std.NAMESPACE.prelude` names the module `std.NAMESPACE`: `from std.async.prelude import spawn` imports what `from std.async import spawn` does. `std.prelude` is a module of its own.
+- `from std.NAMESPACE import name` binds the module `std.NAMESPACE.name` when that is a standard-library module, and otherwise the member `name` of `std.NAMESPACE`. `std.derives` has no members: `from std.derives import comparison` imports the module `std.derives.comparison`, and any other name imported from `std.derives` is refused.
 - An unknown `std.*` module is refused.
 
 ```incan
 from std import toml                   # accepted
 from std import math as arithmetic     # accepted
-from std import Debug                  # refused: Debug is declared in std.derives.string
+from std import Debug                  # refused: Debug is not a standard-library module
 from std.derives.string import Debug   # accepted
+from std.derives import comparison     # accepted: the module std.derives.comparison
+from std.derives import Eq             # refused: std.derives has no members
 ```
 
 The standard-library modules are listed in the [language reference](language.md#standard-library-namespaces).
@@ -225,8 +260,11 @@ from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 - Annotations are refused on a crate that `loaf.toml` configures.
 - Across files, one crate's versions match, and its features are unioned.
 - Annotations apply to `rust::` imports only.
+- A crate that `loaf.toml` declares under `[dependencies]`, the table of Incan library dependencies, and under neither `[rust-dependencies]` nor `[rust-dev-dependencies]`, is refused.
+- A crate that `loaf.toml` declares only under `[rust-dev-dependencies]` is refused outside a test file (see [`[rust-dev-dependencies]`](../../tooling/reference/project_configuration.md#rust-dev-dependencies)).
+- An empty `@ ""` version requirement, and one that is not a Cargo SemVer requirement, are refused.
 
-These refusals are reported when the project builds or locks (`INCAN-C0001`).
+These refusals are reported when the project builds or locks (`INCAN-C0001`). `rust::core` and `rust::alloc` are refused (`INCAN-I0001`).
 
 ```incan
 import rust::my_crate @ "1.0"
@@ -234,8 +272,22 @@ import rust::tokio @ "1.0" with ["full"]
 from rust::sqlx @ "0.7" with ["runtime-tokio", "postgres"] import Pool
 ```
 
+## `import python`
+
+`import python "PACKAGE" [as NAME]` parses and is always refused (`INCAN-I0001`).
+
+```incan
+import python "requests" as pyreq    # refused (INCAN-I0001)
+```
+
 ## `import this`
 
 `import this` prints the Zen of Incan when the program starts:
 
 --8<-- "_snippets/language/zen_of_incan.md"
+
+## See also
+
+- [Imports and modules (explanation)](../explanation/imports_and_modules.md)
+- [Imports and modules (how-to)](../how-to/imports_and_modules.md)
+- [Rust interop (how-to)](../how-to/rust_interop.md)

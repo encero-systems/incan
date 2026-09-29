@@ -1167,10 +1167,10 @@ impl TypeChecker {
         }
 
         for (supertrait_name, supertrait_args) in &trait_info.supertraits {
-            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+            let Some(supertrait_info) = self.supertrait_info_for_methods(supertrait_name.as_str()) else {
                 continue;
             };
-            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            let instantiated = self.instantiate_trait_info(&supertrait_info, supertrait_args);
             self.collect_instantiated_trait_method_entries(
                 supertrait_name,
                 &instantiated,
@@ -1179,6 +1179,40 @@ impl TypeChecker {
                 seen,
                 out,
             );
+        }
+    }
+
+    /// Return the declaration a supertrait name gives method lookup: its visible or semantic declaration, or, when
+    /// that is missing or a compiler stub without methods, the builtin trait's standard-library source declaration
+    /// once [`Self::load_builtin_supertrait_sources`] has loaded it. An adopter of `Ord` that imports only `Ord`
+    /// reaches the `__ne__` default of its `Eq` supertrait this way (#1561).
+    fn supertrait_info_for_methods(&self, name: &str) -> Option<TraitInfo> {
+        let semantic = self.lookup_semantic_trait_info(name);
+        if semantic.is_some_and(|info| !info.methods.is_empty()) {
+            return semantic.cloned();
+        }
+        stdlib::trait_method_module_segments(name)
+            .and_then(|segments| self.stdlib_cache.loaded_trait(&segments, name).cloned())
+            .or_else(|| semantic.cloned())
+    }
+
+    /// Load the standard-library source declaration of each builtin trait among `supertraits` and their own
+    /// supertraits, so [`Self::supertrait_info_for_methods`] can read it.
+    fn load_builtin_supertrait_sources(&mut self, supertraits: &[(String, Vec<ResolvedType>)]) {
+        let mut pending = supertraits.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        while let Some(name) = pending.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            if let Some(segments) = stdlib::trait_method_module_segments(&name)
+                && let Some(info) = self.stdlib_cache.lookup_trait(&segments, &name)
+            {
+                pending.extend(info.supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
+            }
+            if let Some(info) = self.lookup_semantic_trait_info(&name) {
+                pending.extend(info.supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
+            }
         }
     }
 
@@ -1257,8 +1291,10 @@ impl TypeChecker {
         {
             entries.push((adopted_trait.to_string(), info.clone()));
         }
-        for (supertrait_name, supertrait_args) in self.semantic_supertrait_closure(adopted_trait) {
-            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+        let closure = self.semantic_supertrait_closure(adopted_trait);
+        self.load_builtin_supertrait_sources(&closure);
+        for (supertrait_name, supertrait_args) in closure {
+            let Some(supertrait_info) = self.supertrait_info_for_methods(supertrait_name.as_str()) else {
                 continue;
             };
             let Some(info) = supertrait_info.methods.get(method) else {
@@ -1362,6 +1398,7 @@ impl TypeChecker {
                 stdlib::trait_method_module_segments(&adoption.name)
                     .and_then(|module_path| self.stdlib_cache.lookup_trait(&module_path, &adoption.name))
             })?;
+        self.load_builtin_supertrait_sources(&root.supertraits);
         let instantiated = if adoption.type_args.is_empty() {
             root
         } else {
@@ -1889,6 +1926,18 @@ impl TypeChecker {
                 continue;
             }
             let Some(found_group) = concrete_method_overloads.get(&entry.method_name) else {
+                // A compiled package publishes its traits' method signatures, not their default bodies, so a default
+                // of another package's trait has no body to give this adopter (#1561).
+                if self.method_declared_by_another_package(&entry.info)
+                    && self.trait_bound_through_a_package(trait_name)
+                {
+                    self.errors.push(errors::package_trait_default_not_available(
+                        &entry.origin_trait,
+                        type_name,
+                        &entry.method_name,
+                        adoption_span,
+                    ));
+                }
                 continue;
             };
             let expected = self.concretize_trait_method_requirement(&entry.info, &self_ty);
@@ -1911,6 +1960,23 @@ impl TypeChecker {
                 ));
             }
         }
+    }
+
+    /// Whether the checked module binds `trait_name` through a `pub::` package import, as opposed to the standard
+    /// library, whose trait sources lowering expands defaults from.
+    fn trait_bound_through_a_package(&self, trait_name: &str) -> bool {
+        self.import_binding_path(trait_name)
+            .and_then(|path| path.first())
+            .is_some_and(|root| root == super::PUBLIC_LIBRARY_NAMESPACE)
+    }
+
+    /// Whether a method was declared by a compiled package other than the one being checked.
+    fn method_declared_by_another_package(&self, method: &MethodInfo) -> bool {
+        matches!(
+            method.identity.as_ref().map(|identity| &identity.origin),
+            Some(incan_semantics_core::SymbolOrigin::Package { library, .. })
+                if self.symbols.package_identity() != Some(library.as_str())
+        )
     }
 
     /// If a trait method partial explicitly overrides an inherited trait method, its projected signature must remain
@@ -2182,12 +2248,12 @@ impl TypeChecker {
             Declaration::Model(model) => {
                 self.validate_protected_type_param_bindings(&model.type_params, decl.span);
                 self.check_model(model);
-                self.record_declared_error_message_display(&model.name, decl.span);
+                self.record_declared_display_route(&model.name, decl.span);
             }
             Declaration::Class(class) => {
                 self.validate_protected_type_param_bindings(&class.type_params, decl.span);
                 self.check_class(class);
-                self.record_declared_error_message_display(&class.name, decl.span);
+                self.record_declared_display_route(&class.name, decl.span);
             }
             Declaration::Trait(tr) => {
                 self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
@@ -2202,12 +2268,12 @@ impl TypeChecker {
             Declaration::Newtype(nt) => {
                 self.validate_protected_type_param_bindings(&nt.type_params, decl.span);
                 self.check_newtype(nt);
-                self.record_declared_error_message_display(&nt.name, decl.span);
+                self.record_declared_display_route(&nt.name, decl.span);
             }
             Declaration::Enum(en) => {
                 self.validate_protected_type_param_bindings(&en.type_params, decl.span);
                 self.check_enum(en);
-                self.record_declared_error_message_display(&en.name, decl.span);
+                self.record_declared_display_route(&en.name, decl.span);
             }
             Declaration::Function(func) => {
                 self.validate_protected_type_param_bindings(&func.type_params, decl.span);
@@ -2223,11 +2289,15 @@ impl TypeChecker {
         }
     }
 
-    /// Record the `message()` call a declared model, class, enum or newtype displays through, when it adopts `Error`
-    /// and has no `Display` of its own, so lowering can give it the Rust `Display` a `Display` bound needs.
-    fn record_declared_error_message_display(&mut self, type_name: &str, decl_span: Span) {
+    /// Record how a declared model, class, enum or newtype displays when lowering has to give it a Rust `Display`: the
+    /// `message()` call it displays through when it adopts `Error` and has no `Display` of its own, or its derived
+    /// `Display` (RFC 000).
+    fn record_declared_display_route(&mut self, type_name: &str, decl_span: Span) {
         let self_ty = self.trait_conformance_self_type(type_name);
         self.record_error_message_display_type(type_name, &self_ty, decl_span);
+        if self.nominal_derives_display(type_name) {
+            self.type_info.record_derived_display_type(type_name);
+        }
     }
 
     /// Reject protected builtin spellings in a declaration-owned generic parameter list.
@@ -2476,11 +2546,21 @@ impl TypeChecker {
     }
 
     /// Return whether a module-level partial preset can be represented without executing user code.
-    fn is_declaration_safe_partial_preset(&self, expr: &Spanned<Expr>) -> bool {
+    ///
+    /// RFC 084 admits a scalar literal (a negated number literal included), a const named by identifier or by a
+    /// qualified path, a payload-free enum variant path, a list, dict, set or tuple literal of such values, and a model
+    /// literal of a known model.
+    fn is_declaration_safe_partial_preset(&mut self, expr: &Spanned<Expr>) -> bool {
         match &expr.node {
             Expr::Literal(_) => true,
+            Expr::Unary(UnaryOp::Neg, operand) => {
+                matches!(operand.node, Expr::Literal(Literal::Int(_) | Literal::Float(_)))
+            }
             Expr::Ident(_) | Expr::Field(_, _) => self.is_declaration_safe_const_or_variant_path(expr),
             Expr::Paren(inner) => self.is_declaration_safe_partial_preset(inner),
+            Expr::Tuple(items) | Expr::Set(items) => {
+                items.iter().all(|item| self.is_declaration_safe_partial_preset(item))
+            }
             Expr::List(entries) => entries.iter().all(|entry| match entry {
                 ListEntry::Element(value) => self.is_declaration_safe_partial_preset(value),
                 ListEntry::Spread(_) => false,
@@ -2525,13 +2605,22 @@ impl TypeChecker {
     }
 
     /// Return whether a top-level partial preset path names a const or a zero-argument enum variant.
-    fn is_declaration_safe_const_or_variant_path(&self, expr: &Spanned<Expr>) -> bool {
+    ///
+    /// A const is one this module declares, one imported by name (its binding carries the const's identity), or one
+    /// read through an imported module (`limits.LIMIT`).
+    fn is_declaration_safe_const_or_variant_path(&mut self, expr: &Spanned<Expr>) -> bool {
         match &expr.node {
             Expr::Ident(name) => {
                 self.const_decls.contains_key(name)
-                    || self
-                        .lookup_symbol(name)
-                        .is_some_and(|sym| matches!(sym.kind, SymbolKind::Variant(_)))
+                    || self.symbols.lookup(name).is_some_and(|symbol_id| {
+                        self.symbols
+                            .identity_of(symbol_id)
+                            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const)
+                            || self
+                                .symbols
+                                .get(symbol_id)
+                                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Variant(_)))
+                    })
             }
             Expr::Field(base, member) => {
                 if let Expr::Ident(type_name) = &base.node
@@ -2541,7 +2630,12 @@ impl TypeChecker {
                     return info.variants.iter().any(|variant| variant == member)
                         || info.variant_aliases.contains_key(member);
                 }
-                false
+                let Some((_, module_path)) = self.imported_module_for_expr(base) else {
+                    return false;
+                };
+                self.resolve_imported_module_constant_member(&module_path, member)
+                    .and_then(|(_, identity)| identity)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const)
             }
             _ => false,
         }
@@ -5938,7 +6032,9 @@ impl TypeChecker {
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
-        // binding. The function body still receives its ordinary parameter locals below.
+        // binding. The function body still receives its ordinary parameter locals below. Its `mut` bindings are its
+        // own: the set starts empty and the enclosing set is restored afterwards.
+        let previous_mutable_bindings = std::mem::take(&mut self.mutable_bindings);
         let mut_param_body = self.enter_mut_param_body(
             &func.name,
             SemanticSourceTargetKind::Function,
@@ -5964,6 +6060,7 @@ impl TypeChecker {
                 },
                 SemanticSourceTargetKind::Parameter,
             );
+            self.record_read_only_binding(param.node.is_mut, param.span);
             self.record_write_target_identity(param.span, &param.node.name);
         }
 
@@ -6027,6 +6124,7 @@ impl TypeChecker {
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
         self.exit_mut_param_body(mut_param_body);
+        self.mutable_bindings = previous_mutable_bindings;
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
     }
@@ -6388,6 +6486,9 @@ impl TypeChecker {
             &mut self.current_immutable_self_method,
             (method.receiver == Some(Receiver::Immutable) && binds_self_receiver).then(|| method.name.clone()),
         );
+        // The method's `mut` bindings, its receiver included, are its own: the set starts empty and the enclosing set
+        // is restored afterwards.
+        let previous_mutable_bindings = std::mem::take(&mut self.mutable_bindings);
         if let Some(receiver) = method.receiver
             && binds_self_receiver
         {
@@ -6478,6 +6579,7 @@ impl TypeChecker {
                 },
                 SemanticSourceTargetKind::Parameter,
             );
+            self.record_read_only_binding(param.node.is_mut, param.span);
             self.record_write_target_identity(param.span, &param.node.name);
         }
 
@@ -6556,7 +6658,7 @@ impl TypeChecker {
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
         self.current_immutable_self_method = previous_immutable_self_method;
-        self.mutable_bindings.remove("self");
+        self.mutable_bindings = previous_mutable_bindings;
         self.exit_mut_param_body(mut_param_body);
         self.symbols.exit_scope();
     }

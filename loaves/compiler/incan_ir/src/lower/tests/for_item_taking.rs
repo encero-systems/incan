@@ -314,3 +314,81 @@ def keep(items: list[int]) -> int:
     assert_eq!(var_read(argument), Some(("items", VarAccess::Move)), "{argument:?}");
     Ok(())
 }
+
+/// Receivers of every source method call in a function, in source order.
+#[derive(Default)]
+struct MethodReceivers(Vec<TypedExpr>);
+
+impl crate::visit::Visitor for MethodReceivers {
+    fn expr(&mut self, expr: &mut crate::IrExpr) {
+        if let IrExprKind::MethodCall { receiver, .. } = &expr.kind {
+            self.0.push(receiver.as_ref().clone());
+        }
+        crate::visit::walk_expr(expr, self);
+    }
+}
+
+/// A call to a `mut self` method borrows the binding its receiver is rooted at mutably, wherever the call sits (a call
+/// argument, a list element, a field of the loop item), so the loop reaches its items in place. A call to a plain
+/// `self` method reads the binding.
+#[test]
+fn mut_self_calls_borrow_their_receiver_root_mutably() -> Result<(), String> {
+    let mut ir = lower_checked_source(
+        r#"
+class Cell:
+    pub value: int
+
+    def bump(mut self) -> int:
+        self.value += 1
+        return self.value
+
+    def peek(self) -> int:
+        return self.value
+
+class Grid:
+    pub inner: Cell
+
+def main() -> None:
+    mut cells: list[Cell] = [Cell(value=1)]
+    for c in cells:
+        println(c.bump())
+        values = [c.bump(), c.peek()]
+        println(len(values))
+    mut grids: list[Grid] = [Grid(inner=Cell(value=2))]
+    for g in grids:
+        println(g.inner.bump())
+"#,
+    )?;
+    let function = ir
+        .declarations
+        .iter_mut()
+        .find_map(|decl| match &mut decl.kind {
+            IrDeclKind::Function(function) if function.name == "main" => Some(function),
+            _ => None,
+        })
+        .ok_or("missing function `main`")?;
+    let mut receivers = MethodReceivers::default();
+    for stmt in &mut function.body {
+        crate::visit::Visitor::stmt(&mut receivers, stmt);
+    }
+    let roots = receivers
+        .0
+        .iter()
+        .filter_map(|receiver| match &receiver.kind {
+            IrExprKind::Field { object, .. } => var_read(object),
+            _ => var_read(receiver),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        roots,
+        vec![
+            ("c", VarAccess::BorrowMut),
+            ("c", VarAccess::BorrowMut),
+            ("c", VarAccess::Read),
+            ("g", VarAccess::BorrowMut),
+        ],
+        "only `mut self` calls borrow their receiver root mutably: {:?}",
+        receivers.0
+    );
+    Ok(())
+}

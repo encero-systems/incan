@@ -1,0 +1,12 @@
+# behavior: a generic function that writes its type parameter's values as dict keys refuses a float type argument at check time, since a dict key must implement Eq and Hash
+# expect-diagnostic: INCAN-T0114
+
+def count[T](items: list[T]) -> dict[T, int]:
+    mut counts: dict[T, int] = {}
+    for item in items:
+        counts[item] = 1
+    return counts
+
+
+def main() -> None:
+    println(len(count([1.5, 2.5])))

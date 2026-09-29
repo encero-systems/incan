@@ -1,0 +1,41 @@
+# behavior: slice syntax on a type that adopts Sliceable calls its __getslice__ hook with Some of each written part and None for each omitted one, on a generic type too, and list and str slices written with :: keep their meaning
+# retires: loaves/compiler/incan_emit/src/tests/slice_hooks.rs::slice_syntax_calls_the_getslice_hook_issue1561
+# expect-stdout:
+#   [1, 2, -1]
+#   [-1, -1, -1]
+#   [-1, -1, 2]
+#   [0, 3, 2]
+#   ["b", "c"]
+#   [1, 3, 5]
+#   [2, 4]
+#   olleh
+
+from std.traits.indexing import Sliceable
+
+
+model Window with Sliceable[int]:
+    items: list[int]
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[int]:
+        return [start.unwrap_or(-1), end.unwrap_or(-1), step.unwrap_or(-1)]
+
+
+model Shelf[T] with Sliceable[T]:
+    items: list[T]
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[T]:
+        return self.items[start.unwrap_or(0):]
+
+
+def main() -> None:
+    w = Window(items=[1, 2, 3])
+    println(w[1:2])
+    println(w[:])
+    println(w[::2])
+    println(w[0:3:2])
+    shelf = Shelf(items=["a", "b", "c"])
+    println(shelf[1:])
+    items = [1, 2, 3, 4, 5]
+    println(items[::2])
+    println(items[1::2])
+    println("hello"[::-1])

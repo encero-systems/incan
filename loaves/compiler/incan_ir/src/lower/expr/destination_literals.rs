@@ -343,7 +343,7 @@ impl AstLowering {
     }
 
     /// Build the `Some(payload)` constructor call of type `option_ty`, spelled as a source `Some(...)` call lowers.
-    fn some_constructor_call(payload: TypedExpr, option_ty: IrType) -> TypedExpr {
+    pub(in crate::lower) fn some_constructor_call(payload: TypedExpr, option_ty: IrType) -> TypedExpr {
         let span = payload.span;
         let mut call = TypedExpr::new(
             IrExprKind::Call {

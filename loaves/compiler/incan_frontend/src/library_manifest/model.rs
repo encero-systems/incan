@@ -363,6 +363,8 @@ pub enum PresetValueExport {
     Bytes(Vec<u8>),
     None,
     List(Vec<PresetValueExport>),
+    Set(Vec<PresetValueExport>),
+    Tuple(Vec<PresetValueExport>),
     Dict(Vec<PresetDictEntryExport>),
     ConstRef(Vec<String>),
     ModelLiteral {
@@ -2256,6 +2258,12 @@ fn preset_value_from_checked(value: &CheckedPresetValue) -> PresetValueExport {
         CheckedPresetValue::None => PresetValueExport::None,
         CheckedPresetValue::List(values) => {
             PresetValueExport::List(values.iter().map(preset_value_from_checked).collect())
+        }
+        CheckedPresetValue::Set(values) => {
+            PresetValueExport::Set(values.iter().map(preset_value_from_checked).collect())
+        }
+        CheckedPresetValue::Tuple(values) => {
+            PresetValueExport::Tuple(values.iter().map(preset_value_from_checked).collect())
         }
         CheckedPresetValue::Dict(entries) => PresetValueExport::Dict(
             entries

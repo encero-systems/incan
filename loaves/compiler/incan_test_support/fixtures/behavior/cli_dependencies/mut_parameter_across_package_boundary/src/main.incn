@@ -1,4 +1,5 @@
 # behavior: a dependency's function whose parameter is `mut` changes the consumer's argument, called directly and passed as a value of a function type that marks the parameter `mut`
+# retires: loaves/compiler/incan_emit/src/tests/mut_marker_publication.rs::marked_callable_parameter_publishes_its_marker_and_native_union
 # retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::imported_mut_parameter_is_passed_mut_across_the_library_boundary
 # expect-stdout:
 #   3

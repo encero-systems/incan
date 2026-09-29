@@ -20,7 +20,7 @@ impl<'a> IrEmitter<'a> {
     /// - Empty struct construction: `Unit {}`
     ///
     /// Explicit source type arguments (`Column[T](...)`) are threaded onto the constructed path as a turbofish, and a
-    /// struct literal for a type with phantom type parameters initialises the compiler-owned marker field. Both
+    /// struct literal for a type with phantom type parameters initializes the compiler-owned marker field. Both
     /// facts come from lowering; see #1370.
     pub(in super::super) fn emit_struct_expr(
         &self,

@@ -64,6 +64,11 @@ impl TypeChecker {
         }
         match &expr.node {
             Expr::Call(callee, _, _) => self.call_expr_is_async(callee),
+            // `time.sleep(...)` through a module binding is a call of the module's function, which the parser spells
+            // as a method call on the binding (#1561).
+            Expr::MethodCall(base, method, _, _) if self.imported_module_for_expr(base).is_some() => {
+                self.module_function_member_is_async(base, method)
+            }
             Expr::MethodCall(base, method, _, _) => self.method_call_expr_is_async(base, method),
             Expr::Paren(inner) | Expr::Try(inner) => self.expr_is_async_call_realization(inner),
             _ => false,
@@ -80,18 +85,23 @@ impl TypeChecker {
                 }
                 _ => false,
             }),
-            Expr::Field(base, member) => self
-                .imported_module_for_expr(base)
-                .and_then(|(_, module_path)| self.resolve_imported_module_function_member(&module_path, member))
-                .is_some_and(|kind| match kind {
-                    SymbolKind::Function(info) => info.is_async,
-                    SymbolKind::FunctionOverloads(overloads) => {
-                        !overloads.is_empty() && overloads.iter().all(|overload| overload.info.is_async)
-                    }
-                    _ => false,
-                }),
+            Expr::Field(base, member) => self.module_function_member_is_async(base, member),
             _ => false,
         }
+    }
+
+    /// Return whether `base.member` names an async function of the module `base` binds (`import std.async.time`, then
+    /// `time.sleep`): a function declared `async`, or an overload set whose every overload is.
+    fn module_function_member_is_async(&mut self, base: &Spanned<Expr>, member: &str) -> bool {
+        self.imported_module_for_expr(base)
+            .and_then(|(_, module_path)| self.resolve_imported_module_function_member(&module_path, member))
+            .is_some_and(|kind| match kind {
+                SymbolKind::Function(info) => info.is_async,
+                SymbolKind::FunctionOverloads(overloads) => {
+                    !overloads.is_empty() && overloads.iter().all(|overload| overload.info.is_async)
+                }
+                _ => false,
+            })
     }
 
     /// Return whether a method-call receiver resolves to an async method.

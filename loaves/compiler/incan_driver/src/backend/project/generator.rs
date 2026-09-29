@@ -2871,12 +2871,19 @@ mod tests {
         let mut modules = HashMap::new();
         modules.insert("async".to_string(), "pub fn launch() {}".to_string());
         modules.insert("type".to_string(), "pub fn marker() {}".to_string());
+        // #1561: `gen` is reserved from Rust 2024 on.
+        modules.insert("gen".to_string(), "pub fn produce() {}".to_string());
 
         generator.generate_multi("fn main() {}", &modules)?;
 
         let main_content = fs::read_to_string(temp_dir.join("src/main.rs"))?;
         assert!(main_content.contains("#[path = \"async.rs\"]\nmod r#async;"));
         assert!(main_content.contains("#[path = \"type.rs\"]\nmod r#type;"));
+        assert!(
+            main_content.contains("#[path = \"gen.rs\"]\nmod r#gen;"),
+            "{main_content}"
+        );
+        assert!(temp_dir.join("src/gen.rs").exists());
         assert!(temp_dir.join("src/async.rs").exists());
         assert!(temp_dir.join("src/type.rs").exists());
 

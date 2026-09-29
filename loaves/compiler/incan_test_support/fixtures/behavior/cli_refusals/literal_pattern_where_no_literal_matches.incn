@@ -1,0 +1,29 @@
+# behavior: a match arm whose literal sits where the matched value is a model, bytes or a type parameter, which no literal spells, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Point:
+    x: int
+
+
+def describe(point: Point) -> str:
+    match point:
+        1 => return "one"
+        _ => return "other"
+
+
+def head(data: bytes) -> str:
+    match data:
+        "a" => return "a"
+        _ => return "other"
+
+
+def pick[T](value: T) -> str:
+    match value:
+        0 => return "zero"
+        _ => return "other"
+
+
+def main() -> None:
+    println(describe(Point(x=1)))
+    println(head(b"a"))
+    println(pick(0))

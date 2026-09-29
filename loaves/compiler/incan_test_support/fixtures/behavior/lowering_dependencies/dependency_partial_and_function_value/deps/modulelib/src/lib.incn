@@ -1,0 +1,9 @@
+pub def show(prefix: str, label: str) -> str:
+    return prefix + label
+
+
+pub show_ace = partial show(label="ace")
+
+
+pub def calculate(value: int) -> int:
+    return value * 2

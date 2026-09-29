@@ -174,7 +174,7 @@ use incan_ir::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_
 use incan_ir::types::{Mutability, exact_integer_arithmetic_type, same_exact_binary_float_type};
 use incan_ir::{IrExpr, IrExprKind, IrType, TypedExpr};
 use incan_lang::interop::rust_display_is_owned_string;
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_lang::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
@@ -890,7 +890,7 @@ fn field_access_reads_from_self_receiver(expr: &IrExpr) -> bool {
 /// borrowed/shared parents still need owned materialization at storage and return sinks, and so does a field the
 /// typechecker resolved through a transparent wrapper: the owner may be at its last use, but Rust reaches the field
 /// through the wrapper's `Deref`, and a move out of a dereference is E0507 whatever the owner's access says.
-fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
+pub(crate) fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
     match &expr.kind {
         IrExprKind::Field { object, .. } => !matches!(
             &object.kind,
@@ -905,15 +905,14 @@ fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
 
 /// Whether a field read on a value of this type goes through a wrapper the typechecker looked through.
 ///
-/// `Json[T]` and `Query[T]` are the web extractor wrappers whose field access the checker resolves on the wrapped `T`
-/// (`check_expr/access.rs`); the emitted `wrapper.field` relies on the wrapper's `Deref`, so the field is borrowed
-/// storage however the wrapper itself is owned. The pair is the same one the checker names, so a wrapper it starts
-/// looking through must also be added here.
+/// The surface registry names those wrappers ([`surface_types::field_access_reads_wrapped_value`]), and the checker
+/// resolves their fields on the wrapped `T` from the same predicate; the emitted `wrapper.field` relies on the
+/// wrapper's `Deref`, so the field is borrowed storage however the wrapper itself is owned.
 fn field_access_derefs_transparent_wrapper(ty: &IrType) -> bool {
     matches!(
         ty,
         IrType::NamedGeneric(name, _)
-            if matches!(surface_types::from_str(name), Some(SurfaceTypeId::Json | SurfaceTypeId::Query))
+            if surface_types::from_str(name).is_some_and(surface_types::field_access_reads_wrapped_value)
     )
 }
 
@@ -1590,6 +1589,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "POLICY".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::FrozenStr,
         );
@@ -1696,6 +1696,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "PREFIX".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::StaticStr,
         );
@@ -1711,6 +1712,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "MARKER".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::Int,
         );
@@ -1829,6 +1831,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "MARKER".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::Int,
         );
@@ -1881,6 +1884,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "PREFIX".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::StaticStr,
         );
@@ -2301,6 +2305,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "OPTION_NAME".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::StaticStr,
         );

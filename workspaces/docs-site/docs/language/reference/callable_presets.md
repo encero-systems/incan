@@ -41,9 +41,31 @@ Every preset is a named argument; a positional preset is a syntax error, `INCAN-
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Top-level declaration    | A function, declared or imported (`partial math.sqrt(x=4.0)`), a model, class or newtype constructor, or a symbol alias or top-level partial that resolves to one of these. A newtype constructor's parameter is named `value`. |
 | Method partial           | A method of the same type, named by its unqualified name or through a same-type method alias (`display = label`).                                                                                                                    |
-| Local partial expression | Any expression of callable type: a function, a model, class or newtype constructor, a symbol alias, a partial, a method of a value (`partial user.label(prefix="x")`), or a generic function.                                          |
+| Local partial expression | A callable named by its name or path: a function, a generic function, a model, class or newtype constructor, a symbol alias, a top-level partial, or a method of a value (`partial user.label(prefix="x")`).                              |
 
 A top-level target that is a const, a static, a module, an enum variant, a call expression, a local variable, a closure, a field or an unbound method is error `INCAN-T0001`. A local partial expression whose target is not callable, or is a variable or parameter holding a callable, is error `INCAN-T0001`.
+
+A method of a value as a local partial's target is a method that takes `self`, of a local, of `self`, or of a field of one. The partial holds the receiver as it is when the partial is built, and calls the method on it. A method that takes `mut self`, an overloaded method and a generic method are error `INCAN-T0001`.
+
+```incan
+model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+class Counter:
+    pub count: int
+
+    def add(mut self, by: int) -> None:
+        self.count += by
+
+def main() -> None:
+    user = User(name="ann")
+    tag = partial user.label(prefix="x")          # accepted
+    mut counter = Counter(count=0)
+    step = partial counter.add(by=1)              # refused: add takes mut self (INCAN-T0001)
+```
 
 ## Signature
 
@@ -55,9 +77,11 @@ A partial has the target's signature with these changes:
 - the return type is the target's return type;
 - the partial is async exactly when the target is;
 - a method partial has the target method's receiver;
-- a partial of a generic callable stays generic over the type parameters its presets leave free.
+- a top-level partial of a generic callable stays generic over the type parameters its presets leave free.
 
-A local partial expression's value has the projected function type: the target's parameters that are not preset, and the target's return type.
+A local partial expression's value is a callable with the target's parameters and return type, each preset parameter defaulted to its preset value. It holds its presets, so a function-typed slot holds it where it holds a closure that captures local values (see [Closures that capture local values](functions.md#closures-that-capture-local-values)).
+
+A local partial expression of a generic callable instantiates it: each type parameter takes the type argument the partial writes (`partial pair[int](a=1)`) or, when it writes none, the one its preset values fix. A type parameter neither fixes is error `INCAN-T0001`, and a type argument that does not meet its parameter's bounds is refused as it is in a call.
 
 ```incan
 model TableReader:
@@ -65,8 +89,21 @@ model TableReader:
     format: str
     path: str
 
-def reader_for(layer: str) -> (str) -> TableReader:
-    return partial TableReader(layer=layer, format="delta")   # accepted
+model Box[T]:
+    value: T
+    label: str
+
+def pair[T](a: T, b: T) -> list[T]:
+    return [a, b]
+
+def read_orders(layer: str) -> TableReader:
+    reader = partial TableReader(layer=layer, format="delta")   # accepted
+    return reader("orders")
+
+def instantiate() -> None:
+    first = partial pair(a=1)                  # accepted: T is int
+    labeled = partial Box[str](label="x")     # accepted: T is str
+    unfixed = partial Box(label="x")           # refused: INCAN-T0001, T is not fixed
 ```
 
 Positional arguments bind as follows:
@@ -102,7 +139,7 @@ Each preset value of a top-level declaration is one of:
 - a scalar literal, including a negative number literal such as `-2`, a string or bytes literal, or `None`;
 - a const, named by its identifier or by a qualified path, whose value is itself such a value;
 - an enum variant path whose variant takes no payload, such as `Mode.Fast`;
-- a collection literal whose elements, keys and values are such values;
+- a list, set, tuple or dict literal whose elements, keys and values are such values;
 - a model literal of a known model whose field values are such values.
 
 Any other preset value of a top-level declaration, such as a function or constructor call, a closure, a comprehension or a spread entry, is error `INCAN-T0001`:
@@ -146,7 +183,7 @@ A method partial declared in a trait is a default method of the trait: every typ
 
 A `pub` top-level partial is exported from its module and imported like a function. A call of an imported partial binds its arguments against the partial's signature, preset parameters included. In a package other than the partial's, a leftover defaulted parameter follows the target's cross-package default rule, and every preset of a method partial is a required argument (see [Ordinary call binding](functions.md#ordinary-call-binding), rule 8).
 
-## Diagnostics
+## Refusals
 
 A positional preset is syntax error `INCAN-P0001`. Each of the following is error `INCAN-T0001`:
 
@@ -156,6 +193,7 @@ A positional preset is syntax error `INCAN-P0001`. Each of the following is erro
 - a target that is unknown or not one the form allows (see [Targets](#targets));
 - a partial whose name is already declared in its module or on its type;
 - a target with a rest parameter;
+- a local partial expression of a generic callable that leaves one of its type parameters unfixed;
 - a partial whose target resolves back to itself, directly or through symbol aliases;
 - a `pub` partial whose target is private, or whose preset value names a private item;
 - a top-level preset value that is not one of the values listed under [Preset values](#preset-values).

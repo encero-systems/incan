@@ -301,6 +301,13 @@ impl AstLowering {
                     || method.name == iterator_methods::as_str(IteratorMethodId::Sum)
             });
         }
+        // An adopter's `__eq__` is its `PartialEq::eq` (the backend implements `PartialEq` from it and keeps it out of
+        // every other impl), so a trait's `__eq__` is no slot of its own: the trait requires `PartialEq` instead, and
+        // a call of `__eq__` lowers to `==` (#1561).
+        let declares_eq = methods
+            .iter()
+            .any(|method| magic_methods::from_str(&method.name) == Some(MagicMethodId::Eq));
+        methods.retain(|method| magic_methods::from_str(&method.name) != Some(MagicMethodId::Eq));
 
         for property in &t.properties {
             methods.push(self.lower_property_with_type_params(
@@ -310,7 +317,7 @@ impl AstLowering {
             )?);
         }
 
-        let supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
+        let mut supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
             .type_info
             .as_ref()
             .and_then(|info| info.traits.direct_supertraits.get(&t.name))
@@ -321,6 +328,13 @@ impl AstLowering {
         } else {
             self.lower_supertraits_from_ast(t, &type_param_names)
         };
+        if declares_eq
+            && !supertraits
+                .iter()
+                .any(|(path, _)| path == trait_bounds::rust::PARTIAL_EQ)
+        {
+            supertraits.push((trait_bounds::rust::PARTIAL_EQ.to_string(), Vec::new()));
+        }
 
         Ok(IrTrait {
             name: t.name.clone(),

@@ -1243,6 +1243,8 @@ fn api_preset_value(value: &CheckedPresetValue) -> PresetValueExport {
         CheckedPresetValue::Bytes(value) => PresetValueExport::Bytes(value.clone()),
         CheckedPresetValue::None => PresetValueExport::None,
         CheckedPresetValue::List(values) => PresetValueExport::List(values.iter().map(api_preset_value).collect()),
+        CheckedPresetValue::Set(values) => PresetValueExport::Set(values.iter().map(api_preset_value).collect()),
+        CheckedPresetValue::Tuple(values) => PresetValueExport::Tuple(values.iter().map(api_preset_value).collect()),
         CheckedPresetValue::Dict(entries) => PresetValueExport::Dict(
             entries
                 .iter()

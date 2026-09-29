@@ -37,6 +37,8 @@ mod generic_bounds;
 mod rust_boundary;
 mod task_arguments;
 
+pub(in crate::typechecker::check_expr) use generic_bounds::first_open_type_param;
+
 /// Source-facing and canonical identity for one constructor reached through a public package namespace.
 pub(super) struct PublicModuleConstructorContext<'a> {
     pub display_name: &'a str,
@@ -258,14 +260,19 @@ impl TypeChecker {
                     self.type_info.record_resolved_identity(callee.span, identity);
                 }
                 return match (kind, public_library) {
-                    (SymbolKind::Function(info), _) => self.validate_stdlib_module_function_call(
-                        callable.as_str(),
-                        &info,
-                        type_args,
-                        args,
-                        span,
-                        expected_return_ty,
-                    ),
+                    (SymbolKind::Function(info), _) => {
+                        let result = self.validate_stdlib_module_function_call(
+                            callable.as_str(),
+                            &info,
+                            type_args,
+                            args,
+                            span,
+                            expected_return_ty,
+                        );
+                        let identity = self.type_info.resolved_identity(callee.span).cloned();
+                        self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
+                        result
+                    }
                     (SymbolKind::FunctionOverloads(overloads), _) => self
                         .validate_function_overload_call_with_callee_span(
                             callable.as_str(),
@@ -346,7 +353,17 @@ impl TypeChecker {
                 return ResolvedType::Unknown;
             }
 
-            if let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty) {
+            // RFC 054: a generic standard-library function reached through a surface-function import, such as
+            // `channel[str](4)`, takes explicit type arguments as any generic function does, so a call that writes
+            // them is checked against the function's declaration below.
+            let explicit_generic_surface_call = !type_args.is_empty()
+                && self.active_surface_function_import(name).is_some()
+                && self.lookup_symbol(name).is_some_and(
+                    |symbol| matches!(&symbol.kind, SymbolKind::Function(info) if !info.type_params.is_empty()),
+                );
+            if !explicit_generic_surface_call
+                && let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty)
+            {
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -491,6 +508,7 @@ impl TypeChecker {
                         let first_error = self.errors.len();
                         let result =
                             self.validate_function_call(name, &func_info, type_args, args, span, expected_return_ty);
+                        self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
                         if let Some(declaration) = declaration {
                             self.attach_related_declaration_to_new_errors(first_error, &declaration);
                         }
@@ -739,6 +757,7 @@ impl TypeChecker {
                 );
                 let final_params = Self::substitute_callable_params(&resolved_params, &type_bindings);
                 self.type_info.record_call_site_callable_params(span, &final_params);
+                self.check_capturing_value_call_arguments(callee, &params, args);
                 substitute_resolved_type(&ret, &type_bindings)
             }
             ty if self.is_user_operator_receiver(&ty)
@@ -849,6 +868,10 @@ impl TypeChecker {
         self.record_c_raw_owned_resource_transfers(&symbol, args);
         self.type_info.record_call_site_callable_params(span, &parameters);
         let return_type = Self::c_raw_call_return_type(&binding, &symbol.return_type);
+        if matches!(&return_type, ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID) {
+            // The view may only be bound to a local or copied at once; anything else lets it escape (RFC 116).
+            self.unbound_scoped_c_string_views.insert((span.start, span.end));
+        }
         self.type_info.c_abi.raw_calls.push(CBindingRawCall {
             span,
             owner: self.current_c_abi_raw_call_owner.clone(),
@@ -1504,11 +1527,22 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> Option<ResolvedType> {
-        if method != "copy_utf8"
-            || !matches!(self.check_expr(base), ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID)
-        {
+        if method != "copy_utf8" {
             return None;
         }
+        // The receiver of `copy_utf8` is the one position a view may be read in (RFC 116).
+        let mut receiver = base;
+        while let Expr::Paren(inner) = &receiver.node {
+            receiver = inner;
+        }
+        let receiver_key = (receiver.span.start, receiver.span.end);
+        self.scoped_c_string_view_receivers.insert(receiver_key);
+        let base_ty = self.check_expr(base);
+        self.scoped_c_string_view_receivers.remove(&receiver_key);
+        if !matches!(base_ty, ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID) {
+            return None;
+        }
+        self.unbound_scoped_c_string_views.remove(&receiver_key);
         let [CallArg::Named(name, _)] = args else {
             self.errors.push(CompileError::type_error(
                 "a scoped C string view requires copy_utf8(max_bytes=<positive int>)".to_string(),

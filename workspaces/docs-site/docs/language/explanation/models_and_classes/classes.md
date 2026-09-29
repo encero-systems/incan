@@ -17,7 +17,7 @@ class Counter:
         self.value += 1
 
 def main() -> None:
-    c = Counter(value=0)  # (4)
+    mut c = Counter(value=0)  # (4)
     c.increment()
     println(c.get()) # (5)
     println(c.value) # (6)
@@ -177,6 +177,26 @@ def main() -> None:
 
 See also: [Decorators reference](../../reference/derives_and_traits.md#decorators-staticmethod-requires)
 
+## Class methods (`@classmethod`)
+
+Use `@classmethod` for a method that is called on the type rather than on an instance, but still belongs to that type. Its most common use is a constructor-style API: a named way to build a value from some other input.
+
+```incan
+model UserId:
+    value: int
+
+    @classmethod
+    def parse(cls, text: str) -> Self:
+        return cls(value=int(text))
+
+def main() -> None:
+    user_id = UserId.parse("42")
+```
+
+Unlike an instance method, a class method does not take `self`. Its first parameter, `cls`, stands for the declaring type and is called like its constructor. Unlike a static method, which names its type explicitly (`Temperature(celsius=...)`), a class method builds through `cls` and returns `Self`, so it reads as a hook on the type itself. For a generic type, `Self` and `cls` keep the call site's type arguments: `Box[int].make(1)` builds a `Box[int]`.
+
+See also: [`@classmethod` reference](../../reference/derives_and_traits.md#classmethod)
+
 ## Inheritance (`extends`) and overrides
 
 Classes support single inheritance:
@@ -294,4 +314,5 @@ See: [Reflection (Reference)](../../reference/reflection.md)
 
 - **Using a class for schema mapping**: if you need wire keys/aliases, use a model (and embed it in a class if needed).
 - **Forgetting `mut self`**: if a method assigns to `self.field`, it must take `mut self`.
+- **Forgetting `mut` on the binding**: a `mut self` method is called through a binding declared `mut`, such as `mut c = Counter(value=0)`; through `c = Counter(value=0)` the call is refused.
 - **Using inheritance for data reuse**: prefer composition for data shapes; use `extends` for behavior reuse and overrides.

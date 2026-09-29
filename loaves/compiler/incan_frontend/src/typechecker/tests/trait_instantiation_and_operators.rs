@@ -660,7 +660,7 @@ def main() -> str:
 }
 
 #[test]
-fn test_source_callable_bound_records_typed_rust_closure_boundary() -> Result<(), Vec<CompileError>> {
+fn test_source_callable_bound_records_typed_rust_closure_boundary() -> Result<(), String> {
     let source = r#"
 from std.traits.callable import Callable1
 
@@ -674,13 +674,17 @@ def main() -> str:
   prefix = "item"
   return apply((error) => f"{prefix}:{error.kind}", Failure(kind="read"))
 "#;
-    let tokens = lexer::lex(source)?;
-    let ast = parser::parse(&tokens)?;
+    let tokens = lexer::lex(source).map_err(|errors| format!("fixture should lex: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("fixture should parse: {errors:?}"))?;
     let mut checker = TypeChecker::new();
-    checker.check_program(&ast)?;
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("fixture should typecheck: {errors:?}"))?;
 
     let closure = r#"(error) => f"{prefix}:{error.kind}""#;
-    let start = source.find(closure).expect("fixture must contain closure");
+    let start = source
+        .find(closure)
+        .ok_or_else(|| "fixture must contain closure".to_string())?;
     assert!(
         checker
             .type_info()
@@ -717,7 +721,7 @@ def apply[Mapper with Callable1[int, str]](mapper: Mapper, value: int) -> str:
 }
 
 #[test]
-fn test_source_callable_bound_infers_return_type_from_nominal_adoption() -> Result<(), Vec<CompileError>> {
+fn test_source_callable_bound_infers_return_type_from_nominal_adoption() -> Result<(), String> {
     let source = r#"
 from std.traits.callable import Callable1
 
@@ -735,15 +739,17 @@ model Label with Callable1[int, str]:
 def main() -> None:
   mapped = Source().map(Label())
 "#;
-    let tokens = lexer::lex(source)?;
-    let ast = parser::parse(&tokens)?;
+    let tokens = lexer::lex(source).map_err(|errors| format!("fixture should lex: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("fixture should parse: {errors:?}"))?;
     let mut checker = TypeChecker::new();
-    checker.check_program(&ast)?;
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("fixture should typecheck: {errors:?}"))?;
 
     let expression = "Source().map(Label())";
     let start = source
         .find(expression)
-        .expect("fixture must contain nominal callable call");
+        .ok_or_else(|| "fixture must contain nominal callable call".to_string())?;
     let span = Span::new(start, start + expression.len());
     assert_eq!(
         checker.type_info().expr_type(span),
@@ -1360,4 +1366,76 @@ def main() -> bytes:
         }),
         "expected enum generic bound type-argument diagnostic, got: {errs:?}"
     );
+}
+
+/// Slice syntax on a type that defines `__getslice__`, the hook `Sliceable[T]` declares, calls the hook: `obj[a:b:c]`
+/// has the hook's return type, over a generic type too, whichever parts are written. A type without the hook, and a
+/// slice part that is not an `int`, are refused (#1561).
+#[test]
+fn slice_syntax_calls_a_user_types_getslice_issue1561() {
+    assert_check_ok(
+        r#"
+from std.traits.indexing import Sliceable
+
+model Window with Sliceable[int]:
+    items: list[int]
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[int]:
+        return self.items
+
+model Shelf[T]:
+    items: list[T]
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[T]:
+        return self.items
+
+def main() -> None:
+    w = Window(items=[1, 2, 3])
+    head: list[int] = w[0:2]
+    every: list[int] = w[::2]
+    tail: list[int] = w[1::2]
+    whole: list[int] = w[:]
+    shelf = Shelf(items=["a", "b"])
+    names: list[str] = shelf[1:]
+    println(len(head) + len(every) + len(tail) + len(whole) + len(names))
+"#,
+    );
+    let errors = check_str_err(
+        r#"
+model Shelf[T]:
+    items: list[T]
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[T]:
+        return self.items
+
+def main() -> None:
+    shelf = Shelf(items=["a", "b"])
+    counts: list[int] = shelf[1:]
+"#,
+        "a generic type's hook returns its instantiated type",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let errors = check_str_err(
+        r#"
+model Plain:
+    items: list[int]
+
+model Window:
+    items: list[int]
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[int]:
+        return self.items
+
+def main() -> None:
+    p = Plain(items=[1])
+    cut = p[0:1]
+    w = Window(items=[1])
+    bad = w["a":1]
+"#,
+        "slices on a type without the hook, or with a part that is not an int",
+    );
+    let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+    assert_eq!(errors.len(), 2, "{messages:?}");
+    assert!(messages[0].contains("__getslice__"), "{messages:?}");
+    assert!(messages[1].contains("int"), "{messages:?}");
 }

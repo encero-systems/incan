@@ -56,7 +56,7 @@ def main() -> None:
 | `42u16`, `7i8`, `3.14f32` | The type its suffix names | The type its suffix names. |
 | `19.99d`, `12345d` | A decimal literal requires a decimal destination | The destination's `decimal[p, s]` type (see [Decimal types](#decimal-types)). |
 
-- An integer literal outside the range of its integer type is refused (`INCAN-T0001`), as a declared value, an argument and a returned value alike. A suffixed literal outside the range of its suffix's type is refused.
+- An integer literal outside the range of its integer type is refused (`INCAN-T0001`), as a declared value, an argument and a returned value alike. A suffixed literal outside the range of its suffix's type is refused (`INCAN-T0001`).
 - A literal whose value is not finite in `f32` is refused at an `f32` destination (`INCAN-T0001`). At a `float` destination, a float literal may be infinite (`1e309`), and so may an `f64`-suffixed literal (`1e309f64`).
 - Numeric literals are written in decimal digits. A float literal has a `.` followed by a digit (`0.5`), an exponent (`1e3`), or both.
 - `_` separators do not change a literal's value.
@@ -65,7 +65,7 @@ def main() -> None:
 - An integer literal argument of a generic function takes its parameter's type in the call: with `def pick[T](a: T, b: T) -> T`, `pick(2.5, 1)` and `pick(1, 2.5)` bind `T` to `float`, and `1` is `1.0`.
 - An `int` value is not assignable to a float type (see [Assignment between numeric types](#assignment-between-numeric-types)).
 - A float literal at an integer destination is refused (`INCAN-T0001`).
-- An unsuffixed integer literal operand of `+`, `-`, `*`, `//` or `%` takes the exact-width integer type of the other operand (see [Operators](#operators)).
+- An unsuffixed integer literal operand of `+`, `-`, `*`, `//`, `%`, `&`, `|` or `^` takes the exact-width integer type of the other operand (see [Operators](#operators)).
 
 ```incan
 def main() -> None:
@@ -148,16 +148,16 @@ def main() -> None:
 
 ## Resizing methods
 
-A resizing method converts a numeric value to its destination type `T`, the expected type of the call, such as a binding's declared type.
+A resizing method converts a numeric value to its destination type `T`. The destination may come from the expected type of the call, such as a binding's declared type. `try_resize[T]()`, `wrapping_resize[T]()` and `saturating_resize[T]()` may instead name it explicitly. When both forms supply a destination, they must name the same type (`try_resize` compares `T` with the payload of the expected `Option[T]`).
 
 | Method | Destination | Receiver and `T` | Result |
 | --- | --- | --- | --- |
 | `resize()` | `T` | The receiver's type is `T` or assignable to `T` | The same value |
-| `try_resize()` | `Option[T]` | Integer types | `Some(value)` when `T` holds the value, otherwise `None` |
-| `wrapping_resize()` | `T` | Integer types | The value modulo 2^N, in the range of `T`, where N is the bit width of `T` |
-| `saturating_resize()` | `T` | Integer types | The value clamped to the minimum and maximum of `T` |
+| `try_resize()` or `try_resize[T]()` | `Option[T]` | Integer types | `Some(value)` when `T` holds the value, otherwise `None` |
+| `wrapping_resize()` or `wrapping_resize[T]()` | `T` | Integer types | The value modulo 2^N, in the range of `T`, where N is the bit width of `T` |
+| `saturating_resize()` or `saturating_resize[T]()` | `T` | Integer types | The value clamped to the minimum and maximum of `T` |
 
-- A call without a destination type, with arguments or with type arguments, or outside the table's receiver and destination types is refused (`INCAN-T0001`).
+- A call without a contextual or explicit destination type, with value arguments, with more than one type argument, or outside the table's receiver and destination types is refused (`INCAN-T0001`). `resize()` does not accept an explicit type argument.
 
 ```incan
 def main() -> None:
@@ -165,15 +165,37 @@ def main() -> None:
     wide: int = small.resize()                   # accepted
     incoming: i16 = 240
     maybe: Option[i8] = incoming.try_resize()    # accepted
-    wrapped: i8 = incoming.wrapping_resize()     # accepted
-    capped: i8 = incoming.saturating_resize()    # accepted
+    wrapped = incoming.wrapping_resize[i8]()     # accepted: explicit destination
+    capped: i8 = incoming.saturating_resize[i8]() # accepted: matching context and explicit destination
+    conflict: u8 = incoming.saturating_resize[i8]() # refused: conflicting destinations
     narrow: i8 = wide.resize()                   # refused: int is not assignable to i8
     loose = small.resize()                       # refused: no destination type
 ```
 
+## Integer overflow helpers
+
+All signed and unsigned integer types, including `int`, provide the following helpers. `T` is the receiver's type. The operand to `add`, `sub` and `mul` must also be `T`; mixed-width values require an explicit resize. A `pow` exponent is `u32`, matching the underlying integer operation. Float receivers are refused (`INCAN-T0001`).
+
+| Policy | Methods | Result |
+| --- | --- | --- |
+| Checked | `checked_add(other: T)`, `checked_sub(other: T)`, `checked_mul(other: T)`, `checked_pow(exponent: u32)` | `Option[T]`: `Some(result)` when representable, otherwise `None` |
+| Wrapping | `wrapping_add(other: T)`, `wrapping_sub(other: T)`, `wrapping_mul(other: T)`, `wrapping_pow(exponent: u32)` | `T`, wrapped at the bounds of `T` |
+| Saturating | `saturating_add(other: T)`, `saturating_sub(other: T)`, `saturating_mul(other: T)`, `saturating_pow(exponent: u32)` | `T`, clamped at the bounds of `T` |
+
+Ordinary sized-integer arithmetic traps on overflow in debug builds and wraps in release builds. The helper methods select checked, wrapping or saturating behavior explicitly in every build profile.
+
+```incan
+def main() -> None:
+    maximum: u8 = 255
+    maybe: Option[u8] = maximum.checked_add(1u8)
+    wrapped: u8 = maximum.wrapping_add(1u8)
+    clamped: u8 = maximum.saturating_add(1u8)
+    power: u8 = 3u8.saturating_pow(6u32)
+```
+
 ## Rust interop numeric arguments
 
-A numeric argument to a Rust parameter of a primitive numeric type is accepted when the types match or when the Incan type widens without loss: a signed type to a signed type at least as wide, an unsigned type to an unsigned type at least as wide or to a wider signed type, and `f32` to `f64`. `int` matches `i64` and `float` matches `f64`. `isize` and `usize` match only themselves. Every other pairing is refused.
+A numeric argument to a Rust parameter of a primitive numeric type is accepted when the types match or when the Incan type widens without loss: a signed type to a signed type at least as wide, an unsigned type to an unsigned type at least as wide or to a wider signed type, and `f32` to `f64`. `int` matches `i64` and `float` matches `f64`. `isize` and `usize` match only themselves. Every other pairing is refused (`INCAN-T0001`).
 
 | Incan argument | Rust parameter | Accepted |
 | --- | --- | --- |
@@ -200,13 +222,15 @@ A numeric argument to a Rust parameter of a primitive numeric type is accepted w
 | `**` | An integer left operand and a non-negative integer literal exponent | The left operand's type |
 | | Two `f32` | `f32` |
 | | Any other numeric pair | `float` |
-| `&`, <code>&#124;</code>, `^`, `<<`, `>>` | Two integer operands | `int` |
+| `&`, <code>&#124;</code>, `^` | Two operands of one integer type | That integer type |
+| `<<`, `>>` | Two integer operands | The left operand's type |
 | `==`, `!=`, `<`, `<=`, `>`, `>=` | Two numeric operands | `bool` |
 
-- `+`, `-`, `*`, `//` and `%` between two different integer types are refused (`INCAN-T0001`), with a hint naming `resize()` and `try_resize()`. `int` and `i64` are one type.
-- An unsuffixed integer literal operand of `+`, `-`, `*`, `//` or `%` takes the type of an exact-width integer operand on the other side. A literal outside that type's range is refused (`INCAN-T0001`).
+- `+`, `-`, `*`, `//`, `%`, `&`, `|` and `^` between two different integer types are refused (`INCAN-T0001`), with a hint naming `resize()` and `try_resize()`. `int` and `i64` are one type.
+- An unsuffixed integer literal operand of `+`, `-`, `*`, `//`, `%`, `&`, `|` or `^` takes the type of an exact-width integer operand on the other side. A literal outside that type's range is refused (`INCAN-T0001`).
 - Two different integer types compare in the narrowest integer type holding both: the wider of the two, or the narrowest signed type holding both (`i16` for `i8` and `u8`, `i128` for `i64` and `u64`). A pair no integer type holds, `u128` with a signed type or `isize` or `usize` with another integer type, is refused (`INCAN-T0001`). An unsuffixed integer literal operand of a comparison takes the other operand's integer type when it holds the literal's value.
 - A prefix `-` keeps the type of its signed integer or float operand. A prefix `-` on an unsigned integer operand is refused (`INCAN-T0001`).
+- A prefix `~` keeps the type of its integer operand.
 - `&`, `|`, `^`, `<<` and `>>` with a float operand are refused (`INCAN-T0001`).
 - `/` is true division. `//` rounds the quotient toward negative infinity. The result of `%` has the sign of the divisor, and `a == (a // b) * b + (a % b)`.
 - `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for signed integer, unsigned integer and float operands alike.
@@ -248,14 +272,35 @@ def main() -> None:
     smaller = small < count                      # accepted
     huge: u128 = 1
     unsure = huge == count                       # refused: no integer type holds u128 and int
+    mask: u8 = 12
+    low: u8 = mask & 3                           # accepted
+    moved: u8 = mask << count                    # accepted
+    flipped: u8 = ~mask                          # accepted
+    either = mask | size                         # refused: u8 and u16
 ```
 
 ## Compound assignment
 
+This section states compound assignment with numeric operands.
+
 - `x op= y`, with `op` one of `+`, `-`, `*`, `/`, `//`, `%`, `&`, `|`, `^`, `<<` and `>>`, reassigns `x`, which is a `mut` binding or a `static` of its module (`INCAN-T0001` otherwise). `**=` is not an operator (`INCAN-P0001`).
+- A `mut` parameter that is marked (see [`mut` parameters](functions.md#mut-parameters)), such as `mut n: i8`, is not reassigned: `n += 1` is refused (`INCAN-T0001`). A `mut` parameter of type `int`, `float` or `bool` is reassigned.
+- `target.field op= y` writes `target.field op y` to the field, and `target[index] op= y` writes `target[index] op y` to the element. Inside a method, a target reached through `self` requires a `mut self` receiver (`INCAN-T0102`).
 - `x op= y` has the assignability requirement of `x = x op y`: the result of `x op y` (see [Operators](#operators)) is assignable to the type of `x`, or the statement is refused (`INCAN-T0001`).
+- The same requirement holds for a field or element target: the result of `target op y` is assignable to the field's or element's type (`INCAN-T0001`).
+- `x @= y` with a numeric `x` is refused (`INCAN-T0001`).
 
 ```incan
+model Counter:
+    n: i8
+
+    def bump(mut self) -> None:
+        self.n += 1                              # accepted
+
+def shrink(mut n: i8) -> i8:
+    n -= 1                                       # refused: n is a marked mut parameter
+    return n
+
 def main() -> None:
     mut x: int = 10
     x += 2                                       # accepted
@@ -272,6 +317,13 @@ def main() -> None:
     s *= 2.0                                     # refused: s * 2.0 is a float
     mut b: u8 = 7
     b //= 2                                      # accepted
+    b |= 1                                       # accepted: b | 1 is a u8
+    mut counter = Counter(n=1)
+    counter.n += 1                               # accepted
+    mut values: list[int] = [4, 8]
+    values[0] += 1                               # accepted
+    values[1] /= 2                               # refused: values[1] / 2 is a float
+    x @= 2                                       # refused: x is numeric
 ```
 
 ## NaN and infinity

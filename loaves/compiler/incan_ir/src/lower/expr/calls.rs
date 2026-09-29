@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::super::super::decl::{FunctionParam, FunctionParamDefault};
 use super::super::super::expr::{
     BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry,
-    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, VarAccess, VarRefKind,
+    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::super::stmt::IrStmtKind;
 use super::super::super::types::IrType;
@@ -568,7 +568,10 @@ impl AstLowering {
     }
 
     /// Resolve the canonical imported callee path for identifier and module-qualified calls.
-    fn imported_callee_path_for_expr(&self, expr: &ast::Spanned<ast::Expr>) -> Option<Vec<String>> {
+    pub(in crate::lower) fn imported_callee_path_for_expr(
+        &self,
+        expr: &ast::Spanned<ast::Expr>,
+    ) -> Option<Vec<String>> {
         // Inside an expanded source-module trait default, a helper of the trait's module is that module's function,
         // whatever the adopter binds under the same name (#1759).
         if let ast::Expr::Ident(name) = &expr.node
@@ -758,6 +761,18 @@ impl AstLowering {
             }
             _ => None,
         }
+    }
+
+    /// Return the Rust path of the `pub::` dependency module a module binding names, or `None` for any other
+    /// expression.
+    ///
+    /// `cl` bound by `import pub::calc as cl` is the dependency crate `calc`, and a binding of a dependency's submodule
+    /// is that module's path inside the crate. The path is the consumer's own dependency binding, which may differ from
+    /// the package that declares what it reaches.
+    pub(in crate::lower) fn pub_dependency_binding_rust_path(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        let path = self.imported_field_base_path(expr)?;
+        let (root, dependency_path) = path.split_first()?;
+        (root == keywords::as_str(KeywordId::Pub) && !dependency_path.is_empty()).then(|| dependency_path.to_vec())
     }
 
     /// Resolve `module.function(...)` syntax when the receiver is an imported module and the checker proved that the
@@ -3500,7 +3515,15 @@ impl AstLowering {
                         arg.expr
                     }
                 })
-                .collect();
+                .collect::<Vec<_>>();
+            // ---- `dict(source)`: a copy of the source dict, the `{**source}` literal ----
+            if constructor == CollectionTypeId::Dict {
+                let entries = args_ir
+                    .into_iter()
+                    .map(|source| IrDictEntry::Spread(Self::owned_spread_operand(source)))
+                    .collect();
+                return Ok((IrExprKind::Dict(entries), result_ty));
+            }
             return Ok((
                 IrExprKind::BuiltinCall {
                     func: BuiltinFn::CollectionConstructor(constructor),
@@ -4094,6 +4117,24 @@ impl AstLowering {
                     IrType::List(Box::new(IrType::Unknown)),
                 ))
             }
+            CheckedPresetValue::Set(values) => {
+                let items = values
+                    .iter()
+                    .map(|value| self.lower_external_partial_preset(library, value))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypedExpr::new(
+                    IrExprKind::Set(items),
+                    IrType::Set(Box::new(IrType::Unknown)),
+                ))
+            }
+            CheckedPresetValue::Tuple(values) => {
+                let items = values
+                    .iter()
+                    .map(|value| self.lower_external_partial_preset(library, value))
+                    .collect::<Option<Vec<_>>>()?;
+                let item_types = items.iter().map(|item| item.ty.clone()).collect();
+                Some(TypedExpr::new(IrExprKind::Tuple(items), IrType::Tuple(item_types)))
+            }
             CheckedPresetValue::Dict(entries) => {
                 let entries = entries
                     .iter()
@@ -4233,6 +4274,20 @@ impl AstLowering {
                 IrType::Struct(surface_types::as_str(surface_types::SurfaceTypeId::ValidationError).to_string()),
             ));
         }
+
+        // A newtype's constructor parameter, which a partial presets by name, is the newtype's one positional value,
+        // so its construction is the one a positional call makes.
+        let positional_newtype_value;
+        let args = match args {
+            [ast::CallArg::Named(parameter, value)]
+                if parameter.node == super::super::NEWTYPE_CONSTRUCTOR_PARAM
+                    && self.newtype_construction.contains_key(name) =>
+            {
+                positional_newtype_value = [ast::CallArg::Positional(value.clone())];
+                positional_newtype_value.as_slice()
+            }
+            _ => args,
+        };
 
         // Get type if known, otherwise Unknown (will be inferred at emit time)
         let struct_ty = self.struct_names.get(name).cloned().unwrap_or(IrType::Unknown);
@@ -4501,16 +4556,22 @@ impl AstLowering {
         let mut lowered = Vec::new();
         for arg in args {
             match arg {
-                ast::CallArg::Positional(e) => lowered.push(IrCallArg {
-                    name: None,
-                    kind: IrCallArgKind::Positional,
-                    expr: self.lower_expr_spanned(e)?,
-                }),
-                ast::CallArg::Named(name, e) => lowered.push(IrCallArg {
-                    name: Some(name.node.clone()),
-                    kind: IrCallArgKind::Named,
-                    expr: self.lower_expr_spanned(e)?,
-                }),
+                ast::CallArg::Positional(e) => {
+                    let expr = self.lower_call_arg_value(e)?;
+                    lowered.push(IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr,
+                    });
+                }
+                ast::CallArg::Named(name, e) => {
+                    let expr = self.lower_call_arg_value(e)?;
+                    lowered.push(IrCallArg {
+                        name: Some(name.node.clone()),
+                        kind: IrCallArgKind::Named,
+                        expr,
+                    });
+                }
                 ast::CallArg::PositionalUnpack(e) => {
                     let expr = self.lower_expr_spanned(e)?;
                     if let Some(FixedUnpackPlan::Positional(item_types)) =
@@ -4544,6 +4605,28 @@ impl AstLowering {
         Ok(lowered)
     }
 
+    /// Lower one positional or named argument's value. A local bound to a capturing callable that the checker passes
+    /// to a closure-holding parameter is borrowed, since the parameter takes any callable by value and the local stays
+    /// usable after the call (#1561).
+    fn lower_call_arg_value(&mut self, value: &ast::Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
+        let lowered = self.lower_expr_spanned(value)?;
+        if !self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.is_borrowed_callable_argument(value.span))
+        {
+            return Ok(lowered);
+        }
+        let ty = lowered.ty.clone();
+        Ok(TypedExpr::new(
+            IrExprKind::UnaryOp {
+                op: UnaryOp::Ref,
+                operand: Box::new(lowered),
+            },
+            IrType::Ref(Box::new(ty)),
+        ))
+    }
+
     /// Expand a typechecker-proven `*expr` shape into ordinary positional IR arguments.
     fn lower_fixed_positional_unpack_args(&self, expr: &TypedExpr, item_types: &[ResolvedType]) -> Vec<IrCallArg> {
         let items = match &expr.kind {
@@ -4559,14 +4642,7 @@ impl AstLowering {
                 .iter()
                 .enumerate()
                 .map(|(idx, ty)| {
-                    TypedExpr::new(
-                        IrExprKind::Field {
-                            object: Box::new(expr.clone()),
-                            field: idx.to_string(),
-                        },
-                        self.lower_resolved_type(ty),
-                    )
-                    .with_span(expr.span)
+                    TypedExpr::tuple_element(expr.clone(), idx, self.lower_resolved_type(ty)).with_span(expr.span)
                 })
                 .collect(),
         };

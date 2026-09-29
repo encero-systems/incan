@@ -19,14 +19,19 @@
 //!   before the loop; and when it does, a read of the list in the enclosing loops (their conditions included) that
 //!   comes before that assignment, since a repeat reaches it after the loop took the items.
 //!
-//! The list is a local binding, the binding of an enclosing loop that takes its own items, or a parameter whose changes
-//! do not reach the caller; a field, a static or any other expression keeps the ordinary iteration.
+//! The list is a local binding, the binding of an enclosing loop that owns its items (it takes them, or receives them
+//! by value), or a parameter whose changes do not reach the caller. A loop over a new value only it holds (a list
+//! literal or comprehension, the result of a call other than `enumerate` or `zip`, of a method of a declared type, or
+//! of an `await`) and a loop over a `Generator` or a type with an iteration protocol already receive each item by
+//! value, so they iterate as before. Any other iterable (a `mut` parameter, the variable of a loop that reads its items
+//! in place, a list element, a field, a `list`, `dict` or `set` method such as `values()`, `enumerate(...)` or
+//! `zip(...)`) can give up neither its items nor copies of them, and such a loop is refused (`INCAN-T0119`) too.
 //!
 //! [`TypeCheckInfo::for_loop_takes_items`]: crate::typechecker::TypeCheckInfo::for_loop_takes_items
 
 use std::collections::{HashMap, HashSet};
 
-use incan_lang::lang::builtins;
+use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::keywords::KeywordId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -34,7 +39,7 @@ use incan_semantics_core::{SemanticSourceTargetKind, SurfaceFeatureKey};
 
 use crate::ast::*;
 use crate::ast_walk::any_expr_in_body;
-use crate::diagnostics::errors::{self, TakenListReuse};
+use crate::diagnostics::errors::{self, TakenListReuse, UntakeableIterable};
 use crate::symbols::{ResolvedType, SymbolId, SymbolKind, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
 
@@ -91,26 +96,33 @@ struct Reassignment {
 
 impl TypeChecker {
     /// Decide, before its body is checked, whether a `for` loop takes the items out of the list it iterates, and
-    /// return whether it does.
+    /// return whether the loop's bindings own the items they hold: because the loop takes them, or because it iterates
+    /// a value only it holds and so receives each item by value already.
     ///
-    /// A loop takes the items when its iterable names a list binding the loop may empty and the body hands on by value
-    /// a pattern binding whose type can be neither copied nor cloned. The decision is recorded for lowering and the
+    /// A loop takes the items when its body hands on by value a pattern binding whose type can be neither copied nor
+    /// cloned and its iterable names a list binding the loop may empty. The decision is recorded for lowering and the
     /// list is watched for reads until the function ends. A closure that captured the list before the loop, a repeat
     /// of the loop by an enclosing loop over a list defined outside it, and the reads such a repeat reaches after the
-    /// loop are refused here.
+    /// loop are refused here, and so is a loop whose iterable can give up neither its items nor copies of them
+    /// ([`Self::for_items_source`]).
     pub(super) fn plan_for_item_taking(&mut self, for_stmt: &ForStmt, item_ty: &ResolvedType) -> bool {
-        let Some(list) = named_list(&for_stmt.iter) else {
-            return false;
-        };
         let moving = self.moving_bindings(&for_stmt.pattern.node, item_ty);
         if !self.body_hands_on(&for_stmt.body, &moving) {
             return false;
         }
-        let Some(symbol) = self.symbols.lookup(list) else {
-            return false;
-        };
-        let Some(definition) = self.list_binding_definition(symbol) else {
-            return false;
+        let (list, symbol, definition) = match self.for_items_source(&for_stmt.iter) {
+            ItemsSource::OwnValues => return true,
+            ItemsSource::Unresolved => return false,
+            ItemsSource::Untakeable(iterable) => {
+                let error = errors::loop_cannot_take_items(iterable, &item_type_display(item_ty), for_stmt.iter.span);
+                self.errors.push(error);
+                return false;
+            }
+            ItemsSource::List {
+                list,
+                symbol,
+                definition,
+            } => (list, symbol, definition),
         };
         self.type_info.record_for_loop_takes_items(for_stmt.iter.span);
         let taken = TakenList {
@@ -168,9 +180,10 @@ impl TypeChecker {
     }
 
     /// Remember the bindings of a `for` pattern whose loop reads its items in place, so a nested loop over one of them
-    /// keeps ordinary iteration; a loop that takes its items owns them, and a nested loop may take from those.
-    pub(super) fn remember_for_pattern_bindings(&mut self, pattern: &Pattern, takes_items: bool) {
-        if takes_items {
+    /// cannot take its items; a loop that takes its items, or receives them by value, owns them, and a nested loop may
+    /// take from those.
+    pub(super) fn remember_for_pattern_bindings(&mut self, pattern: &Pattern, owns_items: bool) {
+        if owns_items {
             return;
         }
         let mut names = Vec::new();
@@ -440,6 +453,96 @@ impl TypeChecker {
         self.body_hands_on(&inner.body, &inner_moving)
     }
 
+    /// Classify where a `for` loop whose body hands its items on by value gets them from.
+    ///
+    /// A `Generator`, a value iterated through an iteration protocol, a list literal or comprehension, and the result
+    /// of an `await`, of a call other than `enumerate` and `zip` or of a method of a type other than a builtin
+    /// collection are values only the loop holds, whose items it already receives by value; `value?` answers for
+    /// `value`. A list binding is taken when [`Self::list_binding_definition`] admits it. Anything else can give up
+    /// neither its items nor copies of them.
+    fn for_items_source<'e>(&self, iter: &'e Spanned<Expr>) -> ItemsSource<'e> {
+        let iterates_own_values = self.type_info.protocol_iteration(iter.span).is_some()
+            || self.type_info.expr_type(iter.span).is_some_and(|ty| {
+                matches!(ty, ResolvedType::Generic(name, _)
+                    if collection_type_id(name) == Some(CollectionTypeId::Generator))
+            });
+        if iterates_own_values {
+            return ItemsSource::OwnValues;
+        }
+        match unparenthesized(iter) {
+            Expr::Ident(name) => {
+                let Some(symbol) = self.symbols.lookup(name) else {
+                    return ItemsSource::Unresolved;
+                };
+                match self.list_binding_definition(symbol) {
+                    Some(definition) => ItemsSource::List {
+                        list: name.as_str(),
+                        symbol,
+                        definition,
+                    },
+                    None => ItemsSource::Untakeable(self.untakeable_binding(name.as_str(), symbol)),
+                }
+            }
+            Expr::List(_) | Expr::ListComp(_) => ItemsSource::OwnValues,
+            Expr::Try(inner) => self.for_items_source(inner),
+            Expr::Surface(surface)
+                if matches!(
+                    (&surface.key, &surface.payload),
+                    (
+                        SurfaceFeatureKey::SoftKeyword(KeywordId::Await),
+                        SurfaceExprPayload::PrefixUnary(_)
+                    )
+                ) =>
+            {
+                ItemsSource::OwnValues
+            }
+            Expr::Call(callee, _, _) => match &callee.node {
+                Expr::Ident(name)
+                    if matches!(
+                        builtins::from_str(name),
+                        Some(BuiltinFnId::Enumerate | BuiltinFnId::Zip)
+                    ) && !self.has_non_builtin_call_root_binding(name) =>
+                {
+                    ItemsSource::Untakeable(UntakeableIterable::Adapter(name.as_str()))
+                }
+                _ => ItemsSource::OwnValues,
+            },
+            Expr::MethodCall(receiver, method, _, _) => {
+                let builtin_collection = self.type_info.expr_type(receiver.span).is_some_and(|ty| match ty {
+                    ResolvedType::Generic(name, _) => collection_type_id(name).is_some(),
+                    ResolvedType::FrozenList(_) | ResolvedType::FrozenSet(_) | ResolvedType::FrozenDict(_, _) => true,
+                    _ => false,
+                });
+                if builtin_collection {
+                    ItemsSource::Untakeable(UntakeableIterable::CollectionMethod(method.as_str()))
+                } else {
+                    ItemsSource::OwnValues
+                }
+            }
+            Expr::Index(_, _) => ItemsSource::Untakeable(UntakeableIterable::Element),
+            Expr::Field(_, _) => ItemsSource::Untakeable(UntakeableIterable::Field),
+            _ => ItemsSource::Untakeable(UntakeableIterable::Other),
+        }
+    }
+
+    /// Name a binding a loop cannot take items from: a `mut` parameter whose changes reach the caller, the variable
+    /// of an enclosing loop that reads its items in place, or any other binding.
+    fn untakeable_binding<'n>(&self, name: &'n str, symbol: SymbolId) -> UntakeableIterable<'n> {
+        let marked_parameter = self.symbols.get(symbol).is_some_and(|definition| {
+            self.type_info
+                .declarations
+                .mut_param_marker(definition.span, &definition.name)
+                .unwrap_or(false)
+        });
+        if marked_parameter {
+            UntakeableIterable::MutParameter(name)
+        } else if self.for_item_taking.in_place_loop_bindings.contains(&symbol) {
+            UntakeableIterable::InPlaceLoopVariable(name)
+        } else {
+            UntakeableIterable::Binding(name)
+        }
+    }
+
     /// Return the list binding a `for` loop may take items from: a local list binding other than the binding of an
     /// enclosing loop that reads its items in place, or a list parameter whose changes do not reach the caller.
     fn list_binding_definition(&self, symbol: SymbolId) -> Option<ListDefinition> {
@@ -462,6 +565,23 @@ impl TypeChecker {
             scope: definition.scope,
         })
     }
+}
+
+/// Where a `for` loop whose body hands its items on by value gets them from.
+enum ItemsSource<'e> {
+    /// A list binding the loop takes the items out of.
+    List {
+        /// The binding's name, as the source spells it.
+        list: &'e str,
+        symbol: SymbolId,
+        definition: ListDefinition,
+    },
+    /// A value only the loop holds, or an iterator, whose items the loop already receives by value.
+    OwnValues,
+    /// An iterable that can give up neither its items nor copies of them.
+    Untakeable(UntakeableIterable<'e>),
+    /// A name the checker cannot resolve, which is refused where it is read.
+    Unresolved,
 }
 
 /// Where a list binding a `for` loop takes items from was defined.

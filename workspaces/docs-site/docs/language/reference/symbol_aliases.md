@@ -1,6 +1,6 @@
 # Symbol aliases (reference)
 
-An alias gives an existing declaration another name. It is a declaration: it creates no wrapper and copies nothing. This page specifies top-level aliases, method aliases and enum variant aliases.
+An alias is a declaration that gives an existing declaration another name. This page specifies top-level aliases, method aliases and enum variant aliases, and how aliases are imported and re-exported.
 
 ## Top-level aliases
 
@@ -9,10 +9,9 @@ An alias gives an existing declaration another name. It is a declaration: it cre
 [pub] NAME = alias TARGET
 ```
 
-- `TARGET` is a symbol path. The `alias` marker changes nothing.
+- `TARGET` is a symbol path. `NAME = alias TARGET` is the same declaration as `NAME = TARGET`.
 - The alias has its target's type and signature, and a call through it calls the target.
 - A `pub` alias is exported. Its target is public.
-- A library exports a public alias as an alias of its target, not as a separate declaration.
 
 Supported targets:
 
@@ -21,7 +20,7 @@ Supported targets:
 - a `model`, `class`, `enum`, `newtype` or type alias;
 - a trait;
 - an imported public symbol of one of these kinds;
-- a member of a `std.*` or project source module, written through a binding of that module: `math.sqrt` after `import std.math as math`;
+- a member of a `std.*` module, a project source module or a `pub::` package namespace, written through a binding of that module: `math.sqrt` after `import std.math as math`;
 - another alias of one of these, without a cycle.
 
 An alias of a module member binds that member under the alias name, with the alias's visibility, as importing the member under that name does.
@@ -34,8 +33,8 @@ pub def avg(x: int, y: int) -> int:
 
 pub mean = avg                   # accepted
 pub average = alias avg          # accepted
-pub root = math.sqrt             # accepted: the binding of `pub from std.math import sqrt as root`
-common_divisor = math.gcd        # accepted: the binding of `from std.math import gcd as common_divisor`
+pub root = math.sqrt             # accepted
+common_divisor = math.gcd        # accepted
 ```
 
 Refused (`INCAN-P0001`): a target that is not a symbol path, such as a literal or a call.
@@ -66,7 +65,7 @@ pub exposed = helper      # refused: helper is private
 
 - A public alias is imported like any public symbol: `from stats import mean`.
 - `from stats import mean as average_value` binds `average_value` in the importing module; `mean` stays an alias of its target in `stats`.
-- A module can re-export an alias without its target (`pub from stats import mean`), and a further module can re-export that under another name. A call through any of these names calls the alias's target, whether or not the re-exporting module also imports the target.
+- A module can re-export an alias without importing its target (`pub from stats import mean`), and a further module can re-export that under another name. A call through any of these names calls the alias's target.
 
 ```incan
 # stats.incn
@@ -132,15 +131,17 @@ NAME = alias VARIANT
 - In an enum that declares values, the alias has its target's value; it is not a second variant with that value.
 - A variant alias can name its variant in a pattern (see [Match patterns](match_patterns.md#variant-patterns)).
 
+Refused (`INCAN-T0001`): a target that is not a variant of the same enum.
+
 ```incan
 enum Level(str):
     WARN = "WARN"
     FATAL = "FATAL"
-    WARNING = alias WARN
-    CRITICAL = alias FATAL
+    WARNING = alias WARN         # accepted
+    CRITICAL = alias FATAL       # accepted
+    SEVERE = alias PANIC         # refused: PANIC is not a variant of Level
 ```
 
-## Identity
+## See also
 
-- A diagnostic names the alias at its use site, and may also name its target.
-- Checked API metadata and library manifests record an alias as an alias of its target.
+- [Scopes and name resolution](../explanation/scopes_and_name_resolution.md): aliases and wrappers, and how tools and diagnostics see an alias

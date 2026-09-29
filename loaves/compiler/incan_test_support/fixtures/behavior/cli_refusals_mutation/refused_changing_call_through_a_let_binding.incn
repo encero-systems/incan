@@ -1,0 +1,22 @@
+# behavior: a call of a method that changes its receiver, through a local declared without mut or a field, a list element, a dict value or a tuple element of one, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+class Counter:
+    pub count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+
+def main() -> None:
+    counter = Counter(count=0)
+    counter.bump()
+    let items: list[int] = []
+    items.append(1)
+    rows: list[list[int]] = [[1]]
+    rows[0].append(2)
+    table: dict[str, list[int]] = {"a": []}
+    table["a"].append(2)
+    pair: tuple[Counter, int] = (Counter(count=0), 1)
+    pair[0].bump()
+    println(counter.count + len(items) + len(table["a"]))

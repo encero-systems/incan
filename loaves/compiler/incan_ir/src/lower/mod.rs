@@ -128,6 +128,9 @@ pub struct OwnedLoopItems {
     pub names: HashSet<String>,
 }
 
+/// The name of a newtype constructor's one parameter, which a partial of the constructor presets by name.
+pub(in crate::lower) const NEWTYPE_CONSTRUCTOR_PARAM: &str = "value";
+
 /// AST to IR lowering context.
 ///
 /// Maintains state needed during the lowering pass:
@@ -247,6 +250,13 @@ pub struct AstLowering {
     /// Captures remain non-consuming because a closure can run repeatedly. Parameters are freshly owned by each
     /// invocation, but nested non-linear contexts inside the closure must still suppress syntactic last-use moves.
     pub closure_param_scopes: Vec<(usize, HashSet<String>)>,
+    /// The payload type each closure literal passed as the observer of a `Result`'s `inspect` or `inspect_err`
+    /// observes, keyed by the closure's span, while the call's arguments are lowered.
+    ///
+    /// The observer is called in place on the payload the `Result` keeps (a borrow of a non-`Copy` payload, a copy of
+    /// a `Copy` one), so its parameter takes that shape and spells its type: Rust cannot infer it for a closure
+    /// that is called where it is written (#1561).
+    pub result_observer_closure_payloads: HashMap<(usize, usize), IrType>,
     /// Names bound by the patterns of the `for` loops enclosing the statement being lowered, innermost last.
     ///
     /// A loop binding's Rust shape is the emitter's iteration plan rather than the binding's source type: a list of
@@ -311,6 +321,15 @@ pub struct AstLowering {
     /// Trait ABI slots are lowered separately. Keeping the exact identities here prevents that later pass from
     /// emitting a second recoverable wrapper for a declaration whose inherent projection already exists.
     pub emitted_inherent_method_identities: HashSet<CanonicalSymbolId>,
+    /// Identities of the dunder methods whose recoverable projection an inherent impl in this lowering pass offered.
+    ///
+    /// Such a projection calls its slot by method syntax, which reaches the body only when the trait the adopter
+    /// implements it for is in scope under its name. The trait impl that implements the slot takes the projection
+    /// over and spells the call through the trait's path, whatever spelling the adoption used (#1561).
+    pub inherent_dunder_projection_identities: HashSet<CanonicalSymbolId>,
+    /// Identities of the inherent dunder projections a trait impl took over, withdrawn from their inherent impl once
+    /// the module is lowered.
+    pub trait_owned_dunder_projection_identities: HashSet<CanonicalSymbolId>,
     /// Exact source-member identities paired with the nominal owner that receives their emitted projection.
     pub emitted_member_projections: Vec<(String, String, CanonicalSymbolId)>,
     /// Compiler-generated forwarding methods created for source method-partial bindings.
@@ -790,6 +809,7 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             closure_param_scopes: Vec::new(),
+            result_observer_closure_payloads: HashMap::new(),
             loop_pattern_bindings: Vec::new(),
             owned_loop_binding_scopes: Vec::new(),
             return_operand: None,
@@ -810,6 +830,8 @@ impl AstLowering {
             rusttype_interop_edges: HashMap::new(),
             type_method_rebindings: HashMap::new(),
             emitted_inherent_method_identities: HashSet::new(),
+            inherent_dunder_projection_identities: HashSet::new(),
+            trait_owned_dunder_projection_identities: HashSet::new(),
             emitted_member_projections: Vec::new(),
             generated_method_partial_wrappers: HashSet::new(),
             local_generated_method_partial_wrappers: HashSet::new(),
@@ -1466,7 +1488,7 @@ impl AstLowering {
             ast::Param {
                 is_mut: false,
                 kind: ast::ParamKind::Normal,
-                name: "value".to_string(),
+                name: NEWTYPE_CONSTRUCTOR_PARAM.to_string(),
                 ty: nt.underlying.clone(),
                 default: None,
             },
@@ -2406,7 +2428,14 @@ impl AstLowering {
     }
 
     /// Resolve a method name through per-type rebinding aliases.
+    ///
+    /// A receiver reached through a reference, such as a `mut` parameter (`&mut Counter`), names its type's aliases
+    /// as the value itself does.
     pub fn resolve_method_rebinding(&self, receiver_ty: &IrType, method_name: &str) -> String {
+        let mut receiver_ty = receiver_ty;
+        while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+            receiver_ty = inner;
+        }
         let Some(type_name) = receiver_ty.nominal_type_name() else {
             return method_name.to_string();
         };
@@ -2581,6 +2610,8 @@ impl AstLowering {
             let (name, traits, decorators) = match &decl.node {
                 ast::Declaration::Model(m) => (&m.name, &m.traits, &m.decorators),
                 ast::Declaration::Class(c) => (&c.name, &c.traits, &c.decorators),
+                ast::Declaration::Enum(e) => (&e.name, &e.traits, &e.decorators),
+                ast::Declaration::Newtype(n) => (&n.name, &n.traits, &n.decorators),
                 _ => continue,
             };
             let mut adopted = traits
@@ -3114,6 +3145,12 @@ impl AstLowering {
                             }
                             impl_targets.extend(self.derive_trait_impl_targets(&m.decorators));
                             let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            let comparison_impls = self.lower_comparison_capability_impls(
+                                &struct_ir.name,
+                                &m.type_params,
+                                &impl_targets,
+                                &struct_ir.derives,
+                            );
                             for (trait_name, trait_type_args) in
                                 self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
                             {
@@ -3132,6 +3169,11 @@ impl AstLowering {
                                     Err(e) => errors.push(e),
                                 }
                             }
+                            ir_program.declarations.extend(
+                                comparison_impls
+                                    .into_iter()
+                                    .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                            );
                             if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &m.decorators) {
                                 ir_program
                                     .declarations
@@ -3209,6 +3251,12 @@ impl AstLowering {
                             }
                             impl_targets.extend(self.derive_trait_impl_targets(&c.decorators));
                             let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            let comparison_impls = self.lower_comparison_capability_impls(
+                                &struct_ir.name,
+                                &c.type_params,
+                                &impl_targets,
+                                &struct_ir.derives,
+                            );
                             for (trait_name, trait_type_args) in
                                 self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
                             {
@@ -3227,6 +3275,11 @@ impl AstLowering {
                                     Err(e) => errors.push(e),
                                 }
                             }
+                            ir_program.declarations.extend(
+                                comparison_impls
+                                    .into_iter()
+                                    .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                            );
                             if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &c.decorators) {
                                 ir_program
                                     .declarations
@@ -3293,8 +3346,11 @@ impl AstLowering {
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
 
                             // Generate impl block for newtype methods (if any), or for the `__str__` an `Error`
-                            // adopter with no `Display` of its own displays its `message()` through.
-                            if !newtype_methods.is_empty() || self.type_displays_through_error_message(&struct_ir.name)
+                            // adopter with no `Display` of its own displays its `message()` through, or a derived
+                            // `Display` its `Debug` structure through.
+                            if !newtype_methods.is_empty()
+                                || self.type_displays_through_error_message(&struct_ir.name)
+                                || self.type_derives_display(&struct_ir.name)
                             {
                                 match self.lower_decorated_method_statics(&struct_ir.name, &newtype_methods) {
                                     Ok(statics) => ir_program.declarations.extend(statics),
@@ -3335,6 +3391,16 @@ impl AstLowering {
                             let mut impl_targets = adopted_targets;
                             impl_targets.extend(self.derived_json_protocol_impl_targets(&n.decorators));
                             let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            ir_program.declarations.extend(
+                                self.lower_comparison_capability_impls(
+                                    &struct_ir.name,
+                                    &n.type_params,
+                                    &impl_targets,
+                                    &struct_ir.derives,
+                                )
+                                .into_iter()
+                                .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                            );
                             for (index, (trait_name, trait_type_args)) in impl_targets.into_iter().enumerate() {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
@@ -3369,7 +3435,10 @@ impl AstLowering {
                             .declarations
                             .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())).with_span(decl.span.into()));
 
-                        if !e.methods.is_empty() || self.type_displays_through_error_message(&enum_ir.name) {
+                        if !e.methods.is_empty()
+                            || self.type_displays_through_error_message(&enum_ir.name)
+                            || self.type_derives_display(&enum_ir.name)
+                        {
                             match self.lower_decorated_method_statics(&enum_ir.name, &e.methods) {
                                 Ok(statics) => ir_program.declarations.extend(statics),
                                 Err(e) => errors.push(e),
@@ -3397,6 +3466,16 @@ impl AstLowering {
                         }
                         impl_targets.extend(self.derive_trait_impl_targets(&e.decorators));
                         let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                        ir_program.declarations.extend(
+                            self.lower_comparison_capability_impls(
+                                &enum_ir.name,
+                                &e.type_params,
+                                &impl_targets,
+                                &enum_ir.derives,
+                            )
+                            .into_iter()
+                            .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                        );
                         for (trait_name, trait_type_args) in
                             self.without_derived_builtin_trait_targets(impl_targets, &enum_ir.derives)
                         {
@@ -3513,6 +3592,7 @@ impl AstLowering {
             }
         }
         Self::bind_reexported_projections(&mut ir_program.declarations);
+        self.withdraw_trait_owned_dunder_projections(&mut ir_program.declarations);
         // Propagate serde derives from structs to their field types (enums). This allows users to only annotate the
         // top-level model with @derive(json) and have it automatically apply to nested user-defined enums.
         Self::propagate_serde_derives(&mut ir_program);
@@ -3582,22 +3662,28 @@ impl AstLowering {
         }
     }
 
-    /// Return the top-level functions of a module that a default body of one of its public traits calls.
+    /// Return the top-level functions a default body of one of the module's public traits calls, and the constants it
+    /// reads.
     ///
-    /// Such a default is expanded into adopters in other modules, where it calls these helpers through the trait
-    /// module's path (#1759), so they must be emitted, and reachable from those modules, whether or not anything in
-    /// the trait's own module calls them.
-    pub fn source_trait_default_helper_functions(program: &ast::Program) -> HashSet<String> {
-        let functions = program
-            .declarations
-            .iter()
-            .filter_map(|decl| match &decl.node {
-                ast::Declaration::Function(function) => Some(function.name.as_str()),
-                _ => None,
-            })
-            .collect::<HashSet<_>>();
+    /// Such a default is expanded into adopters in other modules, where it reaches these helpers through the trait
+    /// module's path (#1759, #1873), so they must be emitted, and reachable from those modules, whether or not anything
+    /// in the trait's own module uses them.
+    pub fn source_trait_default_helpers(program: &ast::Program) -> HashSet<String> {
+        let mut functions = HashSet::new();
+        let mut consts = HashSet::new();
+        for decl in &program.declarations {
+            match &decl.node {
+                ast::Declaration::Function(function) => {
+                    functions.insert(function.name.as_str());
+                }
+                ast::Declaration::Const(konst) => {
+                    consts.insert(konst.name.as_str());
+                }
+                _ => {}
+            }
+        }
         let mut helpers = HashSet::new();
-        if functions.is_empty() {
+        if functions.is_empty() && consts.is_empty() {
             return helpers;
         }
         for decl in &program.declarations {
@@ -3609,11 +3695,18 @@ impl AstLowering {
             }
             for body in trait_decl.methods.iter().filter_map(|method| method.node.body.as_ref()) {
                 incan_frontend::ast_walk::any_expr_in_body(body, |expr| {
-                    if let ast::Expr::Call(callee, _, _) = expr
-                        && let ast::Expr::Ident(name) = &callee.node
-                        && functions.contains(name.as_str())
-                    {
-                        helpers.insert(name.clone());
+                    match expr {
+                        ast::Expr::Call(callee, _, _) => {
+                            if let ast::Expr::Ident(name) = &callee.node
+                                && functions.contains(name.as_str())
+                            {
+                                helpers.insert(name.clone());
+                            }
+                        }
+                        ast::Expr::Ident(name) if consts.contains(name.as_str()) => {
+                            helpers.insert(name.clone());
+                        }
+                        _ => {}
                     }
                     false
                 });
@@ -3622,22 +3715,25 @@ impl AstLowering {
         helpers
     }
 
-    /// Give each private function that a public trait's default body calls crate visibility.
+    /// Give each private function a public trait's default body calls, and each private constant it reads, crate
+    /// visibility.
     ///
     /// The default is expanded into every adopter, including adopters in other modules of the crate, and there it
-    /// calls the helper through the trait module's path (#1759); a private helper would be out of their reach. The
-    /// helper becomes visible to the crate, never beyond it.
+    /// reaches the helper through the trait module's path (#1759, #1873); a private helper would be out of their
+    /// reach. The helper becomes visible to the crate, never beyond it.
     fn open_trait_default_helpers_to_the_crate(program: &ast::Program, ir_program: &mut IrProgram) {
-        let helpers = Self::source_trait_default_helper_functions(program);
+        let helpers = Self::source_trait_default_helpers(program);
         if helpers.is_empty() {
             return;
         }
         for decl in &mut ir_program.declarations {
-            if let IrDeclKind::Function(function) = &mut decl.kind
-                && matches!(function.visibility, Visibility::Private)
-                && helpers.contains(&function.name)
-            {
-                function.visibility = Visibility::Crate;
+            let (visibility, name) = match &mut decl.kind {
+                IrDeclKind::Function(function) => (&mut function.visibility, &function.name),
+                IrDeclKind::Const { visibility, name, .. } => (visibility, &*name),
+                _ => continue,
+            };
+            if matches!(visibility, Visibility::Private) && helpers.contains(name) {
+                *visibility = Visibility::Crate;
             }
         }
     }
@@ -3939,6 +4035,7 @@ impl AstLowering {
             lowered_registry.kind = IrExprKind::StaticRead {
                 name: description.registry_name.clone(),
                 reference_kind: super::expr::IrStaticReferenceKind::Source,
+                owner_module_path: None,
             };
             let key = self.lower_expr_spanned(key)?;
             let descriptor = self.lower_expr_spanned(descriptor)?;
@@ -4217,6 +4314,7 @@ impl AstLowering {
             IrExprKind::StaticRead {
                 name: static_name.to_string(),
                 reference_kind: super::expr::IrStaticReferenceKind::CompilerGenerated,
+                owner_module_path: None,
             },
             IrType::Function {
                 params: params.iter().map(|param| param.ty.clone()).collect(),
@@ -4698,6 +4796,7 @@ mod tests {
     mod list_count_forms;
     mod method_decorator_receivers;
     mod method_partial_forwarding;
+    mod mut_self_receiver_places;
     mod newtype_automatic_derives;
     mod pattern_alternatives_and_private_rests;
     mod power_base_type;
@@ -4706,6 +4805,7 @@ mod tests {
     mod static_method_args;
     mod stdlib_const_defaults;
     mod tuple_assignment;
+    mod tuple_element_places;
     mod unary_operand_grouping;
     mod union_member_identity;
     mod web_surface;

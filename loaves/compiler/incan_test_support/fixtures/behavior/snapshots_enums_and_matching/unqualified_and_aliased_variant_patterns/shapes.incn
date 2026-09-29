@@ -1,0 +1,9 @@
+pub enum Shape[T]:
+    Filled(T)
+    Pair(T, T)
+    Empty
+    Full = alias Filled
+
+
+pub def make(n: int) -> Shape[int]:
+    return Shape.Filled(n)

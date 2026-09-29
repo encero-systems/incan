@@ -649,7 +649,16 @@ impl TypeChecker {
                         self.check_call_args(args);
                         return Some(ResolvedType::Str);
                     }
-                    self.check_expr(Self::call_arg_expr(&args[0]));
+                    // The value is written as JSON, so its type needs a `Serialize` form.
+                    let arg_expr = Self::call_arg_expr(&args[0]);
+                    let arg_ty = self.check_expr(arg_expr);
+                    if let Some(holder) = self.value_type_without_serialize_form(&arg_ty) {
+                        self.errors.push(errors::json_stringify_value_lacks_serialize(
+                            &arg_ty.to_string(),
+                            &holder,
+                            arg_expr.span,
+                        ));
+                    }
                     Some(ResolvedType::Str)
                 }
             };
@@ -804,7 +813,11 @@ impl TypeChecker {
             if has_call_root_binding {
                 return None;
             }
-            if matches!(cid, CollectionTypeId::Set | CollectionTypeId::List) && args.len() > 1 {
+            if matches!(
+                cid,
+                CollectionTypeId::Set | CollectionTypeId::List | CollectionTypeId::Dict
+            ) && args.len() > 1
+            {
                 self.check_call_args(args);
                 self.errors
                     .push(errors::builtin_max_arity(name, 1, args.len(), call_span));
@@ -830,6 +843,8 @@ impl TypeChecker {
             }
             return match cid {
                 CollectionTypeId::Dict => {
+                    // `dict(source)` copies a dict, so its source is a dict; the constructor identity is recorded for
+                    // lowering so the call never reaches emission as an ordinary function named `dict` (#1852).
                     let (key_ty, val_ty) = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
@@ -840,7 +855,15 @@ impl TypeChecker {
                             {
                                 (type_args[0].clone(), type_args[1].clone())
                             }
-                            _ => (ResolvedType::Unknown, ResolvedType::Unknown),
+                            ResolvedType::Unknown => (ResolvedType::Unknown, ResolvedType::Unknown),
+                            other => {
+                                self.errors.push(errors::type_mismatch(
+                                    &format!("{}[K, V]", collections::as_str(cid)),
+                                    &other.to_string(),
+                                    arg_expr.span,
+                                ));
+                                return Some(ResolvedType::Unknown);
+                            }
                         }
                     } else if let Some(type_args) =
                         Self::matching_collection_constructor_args(expected_return_ty, cid, 2)
@@ -849,9 +872,7 @@ impl TypeChecker {
                     } else {
                         (ResolvedType::Unknown, ResolvedType::Unknown)
                     };
-                    if args.is_empty() {
-                        self.type_info.record_resolved_collection_constructor(call_span, cid);
-                    }
+                    self.type_info.record_resolved_collection_constructor(call_span, cid);
                     Some(dict_ty(key_ty, val_ty))
                 }
                 CollectionTypeId::List => {

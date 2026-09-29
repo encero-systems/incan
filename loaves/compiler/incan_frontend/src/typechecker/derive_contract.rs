@@ -15,8 +15,9 @@
 //!
 //! A type that defines a dunder is also refused when it derives what provides the same behavior (#1872): `__str__`
 //! with `Display`, `__eq__` or `__ne__` with `Eq` or `PartialEq`, and an ordering dunder with `Ord` or `PartialOrd`,
-//! each also through a derive that implies it or through `@rust.derive(...)`. The generated program would implement
-//! the trait twice, or give the dunder's operator a different meaning from the derived ones.
+//! each also through a derive that implies it or through `@rust.derive(...)`, and a `__str__` inherited from a class or
+//! supplied by an adopted trait with `Display`. The generated program would implement the trait twice, or give the
+//! dunder's operator a different meaning from the derived ones.
 //!
 //! The automatic `Clone` and `Debug` of a model, class or enum are refused separately (`INCAN-T0113`), and a member
 //! type the relation cannot decide is never refused.
@@ -32,6 +33,7 @@ use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::decorators::DecoratorId;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::magic_methods::{self, MagicMethodId};
 
 /// The declaration kinds a derive is written on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +207,21 @@ impl TypeChecker {
                     method.span,
                 ));
             }
+        }
+        // A `__str__` inherited from a class the type extends or supplied by a trait it adopts gives the type its
+        // display as a declared one does, so it conflicts with a derived `Display` too.
+        let str_method = magic_methods::as_str(MagicMethodId::Str);
+        if let Some(display) = written.iter().find(|derive| derive.id == DeriveId::Display)
+            && !methods.iter().any(|method| method.node.name == str_method)
+            && self.nominal_defines_str(name, 0)
+        {
+            self.errors.push(errors::dunder_conflicts_with_derive(
+                kind.keyword(),
+                name,
+                str_method,
+                display.spelling.as_str(),
+                display.span,
+            ));
         }
     }
 

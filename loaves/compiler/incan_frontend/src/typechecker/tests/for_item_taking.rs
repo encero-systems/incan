@@ -669,3 +669,135 @@ fn nested_loop_takes_the_items_of_an_owned_loop_binding_issue1844() -> Result<()
     );
     Ok(())
 }
+
+/// #1561: a loop whose body hands each handle on has to take the handles out of what it iterates, and only a list
+/// binding can give them up. A list element, a dict's values, a field, `enumerate(...)` and `zip(...)` read their items
+/// in place, a `mut` parameter's items belong to the caller, and the variable of a loop that reads its items in place
+/// is such an item itself; each of these loops is refused, naming what it iterates.
+#[test]
+fn loop_that_cannot_take_its_items_is_refused_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+    let await_each = "        match await handle:\n            Ok(value) => println(value)\n            Err(_) => println(\"join failed\")\n";
+    let cases = [
+        (
+            "async def main() -> None:\n    groups = [[spawn(work())], [spawn(work())]]\n    for handle in groups[0]:\n",
+            "a list element or dict value",
+        ),
+        (
+            "async def main() -> None:\n    table = {\"a\": spawn(work())}\n    for handle in table.values():\n",
+            "`values()`, which reads the collection in place",
+        ),
+        (
+            "async def main() -> None:\n    pair = ([spawn(work())], 1)\n    for handle in pair.0:\n",
+            "a field",
+        ),
+        (
+            "async def main() -> None:\n    handles = [spawn(work())]\n    for i, handle in enumerate(handles):\n",
+            "`enumerate(...)`, which reads what it iterates in place",
+        ),
+        (
+            "async def main() -> None:\n    handles = [spawn(work())]\n    names = [\"a\"]\n    for handle, name in zip(handles, names):\n",
+            "`zip(...)`, which reads what it iterates in place",
+        ),
+        (
+            "async def drain(mut handles: list[JoinHandle[int]]) -> None:\n    for handle in handles:\n",
+            "`handles`, a `mut` parameter whose items belong to the caller",
+        ),
+    ];
+    for (head, iterable) in cases {
+        let refusal = only_refusal(&format!("{head}{await_each}"), iterable)?;
+        assert!(
+            refusal.message.starts_with("the `for` loop cannot take its `")
+                && refusal.message.ends_with(&format!("items out of {iterable}")),
+            "the refusal names what the loop iterates, got {:?}",
+            refusal.message
+        );
+    }
+
+    let errors = checked(
+        r#"def keep(handle: JoinHandle[int]) -> None:
+    pass
+
+def drain(mut groups: list[list[JoinHandle[int]]]) -> None:
+    for group in groups:
+        for handle in group:
+            keep(handle)
+"#,
+    )
+    .err()
+    .ok_or("loops over a `mut` parameter and its in-place variable must be refused")?;
+    let messages = taken_list_refusals(&errors)
+        .iter()
+        .map(|refusal| refusal.message.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [
+            "the `for` loop cannot take its `List[JoinHandle[int]]` items out of `groups`, a `mut` parameter whose items belong to the caller",
+            "the `for` loop cannot take its `JoinHandle[int]` items out of `group`, the variable of a `for` loop that reads its items in place",
+        ],
+        "got {errors:?}"
+    );
+    Ok(())
+}
+
+/// #1561: a loop over a value only it holds (a list literal or comprehension, a function's or a declared type's
+/// method's result, `list(...)`) already receives each handle by value, so it neither takes items out of a list nor is
+/// refused. Its variable owns what it holds, so a nested loop over it takes the handles out of it.
+#[test]
+fn loop_over_a_value_only_it_holds_keeps_its_iteration_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+    let (source, checker) = checked(
+        r#"def made() -> list[JoinHandle[int]]:
+    return [spawn(work())]
+
+class Pool:
+    size: int
+
+    def handles(self) -> list[JoinHandle[int]]:
+        return [spawn(work())]
+
+async def main() -> None:
+    for handle in made():
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    for handle in [spawn(work()), spawn(work())]:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    for handle in [spawn(work()) for _ in range(2)]:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    pool = Pool(size=1)
+    for handle in pool.handles():
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    handles = [spawn(work())]
+    for handle in list(handles):
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    for group in [[spawn(work())], [spawn(work())]]:
+        for handle in group:
+            match await handle:
+                Ok(value) => println(value)
+                Err(_) => println("join failed")
+"#,
+    )
+    .map_err(|errors| format!("loops over values only they hold must check: {errors:?}"))?;
+    for (iterable, nth) in [("made()", 1), ("pool.handles()", 0), ("list(handles)", 0)] {
+        let span = span_of(&source, iterable, nth)?;
+        assert!(
+            !checker.type_info().for_loop_takes_items(span),
+            "`for handle in {iterable}:` receives its items by value and takes nothing out of a list"
+        );
+    }
+    assert!(
+        checker
+            .type_info()
+            .for_loop_takes_items(loop_iterable(&source, "for handle in group:", 0)?),
+        "the variable of a loop over a new list owns its items, so the nested loop takes them"
+    );
+    Ok(())
+}
