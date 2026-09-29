@@ -4179,9 +4179,9 @@
           "twin": "",
           "notes": "checked result type or Body IR aggregate shape"
         },
-        "nonempty_dict_conversion_does_not_gain_a_checked_constructor_fact_issue1247": {
-          "twin": "dies",
-          "dies": "asserts that the legacy emitter preserves an unresolved `Dict(mapping)` call after the checker supplies no constructor fact; the program cannot compile or expose behavior, and the unresolved generated call dies with #654."
+        "nonempty_dict_conversion_is_a_checked_copy_of_its_source_issue1852": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/mutation_ownership_regressions.incn",
+          "notes": "twinned by the program's `dict(table)` copy of a `mut` parameter, which builds and prints its length; the generated copy loop dies."
         },
         "shadowed_collection_constructors_do_not_gain_aggregate_lowering_issue1247": {
           "disposition": "keep",

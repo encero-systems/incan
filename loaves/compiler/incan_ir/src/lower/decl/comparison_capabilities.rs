@@ -23,6 +23,7 @@ use super::super::AstLowering;
 use incan_frontend::ast;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 
 /// Rust's path for the ordering `Ord::cmp` returns.
@@ -135,7 +136,7 @@ impl AstLowering {
             IrExprKind::Call {
                 func: Box::new(TypedExpr::new(
                     IrExprKind::Var {
-                        name: "Some".to_string(),
+                        name: constructors::as_str(ConstructorId::Some).to_string(),
                         access: VarAccess::Copy,
                         ref_kind: VarRefKind::ExternalRustName,
                     },

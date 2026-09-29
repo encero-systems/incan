@@ -389,21 +389,27 @@ fn checked_typed_empty_dict_reaches_existing_aggregate_emission_issue1247() -> R
     Ok(())
 }
 
-/// Keep nonempty dictionary conversion on its pre-#1247 unchecked-constructor route.
+/// A nonempty `Dict(mapping)` is the checked `Dict` constructor too, and it copies its source dict entry by entry, the
+/// `{**mapping}` literal, so the call never reaches emission as an ordinary function named `Dict` (#1852).
 #[test]
-fn nonempty_dict_conversion_does_not_gain_a_checked_constructor_fact_issue1247()
--> Result<(), Box<dyn std::error::Error>> {
+fn nonempty_dict_conversion_is_a_checked_copy_of_its_source_issue1852() -> Result<(), Box<dyn std::error::Error>> {
     let source = "pub def copy(mapping: Dict[str, int]) -> Dict[str, int]:\n  return Dict(mapping)\n";
     let (program, checker, _) = checked_source(source)?;
     let span = call_span(source, "Dict(mapping)")?;
-    if checker.type_info().resolved_collection_constructor(span).is_some() {
-        return Err("nonempty Dict conversion must remain outside the typed-empty constructor path".into());
+    if checker.type_info().resolved_collection_constructor(span) != Some(CollectionTypeId::Dict) {
+        return Err("a nonempty Dict conversion must record the checked Dict constructor".into());
     }
     let generated = IrCodegen::new()
         .try_generate(&program)
         .map_err(|error| std::io::Error::other(format!("nonempty Dict conversion generation failed: {error}")))?;
-    if !normalize_codegen_output(&generated).contains("pub fn copy") {
-        return Err(format!("nonempty Dict conversion must retain code generation, got:\n{generated}").into());
+    let normalized = normalize_codegen_output(&generated);
+    if !normalized.contains("pub fn copy")
+        || !normalized.contains("__incan_dict.insert(__incan_key, __incan_value)")
+        || normalized.contains("Dict(mapping)")
+    {
+        return Err(
+            format!("a nonempty Dict conversion must copy its source entry by entry, got:\n{generated}").into(),
+        );
     }
     Ok(())
 }

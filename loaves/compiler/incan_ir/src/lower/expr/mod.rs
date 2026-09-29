@@ -47,6 +47,7 @@ use incan_frontend::typechecker::{
 };
 use incan_lang::interop::RustCollectionFamily;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
@@ -968,7 +969,8 @@ impl AstLowering {
     fn unimported_dependency_trait_path(&self, declaration_name: &str, receiver: &TypedExpr) -> Option<String> {
         let library = self.public_library_for_method_receiver(receiver)?;
         let imported = self.import_aliases.values().any(|path| {
-            path.first().is_some_and(|root| root == "pub")
+            path.first()
+                .is_some_and(|root| root == keywords::as_str(KeywordId::Pub))
                 && path.get(1) == Some(&library)
                 && path.last().is_some_and(|name| name == declaration_name)
         });
@@ -3910,12 +3912,11 @@ mod tests {
             scope_discriminant: None,
             declaration_span: incan_semantics_core::HirSourceSpan::new(2044, 2141),
         };
-        let mut lowering = AstLowering::new_with_type_info(incan_frontend::typechecker::TypeCheckInfo::default());
-        lowering.adopted_traits_by_type.insert(
-            "Score".to_string(),
-            std::collections::HashSet::from(["Ord".to_string()]),
-        );
         let ord = builtin_traits::as_str(TraitId::Ord);
+        let mut lowering = AstLowering::new_with_type_info(incan_frontend::typechecker::TypeCheckInfo::default());
+        lowering
+            .adopted_traits_by_type
+            .insert("Score".to_string(), std::collections::HashSet::from([ord.to_string()]));
 
         let adopter = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Score".to_string()));
         let (method, dispatch) =

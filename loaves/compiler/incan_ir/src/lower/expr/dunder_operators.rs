@@ -17,7 +17,7 @@ use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::trait_declaration_name;
 use incan_lang::lang::keywords::{self, KeywordId};
-use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::magic_methods::{self, ComparisonDunderId, MagicMethodId};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::{stdlib, trait_bounds};
 
@@ -52,13 +52,13 @@ impl AstLowering {
                 if builtin_traits::from_str(trait_declaration_name(trait_dispatch)) == Some(TraitId::Eq)
                     && trait_dispatch.trait_module_path.as_ref().and_then(|path| path.first()).map(String::as_str)
                         == Some(stdlib::STDLIB_ROOT));
-        let op = match method {
-            "__eq__" => Some(BinOp::Eq),
-            "__ne__" if through_builtin_bound || through_eq_default => Some(BinOp::Ne),
-            "__lt__" if through_builtin_bound => Some(BinOp::Lt),
-            "__le__" if through_builtin_bound => Some(BinOp::Le),
-            "__gt__" if through_builtin_bound => Some(BinOp::Gt),
-            "__ge__" if through_builtin_bound => Some(BinOp::Ge),
+        let op = match magic_methods::comparison_from_str(method) {
+            Some(ComparisonDunderId::Eq) => Some(BinOp::Eq),
+            Some(ComparisonDunderId::Ne) if through_builtin_bound || through_eq_default => Some(BinOp::Ne),
+            Some(ComparisonDunderId::Lt) if through_builtin_bound => Some(BinOp::Lt),
+            Some(ComparisonDunderId::Le) if through_builtin_bound => Some(BinOp::Le),
+            Some(ComparisonDunderId::Gt) if through_builtin_bound => Some(BinOp::Gt),
+            Some(ComparisonDunderId::Ge) if through_builtin_bound => Some(BinOp::Ge),
             _ => None,
         };
         let single_positional =

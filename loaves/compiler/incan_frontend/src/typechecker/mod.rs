@@ -3210,7 +3210,7 @@ impl TypeChecker {
         let [root, library, rest @ ..] = module_path else {
             return None;
         };
-        if root != "pub" {
+        if root != PUBLIC_LIBRARY_NAMESPACE {
             return None;
         }
         let crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. } =

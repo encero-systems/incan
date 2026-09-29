@@ -999,7 +999,7 @@ impl TypeChecker {
         let [root, library, rest @ ..] = module_path.as_slice() else {
             return None;
         };
-        if root != "pub" {
+        if root != super::PUBLIC_LIBRARY_NAMESPACE {
             return None;
         }
         let resolved = self
@@ -1182,7 +1182,7 @@ impl TypeChecker {
             return Some(info);
         }
         if let [root, library, rest @ ..] = module_path
-            && root == "pub"
+            && root == super::PUBLIC_LIBRARY_NAMESPACE
             && let Some((SymbolKind::Trait(info), _)) =
                 self.lookup_pub_library_module_symbol_member(library, rest, trait_name)
         {

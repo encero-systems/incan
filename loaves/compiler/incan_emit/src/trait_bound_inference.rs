@@ -2622,7 +2622,7 @@ fn scan_expr_for_bounds(
                 }
             );
             if let Some(tp_name) = expr_type_param_name(receiver, type_params, params) {
-                if method == "clone" && !receiver_is_type_name {
+                if method == tb::CLONE_METHOD && !receiver_is_type_name {
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
                 let reflection_bound = if receiver_is_type_name {
@@ -2638,14 +2638,14 @@ fn scan_expr_for_bounds(
                 && let Some(bound) = type_reflection_magic_trait_bound(method)
             {
                 add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
-            } else if method == "clone"
+            } else if method == tb::CLONE_METHOD
                 && matches!(receiver.ty, IrType::Unknown)
                 && matches!(&receiver.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
             {
                 for tp_name in type_params {
                     add_bound(bounds_map, tp_name, IrTraitBound::simple(tb::CLONE));
                 }
-            } else if method == "clone" && !receiver_is_type_name && args.is_empty() {
+            } else if method == tb::CLONE_METHOD && !receiver_is_type_name && args.is_empty() {
                 // A copy of a collection of the type parameter (`items.clone()` for a spread that must leave `items`
                 // as it was, #1852) copies each item, so every type parameter the collection holds is `Clone`.
                 let mut held_type_params = HashSet::new();

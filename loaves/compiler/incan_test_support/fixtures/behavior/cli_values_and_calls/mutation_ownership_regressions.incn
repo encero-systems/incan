@@ -1,4 +1,5 @@
 # behavior: copies and mutations through collection parameters, indexed elements, derived iterables, match and comprehension bindings, closures, loop bindings and generic mut parameters preserve the values visible to the program
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::nonempty_dict_conversion_is_a_checked_copy_of_its_source_issue1852
 # retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::collection_copies_from_mut_parameters_are_owned_issue1852
 # retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::mut_method_on_list_element_borrows_the_element_issue1857
 # retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::tuple_index_after_list_index_has_no_bad_deref_issue1861

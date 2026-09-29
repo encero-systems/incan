@@ -772,7 +772,7 @@ impl AstLowering {
     pub(in crate::lower) fn pub_dependency_binding_rust_path(&self, expr: &ast::Expr) -> Option<Vec<String>> {
         let path = self.imported_field_base_path(expr)?;
         let (root, dependency_path) = path.split_first()?;
-        (root == "pub" && !dependency_path.is_empty()).then(|| dependency_path.to_vec())
+        (root == keywords::as_str(KeywordId::Pub) && !dependency_path.is_empty()).then(|| dependency_path.to_vec())
     }
 
     /// Resolve `module.function(...)` syntax when the receiver is an imported module and the checker proved that the
