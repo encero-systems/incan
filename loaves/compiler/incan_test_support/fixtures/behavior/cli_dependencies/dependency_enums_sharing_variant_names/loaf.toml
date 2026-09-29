@@ -1,0 +1,9 @@
+[project]
+name = "dependency_enums_sharing_variant_names"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+flows = { path = "deps/flows" }

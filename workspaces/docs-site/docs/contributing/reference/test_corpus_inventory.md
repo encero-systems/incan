@@ -12,14 +12,14 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3534 | 244 | 8 |
-| re-point | 515 | 86 | 1032 |
-| retire | 1479 | 148 | 0 |
+| keep | 3536 | 245 | 8 |
+| re-point | 515 | 86 | 1033 |
+| retire | 1481 | 149 | 0 |
 | unaffected | 1462 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6990** | **612** | **1045** |
+| **Total** | **6994** | **614** | **1046** |
 
-- Retire-class tests: 1479, of which twinned 1006, dies 294, open 179 (neither yet).
+- Retire-class tests: 1481, of which twinned 1008, dies 294, open 179 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
 - Files whose test region exceeds the split threshold of 1500 lines: 13, of which 0 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
@@ -73,7 +73,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/fixtures` | `**/*.incn` | 20 | re-point | #1561 | driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class. |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots` | `**/*.incn` | 180 | re-point | #1561 | snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs. |
 | `loaves/compiler/incan_test_support/fixtures` | `*.incn` | 12 | re-point | #1561 | top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behavior, reflection, model traits). |
-| `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies` | `<name>.incn or <name>/` | 20 | re-point | #1561 | behavior fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = "deps/<name>" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines. |
+| `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies` | `<name>.incn or <name>/` | 21 | re-point | #1561 | behavior fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = "deps/<name>" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations` | `<name>.incn or <name>/` | 36 | re-point | #1561 | behavior fixtures about modules, facades and imports across files, models, methods, traits and their defaults, generics, decorators and web types, twinning retire-class lowering, emission and CLI tests whose observable is a program's output. Run by behavior_cli_tests.rs; a fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals` | `<name>.incn or <name>/` | 48 | re-point | #1561 | behavior fixtures whose observable is a check-time refusal: each program is refused with the diagnostic code its header declares and is never run. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips; a fixture that twins a retire test names it in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals_mutation` | `<name>.incn or <name>/` | 22 | re-point | #1561 | behavior fixtures whose observable is a check-time refusal of a change through a place that does not permit it: a changing method call, a field write or a pattern binding's change through a binding declared without `mut`, a parameter not marked `mut` or a plain `self`, a `for` loop that changes the items of such a place or of a static through a local bound to it, a closure that changes a local it captures, a generator expression that changes the items it copies, a local partial of a `mut self` method, an immutable argument for a `mut` parameter the callee changes, a `mut` parameter held in or rebound to another place, and a `mut` marker a function type does not admit. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips. |
@@ -285,7 +285,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 |---|---|---|---|---|---|
 | `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement | generated-text hit is a diagnostic string |
 
-### `loaves/compiler/incan_emit` (1125 tests in 97 files: keep 100, retire 1023, unaffected 2)
+### `loaves/compiler/incan_emit` (1127 tests in 98 files: keep 100, retire 1025, unaffected 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -328,6 +328,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/tests/closure_parameter_inference.rs` | 2 | 96 | 96 | retire (retire 2) | 2/2 | 0 | - | #1561 | - | builds and runs the generated Rust of closures typed by their context: iterator adapters and terminals, a fold, a generic function's parameter, a generator's own map and filter, and the Ok(...) or Err(...) a Result combinator's closure returns (#1561); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/tests/comparison_adopters.rs` | 9 | 659 | 659 | retire (retire 9) | 9/9 | 0 | - | #1561 | - | builds and runs the generated Rust of Eq and Ord adopters that define their dunders, dunder calls through builtin bounds, __ne__ through the Eq supertrait of an Ord-only adopter, and trait defaults calling methods on self, the dunders of adopters of every spelling and of unimported builtin bounds in a project module, of adopters imported from another module, and of types that derive Ord (#1561); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/tests/comprehension_item_places.rs` | 2 | 92 | 92 | retire (retire 2) | 2/2 | 0 | - | #1561 | codegen 2, parser 2 | builds and runs the generated Rust of list and dict comprehensions that change their items in place through `enumerate`, `zip`, `values()`, an element and directly, and of comprehensions and generator expressions over temporaries (#1561); retires with the Rust-source backend. |
+| `loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs` | 2 | 139 | 139 | retire (retire 2) | 2/2 | 0 | - | #1561 | - | publishes a library whose enums share variant names, or declare a variant's payload type after the enum, the way a library build publishes it, and builds and runs a consumer against its generated crate with rustc (#1561); retires with the Rust-source backend (#654). |
 | `loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs` | 2 | 137 | 137 | retire (retire 2) | 2/2 | 0 | - | #1561 | codegen 2 | lowering through emission end to end. |
 | `loaves/compiler/incan_emit/src/tests/dependency_references.rs` | 3 | 126 | 126 | retire (retire 3) | 3/3 | 0 | - | #1561 | codegen 3 | consumers of a `pub::` dependency's functions and adopted-trait methods, built against the dependency's generated crate and run by rustc; retires with the Rust-source backend (#654). |
 | `loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs` | 4 | 230 | 230 | retire (retire 4) | 4/4 | 0 | - | #1561 | - | builds and runs a consumer of a `pub::` dependency whose trait it reaches under an alias or through a module binding, adopts under one spelling and bounds under another, and checks the refusal of an adopter relying on the dependency trait's default (#1561); retires with the Rust-source backend. |
@@ -1020,6 +1021,13 @@ Per-test overrides in `loaves/compiler/incan_emit/src/tests/comprehension_item_p
 |---|---|---|---|---|---|
 | `comprehensions_change_their_items_in_place_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn` | - | codegen, parser | Runs comprehensions that change their items through derived iterables and dict comprehensions over a list; the fixture prints each result and the changed lists. |
 | `comprehensions_change_the_items_of_a_temporary_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn` | - | codegen, parser | Runs comprehensions and a generator expression that change the items of a temporary; the fixture prints each result. |
+
+Per-test overrides in `loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs`:
+
+| Test | Disposition | Twin | Dies | Lanes | Notes |
+|---|---|---|---|---|---|
+| `enums_sharing_a_variant_name_publish_each_enums_own_payload_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_enums_sharing_variant_names` | - | - | Publishes a value enum beside payload enums of other arities that share its variant names, in both declaration orders; the consumer constructs, matches and prints each. The fixture's provider adds enums imported from a sibling module. |
+| `a_variant_payload_declared_after_its_enum_publishes_its_type_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_enums_sharing_variant_names` | - | - | Publishes an enum whose variant carries a model declared after the enum; the consumer builds the variant from the model and reads the payload's field. The fixture's provider declares the same enum and the consumer prints the field. |
 
 Per-test overrides in `loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs`:
 
@@ -1815,7 +1823,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2076 tests in 113 files: keep 2076)
+### `loaves/compiler/incan_frontend` (2078 tests in 114 files: keep 2078)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1835,7 +1843,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/compiler_stack.rs` | 3 | 113 | 41 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/contract_metadata.rs` | 5 | 517 | 89 | keep | - | - | - | #1561 | parser 2, formatter 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/hir.rs` | 7 | 540 | 328 | keep | - | - | - | #1561 | checker 7, parser 7 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/library_exports.rs` | 6 | 2265 | 179 | keep | - | - | - | #1561 | checker 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/library_exports.rs` | 6 | 2268 | 179 | keep | - | - | - | #1561 | checker 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/library_manifest/artifact.rs` | 16 | 1677 | 937 | keep | - | - | - | #1561 | checker 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/library_manifest/published_layout.rs` | 2 | 287 | 47 | keep | - | - | - | #1561 | checker 2 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/library_manifest/tests/export_round_trips.rs` | 23 | 1170 | 1170 | keep | - | - | - | #1561 | checker 21 | split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
@@ -1876,6 +1884,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/typechecker/tests/derive_contract.rs` | 25 | 852 | 852 | keep | - | - | - | #1561 | checker 25 | typechecker refusals and acceptances of the derive contract (#1822 set elements through the Hash derive only, #1870 automatic and implied derives, #1871 derive requirements and dunder signatures, #1872 a dunder beside its matching derive, #1881 sorted() element order, #1882 static-method receivers); no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/dict_get_and_frozen_payloads.rs` | 12 | 674 | 674 | keep | - | - | - | #1561 | checker 11, parser 2 | checker facts for a dict's `get` result (the stored value, `copied`/`cloned` refused) and a `Some` payload's string instantiation (#1793, #1794); typechecker only, no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/display_rule.rs` | 15 | 649 | 649 | keep | - | - | - | #1561 | checker 14 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/enum_variant_exports.rs` | 2 | 227 | 227 | keep | - | - | - | #1561 | checker 2, parser 2 | typechecker tests of the variants a checked module publishes for its enums: the checked export, the checked API and the library manifest record each enum's own payloads when enums share variant names, beside enums imported from a sibling module and for a payload type declared after the enum (#1561); typechecker and library manifests only, no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/error_display.rs` | 7 | 276 | 276 | keep | - | - | - | #1561 | checker 7 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/expected_literal_types.rs` | 12 | 580 | 580 | keep | - | - | - | #1561 | checker 12, parser 11 | typechecker facts for literals written to typed destinations (#1831, #1832, #1847, #1854, #1858, #1859, #1862); no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/extern_and_c_bindings.rs` | 22 | 825 | 825 | keep | - | - | - | #1561 | checker 16, parser 3 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |

@@ -4,6 +4,7 @@ mod capturing_closures;
 mod closure_parameter_inference;
 mod comparison_adopters;
 mod comprehension_item_places;
+mod dependency_enum_variants;
 mod dependency_method_unions;
 mod dependency_references;
 mod dependency_trait_aliases;

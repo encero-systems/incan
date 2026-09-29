@@ -69,6 +69,7 @@ mod collections_strings_and_bytes;
 mod derive_contract;
 mod dict_get_and_frozen_payloads;
 mod display_rule;
+mod enum_variant_exports;
 mod error_display;
 mod expected_literal_types;
 mod extern_and_c_bindings;
