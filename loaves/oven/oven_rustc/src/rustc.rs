@@ -7141,7 +7141,8 @@ fi
     }
 
     #[test]
-    fn first_diverging_shared_package_reports_a_same_version_byte_distinct_overlap() {
+    fn first_diverging_shared_package_reports_a_same_version_byte_distinct_overlap()
+    -> Result<(), Box<dyn std::error::Error>> {
         let leaf = |package: &str, version: &str, digest: &str, identity: Option<&str>, features: &[&str]| {
             OvenRustcRegistryLeaf {
                 domain: Default::default(),
@@ -7249,6 +7250,57 @@ fi
             divergence.contains("the provider's unit sha256:different-unit") && divergence.contains("features"),
             "the refusal detail names both units and the facts that differ: {divergence}"
         );
+
+        // Two units recording the same facts differ through a dependency; the detail names the dependency the two
+        // closures carry at different units.
+        let graph_consumer = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/consumer"),
+            vec![
+                leaf(
+                    "cpufeatures",
+                    "0.2.17",
+                    "sha256:consumer-cpufeatures",
+                    Some("sha256:consumer-unit"),
+                    &[],
+                ),
+                leaf(
+                    "libc",
+                    "0.2.189",
+                    "sha256:consumer-libc",
+                    Some("sha256:consumer-libc-unit"),
+                    &["extra_traits", "std"],
+                ),
+            ],
+        );
+        let graph_provider = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/provider"),
+            vec![
+                leaf(
+                    "cpufeatures",
+                    "0.2.17",
+                    "sha256:provider-cpufeatures",
+                    Some("sha256:provider-unit"),
+                    &[],
+                ),
+                leaf(
+                    "libc",
+                    "0.2.189",
+                    "sha256:provider-libc",
+                    Some("sha256:provider-libc-unit"),
+                    &["std"],
+                ),
+            ],
+        );
+        let (package, _, divergence) = graph_consumer
+            .first_diverging_shared_package_pin_detail(&graph_provider)
+            .ok_or("the graph split is refused")?;
+        assert_eq!(package, "cpufeatures");
+        assert!(
+            divergence.contains("no recorded fact besides the selected-unit identity")
+                && divergence.contains(r#"libc 0.2.189 features ["extra_traits", "std"] vs ["std"]"#),
+            "the detail names the dependency the closures split on: {divergence}"
+        );
+        Ok(())
     }
 
     #[test]
