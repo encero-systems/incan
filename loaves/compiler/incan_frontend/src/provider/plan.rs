@@ -1093,6 +1093,26 @@ impl ProviderPlan {
             .collect()
     }
 
+    /// Return the `std` namespace roots this compilation uses that no active SDK provider supplies.
+    ///
+    /// Each namespace root belongs to one SDK component. A used root that no active component claims is compiled from
+    /// the standard library's source, mounted under the generated `__incan_std` namespace, instead of being linked
+    /// from a compiled provider.
+    pub fn source_std_namespace_roots(&self) -> BTreeSet<String> {
+        let supplied = self
+            .active_std_module_paths()
+            .into_iter()
+            .filter_map(|path| path.get(1).cloned())
+            .collect::<BTreeSet<_>>();
+        self.used_module_paths
+            .iter()
+            .filter(|path| path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT))
+            .filter_map(|path| path.get(1))
+            .filter(|root| !supplied.contains(*root))
+            .cloned()
+            .collect()
+    }
+
     /// Return the active SDK provider that owns an exact canonical `std.*` module path.
     pub fn active_sdk_provider_for_module(&self, module: &[String]) -> Option<&ProviderRecord> {
         match self.resolve_module(module) {

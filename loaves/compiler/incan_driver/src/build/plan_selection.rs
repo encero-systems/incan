@@ -442,6 +442,41 @@ pub fn select_published_project_plan(
         }))
 }
 
+/// Keep a composed package closure only when it links every crate the consumer's source-mounted standard library needs.
+///
+/// A consumer with no active provider for a `std` namespace compiles that namespace from source into its own crate,
+/// so its generated root links the namespace's runtime crates directly (see
+/// [`incan_provider::inventory::stdlib_namespace_cargo_dependencies`]). A package Loaf extending a compiler base
+/// supplies them through that base; a self-contained package plan supplies only what its own provider linked. A
+/// closure that lacks one of them cannot compile the consumer, so the caller publishes or selects the consumer's own
+/// closure instead, as it does for a consumer that declares its own Rust roots.
+pub fn packaged_provider_selection_links_source_stdlib(
+    selection: Option<OvenDirectRustcPlanSelection>,
+    provider_plan: &incan_provider::ProviderPlan,
+) -> CliResult<Option<OvenDirectRustcPlanSelection>> {
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let required = provider_plan
+        .source_std_namespace_roots()
+        .iter()
+        .filter_map(|root| incan_lang::lang::stdlib::find_namespace(root))
+        .flat_map(incan_provider::inventory::stdlib_namespace_cargo_dependencies)
+        .map(|dependency| dependency.crate_name.replace('-', "_"))
+        .collect::<BTreeSet<_>>();
+    if required.is_empty() {
+        return Ok(Some(selection));
+    }
+    let linked = selection
+        .source_artifact_plan("generated-root")
+        .map_err(oven_rustc_error)?
+        .externs
+        .into_iter()
+        .map(|(crate_name, _)| crate_name)
+        .collect::<BTreeSet<_>>();
+    Ok(required.is_subset(&linked).then_some(selection))
+}
+
 /// Render the registry requirements that made sealed Loaf selection impossible.
 ///
 /// Oven does not invoke Cargo to diagnose an unavailable registry version, so this preserves the manifest-level
@@ -887,6 +922,89 @@ mod tests {
             OvenDirectRustcPlanSelection::Stored(_)
         ));
         assert!(!selected.cargo_process_started);
+        Ok(())
+    }
+
+    /// #1561: a package closure serves a consumer only while it links every runtime crate of the standard-library
+    /// namespaces the consumer compiles from source. One that lacks the `std.testing` runtime is set aside, so the
+    /// consumer compiles against its own closure instead of failing E0433 against the package's.
+    #[test]
+    fn a_package_closure_without_the_runtime_of_a_source_mounted_namespace_is_set_aside_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let generated = project.path().join("generated/src/main.rs");
+        fs::create_dir_all(generated.parent().ok_or("generated source parent missing")?)?;
+        fs::write(&generated, "fn main() {}\n")?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project.path(),
+                "package-closure-consumer",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &generated),
+        )?;
+        let store = OvenStore::new(
+            project.path().join("oven-store"),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let core_runtime = project.path().join("libincan_std_core.rlib");
+        fs::write(&core_runtime, b"core runtime")?;
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "package-closure-consumer".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&OvenRustcArtifactManifest {
+                schema_version: oven_rustc::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                intent: receipt.intent.clone(),
+                dependency_search_paths: vec!["deps".to_string()],
+                native_search_paths: Vec::new(),
+                externs: vec![oven_rustc::rustc::OvenRustcArtifactExtern {
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core.rlib".to_string(),
+                    digest: digest_bytes(b"core runtime"),
+                }],
+                entrypoint_dependency_search_paths: Default::default(),
+                entrypoint_externs: BTreeMap::new(),
+                registry_leaves: Vec::new(),
+                registry_sources: Vec::new(),
+                compile_environment: BTreeMap::new(),
+                vocab_auxiliary_targets: Vec::new(),
+                supporting_artifacts: Vec::new(),
+            })?,
+            materialized_files: vec![oven_store::store::OvenArtifactMaterializedFile {
+                source_path: core_runtime,
+                relative_path: "deps/libincan_std_core.rlib".to_string(),
+            }],
+            materialized_directories: Vec::new(),
+        })?;
+        let closure = || -> Result<Option<OvenDirectRustcPlanSelection>, Box<dyn std::error::Error>> {
+            Ok(
+                select_published_project_plan(&store, &receipt, OvenToolchainMaterialization::Reused)?
+                    .map(|selected| selected.plan_selection),
+            )
+        };
+        let using = |module: &str| {
+            incan_provider::ProviderPlan::new(
+                Default::default(),
+                Vec::new(),
+                [vec!["std".to_string(), module.to_string()]],
+            )
+        };
+
+        assert!(closure()?.is_some(), "the fixture closure is selectable on its own");
+        assert!(
+            packaged_provider_selection_links_source_stdlib(closure()?, &using("testing")?)?.is_none(),
+            "a closure without `incan_std_testing` cannot compile a consumer that mounts std.testing"
+        );
+        assert!(
+            packaged_provider_selection_links_source_stdlib(closure()?, &using("derives")?)?.is_some(),
+            "a namespace with no runtime crate of its own needs nothing beyond the closure"
+        );
+        assert!(packaged_provider_selection_links_source_stdlib(None, &using("testing")?)?.is_none());
         Ok(())
     }
 
