@@ -3791,6 +3791,20 @@
         }
       }
     },
+    "loaves/compiler/incan_emit/src/tests/rust_trait_unknown_receivers.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of trait-qualified `Read.by_ref` calls on a receiver of unknown type with `std::io::Read` inspected: a bounded read through a RefCell guard and an adapter over the reader it returns (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "bounded_reads_through_an_untyped_guard_build_with_read_inspected_issue1561": {
+          "twin": "",
+          "notes": "open (harness-deps): the assertion is that `Read.by_ref(cursor).take(size).read_to_end(out)` and `BufReader.new(Read.by_ref(cursor))` over the guard `borrow_mut()` returns build and read 4, 2 and 3 bytes with `std::io::Read` inspected, as without metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_read_by_ref_through_a_field_guard.incn` carries the `Buffer` class and prints the three lengths. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/slice_hooks.rs": {
       "disposition": "retire",
       "notes": "builds and runs the generated Rust of slice syntax on a type that defines `__getslice__`, on a generic type too, and of `list` and `str` slices written with `::` (#1561); retires with the Rust-source backend.",

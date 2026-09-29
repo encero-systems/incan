@@ -28,6 +28,7 @@ mod record_pattern_emission;
 mod reexported_projections;
 mod result_method_receivers;
 mod rust_2024_keyword_identifiers;
+mod rust_trait_unknown_receivers;
 mod slice_hooks;
 mod static_reads_and_frozen_strings;
 mod trait_default_module_items;

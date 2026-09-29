@@ -1010,4 +1010,138 @@ mod tests {
         );
         Ok(())
     }
+
+    /// A session with no SDK inventory, as a consumer on a fresh home has: every `std` module is collected from its
+    /// source under the generated `__incan_std` namespace and checked with the consumer's modules.
+    fn session_without_sdk_inventory(project: &Path) -> CompilationSession {
+        let library_manifest_index = LibraryManifestIndex::default();
+        let provider_plan = Arc::new(ProviderPlan::default());
+        CompilationSession {
+            manifest: None,
+            source_root: project.join("src"),
+            library_imported_vocab: library_manifest_index.library_imported_vocab(),
+            library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
+            library_manifest_index,
+            provider_plans_by_modules: Arc::new(Mutex::new(BTreeMap::from([(
+                BTreeSet::new(),
+                Arc::clone(&provider_plan),
+            )]))),
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
+            provider_plan,
+            sdk_inventory: None,
+            sdk_components: None,
+            package_feature_plan: None,
+            active_features: BTreeSet::new(),
+            declared_features: BTreeSet::new(),
+            contract_model_bundles: Vec::new(),
+        }
+    }
+
+    /// Seed the inspected `std::io::Read` a consumer's Rust inspection holds, with the methods the standard library's
+    /// `Read.by_ref(guard).take(size).read_to_end(out)` reads call, into a fresh inspection workspace.
+    #[cfg(feature = "rust_inspect")]
+    fn inspection_workspace_with_std_io_read() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+        use incan_lang::interop::{
+            RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTraitAssoc, RustTraitInfo, RustVisibility,
+        };
+        let workspace = tempfile::tempdir()?;
+        std::fs::write(
+            workspace.path().join("Cargo.toml"),
+            "[package]\nname = \"io_repro_inspection\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        let method = |name: &str, receiver: &str, params: &[(&str, &str)], return_type: &str| {
+            let receiver = RustParam {
+                name: Some("self".to_string()),
+                type_display: receiver.to_string(),
+            };
+            RustTraitAssoc::Function {
+                name: name.to_string(),
+                signature: RustFunctionSig {
+                    receiver_contract: None,
+                    type_params: Vec::new(),
+                    params: std::iter::once(receiver)
+                        .chain(params.iter().map(|(name, ty)| RustParam {
+                            name: Some((*name).to_string()),
+                            type_display: (*ty).to_string(),
+                        }))
+                        .collect(),
+                    return_type: return_type.to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                },
+            }
+        };
+        rust_inspect::RustMetadataCache::new().insert_test_item(
+            workspace.path(),
+            RustItemMetadata {
+                canonical_path: "std::io::Read".to_string(),
+                definition_path: Some("std::io::Read".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo {
+                    items: vec![
+                        method("read", "&mut self", &[("buf", "&mut [u8]")], "Result<usize>"),
+                        method("read_to_end", "&mut self", &[("buf", "&mut Vec<u8>")], "Result<usize>"),
+                        method("read_exact", "&mut self", &[("buf", "&mut [u8]")], "Result<()>"),
+                        method("by_ref", "&mut self", &[], "&mut Self"),
+                        method("take", "self", &[("limit", "u64")], "Take<Self>"),
+                    ],
+                    derive_macro: None,
+                }),
+            },
+        )?;
+        Ok(workspace)
+    }
+
+    /// #1561: a consumer that imports `std.io` and `std.fs` with no SDK inventory, as on a fresh home, checks those
+    /// modules and the `std.derives.collection` they import from the standard library's source, under the generated
+    /// `__incan_std` namespace. That source is the standard library's own there as it is under `std` or in an SDK
+    /// component build, and it checks with and without the consumer's Rust inspection, where `Read.by_ref(guard)` on
+    /// a `borrow_mut()` guard the inspection cannot type stays as open as it is without metadata.
+    #[test]
+    fn a_consumer_without_an_sdk_inventory_checks_std_io_and_std_fs_from_source_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project = tmp.path().join("io_repro");
+        std::fs::create_dir_all(project.join("src"))?;
+        let entry = project.join("src/main.incn");
+        std::fs::write(
+            &entry,
+            "from std.io import BytesIO\nfrom std.fs import Path\n\ndef main() -> None:\n    buffer = BytesIO()\n    print(len(buffer.getvalue()))\n    print(Path(\"a\").exists())\n",
+        )?;
+        let session = session_without_sdk_inventory(&project);
+        let modules = crate::modules::collect_modules_detailed_with_session(entry, &session)
+            .map_err(|failure| failure.render_human())?;
+        for expected in [&["io"][..], &["fs"], &["derives", "collection"]] {
+            let path = std::iter::once(stdlib::INCAN_STD_NAMESPACE)
+                .chain(expected.iter().copied())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            assert!(
+                modules.iter().any(|module| module.path_segments == path),
+                "`{}` must be collected from source: {:?}",
+                path.join("."),
+                modules
+                    .iter()
+                    .map(|module| module.path_segments.join("."))
+                    .collect::<Vec<_>>()
+            );
+        }
+        session
+            .analyze_modules(
+                &modules,
+                #[cfg(feature = "rust_inspect")]
+                None,
+            )
+            .map_err(|failure| format!("without Rust inspection:\n{}", failure.render_human()))?;
+        #[cfg(feature = "rust_inspect")]
+        {
+            let inspection = inspection_workspace_with_std_io_read()?;
+            session
+                .analyze_modules(&modules, Some(inspection.path()))
+                .map_err(|failure| format!("with Rust inspection:\n{}", failure.render_human()))?;
+        }
+        Ok(())
+    }
 }

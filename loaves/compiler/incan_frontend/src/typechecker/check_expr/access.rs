@@ -3269,7 +3269,8 @@ impl TypeChecker {
     /// and `self` moves the value. That mode is recorded as the first argument's Rust boundary coercion, the same fact
     /// lowering and emission already consume for every other inspected Rust parameter, so the emitter never derives
     /// it from the method or trait name. The remaining arguments and the result follow the ordinary trait-method
-    /// validation; a method the trait does not declare is reported here instead of by rustc against generated code.
+    /// validation; a method the trait does not declare is reported here instead of by rustc against generated code. A
+    /// receiver of unknown type records no mode and gives the call a result of unknown type, as without metadata.
     fn resolve_rust_trait_qualified_call(&mut self, call: RustTraitQualifiedCall<'_>) -> ResolvedType {
         let RustTraitQualifiedCall {
             rust_path,
@@ -3317,6 +3318,14 @@ impl TypeChecker {
             self.preserve_unresolved_rust_call_argument_returns(args);
             return ResolvedType::Unknown;
         };
+        // A receiver of unknown type, such as the guard `borrow_mut()` returns when nothing types it, may be the
+        // trait's `Self` or a guard or reference that reaches one. Neither the borrow that turns it into the declared
+        // receiver nor `Self` in the result can be decided, so the call keeps the facts it has without metadata: no
+        // receiver borrow, a result of unknown type, and its arguments handed to Rust as they are (#1561).
+        if Self::is_unknown_behind_references(receiver_ty) {
+            self.preserve_unresolved_rust_call_argument_returns(args);
+            return ResolvedType::Unknown;
+        }
         let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
         if let Some((mutable, _)) = Self::rust_display_borrow_kind(receiver_display.as_str()) {
             let already_borrowed = match receiver_ty {
@@ -3370,6 +3379,15 @@ impl TypeChecker {
         // lowering and emission pair each argument with its own parameter shape.
         self.record_rust_trait_qualified_call_site_params(span, sig, receiver_ty, rust_path);
         ret
+    }
+
+    /// Return whether `ty` is unknown, directly or behind shared and mutable references.
+    fn is_unknown_behind_references(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Unknown => true,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::is_unknown_behind_references(inner),
+            _ => false,
+        }
     }
 
     /// Record the call-site parameters of a trait-qualified call with the receiver parameter in first position.
