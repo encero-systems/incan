@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! `inspect codegraph`, `inspect rust`, checked-binding facts, and the semantic projections that share a project
 //! identity.
 //!
@@ -5,6 +7,8 @@
 //! `incan_test_support::cli_project`.
 
 include!("support/cli_codegraph_and_inspection_tests_root.rs");
+
+use incan_test_support as support;
 
 #[test]
 fn inspect_codegraph_exports_multifile_imports_and_public_symbols() -> Result<(), Box<dyn std::error::Error>> {

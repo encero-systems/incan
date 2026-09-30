@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! Integration tests for the Incan compiler frontend
 
 include!("support/integration_tests_root.rs");

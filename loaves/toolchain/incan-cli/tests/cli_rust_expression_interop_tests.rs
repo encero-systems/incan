@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! Rust interop regressions driven through the CLI: receiver borrowing, generic scenarios, and metadata-free inference.
 //!
 //! One of nine roots split out of the former `tests/cli_integration.rs`. The shared command surface lives in

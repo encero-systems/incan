@@ -41,6 +41,9 @@ use oven_rustc::rustc::{OvenRegistryLeafAuthority, OvenRustcArtifactPlan, resolv
 use oven_store::store::OvenStore;
 use oven_store::{OvenGeneratedProjectRequest, digest_dependency_specs, receipt_generated_project};
 
+/// Package, pinning artifact, and unit divergence reported for one incompatible provider registry closure.
+type ProviderRegistryConflict = (String, Option<PathBuf>, Option<String>);
+
 /// Remove public package-provider roots from the Cargo-published test delta without narrowing project authority.
 ///
 /// The caller retains `dependencies` unchanged for the singular inspection authority. A validated package Loaf owns
@@ -562,7 +565,7 @@ pub fn caller_owned_provider_registry_conflict(
     consumer_authority: Option<&OvenRegistryLeafAuthority>,
     closure: &CallerOwnedProviderRegistryClosure,
     plan: &OvenRustcArtifactPlan,
-) -> CliResult<Option<(String, Option<PathBuf>, Option<String>)>> {
+) -> CliResult<Option<ProviderRegistryConflict>> {
     for provider_authority in &closure.provider_authorities {
         // A shared package can enter both closures transitively without ever being a named extern of either
         // compile (the reproduced `tokio` duplication was exactly this shape), so the catalogs themselves are
@@ -1033,6 +1036,8 @@ mod tests {
                     .map(|selected| selected.plan_selection),
             )
         };
+        // The fixture intentionally exercises the production provider-plan error type without boxing it.
+        #[allow(clippy::result_large_err)]
         let using = |module: &str| {
             incan_provider::ProviderPlan::new(
                 Default::default(),

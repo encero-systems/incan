@@ -103,6 +103,8 @@ struct StagedReleaseToolchain {
 /// This is deliberately part of the explicit Loaf publisher rather than any normal build path. The returned graph
 /// carries the receipt identity as the archive owner; callers publish `product_root` as that owner's immutable asset
 /// and provide the same root when the graph is physically materialized.
+// This boundary is retained for the native-product publisher path, which current all-feature tests do not select.
+#[allow(dead_code)]
 pub(crate) fn finalize_publisher_native_link(
     selected: ValidatedOvenSelectedRustFacetGraph,
     consuming_unit_identity: &str,

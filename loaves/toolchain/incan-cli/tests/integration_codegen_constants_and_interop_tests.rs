@@ -1,8 +1,12 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! Integration tests for the Incan compiler frontend
 
 include!("support/integration_tests_root.rs");
 
 mod codegen_tests {
+    use incan_driver::backend::IrCodegen;
+    use incan_frontend::{lexer, parser, typechecker};
     include!("support/integration_tests_codegen_tests.rs");
 
     #[test]

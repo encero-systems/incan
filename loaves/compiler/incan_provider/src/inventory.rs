@@ -1302,7 +1302,7 @@ import std.traits
             artifact: Some(LibraryArtifactMetadata::from_crate_root(
                 "incan_stdlib_web",
                 "incan_stdlib_web",
-                &workspace.path().join("stdlib-web"),
+                workspace.path().join("stdlib-web"),
             )),
             implementation_facets: Vec::new(),
         };

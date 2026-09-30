@@ -405,6 +405,9 @@ mod tests {
     use incan_frontend::{ParsedModule, lexer, parser};
     use oven_model::manifest::ProjectManifest;
 
+    /// Package name, source modules, and consumer source for one re-export publication case.
+    type ReexportProject<'a> = (&'a str, &'a [(&'a str, &'a str)], String);
+
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn library_rust_abi_query_paths_include_rust_extern_backing_items() -> Result<(), Box<dyn std::error::Error>> {
@@ -1112,7 +1115,7 @@ mod tests {
     {
         const INNER: &str = "pub def greet(name: str) -> str:\n    return f\"hi {name}\"\n\n\npub model Greeting:\n    pub text: str\n\n\npub enum Tone:\n    Warm\n    Cool\n\n\npub const LOUDNESS: int = 3\n";
         const GREET_THREE: &str = "\n\ndef run_all() -> str:\n    first = greet(\"a\")\n    second = second_greet(\"b\")\n    third = third_greet(\"c\")\n    return f\"{first} {second} {third}\"\n";
-        let projects: [(&str, &[(&str, &str)], String); 7] = [
+        let projects: [ReexportProject<'_>; 7] = [
             (
                 "reexport_repro",
                 &[
@@ -1597,7 +1600,7 @@ mod tests {
         failures.extend(consume_library(
             "hyper_nested",
             &[
-                ("memory/search/models.incn", &MODELS),
+                ("memory/search/models.incn", MODELS),
                 (
                     "memory/search/exact.incn",
                     &EXACT.replace("crate.search.", "crate.memory.search."),

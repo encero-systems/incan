@@ -537,7 +537,7 @@ def doubled() -> list[int]:
     let IrExprKind::ListComp { iterable, .. } = &keys.kind else {
         return Err(format!("`keys` must lower to a comprehension, got {keys:?}"));
     };
-    owned_items(&**iterable, CollectionTypeId::FrozenDict, IrType::String)?;
+    owned_items(iterable, CollectionTypeId::FrozenDict, IrType::String)?;
 
     let unique_names = returned_value(&ir, "unique_names")?;
     let IrExprKind::BuiltinCall {
@@ -567,7 +567,7 @@ def doubled() -> list[int]:
     let Some(crate::expr::IrGeneratorClause::For { iterable, .. }) = clauses.first() else {
         return Err(format!("the generator starts with a `for` clause, got {clauses:?}"));
     };
-    owned_items(&**iterable, CollectionTypeId::FrozenList, IrType::Int)
+    owned_items(iterable, CollectionTypeId::FrozenList, IrType::Int)
 }
 
 /// Return the callback that the `flat_map` call in the named function's returned adapter chain passes its adapter.

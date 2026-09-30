@@ -1,8 +1,5 @@
 use std::fs;
 
-use incan_driver::build_report::BUILD_REPORT_SCHEMA_VERSION;
-use incan_test_support as support;
-
 use incan_test_support::cli_project;
 
 use cli_project::*;

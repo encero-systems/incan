@@ -218,7 +218,7 @@ impl AstLowering {
                         *err = receiver_err.clone();
                     }
                 }
-                if let Some(pinned) = Self::pin_returned_result_constructor(body, &**ok, &**err) {
+                if let Some(pinned) = Self::pin_returned_result_constructor(body, ok, err) {
                     **ret = pinned;
                 }
             }

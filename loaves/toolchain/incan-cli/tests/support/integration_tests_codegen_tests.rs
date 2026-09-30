@@ -3,14 +3,10 @@ use crate::support::repo_root;
 use super::{
     compiled_sdk_provider_artifact_root, incan_command, strip_ansi_escapes, support, unique_test_project_name,
 };
-use incan_driver::backend::IrCodegen;
-use incan_frontend::{lexer, parser, typechecker};
-use incan_semantics_core::{SemanticSourceTargetKind, decode_incan_symbol_identity, encode_incan_symbol_identity};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn run_incan_source(source: &str) -> std::process::Output {
     incan_command()
