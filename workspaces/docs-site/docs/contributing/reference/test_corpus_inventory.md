@@ -15,13 +15,13 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3544 | 245 | 8 |
 | re-point | 521 | 86 | 1044 |
 | retire | 1490 | 153 | 0 |
-| unaffected | 1538 | 140 | 5 |
+| unaffected | 1543 | 141 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7093** | **624** | **1057** |
+| **Total** | **7098** | **625** | **1057** |
 
 - Retire-class tests: 1490, of which twinned 1017, dies 294, open 179 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
-- Files whose test region exceeds the split threshold of 1500 lines: 15, of which 0 in the durable corpus (keep or re-point).
+- Files whose test region exceeds the split threshold of 1500 lines: 16, of which 0 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
 ## Dispositions
@@ -3032,7 +3032,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1246 tests in 96 files)"
+??? note "Unaffected crates (1251 tests in 97 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3102,13 +3102,13 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_interop/src/lib.rs` | 20 | 4394 | 2720 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
-    #### `loaves/oven/oven_model` (173 tests in 9 files: unaffected 173)
+    #### `loaves/oven/oven_model` (174 tests in 9 files: unaffected 174)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_model/src/loaf_registry.rs` | 7 | 840 | 301 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/lock.rs` | 24 | 1894 | 994 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_model/src/manifest.rs` | 68 | 4993 | 1621 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_model/src/manifest.rs` | 69 | 5037 | 1657 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/oven_interop.rs` | 8 | 2098 | 603 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/project_lifecycle/env.rs` | 18 | 860 | 476 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/project_lifecycle/toolchain.rs` | 4 | 295 | 58 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -3129,7 +3129,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_rustc/src/plan/selection.rs` | 1 | 569 | 51 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc.rs` | 96 | 11883 | 6910 | unaffected | - | - | required | #1561 | run 3 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/compiled_unit.rs` | 9 | 892 | 524 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_rustc/src/rustc/direct_compiler.rs` | 5 | 1490 | 1490 | unaffected | - | - | - | #1561 | run 3 | Oven ring; publisher-only native-link execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/oven/oven_rustc/src/rustc/direct_compiler.rs` | 5 | 1529 | 1529 | unaffected | - | - | required | #1561 | run 3 | Oven ring; publisher-only native-link execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/direct_compiler/retention.rs` | 3 | 771 | 771 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (compiler-closure retention) with a `#[cfg(all(test, unix))]` region over a synthetic sysroot, measured by that region. Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/inspection.rs` | 32 | 2670 | 1992 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/runtime_closure.rs` | 8 | 1086 | 509 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -3139,18 +3139,19 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_rustc/src/rustc/substitution.rs` | 10 | 702 | 335 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/toolchain.rs` | 5 | 659 | 73 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
-    #### `loaves/oven/oven_store` (103 tests in 8 files: unaffected 103)
+    #### `loaves/oven/oven_store` (107 tests in 9 files: unaffected 107)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_store/src/closure_proof.rs` | 1 | 107 | 27 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_store/src/lib.rs` | 13 | 2286 | 550 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/lib.rs` | 13 | 2287 | 550 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/process.rs` | 10 | 769 | 769 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/progress.rs` | 6 | 343 | 99 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_store/src/publisher_execution.rs` | 4 | 2292 | 2292 | unaffected | - | - | required | #1561 | - | Oven ring; shared bounded publisher execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/publisher_execution.rs` | 6 | 2437 | 2437 | unaffected | - | - | required | #1561 | - | Oven ring; shared bounded publisher execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/publisher_owner.rs` | 2 | 276 | 39 | unaffected | - | - | - | #1561 | - | Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level. |
     | `loaves/oven/oven_store/src/store.rs` | 55 | 6391 | 2080 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/store_mirror.rs` | 9 | 635 | 373 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_store/tests/publisher_tool.rs` | 5 | 373 | 373 | unaffected | - | - | - | #1561 | - | Oven publisher-tool hermetic execution and generated-product receipts; no generated Incan Rust dependency. |
+    | `loaves/oven/oven_store/tests/publisher_tool.rs` | 5 | 374 | 374 | unaffected | - | - | - | #1561 | - | Oven publisher-tool hermetic execution and generated-product receipts; no generated Incan Rust dependency. |
 
     #### `loaves/stdlib/async` (28 tests in 6 files: unaffected 28)
 

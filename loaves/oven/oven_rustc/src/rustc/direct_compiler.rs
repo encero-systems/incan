@@ -137,6 +137,7 @@ pub fn bake_publisher_link(
                     RustFactArgument::Literal { literal } => PublisherExecutionArgument::Literal(literal),
                     RustFactArgument::Input { input } => PublisherExecutionArgument::Input(input),
                     RustFactArgument::Output { output } => PublisherExecutionArgument::Output(output),
+                    RustFactArgument::Owner { owner } => PublisherExecutionArgument::Owner(owner),
                 })
                 .collect();
             Ok(PublisherExecutionObject {
@@ -146,6 +147,14 @@ pub fn bake_publisher_link(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let environment = publisher_link_environment(&request.link.environment)?;
+    let executable_owner_paths = std::iter::once(request.link.executable.path.as_str())
+        .chain(request.link.objects.iter().flat_map(|object| {
+            object.arguments.iter().filter_map(|argument| match argument {
+                RustFactArgument::Owner { owner } => Some(owner.as_str()),
+                _ => None,
+            })
+        }))
+        .collect();
     let archive_relative_path = publisher_link_archive_name(&request.link.library.name);
     let execution = execute_publisher_work(&PublisherExecutionRequest {
         role: "link",
@@ -156,7 +165,8 @@ pub fn bake_publisher_link(
         toolchain: request.toolchain,
         executable: &executable,
         executable_owner_root: request.executable_owner_root,
-        executable_owner: &request.link.executable.owner,
+        executable_owner: request.link.executable.owner.clone(),
+        executable_owner_paths,
         executable_digest: &request.link.executable.digest,
         objects,
         environment,
@@ -1153,7 +1163,7 @@ mod publisher_link_tests {
             target: "aarch64-apple-darwin".to_string(),
             executable: RustFactExecutable {
                 name: "fake-cc".to_string(),
-                owner: digest_bytes(b"tool-owner"),
+                owner: oven_store::publisher_owner::publisher_owner_identity(&root.join("tool"), ["bin/fake-cc"])?,
                 path: "bin/fake-cc".to_string(),
                 digest: digest_bytes(&fs::read(compiler)?),
             },
@@ -1218,6 +1228,7 @@ mod publisher_link_tests {
                 RustFactArgument::Literal { literal } => format!("literal:{literal}"),
                 RustFactArgument::Input { input } => format!("input:{input}"),
                 RustFactArgument::Output { output } => format!("output:{output}"),
+                RustFactArgument::Owner { owner } => format!("owner:{owner}"),
             })
             .collect::<Vec<_>>();
         assert_eq!(product.receipt.objects[0].logical_argv, selected_argv);
@@ -1340,6 +1351,8 @@ mod publisher_link_tests {
         let compiler = root.path().join("tool/bin/fake-cc");
         fs::write(&compiler, "#!/bin/sh\nset -eu\n:\n")?;
         link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        link.executable.owner =
+            oven_store::publisher_owner::publisher_owner_identity(&root.path().join("tool"), ["bin/fake-cc"])?;
         let bake = |link: &RustFactLink, output_root: &std::path::Path| {
             bake_publisher_link(&OvenPublisherLinkBakeRequest {
                 link,
@@ -1370,6 +1383,8 @@ mod publisher_link_tests {
             "#!/bin/sh\nset -eu\nIFS= read -r content < \"$1\" || true\nprintf '%s' \"$content\" > \"$2\"\nprintf '%s' extra > extra.o\n",
         )?;
         link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        link.executable.owner =
+            oven_store::publisher_owner::publisher_owner_identity(&root.path().join("tool"), ["bin/fake-cc"])?;
         let error = bake(&link, &root.path().join("extra"))
             .err()
             .ok_or("extra object was accepted")?;
@@ -1383,10 +1398,26 @@ mod publisher_link_tests {
     fn publisher_link_bake_with_real_clang_is_reproducible() -> Result<(), Box<dyn Error>> {
         let owner = std::path::Path::new("/Library/Developer/CommandLineTools");
         let clang = owner.join("usr/bin/clang");
-        let sdk = owner.join("SDKs/MacOSX.sdk");
-        if !clang.is_file() || !sdk.exists() {
+        let sdk_link = owner.join("SDKs/MacOSX.sdk");
+        if !clang.is_file() || !sdk_link.exists() {
             return Ok(());
         }
+        let sdk = fs::canonicalize(&sdk_link)?;
+        let sdk_relative = sdk
+            .strip_prefix(owner)?
+            .to_str()
+            .ok_or("versioned SDK path is not UTF-8")?
+            .to_string();
+        let resource_output = std::process::Command::new(&clang).arg("-print-resource-dir").output()?;
+        if !resource_output.status.success() {
+            return Err("clang did not report its resource directory".into());
+        }
+        let resource = String::from_utf8(resource_output.stdout)?.trim().to_string();
+        let resource_relative = std::path::Path::new(&resource)
+            .strip_prefix(owner)?
+            .to_str()
+            .ok_or("clang resource directory path is not UTF-8")?
+            .to_string();
         let root = tempdir()?;
         let sources = root.path().join("source");
         fs::create_dir_all(&sources)?;
@@ -1397,7 +1428,6 @@ mod publisher_link_tests {
             "x86_64" => "x86_64-apple-darwin",
             architecture => return Err(format!("unsupported macOS test architecture `{architecture}`").into()),
         };
-        let sdk_literal = sdk.to_string_lossy().into_owned();
         let object = |name: &str, input: &str| RustFactLinkObject {
             name: name.to_string(),
             language: RustFactLinkLanguage::C,
@@ -1405,8 +1435,14 @@ mod publisher_link_tests {
                 RustFactArgument::Literal {
                     literal: "-isysroot".to_string(),
                 },
+                RustFactArgument::Owner {
+                    owner: sdk_relative.clone(),
+                },
                 RustFactArgument::Literal {
-                    literal: sdk_literal.clone(),
+                    literal: "-resource-dir".to_string(),
+                },
+                RustFactArgument::Owner {
+                    owner: resource_relative.clone(),
                 },
                 RustFactArgument::Literal {
                     literal: "-c".to_string(),
@@ -1427,7 +1463,10 @@ mod publisher_link_tests {
             target: target.to_string(),
             executable: RustFactExecutable {
                 name: "clang".to_string(),
-                owner: digest_bytes(b"Command Line Tools owner"),
+                owner: oven_store::publisher_owner::publisher_owner_identity(
+                    owner,
+                    ["usr/bin/clang", sdk_relative.as_str(), resource_relative.as_str()],
+                )?,
                 path: "usr/bin/clang".to_string(),
                 digest: digest_bytes(&fs::read(&clang)?),
             },

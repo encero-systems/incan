@@ -9389,7 +9389,7 @@
       "disposition": "unaffected",
       "notes": "Oven ring; publisher-only native-link execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -9494,6 +9494,14 @@
       "notes": "Oven ring; shared bounded publisher execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_store/src/publisher_owner.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },
