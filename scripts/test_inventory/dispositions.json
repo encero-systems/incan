@@ -11306,6 +11306,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/partition_reconciliation.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven CI evidence reconciliation; no compiler semantics.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level.",

@@ -642,7 +642,7 @@ test-oven-focused:
 .PHONY: test-oven-report-retention
 test-oven-report-retention:
 	@python3 scripts/test_oven_transcript_retention.py
-	@cd scripts && python3 -m unittest test_reconcile_oven_partitions
+	@$(TOOLS)/cargo_narrow.sh $(CURDIR) test -p oven-cli --lib partition_reconciliation
 
 .PHONY: test-oven-pr-regressions
 test-oven-pr-regressions: test-oven-report-retention

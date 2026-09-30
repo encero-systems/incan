@@ -820,7 +820,7 @@ jobs:
       # partial reports into complete-suite evidence, so it fails the job on any gap or overlap.
       - name: Reconcile joint coverage across partitions
         run: |
-          python3 scripts/reconcile_oven_partitions.py target/oven-timing-record \
+          target/debug/incan oven reconcile-partitions target/oven-timing-record \
             --summary target/oven-reconciliation.json
       - name: Upload the reconciliation summary
         if: always()

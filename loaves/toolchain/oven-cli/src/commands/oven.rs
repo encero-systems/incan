@@ -13,6 +13,7 @@ mod inventory;
 mod loaf_bake;
 mod loaf_bake_evidence;
 mod options;
+mod partition_reconciliation;
 mod suite_environment;
 mod suite_execution;
 mod support;
@@ -25,6 +26,7 @@ pub use loaf_bake::oven_legacy_cargo_bake_loafs;
 #[cfg(test)]
 use loaf_bake::{finish_loaf_bake_after_publication, loaf_envelope_default_limits};
 pub(crate) use loaf_bake_evidence::*;
+pub use partition_reconciliation::oven_reconcile_partitions;
 pub(crate) use suite_environment::*;
 pub(crate) use suite_execution::*;
 

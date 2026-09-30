@@ -170,6 +170,15 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Reconcile compiler-suite partition reports into complete-suite evidence
+    ReconcilePartitions {
+        /// JSON report file or directory containing partition reports; may be repeated
+        #[arg(value_name = "REPORT_OR_DIRECTORY", required = true)]
+        reports: Vec<PathBuf>,
+        /// Optional path receiving the reconciliation summary
+        #[arg(long, value_name = "PATH")]
+        summary: Option<PathBuf>,
+    },
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
         /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn

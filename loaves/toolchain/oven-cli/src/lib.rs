@@ -21,6 +21,9 @@ pub use incan_driver::error::{CliError, CliResult, ExitCode};
 /// Run one `oven` command family member.
 pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
     match command {
+        OvenCommand::ReconcilePartitions { reports, summary } => {
+            commands::oven_reconcile_partitions(&reports, summary.as_deref())
+        }
         OvenCommand::Bake {
             project,
             target,

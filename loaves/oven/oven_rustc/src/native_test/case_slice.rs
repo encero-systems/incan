@@ -23,7 +23,7 @@ pub struct OvenNativeTestCaseSlice<'a> {
 
 /// What one sliced execution covered, recorded so a later reconciliation can prove the slices jointly cover the
 /// root exactly once.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct OvenNativeTestCaseSliceReport {
     /// Zero-based slice that ran.
     pub index: usize,
