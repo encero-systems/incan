@@ -11314,6 +11314,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/sdk_handoff.rs": {
+      "disposition": "unaffected",
+      "notes": "CI transport of one compiler-selected SDK provider; no compiler semantics.",
+      "owner": 1965,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level.",

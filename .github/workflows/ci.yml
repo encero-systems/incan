@@ -58,7 +58,6 @@ jobs:
           python3 scripts/test_release_version_consistency.py
           python3 scripts/test_check_ring_versions.py
           python3 scripts/test_ci_scope.py
-          python3 scripts/test_ci_sdk_handoff.py
           python3 -m unittest discover -s scripts/tests -p test_ci_tool_outputs.py
           python3 scripts/check_release_version_consistency.py \
             --release-branch "$RELEASE_BRANCH" --base-branch "$BASE_BRANCH"
@@ -364,7 +363,7 @@ jobs:
           INCAN_TEST_COMPILER_ALREADY_BUILT=1 INCAN_TEST_PREWARM_TOOLCHAIN=1.98.0 make -s test-prewarm-sdk
       - name: Stage the exact SDK handoff
         run: >-
-          python3 scripts/ci_sdk_handoff.py stage
+          target/debug/incan oven sdk-handoff stage
           --store target/incan_test_sdk_provider_store
           --artifact target/ci-sdk-handoff
       - name: Upload SDK preparation evidence

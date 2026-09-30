@@ -21,7 +21,7 @@ runs:
         HANDOFF_STORE: ${{ inputs.store }}
         HANDOFF_PATH_FILE: ${{ inputs.path-file }}
       run: >-
-        python3 scripts/ci_sdk_handoff.py consume
+        target/debug/incan oven sdk-handoff consume
         --artifact "$HANDOFF_STORE"
         --path-file "$HANDOFF_PATH_FILE"
         --env-file "$GITHUB_ENV"
