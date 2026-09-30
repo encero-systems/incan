@@ -647,6 +647,12 @@ fn registry_unit_slot(leaf: &OvenRustcRegistryLeaf) -> RegistryUnitSlot {
     (leaf.package.clone(), leaf.version.clone(), leaf.domain, leaf.crate_kind)
 }
 
+/// The selected leaf per shared registry-unit slot, and, per input manifest, its superseded `(path, digest)` records.
+type ReconciledRegistryUnits = (
+    BTreeMap<RegistryUnitSlot, OvenRustcRegistryLeaf>,
+    Vec<BTreeSet<(String, String)>>,
+);
+
 /// Select one deterministic artifact record for every compatible shared registry unit.
 ///
 /// Modern publisher leaves carry a portable selected-unit identity whose inputs include the unit's source graph,
@@ -657,10 +663,7 @@ fn registry_unit_slot(leaf: &OvenRustcRegistryLeaf) -> RegistryUnitSlot {
 /// hard incompatibility.
 fn reconcile_packaged_registry_units(
     inputs: &[(&str, &OvenRustcArtifactManifest)],
-) -> OvenPlanResult<(
-    BTreeMap<RegistryUnitSlot, OvenRustcRegistryLeaf>,
-    Vec<BTreeSet<(String, String)>>,
-)> {
+) -> OvenPlanResult<ReconciledRegistryUnits> {
     let mut selected = BTreeMap::<RegistryUnitSlot, OvenRustcRegistryLeaf>::new();
     let mut contributors = BTreeMap::<RegistryUnitSlot, &str>::new();
     for (name, manifest) in inputs {
