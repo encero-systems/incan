@@ -9169,7 +9169,15 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/oven/oven_cargo_compat/src/harvest.rs": {
+    "loaves/oven/oven_cargo_compat/src/harvest/native/argv.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; declarative native-argument classification, no compiler-crate dependency (scripts/check_oven_ring.py).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_cargo_compat/src/harvest/tests.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
