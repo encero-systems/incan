@@ -48,6 +48,12 @@ pub struct OvenHarvestCommandOptions {
     pub cargo: PathBuf,
     /// Explicit Rust compiler whose `-vV` identity the facts bind.
     pub rustc: PathBuf,
+    /// Explicit real C compiler traced during native-link adoption.
+    pub cc: PathBuf,
+    /// Explicit real C++ compiler traced during native-link adoption.
+    pub cxx: PathBuf,
+    /// Explicit C sysroot used by the traced compiler.
+    pub c_sysroot: PathBuf,
     /// Optional existing `Cargo.lock` the observation must resolve within.
     pub cargo_lock: Option<PathBuf>,
     /// Directory receiving the proposals and the refusal list.
@@ -148,6 +154,12 @@ pub struct OvenLegacyCargoPrepareCommandOptions {
     pub cargo: PathBuf,
     /// Explicit Rust compiler used by Cargo and recorded in the receipt.
     pub rustc: PathBuf,
+    /// Explicit real C compiler traced during native-link adoption.
+    pub cc: PathBuf,
+    /// Explicit real C++ compiler traced during native-link adoption.
+    pub cxx: PathBuf,
+    /// Explicit C sysroot used by the traced compiler.
+    pub c_sysroot: PathBuf,
     /// Stable compatibility domain for bounded store admission.
     pub domain: String,
     /// Bounded store selection and policy.
@@ -231,6 +243,12 @@ pub struct OvenLoafBakeCommandOptions {
     pub cargo: PathBuf,
     /// Rust compiler used by the baker and recorded by each receipt.
     pub rustc: PathBuf,
+    /// Explicit real C compiler traced during native-link adoption.
+    pub cc: PathBuf,
+    /// Explicit real C++ compiler traced during native-link adoption.
+    pub cxx: PathBuf,
+    /// Explicit C sysroot used by the traced compiler.
+    pub c_sysroot: PathBuf,
     /// Aggregate physical allowance for the selected envelope.
     pub max_physical_bytes: Option<u64>,
     /// Per-Loaf physical allowance.

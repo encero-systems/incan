@@ -2612,6 +2612,12 @@ mod tests {
             "/toolchain/bin/cargo",
             "--rustc",
             "/toolchain/bin/rustc",
+            "--cc",
+            "/toolchain/bin/clang",
+            "--cxx",
+            "/toolchain/bin/clang++",
+            "--c-sysroot",
+            "/toolchain/SDKs/MacOSX.sdk",
             "--cargo-lock",
             "Cargo.lock",
             "--output",
@@ -2627,6 +2633,9 @@ mod tests {
                     profile,
                     cargo,
                     rustc,
+                    cc,
+                    cxx,
+                    c_sysroot,
                     cargo_lock,
                     output,
                     format,
@@ -2643,6 +2652,9 @@ mod tests {
         assert_eq!(profile.as_str(), "debug");
         assert_eq!(cargo, PathBuf::from("/toolchain/bin/cargo"));
         assert_eq!(rustc, PathBuf::from("/toolchain/bin/rustc"));
+        assert_eq!(cc, PathBuf::from("/toolchain/bin/clang"));
+        assert_eq!(cxx, PathBuf::from("/toolchain/bin/clang++"));
+        assert_eq!(c_sysroot, PathBuf::from("/toolchain/SDKs/MacOSX.sdk"));
         assert_eq!(cargo_lock, Some(PathBuf::from("Cargo.lock")));
         assert_eq!(output, PathBuf::from("target/harvest"));
         assert_eq!(format, OvenOutputFormat::Json);
@@ -2656,6 +2668,12 @@ mod tests {
             "cargo",
             "--rustc",
             "rustc",
+            "--cc",
+            "clang",
+            "--cxx",
+            "clang++",
+            "--c-sysroot",
+            "sdk",
             "--output",
             "harvest",
         ])?;
@@ -2678,6 +2696,12 @@ mod tests {
                 "c",
                 "--rustc",
                 "r",
+                "--cc",
+                "clang",
+                "--cxx",
+                "clang++",
+                "--c-sysroot",
+                "sdk",
                 "--output",
                 "o",
             ])
@@ -2700,6 +2724,12 @@ mod tests {
             "cargo",
             "--rustc",
             "rustc",
+            "--cc",
+            "clang",
+            "--cxx",
+            "clang++",
+            "--c-sysroot",
+            "sdk",
             "--loaf-registry",
             "incan.pub-index",
             "--loaf-registry-commit",
@@ -2744,6 +2774,12 @@ mod tests {
                 "cargo",
                 "--rustc",
                 "rustc",
+                "--cc",
+                "clang",
+                "--cxx",
+                "clang++",
+                "--c-sysroot",
+                "sdk",
                 "--loaf-registry-commit",
                 "abc",
             ])

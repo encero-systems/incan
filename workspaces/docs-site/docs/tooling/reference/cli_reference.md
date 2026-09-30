@@ -275,7 +275,7 @@ incan oven bake [--project PATH] [--target TRIPLE] [--features FEATURE,...] [--n
                 [--all-features] [--format text|json]
 incan oven import --target TRIPLE --toolchain IDENTITY [--project PATH] [--profile PROFILE]
                   [--feature NAME ...] [--source NAME=PATH ...] [--output PATH] [--format text|json]
-incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --output PATH [--project PATH]
+incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --cc PATH --cxx PATH --c-sysroot PATH --output PATH [--project PATH]
                    [--profile release|debug] [--cargo-lock PATH] [--format text|json]
 incan oven interop bake --target TRIPLE [--project PATH] [--base-receipt PATH] [--c-compiler PATH]
                         [--cxx-compiler PATH] [--archiver PATH] [--toolchain-version VERSION]
@@ -335,7 +335,7 @@ The Oven design, its compatibility envelope and its exclusions are explained in 
 ### `incan oven harvest`
 
 ```text
-incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --output PATH [--project PATH]
+incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --cc PATH --cxx PATH --c-sysroot PATH --output PATH [--project PATH]
                    [--profile release|debug] [--cargo-lock PATH] [--format text|json]
 ```
 
@@ -345,7 +345,8 @@ Options:
 
 - `--project <PATH>` (default `.`): the checked manifest, or its directory.
 - `--target <TRIPLE>`, `--profile release|debug` (default `release`): the selection the facts bind.
-- `--cargo <PATH>`, `--rustc <PATH>`: the publisher's tools. The facts bind the `rustc` identity; the Cargo version is recorded as provenance.
+- `--cargo <PATH>`, `--rustc <PATH>`: the publisher's Rust tools. The facts bind the `rustc` identity; the Cargo version is recorded as provenance.
+- `--cc <PATH>`, `--cxx <PATH>`, `--c-sysroot <PATH>`: the real C compiler, C++ compiler, and sysroot used for native-link observation. Harvest never discovers them through `PATH` or `xcrun`; it traces compile and archive invocations through the named publisher wrapper and refuses paths that cannot become portable crate or compiler-owner references.
 - `--cargo-lock <PATH>`: resolve within an existing lock instead of resolving afresh.
 - `--output <PATH>`: the proposal directory.
 - `--format text|json`: text lists proposals and refusals; JSON is the harvest report.

@@ -1128,6 +1128,9 @@ pub fn bake_generated_project_compatibility_plan(
         cargo: resolved_cargo_executable()
             .map_err(|error| CliError::failure(format!("cannot resolve Cargo for explicit Oven bake: {error}")))?,
         rustc: rustc.to_path_buf(),
+        cc: None,
+        cxx: None,
+        c_sysroot: None,
         sdk_inventory: None,
         compiler_loaf_root: None,
         domain: format!("incan-release-{INCAN_VERSION}"),
