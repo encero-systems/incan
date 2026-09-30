@@ -1,0 +1,59 @@
+# behavior: not over an or of parameter comparisons keeps the or grouped in if and while conditions, return values and assignments
+# expect-stdout:
+#   false
+#   false
+#   false
+#   true
+#   0
+#   0
+#   0
+#   1
+#   false
+#   false
+#   false
+#   true
+#   false
+#   false
+#   false
+#   true
+
+def if_not_or(a: str, b: str) -> bool:
+    if not (a == "x" or b == "y"):
+        return true
+    return false
+
+
+def while_not_or(a: int, b: int) -> int:
+    mut runs = 0
+    while not (a == 1 or b == 2):
+        runs += 1
+        break
+    return runs
+
+
+def return_not_or(a: bool, b: bool) -> bool:
+    return not (a == true or b == false)
+
+
+def assigned_not_or(a: int, b: int) -> bool:
+    value = not (a > 0 or b < 0)
+    return value
+
+
+def main() -> None:
+    println(if_not_or("x", "y"))
+    println(if_not_or("x", "q"))
+    println(if_not_or("p", "y"))
+    println(if_not_or("p", "q"))
+    println(while_not_or(1, 2))
+    println(while_not_or(1, 0))
+    println(while_not_or(0, 2))
+    println(while_not_or(0, 0))
+    println(return_not_or(true, false))
+    println(return_not_or(true, true))
+    println(return_not_or(false, false))
+    println(return_not_or(false, true))
+    println(assigned_not_or(1, -1))
+    println(assigned_not_or(1, 1))
+    println(assigned_not_or(0, -1))
+    println(assigned_not_or(0, 1))

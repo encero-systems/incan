@@ -1,0 +1,40 @@
+# behavior: nested not operators over an and of parameter comparisons preserve both levels of grouping for string, integer and boolean parameters
+# expect-stdout:
+#   true
+#   false
+#   false
+#   false
+#   true
+#   false
+#   false
+#   false
+#   true
+#   false
+#   false
+#   false
+
+def nested_str(a: str, b: str) -> bool:
+    return not (not (a == "x" and b == "y"))
+
+
+def nested_int(a: int, b: int) -> bool:
+    return not (not (a == 1 and b == 2))
+
+
+def nested_bool(a: bool, b: bool) -> bool:
+    return not (not (a == true and b == false))
+
+
+def main() -> None:
+    println(nested_str("x", "y"))
+    println(nested_str("x", "q"))
+    println(nested_str("p", "y"))
+    println(nested_str("p", "q"))
+    println(nested_int(1, 2))
+    println(nested_int(1, 0))
+    println(nested_int(0, 2))
+    println(nested_int(0, 0))
+    println(nested_bool(true, false))
+    println(nested_bool(true, true))
+    println(nested_bool(false, false))
+    println(nested_bool(false, true))
