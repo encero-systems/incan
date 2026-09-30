@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3544 | 245 | 8 |
 | re-point | 521 | 86 | 1048 |
 | retire | 1490 | 153 | 0 |
-| unaffected | 1558 | 143 | 5 |
+| unaffected | 1567 | 144 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7113** | **627** | **1061** |
+| **Total** | **7122** | **628** | **1061** |
 
 - Retire-class tests: 1490, of which twinned 1017, dies 294, open 179 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -3032,7 +3032,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1266 tests in 99 files)"
+??? note "Unaffected crates (1275 tests in 100 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3208,6 +3208,12 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/third_party/ra_ap_proc_macro_api/src/legacy_protocol/msg.rs` | 2 | 430 | 244 | unaffected | - | - | - | #1561 | - | vendored crate. Reviewed at crate level. |
+
+    #### `loaves/toolchain/incan-ci-tools` (9 tests in 1 file: unaffected 9)
+
+    | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
+    |---|---:|---:|---:|---|---:|---:|---|---|---|---|
+    | `loaves/toolchain/incan-ci-tools/src/tool_outputs.rs` | 9 | 1417 | 191 | unaffected | - | - | - | #1965 | - | CI bootstrap input evidence and output transport; no compiler semantics. |
 
     #### `loaves/toolchain/oven-cli` (115 tests in 11 files: unaffected 115)
 

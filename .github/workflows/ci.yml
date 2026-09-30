@@ -58,7 +58,6 @@ jobs:
           python3 scripts/test_release_version_consistency.py
           python3 scripts/test_check_ring_versions.py
           python3 scripts/test_ci_scope.py
-          python3 -m unittest discover -s scripts/tests -p test_ci_tool_outputs.py
           python3 scripts/check_release_version_consistency.py \
             --release-branch "$RELEASE_BRANCH" --base-branch "$BASE_BRANCH"
           python3 scripts/check_ring_versions.py
@@ -291,7 +290,7 @@ jobs:
       - name: Fingerprint Linux tool inputs
         id: tool-inputs
         run: >-
-          python3 scripts/ci_tool_outputs.py identity --state target/ci-tool-evidence
+          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- identity --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
       - name: Restore exact Linux tool outputs
         continue-on-error: true
@@ -304,27 +303,27 @@ jobs:
         id: tool-restore
         if: steps.tool-inputs.outputs.eligible == 'true'
         run: >-
-          python3 scripts/ci_tool_outputs.py restore --state target/ci-tool-evidence
+          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- restore --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
       - name: Build optimized Linux compiler and reference generators
         if: steps.tool-restore.outputs.hit != 'true'
         run: |
           set -o pipefail
           mkdir -p target/ci-tool-evidence
-          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/compiler.jsonl
-          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_lang --bin generate_lang_reference --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/reference.jsonl
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- record target/ci-tool-private/compiler.jsonl
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_lang --bin generate_lang_reference --message-format=json-render-diagnostics | cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- record target/ci-tool-private/reference.jsonl
       - name: Audit cold Linux tool input coverage
         id: tool-admission
         if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible == 'true'
         run: >-
-          python3 scripts/ci_tool_outputs.py admit --state target/ci-tool-evidence
+          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- admit --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
           --cargo-log target/ci-tool-private/compiler.jsonl
           --cargo-log target/ci-tool-private/reference.jsonl
       - name: Collect ineligible cold tool facts
         if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible != 'true'
         run: >-
-          python3 scripts/ci_tool_outputs.py collect --state target/ci-tool-evidence
+          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- collect --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
           --cargo-log target/ci-tool-private/compiler.jsonl
           --cargo-log target/ci-tool-private/reference.jsonl

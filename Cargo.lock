@@ -1429,6 +1429,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "incan-ci-tools"
+version = "0.6.0-dev.6"
+dependencies = [
+ "clap",
+ "flate2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "incan-cli"
 version = "0.6.0-dev.6"
 dependencies = [

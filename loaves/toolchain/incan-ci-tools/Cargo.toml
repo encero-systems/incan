@@ -1,0 +1,21 @@
+[package]
+name = "incan-ci-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Bootstrap-safe CI evidence and self-build inventory utilities"
+publish = false
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+flate2 = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+tempfile = "3"
+toml = "0.9"
+
+[[bin]]
+name = "incan-ci-tool-outputs"
+path = "src/bin/tool_outputs_cli.rs"

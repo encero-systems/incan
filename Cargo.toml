@@ -17,6 +17,7 @@ members = [
     "loaves/toolchain/incan-cli",
     "loaves/toolchain/incan-lsp",
     "loaves/toolchain/oven-cli",
+    "loaves/toolchain/incan-ci-tools",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
     "loaves/kernel/incan_lang",
