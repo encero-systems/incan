@@ -1,0 +1,82 @@
+# behavior: `not` over `and` or `or` expressions of runtime boolean parameters keeps both operands grouped in if conditions, return values and assignments
+# expect-stdout:
+#   false
+#   true
+#   true
+#   true
+#   false
+#   true
+#   true
+#   true
+#   false
+#   true
+#   true
+#   true
+#   false
+#   false
+#   false
+#   true
+#   false
+#   false
+#   false
+#   true
+#   false
+#   false
+#   false
+#   true
+
+def f(a: bool, b: bool) -> bool:
+    if not (a and b):
+        return true
+    return false
+
+
+def return_not_and(a: bool, b: bool) -> bool:
+    return not (a and b)
+
+
+def assigned_not_and(a: bool, b: bool) -> bool:
+    value = not (a and b)
+    return value
+
+
+def if_not_or(a: bool, b: bool) -> bool:
+    if not (a or b):
+        return true
+    return false
+
+
+def return_not_or(a: bool, b: bool) -> bool:
+    return not (a or b)
+
+
+def assigned_not_or(a: bool, b: bool) -> bool:
+    value = not (a or b)
+    return value
+
+
+def main() -> None:
+    println(f(true, true))
+    println(f(true, false))
+    println(f(false, true))
+    println(f(false, false))
+    println(return_not_and(true, true))
+    println(return_not_and(true, false))
+    println(return_not_and(false, true))
+    println(return_not_and(false, false))
+    println(assigned_not_and(true, true))
+    println(assigned_not_and(true, false))
+    println(assigned_not_and(false, true))
+    println(assigned_not_and(false, false))
+    println(if_not_or(true, true))
+    println(if_not_or(true, false))
+    println(if_not_or(false, true))
+    println(if_not_or(false, false))
+    println(return_not_or(true, true))
+    println(return_not_or(true, false))
+    println(return_not_or(false, true))
+    println(return_not_or(false, false))
+    println(assigned_not_or(true, true))
+    println(assigned_not_or(true, false))
+    println(assigned_not_or(false, true))
+    println(assigned_not_or(false, false))

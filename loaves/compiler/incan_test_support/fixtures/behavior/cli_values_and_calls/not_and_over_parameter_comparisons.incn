@@ -1,0 +1,59 @@
+# behavior: not over an and of parameter comparisons keeps the and grouped in if and while conditions, return values and assignments
+# expect-stdout:
+#   false
+#   true
+#   true
+#   true
+#   0
+#   1
+#   1
+#   1
+#   false
+#   true
+#   true
+#   true
+#   false
+#   true
+#   true
+#   true
+
+def if_not_and(a: str, b: str) -> bool:
+    if not (a == "x" and b == "y"):
+        return true
+    return false
+
+
+def while_not_and(a: int, b: int) -> int:
+    mut runs = 0
+    while not (a == 1 and b == 2):
+        runs += 1
+        break
+    return runs
+
+
+def return_not_and(a: bool, b: bool) -> bool:
+    return not (a == true and b == false)
+
+
+def assigned_not_and(a: int, b: int) -> bool:
+    value = not (a > 0 and b < 0)
+    return value
+
+
+def main() -> None:
+    println(if_not_and("x", "y"))
+    println(if_not_and("x", "q"))
+    println(if_not_and("p", "y"))
+    println(if_not_and("p", "q"))
+    println(while_not_and(1, 2))
+    println(while_not_and(1, 0))
+    println(while_not_and(0, 2))
+    println(while_not_and(0, 0))
+    println(return_not_and(true, false))
+    println(return_not_and(true, true))
+    println(return_not_and(false, false))
+    println(return_not_and(false, true))
+    println(assigned_not_and(1, -1))
+    println(assigned_not_and(1, 1))
+    println(assigned_not_and(0, -1))
+    println(assigned_not_and(0, 1))
