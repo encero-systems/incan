@@ -22,8 +22,8 @@ use super::{
     CargoBuildScriptExecuted, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, CargoUnitGraph,
     CargoUnitGraphDependency, CargoUnitGraphTarget, CargoUnitGraphUnit, OvenLegacyCargoError,
     OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, OvenLegacyRustcInvocation,
-    OvenRustcSupportingArtifact, canonical_directory, copy_regular_directory_tree, digest_bytes,
-    materialized_files_from_directory, regular_file_bytes,
+    OvenRustcSupportingArtifact, canonical_directory, digest_bytes, materialized_files_from_directory,
+    regular_file_bytes,
 };
 
 /// Reconstruct Cargo's exact compiled-unit edges from the stable compiler-artifact stream and observed rustc argv.
@@ -289,6 +289,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             target_context,
             rustc_target,
             digest: probe_digest,
+            output: invocation.stdin_probe_output.clone(),
         });
     }
     build_script_tool_probes.sort();
@@ -518,6 +519,10 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
     let out_root = invocation.environment.get("OUT_DIR").map(Path::new)?;
     invocation.environment.get("CARGO_PKG_NAME")?;
     invocation.environment.get("CARGO_PKG_VERSION")?;
+    // A stdin probe has its own bounded output shapes, one of which (autocfg's) emits LLVM IR.
+    if super::rustc_trace::rustc_positional_source(&invocation.arguments) == Some("-") {
+        return stdin_tool_probe_digest(invocation, out_root);
+    }
     let emits = comma_separated_argument_values(&invocation.arguments, "--emit");
     if emits.is_empty()
         || emits
@@ -525,9 +530,6 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
             .any(|emit| !matches!(emit.as_str(), "dep-info" | "metadata"))
     {
         return None;
-    }
-    if super::rustc_trace::rustc_positional_source(&invocation.arguments) == Some("-") {
-        return stdin_tool_probe_digest(invocation, out_root);
     }
     let out_dir = argument_value(&invocation.arguments, "--out-dir").map(Path::new)?;
     if !lexically_beneath(out_dir, out_root) {
@@ -560,13 +562,14 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
     let normalized_arguments = invocation
         .arguments
         .iter()
-        .map(|argument| {
+        .enumerate()
+        .map(|(index, argument)| {
             if argument == source.to_string_lossy().as_ref() {
                 format!("<package>/{}", source_relative.to_string_lossy())
             } else if argument == out_dir.to_string_lossy().as_ref() {
                 format!("<out>/{}", out_relative.to_string_lossy())
             } else {
-                argument.clone()
+                portable_probe_argument(&invocation.arguments, index)
             }
         })
         .collect::<Vec<_>>();
@@ -585,7 +588,68 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
     Some(digest_bytes(&encoded))
 }
 
-/// Bind a metadata-only stdin probe to its captured source digest and an output beneath the package OUT_DIR.
+/// Spell one probe argument without the publisher's per-run scratch paths.
+///
+/// The publisher remaps its scratch staging, Cargo home and sysroot to stable spellings with `--remap-path-prefix
+/// FROM=TO`. The `TO` side is what the probe's compiler records, while `FROM` names a directory that differs on every
+/// run. Keeping only `TO` makes a probe's identity the same across repeat harvests of one binding. Both the joined and
+/// the separate spelling of the flag are recognized; every other argument is returned verbatim.
+fn portable_probe_argument(arguments: &[String], index: usize) -> String {
+    let Some(argument) = arguments.get(index) else {
+        return String::new();
+    };
+    let follows_flag = index
+        .checked_sub(1)
+        .and_then(|previous| arguments.get(previous))
+        .is_some_and(|previous| previous == "--remap-path-prefix");
+    if let Some((_, to)) = argument
+        .strip_prefix("--remap-path-prefix=")
+        .and_then(|mapping| mapping.rsplit_once('='))
+    {
+        format!("--remap-path-prefix=<publisher>={to}")
+    } else if let Some((_, to)) = argument.rsplit_once('=').filter(|_| follows_flag) {
+        format!("<publisher>={to}")
+    } else {
+        argument.clone()
+    }
+}
+
+/// Locate the single output a stdin compiler probe writes strictly beneath the package `OUT_DIR`.
+///
+/// Two probe shapes are bounded. A metadata-only probe names its output with `-o`, as proc-macro2 and rustix do.
+/// autocfg's probe emits LLVM IR into `--out-dir`, where rustc names the file after `--crate-name`. Any other emit
+/// set, a source other than stdin, or an output outside `OUT_DIR` is not a bounded probe.
+fn stdin_probe_output_path(invocation: &OvenLegacyRustcInvocation, out_root: &Path) -> Option<PathBuf> {
+    if super::rustc_trace::rustc_positional_source(&invocation.arguments) != Some("-") {
+        return None;
+    }
+    let emits = comma_separated_argument_values(&invocation.arguments, "--emit");
+    let output = match (
+        emits.as_slice(),
+        argument_value(&invocation.arguments, "-o"),
+        argument_value(&invocation.arguments, "--out-dir"),
+    ) {
+        ([emit], Some(output), _) if emit == "metadata" => PathBuf::from(output),
+        ([emit], None, Some(out_dir)) if emit == "llvm-ir" => {
+            let crate_name = argument_value(&invocation.arguments, "--crate-name")?;
+            if crate_name.is_empty()
+                || !crate_name
+                    .bytes()
+                    .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+            {
+                return None;
+            }
+            Path::new(out_dir).join(format!("{crate_name}.ll"))
+        }
+        _ => return None,
+    };
+    (lexically_beneath(&output, out_root) && output != out_root).then_some(output)
+}
+
+/// Bind a bounded stdin probe to its captured source digest and its one output beneath the package OUT_DIR.
+///
+/// The output's own spelling (`-o`) or its directory (`--out-dir`) is recorded relative to `OUT_DIR`, so the identity
+/// does not depend on where the publisher's scratch target lives.
 fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Path) -> Option<String> {
     let source_digest = invocation.stdin_digest.as_deref()?;
     let hex = source_digest.strip_prefix("sha256:")?;
@@ -596,28 +660,28 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
     {
         return None;
     }
-    if super::rustc_trace::rustc_positional_source(&invocation.arguments) != Some("-")
-        || comma_separated_argument_values(&invocation.arguments, "--emit") != ["metadata"]
-    {
-        return None;
-    }
-    let output = argument_value(&invocation.arguments, "-o").map(Path::new)?;
-    if !lexically_beneath(output, out_root) || output == out_root {
-        return None;
-    }
+    let output = stdin_probe_output_path(invocation, out_root)?;
     let relative = output.strip_prefix(out_root).ok()?;
     let captured = invocation.stdin_probe_output.as_ref()?;
     if captured.relative_path != relative.to_string_lossy() || !valid_probe_digest(&captured.digest) {
         return None;
     }
+    let output_spelling = output.to_string_lossy();
+    let out_dir = argument_value(&invocation.arguments, "--out-dir").map(Path::new);
     let arguments = invocation
         .arguments
         .iter()
-        .map(|argument| {
-            if argument == output.to_string_lossy().as_ref() {
+        .enumerate()
+        .map(|(index, argument)| {
+            if argument == output_spelling.as_ref() {
                 format!("<out>/{}", relative.to_string_lossy())
+            } else if let Some(directory) = out_dir
+                .filter(|out_dir| argument == out_dir.to_string_lossy().as_ref())
+                .and_then(|out_dir| out_dir.strip_prefix(out_root).ok())
+            {
+                format!("<out>/{}", directory.to_string_lossy())
             } else {
-                argument.clone()
+                portable_probe_argument(&invocation.arguments, index)
             }
         })
         .collect::<Vec<_>>();
@@ -648,20 +712,16 @@ fn valid_probe_digest(value: &str) -> bool {
 
 const MAX_STDIN_PROBE_OUTPUT_BYTES: u64 = 1024 * 1024;
 
-/// Capture ephemeral metadata while rustc has completed but the build script is still waiting on the wrapper.
+/// Capture a stdin probe's ephemeral output while rustc has completed but the build script is still waiting on the
+/// wrapper; build scripts delete or overwrite these files once they have read the probe's success.
 pub(crate) fn capture_stdin_probe_output(
     invocation: &OvenLegacyRustcInvocation,
 ) -> Option<super::rustc_trace::OvenLegacyStdinProbeOutput> {
     let out_root = Path::new(invocation.environment.get("OUT_DIR")?);
-    let output = argument_value(&invocation.arguments, "-o").map(Path::new)?;
-    if super::rustc_trace::rustc_positional_source(&invocation.arguments) != Some("-")
-        || comma_separated_argument_values(&invocation.arguments, "--emit") != ["metadata"]
-        || !valid_probe_digest(invocation.stdin_digest.as_deref()?)
-        || !lexically_beneath(output, out_root)
-        || output == out_root
-    {
+    if !valid_probe_digest(invocation.stdin_digest.as_deref()?) {
         return None;
     }
+    let output = stdin_probe_output_path(invocation, out_root)?;
     let relative = output.strip_prefix(out_root).ok()?;
     let mut file = open_probe_output(out_root, relative)?;
     // Feature probes are small. Bound the read even if the captured file is replaced or grows concurrently.
@@ -982,6 +1042,12 @@ pub struct OvenLegacyCargoBuildScriptToolProbe {
     pub target_context: String,
     pub rustc_target: String,
     pub digest: String,
+    /// The probe's own output path, relative to `out_dir`, and its digest when the probe finished, whenever the
+    /// capture observed it (stdin probes). A script that leaves exactly these bytes in its OUT_DIR has not generated
+    /// an input: the file is the metadata or IR that carried the probe's answer, and nothing the package compiles
+    /// reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<super::rustc_trace::OvenLegacyStdinProbeOutput>,
 }
 
 /// Physical compiler facts captured once for the same host/target selection as the Cargo unit graph.
@@ -1479,7 +1545,7 @@ fn retain_generated_output(
     let relative_root = format!("generated-outputs/{identity}");
     let destination = staging.join(&relative_root);
     if !destination.exists() {
-        copy_regular_directory_tree(&source, &destination, "Cargo build-script OUT_DIR")?;
+        copy_generated_output_tree(&source, &destination)?;
     }
     let retained_members = generated_output_members(&destination)?;
     let digest = selected_graph_generated_input_digest(&retained_members).map_err(|error| {
@@ -1524,21 +1590,98 @@ fn retain_generated_output(
 
 /// Inventory a checked build-script output directory, including an explicitly empty directory.
 fn generated_output_members(root: &Path) -> Result<Vec<OvenSelectedRustFacetSourceMember>, OvenLegacyCargoError> {
-    materialized_files_from_directory(root, "generated", "Cargo build-script OUT_DIR")?
+    generated_output_files(root)?
         .into_iter()
         .map(|file| {
             Ok(OvenSelectedRustFacetSourceMember {
-                path: file
-                    .relative_path
-                    .strip_prefix("generated/")
-                    .ok_or_else(|| {
-                        OvenLegacyCargoError::Plan("generated member lost its inventory prefix".to_string())
-                    })?
-                    .to_string(),
+                path: file.relative_path,
                 digest: digest_bytes(&regular_file_bytes(&file.source_path)?),
             })
         })
         .collect()
+}
+
+/// One regular file a build-script OUT_DIR presents at an OUT_DIR-relative, `/`-separated path.
+struct GeneratedOutputFile {
+    relative_path: String,
+    source_path: PathBuf,
+}
+
+/// Walk one canonical build-script OUT_DIR into the regular files it presents, in path order.
+///
+/// A build script owns its OUT_DIR, and install-style scripts link one of their outputs to another (protobuf-src's
+/// `bin/protoc` names the versioned binary beside it). Such a link is retained as the bytes of the regular file it
+/// names, provided that file lies beneath the same OUT_DIR. A link that leaves the tree, names a directory, or dangles
+/// is refused, as is any other non-regular entry, so retention never reads outside the script's own output.
+fn generated_output_files(root: &Path) -> Result<Vec<GeneratedOutputFile>, OvenLegacyCargoError> {
+    let refuse = |path: &Path, reason: &str| OvenLegacyCargoError::InvalidInput {
+        field: "Cargo build-script OUT_DIR",
+        message: format!("refuses {reason} {}", path.display()),
+    };
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .and_then(|entries| entries.collect::<Result<Vec<_>, _>>())
+            .map_err(|source| OvenLegacyCargoError::Io {
+                path: directory.clone(),
+                source,
+            })?;
+        for entry in entries {
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path).map_err(|source| OvenLegacyCargoError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            let source_path = if metadata.file_type().is_symlink() {
+                let target = std::fs::canonicalize(&path).map_err(|_| refuse(&path, "dangling link"))?;
+                if !target.starts_with(root) || !target.is_file() {
+                    return Err(refuse(&path, "link to a non-member of the OUT_DIR"));
+                }
+                target
+            } else if metadata.is_dir() {
+                pending.push(path);
+                continue;
+            } else if metadata.is_file() {
+                path.clone()
+            } else {
+                return Err(refuse(&path, "non-regular OUT_DIR entry"));
+            };
+            let relative_path = path
+                .strip_prefix(root)
+                .map_err(|_| refuse(&path, "entry outside the OUT_DIR"))?
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            files.push(GeneratedOutputFile {
+                relative_path,
+                source_path,
+            });
+        }
+    }
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(files)
+}
+
+/// Copy one canonical build-script OUT_DIR into the retained store as regular files only.
+///
+/// The destination holds exactly the files [`generated_output_files`] presents, so an in-tree link becomes a copy of
+/// the member it names and the retained tree digests to the same members as the source.
+fn copy_generated_output_tree(source: &Path, destination: &Path) -> Result<(), OvenLegacyCargoError> {
+    let io = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| OvenLegacyCargoError::Io { path, source }
+    };
+    std::fs::create_dir_all(destination).map_err(io(destination))?;
+    for file in generated_output_files(source)? {
+        let target = destination.join(&file.relative_path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(io(parent))?;
+        }
+        std::fs::copy(&file.source_path, &target).map_err(io(&target))?;
+    }
+    Ok(())
 }
 
 /// Join registry-backed selected units to the publisher's exact staged source catalogs.
@@ -2192,6 +2335,140 @@ mod tests {
         let mut escaped = invocation;
         escaped.arguments[5] = scratch.path().join("outside").to_string_lossy().to_string();
         assert!(build_script_tool_probe_digest(&escaped).is_none());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    /// An install-style OUT_DIR link to a sibling member is retained as that member's bytes; a link that leaves the
+    /// OUT_DIR, names a directory or dangles refuses the retention.
+    fn build_script_output_retains_in_tree_links_as_their_members() -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let out_root = scratch.path().join("out");
+        fs::create_dir_all(out_root.join("bin"))?;
+        fs::write(out_root.join("bin/protoc-35.1"), b"protoc bytes")?;
+        symlink("protoc-35.1", out_root.join("bin/protoc"))?;
+        let out_root = fs::canonicalize(&out_root)?;
+
+        let members = generated_output_members(&out_root)?;
+        assert_eq!(
+            members
+                .iter()
+                .map(|member| (member.path.as_str(), member.digest.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("bin/protoc", digest_bytes(b"protoc bytes").as_str()),
+                ("bin/protoc-35.1", digest_bytes(b"protoc bytes").as_str()),
+            ]
+        );
+        let retained = scratch.path().join("retained");
+        copy_generated_output_tree(&out_root, &retained)?;
+        assert!(
+            !fs::symlink_metadata(retained.join("bin/protoc"))?
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(generated_output_members(&retained)?, members);
+
+        let outside = scratch.path().join("outside");
+        fs::write(&outside, b"host bytes")?;
+        for (name, target) in [
+            ("escaping", outside.clone()),
+            ("directory", out_root.join("bin")),
+            ("dangling", out_root.join("missing")),
+        ] {
+            symlink(&target, out_root.join(name))?;
+            assert!(generated_output_members(&out_root).is_err(), "{name} link was retained");
+            fs::remove_file(out_root.join(name))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    /// autocfg probes rustc through stdin with `--emit=llvm-ir --out-dir OUT_DIR`; the probe is bounded by the one
+    /// file rustc names after `--crate-name`, and its identity does not depend on where the scratch target lives.
+    fn stable_trace_classifies_autocfg_llvm_ir_stdin_probes() -> Result<(), Box<dyn std::error::Error>> {
+        let probe = |root: &Path, out_dir: &Path| OvenLegacyRustcInvocation {
+            stdin_digest: Some(digest_bytes(b"pub fn probe() {}")),
+            stdin_probe_output: None,
+            reason: "incan-rustc-invocation".to_string(),
+            rustc: "/verified/rustc".to_string(),
+            working_directory: root.to_string_lossy().to_string(),
+            arguments: vec![
+                "--crate-name".to_string(),
+                "autocfg_0123abcd_0".to_string(),
+                "--crate-type=lib".to_string(),
+                "--out-dir".to_string(),
+                out_dir.to_string_lossy().to_string(),
+                "--emit=llvm-ir".to_string(),
+                "--target".to_string(),
+                "aarch64-apple-darwin".to_string(),
+                format!("--remap-path-prefix={}=/incan/target", root.join("scratch").display()),
+                "--remap-path-prefix".to_string(),
+                format!("{}=/incan/cargo-home", root.join("cargo-home").display()),
+                "-".to_string(),
+            ],
+            environment: BTreeMap::from([
+                ("CARGO_MANIFEST_DIR".to_string(), root.to_string_lossy().to_string()),
+                ("CARGO_PKG_NAME".to_string(), "num-traits".to_string()),
+                ("CARGO_PKG_VERSION".to_string(), "0.2.19".to_string()),
+                (
+                    "OUT_DIR".to_string(),
+                    root.join("target/build/num-traits/out").to_string_lossy().to_string(),
+                ),
+            ]),
+        };
+        let captured = |root: &Path| -> Result<OvenLegacyRustcInvocation, Box<dyn std::error::Error>> {
+            let out_root = root.join("target/build/num-traits/out");
+            fs::create_dir_all(&out_root)?;
+            fs::write(
+                out_root.join("autocfg_0123abcd_0.ll"),
+                b"; ModuleID = 'autocfg_0123abcd_0'\n",
+            )?;
+            let mut invocation = probe(root, &out_root);
+            invocation.stdin_probe_output = capture_stdin_probe_output(&invocation);
+            Ok(invocation)
+        };
+
+        let first = tempfile::tempdir()?;
+        let autocfg = captured(first.path())?;
+        assert_eq!(
+            autocfg
+                .stdin_probe_output
+                .as_ref()
+                .map(|output| output.relative_path.as_str()),
+            Some("autocfg_0123abcd_0.ll")
+        );
+        let original = build_script_tool_probe_digest(&autocfg).ok_or("autocfg probe refused")?;
+        let relocated = tempfile::tempdir()?;
+        assert_eq!(
+            build_script_tool_probe_digest(&captured(relocated.path())?).as_ref(),
+            Some(&original)
+        );
+
+        let elsewhere = first.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere)?;
+        fs::write(elsewhere.join("autocfg_0123abcd_0.ll"), b"; outside")?;
+        let outside = probe(first.path(), &elsewhere);
+        assert!(capture_stdin_probe_output(&outside).is_none());
+        assert!(
+            build_script_tool_probe_digest(&OvenLegacyRustcInvocation {
+                stdin_probe_output: autocfg.stdin_probe_output.clone(),
+                ..outside
+            })
+            .is_none()
+        );
+        let mut linking = autocfg.clone();
+        linking.arguments[5] = "--emit=llvm-ir,link".to_string();
+        assert!(build_script_tool_probe_digest(&linking).is_none());
+        let mut escaping = autocfg.clone();
+        escaping.arguments[1] = "../autocfg_0123abcd_0".to_string();
+        assert!(build_script_tool_probe_digest(&escaping).is_none());
+        let mut redirected = autocfg;
+        redirected.arguments.insert(8, "-o".to_string());
+        redirected.arguments.insert(9, "probe.ll".to_string());
+        assert!(build_script_tool_probe_digest(&redirected).is_none());
         Ok(())
     }
 

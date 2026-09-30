@@ -2878,6 +2878,7 @@ mod tests {
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
                 rustc_target: "x86_64-unknown-linux-gnu".to_string(),
                 digest: digest(b"pruned script probe"),
+                output: None,
             });
         let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let graph = finalized.graph.graph();
@@ -3061,6 +3062,7 @@ mod tests {
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
                 rustc_target: "x86_64-unknown-linux-gnu".to_string(),
                 digest: digest(b"adopted script probe"),
+                output: None,
             });
         let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &registry, "release")?;
         let refused_probe = finalize_release_shaped(&probed_capture, &probed_sources, &probed_authority);
@@ -4015,6 +4017,7 @@ mod tests {
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
                 rustc_target: "x86_64-unknown-linux-gnu".to_string(),
                 digest: digest(b"first bounded probe"),
+                output: None,
             });
         let first_probe_digest = legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?;
         let mut relocated_capture = capture.clone();

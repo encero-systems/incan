@@ -306,6 +306,13 @@ pub struct HarvestEvidence {
     pub cargo_lock_digest: String,
     /// `sha256:` digest of the publisher's `Cargo.toml`.
     pub cargo_manifest_digest: String,
+    /// Sorted, unique digests of the compiler probes whose answers are the fact's `cfg` list; empty when the build
+    /// script probed nothing.
+    ///
+    /// A probe digest covers the probe's exact invocation, so it can differ between units and runs that answered the
+    /// same. It is evidence of what was asked, never part of the fact admission compares.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compiler_probes: Vec<String>,
 }
 
 /// One harvest proposal, as `incan-pub add-fact` admits it.
@@ -736,6 +743,8 @@ struct Observation {
     fact: HarvestFact,
     source: HarvestSource,
     out_relative_root: Option<String>,
+    /// Digests of the compiler probes whose only answer is the fact's `cfg` list; evidence, never part of the fact.
+    compiler_probes: Vec<String>,
 }
 
 /// Turn one capture into proposals for every immediately admissible registry unit and refusals for the rest.
@@ -809,6 +818,14 @@ pub fn harvest_registry_units(
             });
             continue;
         }
+        let compiler_probes = first
+            .compiler_probes
+            .iter()
+            .chain(group.iter().flat_map(|observation| observation.compiler_probes.iter()))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let mut proposal = HarvestProposal {
             project: HarvestProject { name: package, version },
             source: first.source,
@@ -824,6 +841,7 @@ pub fn harvest_registry_units(
                 cargo_version: evidence.cargo_version.clone(),
                 cargo_lock_digest: evidence.cargo_lock_digest.clone(),
                 cargo_manifest_digest: evidence.cargo_manifest_digest.clone(),
+                compiler_probes,
             },
             notes: evidence.notes.clone(),
             out_relative_root: first.out_relative_root,
@@ -1050,9 +1068,47 @@ fn observe_unit(
             "retained output tree has no sha256 digest".to_string(),
         ));
     }
+    // The compiler probes this unit's build script ran, and the files that carried their answers. A probe's own
+    // output is not a generated input: nothing the package compiles reads it, so it is neither `out` nor a product.
+    // It is recognized only by the path and bytes the capture recorded when the probe finished; a file at that path
+    // holding other bytes was rewritten by the script, and the harvest refuses rather than guess which it is.
+    let unit_probes = match (facts, edge) {
+        (Some(facts), Some((_, build_unit))) => capture
+            .build_script_tool_probes
+            .iter()
+            .filter(|probe| probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir)
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    // Several probes may write one path in turn (rustix probes every feature into `rustix_test_can_compile`), so a
+    // path maps to every set of bytes a probe left there.
+    let mut probe_outputs = BTreeMap::<&str, BTreeSet<&str>>::new();
+    for probe_output in unit_probes.iter().filter_map(|probe| probe.output.as_ref()) {
+        probe_outputs
+            .entry(probe_output.relative_path.as_str())
+            .or_default()
+            .insert(probe_output.digest.as_str());
+    }
+    let members = output.map(|output| output.members.as_slice()).unwrap_or_default();
+    if let Some(member) = members.iter().find(|member| {
+        probe_outputs
+            .get(member.path.as_str())
+            .is_some_and(|digests| !digests.contains(member.digest.as_str()))
+    }) {
+        return Err(refuse(
+            HarvestRefusalReason::ConflictingObservations,
+            format!(
+                "OUT_DIR member `{}` is a probe's output rewritten by the script",
+                member.path
+            ),
+        ));
+    }
+    let generated_members = members
+        .iter()
+        .filter(|member| !probe_outputs.contains_key(member.path.as_str()));
     let mut out = Vec::new();
     let mut names = BTreeSet::new();
-    for member in output.map(|output| output.members.as_slice()).unwrap_or_default() {
+    for member in generated_members.clone() {
         if safe_relative(&member.path).is_none() || !is_sha256_identity(&member.digest) {
             return Err(refuse(
                 HarvestRefusalReason::MalformedOutput,
@@ -1075,18 +1131,12 @@ fn observe_unit(
         });
     }
     out.sort_by(|left, right| left.name.cmp(&right.name));
-    let mut products = output
-        .map(|output| {
-            output
-                .members
-                .iter()
-                .map(|member| HarvestObservedProduct {
-                    owner_relative_path: member.path.clone(),
-                    digest: member.digest.clone(),
-                })
-                .collect::<Vec<_>>()
+    let mut products = generated_members
+        .map(|member| HarvestObservedProduct {
+            owner_relative_path: member.path.clone(),
+            digest: member.digest.clone(),
         })
-        .unwrap_or_default();
+        .collect::<Vec<_>>();
     products.sort();
 
     // ---- Environment: prove binding-derived constants or retain an exact owner-relative input ----
@@ -1181,34 +1231,47 @@ fn observe_unit(
 
     // ---- Tool probes retain their target domains, invocation identity and generated product identities ----
     let mut tool_observations = Vec::new();
-    if let (Some(facts), Some((_, build_unit))) = (facts, edge) {
-        let output_tree_digest = output.map(|output| output.digest.clone());
-        for probe in capture
-            .build_script_tool_probes
-            .iter()
-            .filter(|probe| probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir)
-        {
-            let Some(output_tree_digest) = output_tree_digest.clone() else {
-                return Err(refuse(
-                    HarvestRefusalReason::OutputNotRetained,
-                    "tool products were not retained".to_string(),
-                ));
-            };
-            tool_observations.push(HarvestToolObservation {
-                target_context: probe.target_context.clone(),
-                rustc_target: probe.rustc_target.clone(),
-                probe_digest: probe.digest.clone(),
-                executable_identity: rustc_executable_identity.to_string(),
-                output_tree_digest,
-                products: products.clone(),
-                name: None,
-                executable: None,
-                arguments: Vec::new(),
-                environment: Vec::new(),
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-            });
-        }
+    let output_tree_digest = output.map(|output| output.digest.clone());
+    for probe in &unit_probes {
+        let Some(output_tree_digest) = output_tree_digest.clone() else {
+            return Err(refuse(
+                HarvestRefusalReason::OutputNotRetained,
+                "tool products were not retained".to_string(),
+            ));
+        };
+        tool_observations.push(HarvestToolObservation {
+            target_context: probe.target_context.clone(),
+            rustc_target: probe.rustc_target.clone(),
+            probe_digest: probe.digest.clone(),
+            executable_identity: rustc_executable_identity.to_string(),
+            output_tree_digest,
+            products: products.clone(),
+            name: None,
+            executable: None,
+            arguments: Vec::new(),
+            environment: Vec::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        });
+    }
+
+    // ---- A compiler probe answers only through `cfg` ----
+    // RFC 119 records a probe's answer, not the probe. A compiler probe is a bounded, non-linking rustc invocation
+    // that emits only metadata or IR, so its answer is a function of the compiler and the crate source, which the
+    // record already binds by `toolchain`, `target` and `source.checksum`, and it produces no input the package
+    // compiles. The probe digests therefore stay evidence, and two units whose probes were spelled differently (a host
+    // unit's opt-level) but answered the same fold into one fact. Whatever else the script left in OUT_DIR is its
+    // ordinary `out`, as for a script that probes nothing. A probe of another target is refused until a record binds
+    // that target.
+    let mut compiler_probes = Vec::new();
+    if tool_observations
+        .iter()
+        .all(|observation| observation.rustc_target == compiler.target)
+    {
+        compiler_probes = tool_observations
+            .drain(..)
+            .map(|observation| observation.probe_digest)
+            .collect();
     }
     if let (Some(facts), Some(output_tree_digest)) = (facts, output.map(|output| output.digest.clone())) {
         for work in facts
@@ -1263,6 +1326,7 @@ fn observe_unit(
             checksum,
         },
         out_relative_root: output.map(|output| output.relative_root.clone()),
+        compiler_probes,
     })
 }
 
@@ -1730,6 +1794,7 @@ mod tests {
     }
 
     #[test]
+    /// A refused probe (here one of another target) keeps its invocation identity and the OUT_DIR products beside it.
     fn harvest_contract_preserves_tool_probe_and_product_identities() -> TestResult {
         let unit = library("isle-meta", "1.0.0", &[]);
         let build = build_script_of(&unit);
@@ -1740,8 +1805,9 @@ mod tests {
                 package_id: build.package_id,
                 out_dir: PathBuf::from("/transient/out"),
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
-                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "aarch64-apple-darwin".to_string(),
                 digest: selected_graph_sha256(b"probe"),
+                output: None,
             });
         let report = harvest_registry_units(&selected, &evidence(), "release")?;
         assert!(report.proposals.is_empty());
@@ -1753,6 +1819,145 @@ mod tests {
         let observation = &refusal.observations.tool[0];
         assert_eq!(observation.probe_digest, selected_graph_sha256(b"probe"));
         assert_eq!(observation.products[0].digest, selected_graph_sha256(b"archive"));
+        Ok(())
+    }
+
+    #[test]
+    /// A build script's compiler probes propose their answers as `cfg` with the probe digests as evidence. A probe's
+    /// own output left in OUT_DIR is neither `out` nor a product, while a file the script wrote stays `out`. Units
+    /// that asked differently but answered the same fold into one fact; different answers still conflict, and a
+    /// probe of another target stays tool work.
+    fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
+        let probed_out = || OvenLegacyCargoSelectedGeneratedOutput {
+            relative_root: "generated-outputs/probed".to_string(),
+            digest: selected_graph_sha256(b"probed tree"),
+            members: vec![
+                OvenLegacyCargoInspectionSourceMember {
+                    path: "config.rs".to_string(),
+                    digest: selected_graph_sha256(b"pub const PRECISION: u64 = 100;"),
+                },
+                OvenLegacyCargoInspectionSourceMember {
+                    path: "rustix_test_can_compile".to_string(),
+                    digest: selected_graph_sha256(b"probe metadata"),
+                },
+            ],
+        };
+        let unit = library("rustix", "1.1.5", &["std"]);
+        let probe = |out_dir: &str, target: &str, spelling: &[u8]| OvenLegacyCargoBuildScriptToolProbe {
+            package_id: unit.package_id.clone(),
+            out_dir: PathBuf::from(out_dir),
+            target_context: "x86_64-unknown-linux-gnu".to_string(),
+            rustc_target: target.to_string(),
+            digest: selected_graph_sha256(spelling),
+            output: Some(crate::rustc_trace::OvenLegacyStdinProbeOutput {
+                relative_path: "rustix_test_can_compile".to_string(),
+                digest: selected_graph_sha256(b"probe metadata"),
+            }),
+        };
+        let selection = |host_answers: &[&str], host_probe_target: &str| {
+            let mut target_facts = facts(&["static_assertions"], Some(probed_out()));
+            target_facts.out_dir = PathBuf::from("/transient/target-out");
+            let mut host_facts = facts(host_answers, Some(probed_out()));
+            host_facts.out_dir = PathBuf::from("/transient/host-out");
+            let mut selected = capture(vec![
+                (unit.clone(), Some(target_facts)),
+                (unit.clone(), Some(host_facts)),
+            ]);
+            // An earlier probe of the target unit wrote other bytes to the same path before the last one replaced
+            // them, as rustix's feature probes do; the member must match one probe's bytes, not every probe's.
+            let mut earlier = probe(
+                "/transient/target-out",
+                "x86_64-unknown-linux-gnu",
+                b"earlier probe at opt-level 3",
+            );
+            if let Some(output) = earlier.output.as_mut() {
+                output.digest = selected_graph_sha256(b"earlier probe metadata");
+            }
+            selected.build_script_tool_probes.extend([
+                earlier,
+                probe(
+                    "/transient/target-out",
+                    "x86_64-unknown-linux-gnu",
+                    b"probe at opt-level 3",
+                ),
+                probe("/transient/host-out", host_probe_target, b"probe at opt-level 0"),
+            ]);
+            selected
+        };
+
+        let report = harvest_registry_units(
+            &selection(&["static_assertions"], "x86_64-unknown-linux-gnu"),
+            &evidence(),
+            "release",
+        )?;
+        assert!(report.refusals.iter().all(|refusal| refusal.package != "rustix"));
+        let proposal = report
+            .proposals
+            .iter()
+            .find(|proposal| proposal.project.name == "rustix")
+            .ok_or("probe-only answers must be proposed")?;
+        assert_eq!(proposal.rust.facts[0].cfg, ["static_assertions"]);
+        assert!(proposal.rust.facts[0].tool.is_empty());
+        assert_eq!(
+            proposal.rust.facts[0]
+                .out
+                .iter()
+                .map(|member| member.name.as_str())
+                .collect::<Vec<_>>(),
+            ["config.rs"],
+            "the probe's own output is not a generated input; the script's file is"
+        );
+        let mut probes = vec![
+            selected_graph_sha256(b"earlier probe at opt-level 3"),
+            selected_graph_sha256(b"probe at opt-level 3"),
+            selected_graph_sha256(b"probe at opt-level 0"),
+        ];
+        probes.sort();
+        assert_eq!(proposal.evidence.compiler_probes, probes);
+        let written = serde_json::to_value(proposal)?;
+        assert_eq!(written["evidence"]["compiler_probes"].as_array().map(Vec::len), Some(3));
+        assert!(written["rust"]["facts"][0].get("tool").is_none());
+
+        let disagreeing = harvest_registry_units(
+            &selection(&["other_answer"], "x86_64-unknown-linux-gnu"),
+            &evidence(),
+            "release",
+        )?;
+        assert!(
+            disagreeing.refusals.iter().any(|refusal| refusal.package == "rustix"
+                && refusal.reason == HarvestRefusalReason::ConflictingObservations)
+        );
+
+        let foreign = harvest_registry_units(
+            &selection(&["static_assertions"], "aarch64-apple-darwin"),
+            &evidence(),
+            "release",
+        )?;
+        assert!(
+            foreign
+                .proposals
+                .iter()
+                .all(|proposal| proposal.project.name != "rustix")
+        );
+        assert!(foreign.refusals.iter().any(|refusal| refusal.package == "rustix"));
+
+        // A file at a probe's output path holding other bytes was rewritten by the script: refuse, never choose.
+        let mut rewritten = selection(&["static_assertions"], "x86_64-unknown-linux-gnu");
+        for probe in &mut rewritten.build_script_tool_probes {
+            if let Some(output) = probe.output.as_mut() {
+                output.digest = selected_graph_sha256(b"what the probe wrote before the script replaced it");
+            }
+        }
+        let rewritten = harvest_registry_units(&rewritten, &evidence(), "release")?;
+        assert!(
+            rewritten
+                .proposals
+                .iter()
+                .all(|proposal| proposal.project.name != "rustix")
+        );
+        assert!(rewritten.refusals.iter().any(|refusal| refusal.package == "rustix"
+            && refusal.reason == HarvestRefusalReason::ConflictingObservations
+            && refusal.detail.contains("rewritten by the script")));
         Ok(())
     }
 
@@ -2353,8 +2558,9 @@ mod tests {
                 package_id: probe_unit.package_id.clone(),
                 out_dir: PathBuf::from("/transient/probed-out"),
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
-                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "aarch64-apple-darwin".to_string(),
                 digest: selected_graph_sha256(b"probe"),
+                output: None,
             });
         let report = harvest_registry_units(&capture, &evidence(), "release")?;
         assert!(report.proposals.is_empty());
