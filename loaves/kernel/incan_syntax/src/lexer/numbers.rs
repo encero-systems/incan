@@ -18,7 +18,7 @@ impl<'a> Lexer<'a> {
                 && remaining.strip_prefix(info.canonical).is_some_and(|rest| {
                     rest.chars()
                         .next()
-                        .map_or(true, |next| !next.is_ascii_alphanumeric() && next != '_')
+                        .is_none_or(|next| !next.is_ascii_alphanumeric() && next != '_')
                 })
         })?;
         for _ in suffix.canonical.chars() {

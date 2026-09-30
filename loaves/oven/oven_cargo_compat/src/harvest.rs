@@ -788,7 +788,7 @@ pub fn harvest_registry_units(
                 observations.entry(key).or_default().push(observation);
             }
             Err(refusal) => {
-                refusals.insert(refusal);
+                refusals.insert(*refusal);
             }
         }
     }
@@ -966,20 +966,22 @@ fn raw_refusal_observations<'a>(facts: impl IntoIterator<Item = &'a HarvestFact>
     observations
 }
 
-/// Observe one unit, or say why it cannot be proposed.
+/// Observe one unit, or say why it cannot be proposed. The refusal is boxed because it carries its observations.
 fn observe_unit(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     compiler: &OvenLegacyCargoSelectedCompilerContext,
     unit: &OvenLegacyCargoSelectedUnit,
     profile: &str,
     rustc_executable_identity: &str,
-) -> Result<Observation, HarvestRefusal> {
-    let refuse = |reason: HarvestRefusalReason, detail: String| HarvestRefusal {
-        package: unit.package.clone(),
-        version: unit.package_version.clone(),
-        reason,
-        detail,
-        observations: HarvestRefusalObservations::default(),
+) -> Result<Observation, Box<HarvestRefusal>> {
+    let refuse = |reason: HarvestRefusalReason, detail: String| {
+        Box::new(HarvestRefusal {
+            package: unit.package.clone(),
+            version: unit.package_version.clone(),
+            reason,
+            detail,
+            observations: HarvestRefusalObservations::default(),
+        })
     };
     if is_build_script_unit(unit) {
         // Named by what it is, never by its position: Cargo orders the unit graph differently between runs, and a
