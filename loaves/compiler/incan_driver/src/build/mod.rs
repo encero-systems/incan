@@ -415,6 +415,8 @@ pub struct OvenPackagedLibraryLoafProfile {
 pub struct CheckedPackagedProviderProfile {
     pub dependency_key: String,
     pub artifact_root: PathBuf,
+    /// Whether the package artifact still belongs to a checked caller-owned source project that can be recompiled.
+    pub source_available: bool,
     pub profile: String,
     pub package: OvenPackagedLibraryLoafProfile,
 }
@@ -750,7 +752,7 @@ pub struct PreparedOvenTestDependencyEnvelope {
     /// Complete dependency records retained for exact per-root authority checks.
     pub dependencies: Vec<DependencySpec>,
     pub dependency_root_digests: BTreeMap<String, String>,
-    /// Checked package Loaf entries whose compiled closures must remain authoritative for generated tests.
+    /// Checked source-free package Loaf entries whose compiled closures must remain authoritative for generated tests.
     pub provider_entries: Vec<(String, OvenPackagedLibraryLoafEntry)>,
     /// Direct-Rustc plan for the non-package delta; public package libraries are attached from their own Loafs.
     pub plan_selection: OvenDirectRustcPlanSelection,

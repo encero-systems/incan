@@ -316,6 +316,180 @@ fn baked_provider_reconciles_a_shared_registry_unit_issue1241() -> TestResult {
     Ok(())
 }
 
+/// A source-backed provider is recompiled inside the consumer's feature-unified closure (#1241).
+#[test]
+fn baked_provider_recompiles_against_consumer_extended_shared_registry_unit_issue1241() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let home = fixture.path().join("incan-home");
+    write_registry_backed_provider(
+        fixture.path(),
+        "catalog",
+        "coherent_catalog",
+        "sha1",
+        "0.10.6",
+        "catalog_value",
+        40,
+    )?;
+    assert_success(
+        &bake_with_home(&fixture.path().join("catalog"), &home)?,
+        "catalog publication with the default sha1 registry unit",
+    );
+    let catalog_artifact = fixture.path().join("catalog/target/lib");
+    let catalog_before = artifact_inventory(&catalog_artifact)?;
+
+    let consumer = fixture.path().join("consumer");
+    write_fixture_file(
+        &consumer,
+        "loaf.toml",
+        "[project]\nname = \"coherent_registry_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncatalog = { path = \"../catalog\" }\n\n[rust-dependencies]\nsha1 = { version = \"=0.10.6\", features = [\"force-soft\"] }\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "src/lib.incn",
+        "from pub::catalog import catalog_value\nfrom rust::sha1 import Sha1\n\npub def combined_value() -> int:\n    handle: Sha1 = Sha1.default()\n    return catalog_value() + 2\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "tests/test_coherent_registry.incn",
+        "from pub::catalog import catalog_value\nfrom rust::sha1 import Sha1\nfrom std.testing import assert_eq\n\n\ndef test_coherent_registry_closure() -> None:\n    handle: Sha1 = Sha1.default()\n    assert_eq(catalog_value(), 40)\n",
+    )?;
+    assert_success(
+        &bake_with_home(&consumer, &home)?,
+        "consumer bake over a feature-divergent shared registry unit",
+    );
+    assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
+
+    let mut build = configured_incan_command(&consumer, &["build", "--lib", "--locked"]);
+    build.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(
+        &build.output()?,
+        "normal locked coherent consumer library build without Cargo",
+    );
+    let mut test = configured_incan_command(&consumer, &["test", "tests", "--locked"]);
+    test.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(&test.output()?, "normal locked coherent consumer tests without Cargo");
+    assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
+    Ok(())
+}
+
+/// Workspace member tests reuse a source-backed root provider coherently without poisoning later bakes (#1241).
+#[test]
+fn workspace_member_uses_the_root_providers_coherent_closure_without_adopting_a_sibling_plan_issue1241() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path();
+    let home = root.join("incan-home");
+    write_fixture_file(
+        root,
+        "loaf.toml",
+        r#"[project]
+name = "root_provider"
+version = "0.1.0"
+
+[workspace]
+members = ["consumer", "feature_owner"]
+
+[workspace.dependencies]
+root_provider = { path = "." }
+
+[workspace.rust-dependencies]
+sha1 = { version = "=0.10.6", features = ["force-soft"] }
+serde = { version = "1", features = ["derive"] }
+
+[rust-dependencies]
+sha1 = "=0.10.6"
+serde = "1"
+"#,
+    )?;
+    write_fixture_file(
+        root,
+        "src/lib.incn",
+        "from rust::sha1 import Sha1\n\n@derive(Clone)\npub model Answer:\n    pub value: int\n\npub def answer() -> int:\n    handle: Sha1 = Sha1.default()\n    return Answer(value=42).value\n",
+    )?;
+
+    let consumer = root.join("consumer");
+    write_fixture_file(
+        &consumer,
+        "loaf.toml",
+        "[project]\nname = \"root_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nroot_provider = { workspace = true }\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "src/lib.incn",
+        "from pub::root_provider import answer\n\npub def member_answer() -> int:\n    return answer()\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "tests/test_provider.incn",
+        "from pub::root_provider import answer\nfrom std.testing import assert_eq\n\n\ndef test_the_root_library_answers() -> None:\n    assert_eq(answer(), 42)\n",
+    )?;
+
+    let feature_owner = root.join("feature_owner");
+    write_fixture_file(
+        &feature_owner,
+        "loaf.toml",
+        "[project]\nname = \"feature_owner\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nroot_provider = { workspace = true }\n\n[rust-dependencies]\nsha1 = { workspace = true }\nserde = { workspace = true }\n",
+    )?;
+    write_fixture_file(
+        &feature_owner,
+        "src/main.incn",
+        "from pub::root_provider import answer\nfrom rust::sha1 import Sha1\n\ndef main() -> None:\n    handle: Sha1 = Sha1.default()\n    println(answer())\n",
+    )?;
+    write_fixture_file(
+        &feature_owner,
+        "tests/test_feature_provider.incn",
+        "from pub::root_provider import answer\nfrom rust::sha1 import Sha1\nfrom std.testing import assert_eq\n\n\ndef test_feature_member_uses_the_root_provider() -> None:\n    handle: Sha1 = Sha1.default()\n    assert_eq(answer(), 42)\n",
+    )?;
+
+    assert_success(
+        &bake_with_home(root, &home)?,
+        "workspace root bake before the member bake",
+    );
+    let mut root_build = configured_incan_command(root, &["build", "--lib", "--locked"]);
+    root_build.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(
+        &root_build.output()?,
+        "workspace root locked library build before the member bake",
+    );
+
+    assert_success(&bake_with_home(&consumer, &home)?, "workspace member bake");
+    let mut member_tests = configured_incan_command(&consumer, &["test", "tests", "--locked"]);
+    member_tests.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(
+        &member_tests.output()?,
+        "workspace member without Rust dependencies runs locked tests over a derived root provider",
+    );
+
+    assert_success(
+        &bake_with_home(&feature_owner, &home)?,
+        "feature-divergent workspace member bake",
+    );
+    let mut feature_tests = configured_incan_command(
+        &feature_owner,
+        &["test", "tests/test_feature_provider.incn", "--locked"],
+    );
+    feature_tests.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(
+        &feature_tests.output()?,
+        "feature-divergent workspace member locked test after its bake",
+    );
+    assert_success(
+        &bake_with_home(&feature_owner, &home)?,
+        "feature-divergent workspace member second bake after its locked test",
+    );
+
+    assert_success(
+        &bake_with_home(root, &home)?,
+        "workspace root bake after the member bake",
+    );
+    let mut root_rebuild = configured_incan_command(root, &["build", "--lib", "--locked"]);
+    root_rebuild.env_remove("CARGO").env("INCAN_HOME", &home);
+    assert_success(
+        &root_rebuild.output()?,
+        "workspace root locked library build after the member bake",
+    );
+    Ok(())
+}
+
 /// Two source-free sibling providers share one registry unit without mutating their published entries (#1458).
 ///
 /// Each provider owns a separately baked registry closure, and each reaches `cpufeatures` through a different digest

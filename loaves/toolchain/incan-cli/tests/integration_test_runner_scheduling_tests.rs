@@ -641,9 +641,6 @@ module tests:
 
     /// Run `incan` in `cwd` on the standard library compiled from source, as a project on a fresh home with no SDK
     /// inventory builds it: every `std` module is mounted from source and compiled into the project's own crate.
-    ///
-    /// Under the compiler suite the sealed SDK inventory stays in place, as the rooted-workspace journey keeps it, so
-    /// the same journey runs on the compiled standard library there.
     fn run_on_source_standard_library(
         cwd: &Path,
         incan_home: &Path,
@@ -659,13 +656,11 @@ module tests:
             .env("INCAN_SOURCE_ROOT", &source_root)
             .env("INCAN_STDLIB", &stdlib)
             .env("INCAN_STDLIB_DIR", &stdlib);
-        if !super::support::oven_compiler_suite_is_active() {
-            command
-                .env("INCAN_HOME", incan_home)
-                .env_remove("INCAN_SDK_INVENTORY")
-                .env_remove("INCAN_INTERNAL_SDK_PROVIDER_STORE")
-                .env_remove("INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE");
-        }
+        command
+            .env("INCAN_HOME", incan_home)
+            .env_remove("INCAN_SDK_INVENTORY")
+            .env_remove("INCAN_INTERNAL_SDK_PROVIDER_STORE")
+            .env_remove("INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE");
         if args.starts_with(&["oven", "bake"]) {
             super::support::configure_explicit_oven_bake_command(&mut command)?;
         }
@@ -804,9 +799,10 @@ async def test_slept_task_returns_its_value() -> None:
 
     /// #1561: a workspace member whose tests import the workspace-root library it depends on (`{ workspace = true }`
     /// resolving to the root at `path = "."`) runs them locked after its own bake, with the root library built by
-    /// `incan build --lib` first, as a package's external-consumer check does. The library re-exports a model and the
-    /// identifier its list field holds from submodules, and carries a union in its surface; a test builds the model
-    /// with an empty list and `None` without importing the identifier.
+    /// `incan build --lib` first, as a package's external-consumer check does. The source-mounted root library uses
+    /// the `std.collections` runtime and declares a registry dependency, while the member has no Rust dependencies.
+    /// The library also re-exports a model and the identifier its list field holds from submodules, and carries a
+    /// union in its surface; a test builds the model with an empty list and `None` without importing the identifier.
     #[test]
     fn e2e_member_tests_importing_the_workspace_root_library_run_locked_after_the_members_bake_issue1561()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -828,12 +824,29 @@ root_provider = { path = "." }
 libc = { version = "0.2", features = ["extra_traits"] }
 
 [rust-dependencies]
-sha2 = "=0.10.9"
+itoa = "=1.0.17"
 "#,
         )?;
         std::fs::write(
             root.path().join("src/lib.incn"),
-            "from rust::sha2 import Sha256\npub from cards import Card, weigh\npub from ids import EvidenceId\n\n\npub model Reading:\n    pub value: int\n\n\npub def answer() -> int:\n    handle: Sha256 = Sha256.default()\n    return 42\n",
+            r#"from std.collections import Deque
+pub from cards import Card, weigh
+pub from ids import EvidenceId
+
+
+pub model Reading:
+    pub value: int
+
+
+pub def answer() -> int:
+    return 42
+
+
+pub def queued_count() -> int:
+    mut values = Deque[int].from_iter([1])
+    values.append(2)
+    return len(values)
+"#,
         )?;
         std::fs::write(root.path().join("src/ids.incn"), "pub newtype EvidenceId = str\n")?;
         std::fs::write(
@@ -863,13 +876,14 @@ root_provider = { workspace = true }
         std::fs::write(
             consumer.join("tests/test_provider.incn"),
             r#"from std.testing import assert_eq
-from pub::root_provider import Card, Reading, answer
+from pub::root_provider import Card, Reading, answer, queued_count
 
 
 def test_the_root_library_answers() -> None:
     assert_eq(answer(), 42)
     reading = Reading(value=3)
     assert_eq(reading.value, 3)
+    assert_eq(queued_count(), 2)
 
 
 def test_a_card_built_with_empty_fields() -> None:

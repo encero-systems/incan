@@ -122,6 +122,7 @@ pub fn collect_workspace_lock_context_tolerating(
         dev_dependencies: Vec::new(),
     };
     let mut project_requirements = ProjectRequirements::default();
+    let mut project_dependency_surface = None;
     let mut member_semantics = Vec::new();
     let mut has_context = false;
     let mut unresolved = Vec::new();
@@ -158,6 +159,9 @@ pub fn collect_workspace_lock_context_tolerating(
             }
             Err(error) => return Err(in_member(error)),
         };
+        if member_is_command_target {
+            project_dependency_surface = Some(member_context.resolved.clone());
+        }
         has_context = true;
         resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved).map_err(outside)?;
         project_requirements =
@@ -179,6 +183,11 @@ pub fn collect_workspace_lock_context_tolerating(
             project_requirements,
             semantic,
         },
+        project_dependency_surface: project_dependency_surface.ok_or_else(|| {
+            outside(CliError::failure(
+                "workspace lock collection did not retain the requesting member's dependency surface",
+            ))
+        })?,
         unresolved,
     })
 }

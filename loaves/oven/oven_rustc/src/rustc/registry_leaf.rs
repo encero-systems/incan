@@ -102,6 +102,45 @@ impl OvenRegistryLeafAuthority {
         }
     }
 
+    /// Prefer one compiler-release cohort for every target-linked registry package it seals.
+    ///
+    /// A project extension that links the release runtime must use that runtime's registry identities as well. This
+    /// operation replaces only target-library packages present in `preferred`; project-only packages and every host
+    /// or procedural-macro unit retain their existing authority and linkage role.
+    #[must_use]
+    pub fn with_preferred_target_cohort(&self, preferred: &Self) -> Self {
+        let preferred_packages = preferred
+            .entries
+            .iter()
+            .filter(|entry| participates_in_target_link_collision(&entry.leaf))
+            .map(|entry| entry.leaf.package.as_str())
+            .collect::<BTreeSet<_>>();
+        let entries = preferred
+            .entries
+            .iter()
+            .filter(|entry| participates_in_target_link_collision(&entry.leaf))
+            .cloned()
+            .chain(
+                self.entries
+                    .iter()
+                    .filter(|entry| {
+                        !participates_in_target_link_collision(&entry.leaf)
+                            || !preferred_packages.contains(entry.leaf.package.as_str())
+                    })
+                    .cloned(),
+            )
+            .collect();
+        Self { entries }
+    }
+
+    /// Return whether this authority seals a target-library unit for `package`.
+    #[must_use]
+    pub fn contains_target_package(&self, package: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| participates_in_target_link_collision(&entry.leaf) && entry.leaf.package == package)
+    }
+
     /// Return the first package name this authority's own registry leaves would silently link as a second,
     /// incompatible compiled instance of a crate `plan` already links explicitly.
     ///
@@ -139,6 +178,9 @@ impl OvenRegistryLeafAuthority {
         reconciled: Option<&Self>,
     ) -> Result<Option<String>, OvenRustcError> {
         for entry in &self.entries {
+            if !participates_in_target_link_collision(&entry.leaf) {
+                continue;
+            }
             let Some((_, existing_path)) = plan
                 .externs
                 .iter()
@@ -197,7 +239,9 @@ impl OvenRegistryLeafAuthority {
     pub fn first_diverging_shared_package_pin_detail(&self, other: &Self) -> Option<(String, PathBuf, String)> {
         for entry in &self.entries {
             for candidate in &other.entries {
-                if entry.leaf.package == candidate.leaf.package
+                if participates_in_target_link_collision(&entry.leaf)
+                    && participates_in_target_link_collision(&candidate.leaf)
+                    && entry.leaf.package == candidate.leaf.package
                     && entry.leaf.version == candidate.leaf.version
                     && !registry_units_are_compatible(&entry.leaf, &candidate.leaf)
                     && !registry_units_are_byte_equivalent(&entry.leaf, &candidate.leaf)
@@ -226,14 +270,23 @@ impl OvenRegistryLeafAuthority {
     fn other_diverging_shared_packages(&self, other: &Self, except: &str) -> Vec<String> {
         let mut named = Vec::new();
         for entry in &self.entries {
-            if entry.leaf.package == except {
+            if entry.leaf.package == except || !participates_in_target_link_collision(&entry.leaf) {
                 continue;
             }
             for candidate in &other.entries {
-                if entry.leaf.package != candidate.leaf.package || entry.leaf.domain != candidate.leaf.domain {
+                if entry.leaf.package != candidate.leaf.package
+                    || !participates_in_target_link_collision(&candidate.leaf)
+                {
                     continue;
                 }
                 let description = if entry.leaf.version != candidate.leaf.version {
+                    if other.entries.iter().any(|other_entry| {
+                        participates_in_target_link_collision(&other_entry.leaf)
+                            && other_entry.leaf.package == entry.leaf.package
+                            && other_entry.leaf.version == entry.leaf.version
+                    }) {
+                        continue;
+                    }
                     format!(
                         "{} {} vs {}",
                         entry.leaf.package, entry.leaf.version, candidate.leaf.version
@@ -282,6 +335,12 @@ impl OvenRegistryLeafAuthority {
         }
         Ok(false)
     }
+}
+
+/// Return whether a registry unit is linked into the target artifact and therefore participates in RFC 124 collision
+/// checks.
+fn participates_in_target_link_collision(leaf: &OvenRustcRegistryLeaf) -> bool {
+    leaf.domain.is_target() && leaf.crate_kind.is_rlib()
 }
 
 /// Describe how two sealed units of one package and version differ, for a refusal: both selected-unit identities,

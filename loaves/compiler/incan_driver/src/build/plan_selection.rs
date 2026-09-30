@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::backend::ProjectGenerator;
+use crate::build::output_selection::baked_project_owner_identity;
 use crate::build::oven_project::{
     bake_generated_project_compatibility_plan, project_extension_base_loaf, remove_completed_generated_cargo_lock,
     select_oven_direct_rustc_plan, select_oven_direct_rustc_plan_with_materialization,
@@ -33,7 +34,8 @@ use oven_rustc::loaf::{
 };
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::plan::selection::{
-    select_receipt_direct_rustc_execution_plan, select_receipt_project_extension_execution_plan,
+    select_exact_receipt_direct_rustc_execution_plan, select_receipt_direct_rustc_execution_plan,
+    select_receipt_project_extension_execution_plan,
 };
 use oven_rustc::rustc::{OvenRegistryLeafAuthority, OvenRustcArtifactPlan, resolve_active_rustc};
 use oven_store::store::OvenStore;
@@ -193,6 +195,7 @@ pub fn prepare_oven_test_dependency_envelope(
         .collect::<BTreeSet<_>>();
     let provider_entries = checked_package_profiles
         .iter()
+        .filter(|checked| !checked.source_available)
         .flat_map(|checked| {
             checked
                 .package
@@ -269,6 +272,8 @@ pub fn prepare_oven_test_dependency_envelope(
     for (name, value) in &base_receipt.sources.build_unit_inputs {
         receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
     }
+    receipt_request =
+        receipt_request.with_build_unit_input("project-owner-identity", baked_project_owner_identity(project_root)?);
     receipt_request = receipt_request.with_build_unit_input("rust-dependencies", publisher_dependency_surface_digest);
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
     let plan_selection = if publisher_dependencies
@@ -447,6 +452,27 @@ pub fn select_published_project_plan(
         return Ok(Some(selected));
     }
     Ok(select_receipt_direct_rustc_execution_plan(store, receipt)
+        .map_err(oven_plan_error)?
+        .map(|selected| OvenDirectRustcPlanPreparation {
+            plan_selection: OvenDirectRustcPlanSelection::Stored(Box::new(selected)),
+            materialization,
+            cargo_process_started: false,
+        }))
+}
+
+/// Select only a plan published by the exact caller-owned provider receipt.
+///
+/// This deliberately excludes build-unit-compatible plans from other projects. Cross-project reuse remains valid
+/// for ordinary generated roots, but provider coherence checks must compare the provider's own sealed closure.
+pub fn select_exact_published_provider_plan(
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    materialization: OvenToolchainMaterialization,
+) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    if let Some(selected) = select_published_project_extension_plan(store, receipt, materialization)? {
+        return Ok(Some(selected));
+    }
+    Ok(select_exact_receipt_direct_rustc_execution_plan(store, receipt)
         .map_err(oven_plan_error)?
         .map(|selected| OvenDirectRustcPlanPreparation {
             plan_selection: OvenDirectRustcPlanSelection::Stored(Box::new(selected)),
