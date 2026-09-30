@@ -122,6 +122,21 @@ Read and follow [`workspaces/docs-site/docs/contributing/explanation/readable-ma
 
 Spell everything in US English -- identifiers, comments, docstrings, diagnostics and docs (`color`, `behavior`, `initialize`, `catalog`; the owner keeps `cancelled`); `make us-english-check` (part of `make pre-commit-fast` and CI) rejects UK spellings, `make us-english-fix` rewrites them, and `scripts/check_us_english.allow` records the upstream names and quoted text that keep theirs.
 
+**No Python in production logic.** Product and tooling behavior is written in Rust or Incan, never Python:
+
+- the compiler and the Oven;
+- the Loaf registry side;
+- the CI evidence and release pipeline that decides what an artifact or a test result is.
+
+New evidence operations belong beside the existing ones as `incan oven` subcommands. Python remains only for:
+
+- the repository-hygiene `check_*` gates and the test-inventory generator;
+- the benchmarks' Python baselines;
+- the pip installer shim;
+- agent hooks and research scripts.
+
+A change that adds a production `.py` file is refused in review.
+
 ### Inline section headers
 
 In longer functions (roughly 30+ lines or 3+ logical blocks), use `// ----` section headers to delineate logical blocks:
