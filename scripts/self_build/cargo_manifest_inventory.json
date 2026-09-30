@@ -1620,7 +1620,16 @@
     "path": null
    },
    "lints": null,
-   "package_metadata": null,
+   "package_metadata": {
+    "cargo-udeps": {
+     "ignore": {
+      "development": [
+       "byteorder",
+       "incan_std_core"
+      ]
+     }
+    }
+   },
    "target_roots": {
     "lib": "loaves/compiler/incan_driver/src/lib.rs"
    },

@@ -523,8 +523,11 @@ fn collect_evidence(workspace: &Path, candidate: Option<&Candidate>, logs: &[Pat
     )
 }
 
+/// A depfile's sorted inputs and its `env-dep` variables with their recorded values, if any.
+type DepfileFacts = (Vec<String>, BTreeMap<String, Option<String>>);
+
 /// Parse Make-style rustc depfile inputs and env-dep facts without expanding variables.
-fn depfile_facts(path: &Path) -> io::Result<(Vec<String>, BTreeMap<String, Option<String>>)> {
+fn depfile_facts(path: &Path) -> io::Result<DepfileFacts> {
     let text = fs::read_to_string(path)?.replace("\\\n", "");
     let mut inputs = BTreeSet::new();
     let mut environment = BTreeMap::new();

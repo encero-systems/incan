@@ -357,7 +357,9 @@ fn hex_digest(bytes: &[u8]) -> String {
 fn hex_to_bytes(value: &str) -> io::Result<Vec<u8>> {
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let pair = std::str::from_utf8(pair).map_err(io::Error::other)?;
             u8::from_str_radix(pair, 16).map_err(io::Error::other)

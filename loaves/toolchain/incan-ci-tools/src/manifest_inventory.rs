@@ -446,19 +446,19 @@ fn dependency_tables(
         for (predicate, sections) in target_entries {
             let mut roles = Map::new();
             for (key, role) in DEPENDENCY_TABLES {
-                if let Some(entries) = child_table(sections, key) {
-                    if !entries.is_empty() {
-                        let mut normalized = Map::new();
-                        let mut entries = entries.iter().collect::<Vec<_>>();
-                        entries.sort_by_key(|(alias, _)| *alias);
-                        for (alias, entry) in entries {
-                            normalized.insert(
-                                alias.clone(),
-                                normalize_dependency(alias, entry, workspace_dependencies, workspace_packages)?,
-                            );
-                        }
-                        roles.insert(role.to_owned(), Value::Object(normalized));
+                if let Some(entries) = child_table(sections, key)
+                    && !entries.is_empty()
+                {
+                    let mut normalized = Map::new();
+                    let mut entries = entries.iter().collect::<Vec<_>>();
+                    entries.sort_by_key(|(alias, _)| *alias);
+                    for (alias, entry) in entries {
+                        normalized.insert(
+                            alias.clone(),
+                            normalize_dependency(alias, entry, workspace_dependencies, workspace_packages)?,
+                        );
                     }
+                    roles.insert(role.to_owned(), Value::Object(normalized));
                 }
             }
             if !roles.is_empty() {
@@ -807,13 +807,13 @@ fn inventory_summary(records: &[Value], workspace_packages: &BTreeSet<String>) -
         for role in ["normal", "dev", "build"] {
             if let Some(dependencies) = record["dependencies"][role].as_object() {
                 for dependency in dependencies.values() {
-                    if dependency["kind"] == "third-party" {
-                        if let Some(package) = dependency["package"].as_str() {
-                            third_party
-                                .entry(package.to_owned())
-                                .or_default()
-                                .insert(role.to_owned());
-                        }
+                    if dependency["kind"] == "third-party"
+                        && let Some(package) = dependency["package"].as_str()
+                    {
+                        third_party
+                            .entry(package.to_owned())
+                            .or_default()
+                            .insert(role.to_owned());
                     }
                 }
             }
@@ -829,20 +829,20 @@ fn inventory_summary(records: &[Value], workspace_packages: &BTreeSet<String>) -
     };
     let mut bins = BTreeMap::<String, Value>::new();
     for record in &members {
-        if record["bins"].as_array().is_some_and(|values| !values.is_empty()) {
-            if let Some(name) = record["package"]["name"].as_str() {
-                bins.insert(
-                    name.to_owned(),
-                    Value::Array(
-                        record["bins"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .map(|binary| binary["name"].clone())
-                            .collect(),
-                    ),
-                );
-            }
+        if record["bins"].as_array().is_some_and(|values| !values.is_empty())
+            && let Some(name) = record["package"]["name"].as_str()
+        {
+            bins.insert(
+                name.to_owned(),
+                Value::Array(
+                    record["bins"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|binary| binary["name"].clone())
+                        .collect(),
+                ),
+            );
         }
     }
     let mut lint_attributes = Map::new();
@@ -863,10 +863,9 @@ fn inventory_summary(records: &[Value], workspace_packages: &BTreeSet<String>) -
         if targets
             .values()
             .any(|attributes| attributes.as_array().is_some_and(|values| !values.is_empty()))
+            && let Some(path) = record["path"].as_str()
         {
-            if let Some(path) = record["path"].as_str() {
-                lint_attributes.insert(path.to_owned(), Value::Object(targets));
-            }
+            lint_attributes.insert(path.to_owned(), Value::Object(targets));
         }
     }
     json!({
@@ -945,11 +944,11 @@ pub fn render_markdown(inventory: &Value) -> String {
             for binary in binaries {
                 targets.push(format!("bin `{}`", text(&binary["name"])));
             }
-            if binaries.is_empty() {
-                if let Some(roots) = record["target_roots"].as_object() {
-                    for target in roots.keys().filter(|target| target.starts_with("bin:")) {
-                        targets.push(format!("bin `{}` (conventional)", &target[4..]));
-                    }
+            if binaries.is_empty()
+                && let Some(roots) = record["target_roots"].as_object()
+            {
+                for target in roots.keys().filter(|target| target.starts_with("bin:")) {
+                    targets.push(format!("bin `{}` (conventional)", &target[4..]));
                 }
             }
         }
