@@ -119,7 +119,7 @@ pub fn bake_publisher_link(
     for source in &request.link.sources {
         inputs.push(PublisherExecutionInput {
             name: &source.name,
-            path: owner_relative_path(request.source_owner_root, &source.path, "publisher link source")?,
+            path: source_owner_path(request.source_owner_root, source)?,
             digest: source.digest.clone(),
             kind: source.kind,
             members: source.members.clone(),
@@ -137,6 +137,7 @@ pub fn bake_publisher_link(
                     RustFactArgument::Literal { literal } => PublisherExecutionArgument::Literal(literal),
                     RustFactArgument::Input { input } => PublisherExecutionArgument::Input(input),
                     RustFactArgument::Output { output } => PublisherExecutionArgument::Output(output),
+                    RustFactArgument::Owner { owner } => PublisherExecutionArgument::Owner(owner),
                 })
                 .collect();
             Ok(PublisherExecutionObject {
@@ -146,6 +147,14 @@ pub fn bake_publisher_link(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let environment = publisher_link_environment(&request.link.environment)?;
+    let executable_owner_paths = std::iter::once(request.link.executable.path.as_str())
+        .chain(request.link.objects.iter().flat_map(|object| {
+            object.arguments.iter().filter_map(|argument| match argument {
+                RustFactArgument::Owner { owner } => Some(owner.as_str()),
+                _ => None,
+            })
+        }))
+        .collect();
     let archive_relative_path = publisher_link_archive_name(&request.link.library.name);
     let execution = execute_publisher_work(&PublisherExecutionRequest {
         role: "link",
@@ -156,7 +165,8 @@ pub fn bake_publisher_link(
         toolchain: request.toolchain,
         executable: &executable,
         executable_owner_root: request.executable_owner_root,
-        executable_owner: &request.link.executable.owner,
+        executable_owner: request.link.executable.owner.clone(),
+        executable_owner_paths,
         executable_digest: &request.link.executable.digest,
         objects,
         environment,
@@ -183,6 +193,14 @@ pub fn bake_publisher_link(
         archive_digest: product.digest.clone(),
         receipt: execution.receipt,
     })
+}
+
+/// Resolve a declared link source, allowing `.` only for a complete tree rooted at the source owner.
+fn source_owner_path(root: &Path, source: &oven_model::manifest::RustFactArtifact) -> Result<PathBuf, OvenRustcError> {
+    if source.kind == oven_model::manifest::RustFactArtifactKind::Tree && source.path == "." {
+        return Ok(root.to_path_buf());
+    }
+    owner_relative_path(root, &source.path, "publisher link source")
 }
 
 /// Resolve one plain owner-relative path without accepting traversal or absolute paths.
@@ -1115,8 +1133,8 @@ mod publisher_link_tests {
     use std::time::Duration;
 
     use oven_model::manifest::{
-        RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactExecutable, RustFactLibrary,
-        RustFactLibraryKind, RustFactLink, RustFactLinkLanguage, RustFactLinkObject,
+        RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactArtifactMember, RustFactExecutable,
+        RustFactLibrary, RustFactLibraryKind, RustFactLink, RustFactLinkLanguage, RustFactLinkObject,
     };
     use oven_store::digest_bytes;
     use oven_store::process::BoundedProcessLimits;
@@ -1153,7 +1171,7 @@ mod publisher_link_tests {
             target: "aarch64-apple-darwin".to_string(),
             executable: RustFactExecutable {
                 name: "fake-cc".to_string(),
-                owner: digest_bytes(b"tool-owner"),
+                owner: oven_store::publisher_owner::publisher_owner_identity(&root.join("tool"), ["bin/fake-cc"])?,
                 path: "bin/fake-cc".to_string(),
                 digest: digest_bytes(&fs::read(compiler)?),
             },
@@ -1218,10 +1236,76 @@ mod publisher_link_tests {
                 RustFactArgument::Literal { literal } => format!("literal:{literal}"),
                 RustFactArgument::Input { input } => format!("input:{input}"),
                 RustFactArgument::Output { output } => format!("output:{output}"),
+                RustFactArgument::Owner { owner } => format!("owner:{owner}"),
             })
             .collect::<Vec<_>>();
         assert_eq!(product.receipt.objects[0].logical_argv, selected_argv);
         Ok(())
+    }
+
+    #[test]
+    /// A root tree input resolves to the source owner itself while confinement still excludes its siblings.
+    fn publisher_link_root_tree_input_stays_confined() -> Result<(), Box<dyn Error>> {
+        let root = tempdir()?;
+        let mut link = fixture_link(root.path())?;
+        let source_root = root.path().join("source");
+        fs::write(source_root.join("config.h"), b"root-config")?;
+        fs::write(root.path().join("secret"), b"secret")?;
+        let compiler = root.path().join("tool/bin/fake-cc");
+        fs::write(
+            &compiler,
+            "#!/bin/sh\nset -eu\nsource_root=\"$1\"\nparent=${source_root%/*}\nif IFS= read -r secret < \"$parent/secret\"; then exit 41; fi\nIFS= read -r content < \"$source_root/config.h\" || true\nprintf '%s' \"$content\" > \"$2\"\n",
+        )?;
+        let mut permissions = fs::metadata(&compiler)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&compiler, permissions)?;
+        link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        link.executable.owner =
+            oven_store::publisher_owner::publisher_owner_identity(&root.path().join("tool"), ["bin/fake-cc"])?;
+        let members = vec![
+            RustFactArtifactMember {
+                path: "config.h".to_string(),
+                digest: digest_bytes(b"root-config"),
+            },
+            RustFactArtifactMember {
+                path: "native/fixture.c".to_string(),
+                digest: digest_bytes(b"native-source"),
+            },
+        ];
+        link.sources = vec![RustFactArtifact {
+            name: "crate-root".to_string(),
+            kind: RustFactArtifactKind::Tree,
+            path: ".".to_string(),
+            digest: digest_bytes(&serde_json::to_vec(&(
+                "incan.oven.publisher-artifact-tree/1",
+                &members,
+            ))?),
+            members,
+        }];
+        link.objects[0].arguments[0] = RustFactArgument::Input {
+            input: "crate-root".to_string(),
+        };
+        let output = root.path().join("product");
+
+        match bake_publisher_link(&OvenPublisherLinkBakeRequest {
+            link: &link,
+            selected_target: "aarch64-apple-darwin",
+            archive_format: "darwin",
+            toolchain: "rustc fixture",
+            consuming_unit_identity: &digest_bytes(b"consumer"),
+            executable_owner_root: &root.path().join("tool"),
+            source_owner_root: &source_root,
+            output_root: &output,
+            limits: BoundedProcessLimits {
+                stdout_bytes: 1024,
+                stderr_bytes: 1024,
+                timeout: Some(Duration::from_secs(2)),
+            },
+        }) {
+            Ok(_) => Ok(()),
+            Err(error) if error.to_string().contains("sandbox_apply: Operation not permitted") => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     #[test]
@@ -1340,6 +1424,8 @@ mod publisher_link_tests {
         let compiler = root.path().join("tool/bin/fake-cc");
         fs::write(&compiler, "#!/bin/sh\nset -eu\n:\n")?;
         link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        link.executable.owner =
+            oven_store::publisher_owner::publisher_owner_identity(&root.path().join("tool"), ["bin/fake-cc"])?;
         let bake = |link: &RustFactLink, output_root: &std::path::Path| {
             bake_publisher_link(&OvenPublisherLinkBakeRequest {
                 link,
@@ -1370,6 +1456,8 @@ mod publisher_link_tests {
             "#!/bin/sh\nset -eu\nIFS= read -r content < \"$1\" || true\nprintf '%s' \"$content\" > \"$2\"\nprintf '%s' extra > extra.o\n",
         )?;
         link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        link.executable.owner =
+            oven_store::publisher_owner::publisher_owner_identity(&root.path().join("tool"), ["bin/fake-cc"])?;
         let error = bake(&link, &root.path().join("extra"))
             .err()
             .ok_or("extra object was accepted")?;
@@ -1383,10 +1471,26 @@ mod publisher_link_tests {
     fn publisher_link_bake_with_real_clang_is_reproducible() -> Result<(), Box<dyn Error>> {
         let owner = std::path::Path::new("/Library/Developer/CommandLineTools");
         let clang = owner.join("usr/bin/clang");
-        let sdk = owner.join("SDKs/MacOSX.sdk");
-        if !clang.is_file() || !sdk.exists() {
+        let sdk_link = owner.join("SDKs/MacOSX.sdk");
+        if !clang.is_file() || !sdk_link.exists() {
             return Ok(());
         }
+        let sdk = fs::canonicalize(&sdk_link)?;
+        let sdk_relative = sdk
+            .strip_prefix(owner)?
+            .to_str()
+            .ok_or("versioned SDK path is not UTF-8")?
+            .to_string();
+        let resource_output = std::process::Command::new(&clang).arg("-print-resource-dir").output()?;
+        if !resource_output.status.success() {
+            return Err("clang did not report its resource directory".into());
+        }
+        let resource = String::from_utf8(resource_output.stdout)?.trim().to_string();
+        let resource_relative = std::path::Path::new(&resource)
+            .strip_prefix(owner)?
+            .to_str()
+            .ok_or("clang resource directory path is not UTF-8")?
+            .to_string();
         let root = tempdir()?;
         let sources = root.path().join("source");
         fs::create_dir_all(&sources)?;
@@ -1397,7 +1501,6 @@ mod publisher_link_tests {
             "x86_64" => "x86_64-apple-darwin",
             architecture => return Err(format!("unsupported macOS test architecture `{architecture}`").into()),
         };
-        let sdk_literal = sdk.to_string_lossy().into_owned();
         let object = |name: &str, input: &str| RustFactLinkObject {
             name: name.to_string(),
             language: RustFactLinkLanguage::C,
@@ -1405,8 +1508,14 @@ mod publisher_link_tests {
                 RustFactArgument::Literal {
                     literal: "-isysroot".to_string(),
                 },
+                RustFactArgument::Owner {
+                    owner: sdk_relative.clone(),
+                },
                 RustFactArgument::Literal {
-                    literal: sdk_literal.clone(),
+                    literal: "-resource-dir".to_string(),
+                },
+                RustFactArgument::Owner {
+                    owner: resource_relative.clone(),
                 },
                 RustFactArgument::Literal {
                     literal: "-c".to_string(),
@@ -1427,7 +1536,10 @@ mod publisher_link_tests {
             target: target.to_string(),
             executable: RustFactExecutable {
                 name: "clang".to_string(),
-                owner: digest_bytes(b"Command Line Tools owner"),
+                owner: oven_store::publisher_owner::publisher_owner_identity(
+                    owner,
+                    ["usr/bin/clang", sdk_relative.as_str(), resource_relative.as_str()],
+                )?,
                 path: "usr/bin/clang".to_string(),
                 digest: digest_bytes(&fs::read(&clang)?),
             },

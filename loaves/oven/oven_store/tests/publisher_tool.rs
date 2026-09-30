@@ -13,6 +13,7 @@ use oven_store::publisher_execution::{
     OvenPublisherExecutionMode, OvenPublisherToolError, OvenPublisherToolOwner, OvenPublisherToolRequest,
     execute_publisher_tool,
 };
+use oven_store::publisher_owner::publisher_owner_identity;
 
 const HOST: &str = "aarch64-apple-darwin";
 const TARGET: &str = "aarch64-apple-darwin";
@@ -27,7 +28,7 @@ fn write_executable(root: &Path, body: &str) -> Result<RustFactExecutable, Box<d
     fs::set_permissions(&path, permissions)?;
     Ok(RustFactExecutable {
         name: "isle-fixture".to_string(),
-        owner: digest_bytes(b"fixture tool owner"),
+        owner: publisher_owner_identity(root, ["bin/isle-fixture"])?,
         path: "bin/isle-fixture".to_string(),
         digest: digest_bytes(body.as_bytes()),
     })

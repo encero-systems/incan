@@ -641,6 +641,8 @@ pub enum RustFactArgument {
     Input { input: String },
     /// Reference to one named declared output.
     Output { output: String },
+    /// Portable path below the executable's immutable owner root.
+    Owner { owner: String },
 }
 
 /// One named producer environment entry.
@@ -1755,6 +1757,14 @@ fn validate_rust_fact_path(value: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate an artifact path, reserving `.` for a complete tree rooted at the source owner.
+fn validate_rust_fact_artifact_path(artifact: &RustFactArtifact, field: &str) -> Result<(), String> {
+    if artifact.kind == RustFactArtifactKind::Tree && artifact.path == "." {
+        return Ok(());
+    }
+    validate_rust_fact_path(&artifact.path, field)
+}
+
 /// Require one stable portable name used by producer-local references.
 fn validate_rust_fact_name(value: &str, field: &str) -> Result<(), String> {
     if value.trim().is_empty()
@@ -1825,7 +1835,7 @@ fn validate_rust_fact_artifacts<'a>(
     let mut paths: Vec<&str> = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
         validate_rust_fact_name(&artifact.name, &format!("{field} name"))?;
-        validate_rust_fact_path(&artifact.path, &format!("{field} `{}` path", artifact.name))?;
+        validate_rust_fact_artifact_path(artifact, &format!("{field} `{}` path", artifact.name))?;
         if !is_sha256_identity(&artifact.digest) {
             return Err(format!(
                 "{field} `{}` digest must be a `sha256:` identity",
@@ -1917,6 +1927,9 @@ fn validate_rust_fact_work(
             }
             RustFactArgument::Output { output } if !output_names.contains(output.as_str()) => {
                 return Err(format!("argument references undeclared output `{output}`"));
+            }
+            RustFactArgument::Owner { owner } => {
+                validate_rust_fact_path(owner, "owner argument")?;
             }
             _ => {}
         }
@@ -2029,6 +2042,9 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
                 }
                 RustFactArgument::Output { output } => {
                     object_outputs.push(output.as_str());
+                }
+                RustFactArgument::Owner { owner } => {
+                    validate_rust_fact_path(owner, "owner argument")?;
                 }
                 RustFactArgument::Input { input } => {
                     object_inputs.insert(input.as_str());
@@ -4520,7 +4536,7 @@ target = "aarch64-apple-darwin"
 executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
 environment = []
 sources = [{{ name = "asm-source", kind = "file", path = "c/helper.S", digest = "{digest}" }}, {{ name = "c-source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
-objects = [{{ name = "helper-assembly.o", language = "assembly", arguments = [{{ literal = "-c" }}, {{ input = "asm-source" }}, {{ literal = "-o" }}, {{ output = "helper-assembly.o" }}] }}, {{ name = "helper.o", language = "c", arguments = [{{ literal = "-c" }}, {{ input = "c-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
+objects = [{{ name = "helper-assembly.o", language = "assembly", arguments = [{{ literal = "-isysroot" }}, {{ owner = "SDKs/MacOSX.sdk" }}, {{ literal = "-c" }}, {{ input = "asm-source" }}, {{ literal = "-o" }}, {{ output = "helper-assembly.o" }}] }}, {{ name = "helper.o", language = "c", arguments = [{{ literal = "-c" }}, {{ input = "c-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
 library = {{ name = "sys_helper", kind = "static" }}
 "#,
             ),
@@ -4529,9 +4545,45 @@ library = {{ name = "sys_helper", kind = "static" }}
         let link = &manifest.rust_facts.first().ok_or("missing fact record")?.link[0];
         assert_eq!(link.objects.len(), 2);
         assert_eq!(link.objects[0].name, "helper-assembly.o");
+        assert_eq!(
+            link.objects[0].arguments[1],
+            RustFactArgument::Owner {
+                owner: "SDKs/MacOSX.sdk".to_string()
+            }
+        );
         let encoded = serde_json::to_vec(link)?;
         let decoded: RustFactLink = serde_json::from_slice(&encoded)?;
         assert_eq!(&decoded, link);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_owner_arguments_refuse_nonportable_paths() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [{{ name = "source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+objects = [{{ name = "helper.o", language = "c", arguments = [{{ owner = "OWNER_PATH" }}, {{ input = "source" }}, {{ output = "helper.o" }}] }}]
+library = {{ name = "sys_helper", kind = "static" }}
+"#,
+        );
+        for path in ["/Library/SDK", "../SDK", "SDK/../SDK"] {
+            let error = ProjectManifest::from_str(&base.replace("OWNER_PATH", path), Path::new("loaf.toml"))
+                .err()
+                .ok_or("nonportable owner argument was accepted")?;
+            assert!(error.to_string().contains("owner argument"), "{path}: {error}");
+        }
         Ok(())
     }
 
@@ -4687,6 +4739,45 @@ library = {{ name = "blake3", kind = "static" }}
             Path::new("loaf.toml"),
         )?;
         assert_eq!(manifest.rust_facts[0].link[0].objects.len(), 2);
+        Ok(())
+    }
+
+    /// Admit `.` only for a complete tree input, never for file inputs or produced outputs.
+    #[test]
+    fn rust_fact_root_path_is_tree_input_only() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "x86_64-unknown-linux-gnu"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.tool]]
+name = "fixture"
+target = "x86_64-unknown-linux-gnu"
+executable = {{ name = "fixture", owner = "{digest}", path = "bin/fixture", digest = "{digest}" }}
+arguments = [{{ input = "crate" }}, {{ output = "generated" }}]
+inputs = [{{ name = "crate", kind = "tree", path = ".", digest = "{digest}", members = [{{ path = "config.h", digest = "{digest}" }}] }}]
+outputs = [{{ name = "generated", kind = "file", path = "generated/output.rs" }}]
+"#
+        );
+
+        let parsed = ProjectManifest::from_str(&manifest, Path::new("loaf.toml"))?;
+        assert_eq!(parsed.rust_facts[0].tool[0].inputs[0].path, ".");
+
+        let file_root = manifest.replace("kind = \"tree\", path = \".\"", "kind = \"file\", path = \".\"");
+        let file_error = ProjectManifest::from_str(&file_root, Path::new("loaf.toml"))
+            .err()
+            .ok_or("`.` file source was accepted")?;
+        assert!(file_error.to_string().contains("inputs `crate` path `.`"));
+        let output_root = manifest.replace("path = \"generated/output.rs\"", "path = \".\"");
+        let output_error = ProjectManifest::from_str(&output_root, Path::new("loaf.toml"))
+            .err()
+            .ok_or("`.` output was accepted")?;
+        assert!(output_error.to_string().contains("outputs `generated` path `.`"));
         Ok(())
     }
 

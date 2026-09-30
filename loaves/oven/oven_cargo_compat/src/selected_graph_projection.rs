@@ -2739,6 +2739,8 @@ mod tests {
                     out_dir: PathBuf::from("/transient/serde/out"),
                     output: None,
                     publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
                 }),
             });
         capture.units.insert(0, root);
@@ -2861,6 +2863,8 @@ mod tests {
             out_dir: PathBuf::from("/transient/probe-only/out"),
             output: None,
             publisher_work: Vec::new(),
+            publisher_native_probes: Vec::new(),
+            publisher_work_refusal: None,
         };
         capture.units[2]
             .dependencies
@@ -3335,6 +3339,8 @@ mod tests {
                 ],
             }),
             publisher_work: Vec::new(),
+            publisher_native_probes: Vec::new(),
+            publisher_work_refusal: None,
         };
         capture.units[0]
             .dependencies
@@ -3829,6 +3835,8 @@ mod tests {
                             .collect(),
                     }),
                     publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
                 }),
             });
         capture.units.push(OvenLegacyCargoSelectedUnit {
@@ -3959,6 +3967,8 @@ mod tests {
                 out_dir: PathBuf::from("/transient/out"),
                 output: None,
                 publisher_work: Vec::new(),
+                publisher_native_probes: Vec::new(),
+                publisher_work_refusal: None,
             }),
             registry_source: None,
         });

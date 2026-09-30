@@ -262,6 +262,15 @@ pub enum OvenCommand {
         /// Explicit Rust compiler whose identity the facts are bound to
         #[arg(long, value_name = "PATH")]
         rustc: PathBuf,
+        /// Explicit real C compiler traced during the publisher observation
+        #[arg(long, value_name = "PATH")]
+        cc: PathBuf,
+        /// Explicit real C++ compiler traced during the publisher observation
+        #[arg(long, value_name = "PATH")]
+        cxx: PathBuf,
+        /// Explicit C sysroot used by traced native compiles
+        #[arg(long = "c-sysroot", value_name = "PATH")]
+        c_sysroot: PathBuf,
         /// Existing `Cargo.lock` whose registry identities the observation must resolve within; without it Cargo
         /// resolves the closure afresh
         #[arg(long = "cargo-lock", value_name = "PATH")]
@@ -588,6 +597,15 @@ pub enum OvenLegacyCargoCommand {
         /// Explicit Rust compiler required to match the receipt
         #[arg(long, value_name = "PATH")]
         rustc: PathBuf,
+        /// Explicit real C compiler traced during the publisher transition
+        #[arg(long, value_name = "PATH")]
+        cc: PathBuf,
+        /// Explicit real C++ compiler traced during the publisher transition
+        #[arg(long, value_name = "PATH")]
+        cxx: PathBuf,
+        /// Explicit C sysroot used by traced native compiles
+        #[arg(long = "c-sysroot", value_name = "PATH")]
+        c_sysroot: PathBuf,
         /// Stable compatibility domain for bounded Oven storage
         #[arg(long, value_name = "NAME")]
         domain: String,
@@ -642,6 +660,15 @@ pub enum OvenLegacyCargoCommand {
         /// Explicit Rust compiler recorded by each Loaf receipt
         #[arg(long, value_name = "PATH")]
         rustc: PathBuf,
+        /// Explicit real C compiler traced for native-link adoption
+        #[arg(long, value_name = "PATH")]
+        cc: PathBuf,
+        /// Explicit real C++ compiler traced for native-link adoption
+        #[arg(long, value_name = "PATH")]
+        cxx: PathBuf,
+        /// Explicit C sysroot used by traced native compiles
+        #[arg(long = "c-sysroot", value_name = "PATH")]
+        c_sysroot: PathBuf,
         /// Aggregate physical Loaf-envelope allowance
         #[arg(long = "max-physical-bytes", value_name = "BYTES")]
         max_physical_bytes: Option<u64>,

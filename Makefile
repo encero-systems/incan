@@ -52,6 +52,17 @@ INCAN_TEST_PREWARM_TOOLCHAIN ?= 1.98.0
 INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24
 INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
 INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
+# The C toolchain whose compiles native adoption observes in every Loaf bake: the Command Line Tools on macOS, the
+# system clang elsewhere. The sysroot is canonical because the owner closure binds canonical paths.
+ifeq ($(shell uname -s),Darwin)
+INCAN_TEST_CC ?= /Library/Developer/CommandLineTools/usr/bin/clang
+INCAN_TEST_CXX ?= /Library/Developer/CommandLineTools/usr/bin/clang++
+INCAN_TEST_C_SYSROOT ?= $(realpath /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)
+else
+INCAN_TEST_CC ?= /usr/bin/clang
+INCAN_TEST_CXX ?= /usr/bin/clang++
+INCAN_TEST_C_SYSROOT ?= /usr
+endif
 # Registered Loaf registry checkout (incan.pub) whose adoption manifests govern captured registry units in the
 # release bake; unset, the release publisher keeps every unit observation-governed.
 INCAN_TEST_LOAF_REGISTRY ?=
@@ -569,6 +580,9 @@ test-prewarm-oven-loafs: test-prewarm-sdk
 			--sdk-inventory "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
 			--cargo "$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)" \
 			--rustc "$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)" \
+			--cc "$(INCAN_TEST_CC)" \
+			--cxx "$(INCAN_TEST_CXX)" \
+			--c-sysroot "$(INCAN_TEST_C_SYSROOT)" \
 			--format "$(INCAN_TEST_OVEN_BAKE_FORMAT)" $(if $(INCAN_TEST_OVEN_BAKE_REPORT),> "$(INCAN_TEST_OVEN_BAKE_REPORT)",)
 
 .PHONY: test-prewarm-oven-release-loafs
@@ -586,6 +600,12 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		rustc_bin="$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"; \
 		target="$$("$$rustc_bin" -vV | sed -n 's/^host: //p')"; \
 		test -n "$$target"; \
+		cc_bin="$(INCAN_TEST_CC)"; \
+		cxx_bin="$(INCAN_TEST_CXX)"; \
+		c_sysroot="$(INCAN_TEST_C_SYSROOT)"; \
+		test -x "$$cc_bin"; \
+		test -x "$$cxx_bin"; \
+		test -d "$$c_sysroot"; \
 		mkdir -p "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
 		policy_home="$$(mktemp -d "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX")"; \
 		trap 'rm -rf "$$policy_home"' EXIT HUP INT TERM; \
@@ -620,6 +640,9 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 			--sdk-inventory "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
 			--cargo "$$cargo_bin" \
 			--rustc "$$rustc_bin" \
+			--cc "$$cc_bin" \
+			--cxx "$$cxx_bin" \
+			--c-sysroot "$$c_sysroot" \
 			--policy-engine-store "$$policy_engine_store" \
 			--policy-engine-identity "$$policy_engine_identity" \
 			--policy-engine-target "$$target" \

@@ -275,7 +275,7 @@ incan oven bake [--project PATH] [--target TRIPLE] [--features FEATURE,...] [--n
                 [--all-features] [--format text|json]
 incan oven import --target TRIPLE --toolchain IDENTITY [--project PATH] [--profile PROFILE]
                   [--feature NAME ...] [--source NAME=PATH ...] [--output PATH] [--format text|json]
-incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --output PATH [--project PATH]
+incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --cc PATH --cxx PATH --c-sysroot PATH --output PATH [--project PATH]
                    [--profile release|debug] [--cargo-lock PATH] [--format text|json]
 incan oven interop bake --target TRIPLE [--project PATH] [--base-receipt PATH] [--c-compiler PATH]
                         [--cxx-compiler PATH] [--archiver PATH] [--toolchain-version VERSION]
@@ -335,7 +335,7 @@ The Oven design, its compatibility envelope and its exclusions are explained in 
 ### `incan oven harvest`
 
 ```text
-incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --output PATH [--project PATH]
+incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --cc PATH --cxx PATH --c-sysroot PATH --output PATH [--project PATH]
                    [--profile release|debug] [--cargo-lock PATH] [--format text|json]
 ```
 
@@ -345,7 +345,8 @@ Options:
 
 - `--project <PATH>` (default `.`): the checked manifest, or its directory.
 - `--target <TRIPLE>`, `--profile release|debug` (default `release`): the selection the facts bind.
-- `--cargo <PATH>`, `--rustc <PATH>`: the publisher's tools. The facts bind the `rustc` identity; the Cargo version is recorded as provenance.
+- `--cargo <PATH>`, `--rustc <PATH>`: the publisher's Rust tools. The facts bind the `rustc` identity; the Cargo version is recorded as provenance.
+- `--cc <PATH>`, `--cxx <PATH>`, `--c-sysroot <PATH>`: the real C compiler, C++ compiler, and sysroot used for native-link observation. Harvest never discovers them through `PATH` or `xcrun`; it traces compile and archive invocations through the named publisher wrapper and refuses paths that cannot become portable crate or compiler-owner references.
 - `--cargo-lock <PATH>`: resolve within an existing lock instead of resolving afresh.
 - `--output <PATH>`: the proposal directory.
 - `--format text|json`: text lists proposals and refusals; JSON is the harvest report.
@@ -364,7 +365,7 @@ Output:
 - Harvesting into an existing output directory is idempotent when the canonical proposal, refusals, and retained bytes agree. Existing different bytes or facts are refused.
 - A package is omitted from proposals when any of its bindings is refused. Proposal and refusal package sets are disjoint for each profile.
 - A proposal observation that contains native-link or generator work becomes a registry record only through the model's fail-closed conversion boundary. The admitted TOML uses `[[rust.facts.link]]` with `name`, `target`, `executable`, `environment`, `sources`, `objects`, and `library`, or `[[rust.facts.tool]]` with `name`, `target`, `executable`, `arguments`, `environment`, `inputs`, and `outputs`. Product bytes, product digests, and producer receipts are registry asset data, not fields of either fact table.
-- A publisher bake executes the admitted `link` compiler once for each object, with the object's ordered arguments, cleared environment plus declared entries, complete source set, and read access to the immutable executable-owner root. After the exact declared object set exists, the Oven writes `lib<library>.a` in process using the target's Darwin, BSD, GNU, or COFF archive format and a linker symbol index. The asset contains that exact archive and `publisher-receipt.json`; the receipt binds the executable, each object's logical argv and digest, logical environment, source digests, target, toolchain, pre-product consuming-unit identity, and archive digest. No archiver executable is declared or run.
+- A publisher bake executes the admitted `link` compiler once for each object, with the object's ordered arguments, cleared environment plus declared entries, complete source set, and read access to only the identity-verified executable-owner closure named by the executable and `{ owner = "..." }` arguments. After the exact declared object set exists, the Oven writes `lib<library>.a` in process using the target's Darwin, BSD, GNU, or COFF archive format and a linker symbol index. The asset contains that exact archive and `publisher-receipt.json`; the receipt binds the executable, each object's logical argv and digest, logical environment, source digests, target, toolchain, pre-product consuming-unit identity, and archive digest. No archiver executable is declared or run.
 - A consumer accepts a native archive only from a verified publisher receipt whose identity is the selected generated-output owner. Missing products, target or toolchain disagreement, receipt or archive tampering, name collisions, and missing or extra publisher outputs refuse. Consumer commands never execute the declared native compiler.
 
 Only complete observations become proposals; all other observations become evidence-bearing refusals. `incan-pub add-fact` performs registry admission from the proposal on disk.
