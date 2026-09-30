@@ -47,6 +47,12 @@ pub struct OvenLoafBakerContext<'a> {
     pub transient_limit: u64,
     pub cargo: &'a Path,
     pub rustc: &'a Path,
+    /// Explicit real C compiler traced for native-link adoption.
+    pub cc: &'a Path,
+    /// Explicit real C++ compiler traced for native-link adoption.
+    pub cxx: &'a Path,
+    /// Explicit C sysroot used by traced native compiles.
+    pub c_sysroot: &'a Path,
     /// Checked Rust dependency surface whose source is sealed into this one Loaf.
     pub inspection_packages: &'a [OvenLegacyCargoInspectionPackage],
     /// Locked source authority resolved once from the compiler root at the explicit baker boundary.
@@ -145,6 +151,9 @@ pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
         generated_project: generated_project.to_path_buf(),
         cargo: context.cargo.to_path_buf(),
         rustc: context.rustc.to_path_buf(),
+        cc: Some(context.cc.to_path_buf()),
+        cxx: Some(context.cxx.to_path_buf()),
+        c_sysroot: Some(context.c_sysroot.to_path_buf()),
         sdk_inventory: None,
         compiler_loaf_root: None,
         domain: format!("toolchain-base-{}", receipt.intent.profile),

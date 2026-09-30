@@ -941,7 +941,11 @@ mod tool_execution {
         producer: &str,
         field: &str,
     ) -> Result<PathBuf, OvenPublisherToolError> {
-        let path = join_portable(root, relative, producer, field)?;
+        let path = if relative == "." {
+            root.to_path_buf()
+        } else {
+            join_portable(root, relative, producer, field)?
+        };
         let canonical_root = canonical_directory(root, producer, field)?;
         let canonical = fs::canonicalize(&path).map_err(|source| OvenPublisherToolError::Io {
             producer: producer.to_string(),

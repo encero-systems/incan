@@ -31,6 +31,7 @@ mod harvest;
 mod inspection_sources;
 mod loaf_registry_authority;
 mod lock;
+mod native_trace;
 mod registry_sources;
 mod rustc_trace;
 mod sdk_staging;
@@ -50,6 +51,7 @@ pub use harvest::*;
 pub use inspection_sources::*;
 pub use loaf_registry_authority::*;
 pub use lock::*;
+pub use native_trace::*;
 pub use registry_sources::*;
 pub use rustc_trace::*;
 pub use sdk_staging::*;
@@ -349,6 +351,12 @@ pub struct OvenLegacyCargoPrepareRequest<'a> {
     pub cargo: PathBuf,
     /// Explicit Rust compiler used by Cargo and later direct-rustc execution.
     pub rustc: PathBuf,
+    /// Explicit C compiler traced for native-link adoption when supplied.
+    pub cc: Option<PathBuf>,
+    /// Explicit C++ compiler traced for native-link adoption when supplied.
+    pub cxx: Option<PathBuf>,
+    /// Explicit C sysroot paired with `cc`; never discovered from the host.
+    pub c_sysroot: Option<PathBuf>,
     /// Exact prebuilt SDK inventory supplied by the Loaf baker for compiler-suite publication.
     ///
     /// Standalone transitional callers may omit this and use the installed-toolchain discovery contract. Normal
@@ -1152,6 +1160,12 @@ fn source_compiler_vocab_support_paths_are_available(root: &Path, executable: &P
 pub fn prepare_direct_rustc_plan(
     request: &OvenLegacyCargoPrepareRequest<'_>,
 ) -> Result<OvenLegacyCargoPrepareResult, OvenLegacyCargoError> {
+    if request.cc.is_some() != request.cxx.is_some() || request.cc.is_some() != request.c_sysroot.is_some() {
+        return Err(OvenLegacyCargoError::InvalidInput {
+            field: "native compiler capture",
+            message: "--cc, --cxx and --c-sysroot must be supplied together".to_string(),
+        });
+    }
     request
         .receipt
         .verify_identity()
@@ -1253,7 +1267,7 @@ pub fn prepare_direct_rustc_plan(
     // confined to the separately provisioned compiler-suite producer. The stable publisher instead joins Cargo's
     // artifact/build-script messages to exact successful rustc invocations, retaining physical unit edges without
     // adding a nightly requirement to installed release tooling.
-    let cargo_outputs = run_legacy_cargo(
+    let cargo_outputs = run_legacy_cargo_with_native(
         &request.cargo,
         &request.rustc,
         &cargo_manifest,
@@ -1265,6 +1279,9 @@ pub fn prepare_direct_rustc_plan(
         request.publication_kind,
         request.compact_debug_info,
         request.base_loaf.is_some(),
+        request.cc.as_deref(),
+        request.cxx.as_deref(),
+        request.c_sysroot.as_deref(),
     )?;
     let cargo_lock = generated_project.join("Cargo.lock");
     let cargo_lock_bytes = regular_file_bytes(&cargo_lock)?;
@@ -1310,6 +1327,13 @@ pub fn prepare_direct_rustc_plan(
     let mut selected_units = if outputs_have_rustc_trace(&cargo_outputs) {
         let mut capture =
             capture_legacy_cargo_selected_units_from_trace(&metadata, &cargo_outputs, &request.rustc, &rustc_host)?;
+        if let (Some(cc), Some(cxx), Some(c_sysroot)) = (
+            request.cc.as_deref(),
+            request.cxx.as_deref(),
+            request.c_sysroot.as_deref(),
+        ) {
+            harvest::attach_native_link_records(&mut capture, &cargo_outputs, cc, cxx, c_sysroot)?;
+        }
         let (host_cfg, target_cfg) =
             rustc_host_and_target_cfg_snapshots(&request.rustc, &request.receipt.intent.target)
                 .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
@@ -2581,7 +2605,7 @@ impl Drop for PublisherLock {
 
 /// Run the explicit Cargo compiler while bounding transient output by the compatibility-domain allowance.
 #[allow(clippy::too_many_arguments)]
-fn run_legacy_cargo(
+fn run_legacy_cargo_with_native(
     cargo: &Path,
     rustc: &Path,
     cargo_manifest: &Path,
@@ -2593,8 +2617,11 @@ fn run_legacy_cargo(
     publication_kind: OvenLegacyCargoPublicationKind,
     compact_debug_info: bool,
     distinct_extension_identities: bool,
+    cc: Option<&Path>,
+    cxx: Option<&Path>,
+    c_sysroot: Option<&Path>,
 ) -> Result<Vec<CargoInvocationOutput>, OvenLegacyCargoError> {
-    let first = run_legacy_cargo_invocation(
+    let first = run_legacy_cargo_invocation_with_native(
         cargo,
         rustc,
         cargo_manifest,
@@ -2622,6 +2649,9 @@ fn run_legacy_cargo(
         false,
         compact_debug_info,
         distinct_extension_identities,
+        cc,
+        cxx,
+        c_sysroot,
     )?;
     let mut outputs = vec![first];
     if publication_kind == OvenLegacyCargoPublicationKind::LibraryTests {
@@ -2629,7 +2659,7 @@ fn run_legacy_cargo(
         // target. Cargo can report the already-built closure as fresh here; the capture accepts those records only
         // because the earlier output in this returned transaction retains their exact traced invocations. No normal
         // test command receives this Cargo authority or target path.
-        outputs.push(run_legacy_cargo_invocation(
+        outputs.push(run_legacy_cargo_invocation_with_native(
             cargo,
             rustc,
             cargo_manifest,
@@ -2644,9 +2674,46 @@ fn run_legacy_cargo(
             false,
             compact_debug_info,
             distinct_extension_identities,
+            cc,
+            cxx,
+            c_sysroot,
         )?);
     }
     Ok(outputs)
+}
+
+/// Run Cargo without native compiler capture for compatibility callers that do not adopt link records.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn run_legacy_cargo(
+    cargo: &Path,
+    rustc: &Path,
+    cargo_manifest: &Path,
+    target: &Path,
+    target_triple: &str,
+    profile: &str,
+    features: &[String],
+    transient_limit: u64,
+    publication_kind: OvenLegacyCargoPublicationKind,
+    compact_debug_info: bool,
+    distinct_extension_identities: bool,
+) -> Result<Vec<CargoInvocationOutput>, OvenLegacyCargoError> {
+    run_legacy_cargo_with_native(
+        cargo,
+        rustc,
+        cargo_manifest,
+        target,
+        target_triple,
+        profile,
+        features,
+        transient_limit,
+        publication_kind,
+        compact_debug_info,
+        distinct_extension_identities,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Captured output from one explicitly named Cargo publisher invocation.
@@ -3104,7 +3171,7 @@ fn stage_release_cohort_project_lock(
 
 /// Run one named Cargo publisher invocation while continuously enforcing its enclosing transient allocation allowance.
 #[allow(clippy::too_many_arguments)]
-fn run_legacy_cargo_invocation(
+fn run_legacy_cargo_invocation_with_native(
     cargo: &Path,
     rustc: &Path,
     cargo_manifest: &Path,
@@ -3119,6 +3186,9 @@ fn run_legacy_cargo_invocation(
     unit_graph: bool,
     compact_debug_info: bool,
     distinct_extension_identities: bool,
+    cc: Option<&Path>,
+    cxx: Option<&Path>,
+    c_sysroot: Option<&Path>,
 ) -> Result<CargoInvocationOutput, OvenLegacyCargoError> {
     let cargo = canonical_tool_file(cargo, "cargo")?;
     let rustc = canonical_tool_file(rustc, "rustc")?;
@@ -3195,12 +3265,18 @@ fn run_legacy_cargo_invocation(
     let stdout_path = target.join(format!("{capture_stem}.stdout"));
     let stderr_path = target.join(format!("{capture_stem}.stderr"));
     let rustc_trace_path = target.join(format!("{capture_stem}.rustc.jsonl"));
+    let native_trace_path = target.join(format!("{capture_stem}.native.jsonl"));
     // A unit-graph query describes compilation without executing rustc. Only the later compilation invocation
     // can supply the physical trace; requiring one here rejects the compiler-suite publisher before it builds.
     let rustc_wrapper = if unit_graph {
         None
     } else {
         current_rustc_trace_wrapper()?
+    };
+    let native_wrapper = if unit_graph || cc.is_none() || cxx.is_none() || c_sysroot.is_none() {
+        None
+    } else {
+        native_trace::current_native_trace_wrapper()?
     };
     if rustc_wrapper.is_some() {
         match fs::remove_file(&rustc_trace_path) {
@@ -3209,6 +3285,18 @@ fn run_legacy_cargo_invocation(
             Err(source) => {
                 return Err(OvenLegacyCargoError::Io {
                     path: rustc_trace_path.clone(),
+                    source,
+                });
+            }
+        }
+    }
+    if native_wrapper.is_some() {
+        match fs::remove_file(&native_trace_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(OvenLegacyCargoError::Io {
+                    path: native_trace_path.clone(),
                     source,
                 });
             }
@@ -3280,6 +3368,78 @@ fn run_legacy_cargo_invocation(
             .env(OVEN_RUSTC_TRACE_WRAPPER_ENV, "1")
             .env(OVEN_RUSTC_TRACE_PATH_ENV, &rustc_trace_path);
     }
+    if let (Some(native_wrapper), Some(cc), Some(cxx), Some(c_sysroot)) = (native_wrapper.as_ref(), cc, cxx, c_sysroot)
+    {
+        let cc = canonical_tool_file(cc, "C compiler")?;
+        let cxx = canonical_tool_file(cxx, "C++ compiler")?;
+        let ar_candidate = cc
+            .parent()
+            .ok_or_else(|| OvenLegacyCargoError::InvalidInput {
+                field: "C compiler",
+                message: format!("{} has no tool directory", cc.display()),
+            })?
+            .join("ar");
+        let ar = canonical_tool_file(&ar_candidate, "C archiver")?;
+        let target_cc = format!("CC_{target_triple}");
+        let target_cxx = format!("CXX_{target_triple}");
+        let target_ar = format!("AR_{target_triple}");
+        let normalized_target = target_triple.replace('-', "_");
+        let normalized_target_cc = format!("CC_{normalized_target}");
+        let normalized_target_cxx = format!("CXX_{normalized_target}");
+        let normalized_target_ar = format!("AR_{normalized_target}");
+        let cc_wrapper = target.join(format!("{capture_stem}.native-cc-trace"));
+        let cxx_wrapper = target.join(format!("{capture_stem}.native-cxx-trace"));
+        let ar_wrapper = target.join(format!("{capture_stem}.native-ar-trace"));
+        #[cfg(unix)]
+        {
+            for wrapper in [&cc_wrapper, &cxx_wrapper, &ar_wrapper] {
+                match fs::remove_file(wrapper) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(source) => {
+                        return Err(OvenLegacyCargoError::Io {
+                            path: wrapper.to_path_buf(),
+                            source,
+                        });
+                    }
+                }
+            }
+            std::os::unix::fs::symlink(native_wrapper, &cc_wrapper).map_err(|source| OvenLegacyCargoError::Io {
+                path: cc_wrapper.clone(),
+                source,
+            })?;
+            std::os::unix::fs::symlink(native_wrapper, &cxx_wrapper).map_err(|source| OvenLegacyCargoError::Io {
+                path: cxx_wrapper.clone(),
+                source,
+            })?;
+            std::os::unix::fs::symlink(native_wrapper, &ar_wrapper).map_err(|source| OvenLegacyCargoError::Io {
+                path: ar_wrapper.clone(),
+                source,
+            })?;
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(OvenLegacyCargoError::Plan(
+                "native trace wrappers require Unix executable aliases".to_string(),
+            ));
+        }
+        command
+            .env("CC", &cc_wrapper)
+            .env("CXX", &cxx_wrapper)
+            .env(&target_cc, &cc_wrapper)
+            .env(&target_cxx, &cxx_wrapper)
+            .env(&normalized_target_cc, &cc_wrapper)
+            .env(&normalized_target_cxx, &cxx_wrapper)
+            .env("AR", &ar_wrapper)
+            .env(&target_ar, &ar_wrapper)
+            .env(&normalized_target_ar, &ar_wrapper)
+            .env("SDKROOT", c_sysroot)
+            .env(native_trace::OVEN_NATIVE_TRACE_PATH_ENV, &native_trace_path)
+            .env(native_trace::OVEN_NATIVE_TRACE_WRAPPER_ENV, "1")
+            .env(native_trace::OVEN_NATIVE_TRACE_EXECUTABLE_ENV, &cc)
+            .env(native_trace::OVEN_NATIVE_TRACE_CXX_EXECUTABLE_ENV, &cxx)
+            .env("INCAN_OVEN_NATIVE_ARCHIVER", &ar);
+    }
     if compact_debug_info && profile == "debug" {
         command.env("CARGO_PROFILE_DEV_DEBUG", "0");
     }
@@ -3342,6 +3502,10 @@ fn run_legacy_cargo_invocation(
         append_rustc_trace(&mut stdout, &rustc_trace_path)?;
         let _ = fs::remove_file(&rustc_trace_path);
     }
+    if native_wrapper.is_some() {
+        native_trace::append_native_trace(&mut stdout, &native_trace_path)?;
+        let _ = fs::remove_file(&native_trace_path);
+    }
     let reservation = conservative_directory_reservation(capacity_root)?;
     if reservation > transient_limit {
         return Err(OvenLegacyCargoError::TransientCapacityExceeded {
@@ -3351,6 +3515,45 @@ fn run_legacy_cargo_invocation(
         });
     }
     Ok(CargoInvocationOutput { stdout })
+}
+
+/// Run one Cargo invocation without tracing native build-script tools.
+#[allow(clippy::too_many_arguments)]
+fn run_legacy_cargo_invocation(
+    cargo: &Path,
+    rustc: &Path,
+    cargo_manifest: &Path,
+    target: &Path,
+    capacity_root: &Path,
+    target_triple: &str,
+    profile: &str,
+    features: &[String],
+    transient_limit: u64,
+    command_name: &'static str,
+    target_selection: &OvenLegacyCargoInvocationTarget,
+    unit_graph: bool,
+    compact_debug_info: bool,
+    distinct_extension_identities: bool,
+) -> Result<CargoInvocationOutput, OvenLegacyCargoError> {
+    run_legacy_cargo_invocation_with_native(
+        cargo,
+        rustc,
+        cargo_manifest,
+        target,
+        capacity_root,
+        target_triple,
+        profile,
+        features,
+        transient_limit,
+        command_name,
+        target_selection,
+        unit_graph,
+        compact_debug_info,
+        distinct_extension_identities,
+        None,
+        None,
+        None,
+    )
 }
 
 type PublisherArtifactClosure = (
@@ -7885,6 +8088,9 @@ version = "1.0.0"
             generated_project: fixture.path().join("unused-generated-project"),
             cargo,
             rustc,
+            cc: None,
+            cxx: None,
+            c_sysroot: None,
             sdk_inventory: None,
             compiler_loaf_root: None,
             domain: "compiler-suite".to_string(),
@@ -8146,6 +8352,9 @@ version = "1.0.0"
             generated_project: project.path().to_path_buf(),
             cargo,
             rustc,
+            cc: None,
+            cxx: None,
+            c_sysroot: None,
             sdk_inventory: None,
             compiler_loaf_root: None,
             domain: "incan-release-fixture".to_string(),

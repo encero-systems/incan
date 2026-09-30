@@ -18,17 +18,18 @@ use std::path::{Component, Path, PathBuf};
 
 use oven_model::loaf_registry::canonical_checksum;
 use oven_model::manifest::{
-    RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactEnvironment, RustFactExecutable, RustFactLibrary,
-    RustFactLibraryKind, RustFactLinkObject, RustFactOut, RustFactOutput, RustFactRecord, RustFactWorkObservation,
-    RustFactWorkRecord, is_sha256_identity,
+    RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactArtifactMember, RustFactEnvironment,
+    RustFactExecutable, RustFactLibrary, RustFactLibraryKind, RustFactLinkLanguage, RustFactLinkObject, RustFactOut,
+    RustFactOutput, RustFactProducerRole, RustFactRecord, RustFactWorkObservation, RustFactWorkRecord,
+    is_sha256_identity,
 };
 use serde::{Deserialize, Serialize};
 
 use super::loaf_bake::OvenLoafPublisherProvenance;
 use super::{
-    OvenLegacyCargoBuildScriptFacts, OvenLegacyCargoError, OvenLegacyCargoPrepareResult,
+    CargoInvocationOutput, OvenLegacyCargoBuildScriptFacts, OvenLegacyCargoError, OvenLegacyCargoPrepareResult,
     OvenLegacyCargoSelectedCompilerContext, OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture,
-    digest_bytes, regular_file_bytes,
+    OvenLegacyNativeInvocation, OvenLegacyNativeProbeEvidence, digest_bytes, regular_file_bytes,
 };
 
 /// The `evidence.method` every proposal records: the facts come from watching Cargo, not from reading a manifest.
@@ -175,6 +176,9 @@ pub struct HarvestLinkObservation {
     /// Logical library contract, when capture proved it unambiguously.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<RustFactLibrary>,
+    /// Precise reason the raw native invocations could not become typed publisher work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversion_refusal: Option<String>,
 }
 
 /// One native-link search path whose ownership was proven below the retained output root.
@@ -470,6 +474,772 @@ fn link_record_from_observation(
             Err(HarvestAdmissionRefusal::UnresolvedLinkObservations)
         }
     }
+}
+
+/// Convert and attach native compiler/archive traces to the exact build-script edges that emitted their library.
+pub(crate) fn attach_native_link_records(
+    capture: &mut OvenLegacyCargoSelectedUnitCapture,
+    outputs: &[CargoInvocationOutput],
+    compiler: &Path,
+    cxx: &Path,
+    sysroot: &Path,
+) -> Result<(), OvenLegacyCargoError> {
+    let mut native = Vec::new();
+    for output in outputs {
+        for line in output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
+                continue;
+            };
+            if matches!(
+                value.get("reason").and_then(serde_json::Value::as_str),
+                Some("incan-native-compile-invocation" | "incan-native-archive-invocation")
+            ) {
+                native.push(
+                    serde_json::from_value::<OvenLegacyNativeInvocation>(value).map_err(|error| {
+                        OvenLegacyCargoError::Plan(format!("invalid native invocation record: {error}"))
+                    })?,
+                );
+            }
+        }
+    }
+    if native.is_empty() {
+        return Ok(());
+    }
+    let compiler = fs::canonicalize(compiler).map_err(|source| OvenLegacyCargoError::Io {
+        path: compiler.to_path_buf(),
+        source,
+    })?;
+    let cxx = fs::canonicalize(cxx).map_err(|source| OvenLegacyCargoError::Io {
+        path: cxx.to_path_buf(),
+        source,
+    })?;
+    let sysroot = fs::canonicalize(sysroot).map_err(|source| OvenLegacyCargoError::Io {
+        path: sysroot.to_path_buf(),
+        source,
+    })?;
+    let compiler_resource = native_resource_directory(&compiler, "C compiler")?;
+    let cxx_resource = native_resource_directory(&cxx, "C++ compiler")?;
+    let compilers = [
+        NativeCompiler {
+            executable: &compiler,
+            resource_dir: &compiler_resource,
+            sysroot: &sysroot,
+        },
+        NativeCompiler {
+            executable: &cxx,
+            resource_dir: &cxx_resource,
+            sysroot: &sysroot,
+        },
+    ];
+    for unit in &mut capture.units {
+        for dependency in &mut unit.dependencies {
+            let Some(facts) = dependency.build_script.as_mut() else {
+                continue;
+            };
+            if facts.linked_libraries.is_empty() {
+                continue;
+            }
+            let out_dir = facts.out_dir.to_string_lossy();
+            let matching = native
+                .iter()
+                .filter(|invocation| {
+                    invocation
+                        .environment
+                        .get("OUT_DIR")
+                        .is_some_and(|value| value == out_dir.as_ref())
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            match native_link_work_from_observations(&matching, &facts.linked_libraries, &compilers) {
+                Ok(conversion) => {
+                    facts.publisher_work = conversion.work;
+                    facts.publisher_native_probes = conversion.probes;
+                    facts.publisher_work_refusal = None;
+                }
+                Err(reason) => facts.publisher_work_refusal = Some(reason),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Ask one explicit native compiler for the resource directory that belongs to its owner closure.
+fn native_resource_directory(compiler: &Path, label: &str) -> Result<PathBuf, OvenLegacyCargoError> {
+    let output = std::process::Command::new(compiler)
+        .arg("-print-resource-dir")
+        .output()
+        .map_err(|source| OvenLegacyCargoError::Io {
+            path: compiler.to_path_buf(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(OvenLegacyCargoError::Plan(format!(
+            "explicit {label} did not report its resource directory"
+        )));
+    }
+    let resource = PathBuf::from(
+        String::from_utf8(output.stdout)
+            .map_err(|error| OvenLegacyCargoError::Plan(format!("{label} resource directory is not UTF-8: {error}")))?
+            .trim(),
+    );
+    fs::canonicalize(&resource).map_err(|source| OvenLegacyCargoError::Io { path: resource, source })
+}
+
+/// Native compiler authority used to validate and materialize one adopted link record.
+struct NativeCompiler<'a> {
+    executable: &'a Path,
+    resource_dir: &'a Path,
+    sysroot: &'a Path,
+}
+
+/// Converted native work and the compiler probes deliberately excluded from replay.
+struct NativeLinkConversion {
+    work: Vec<RustFactWorkObservation>,
+    probes: Vec<OvenLegacyNativeProbeEvidence>,
+}
+
+/// Convert complete compiler and archiver traces into one link record per observed archive path.
+fn native_link_work_from_observations(
+    invocations: &[OvenLegacyNativeInvocation],
+    linked_libraries: &[String],
+    compilers: &[NativeCompiler<'_>],
+) -> Result<NativeLinkConversion, String> {
+    let compiles = invocations
+        .iter()
+        .filter(|invocation| invocation.reason == "incan-native-compile-invocation")
+        .collect::<Vec<_>>();
+    if compiles.is_empty() {
+        return Err("native adoption observed no compiler invocation".to_string());
+    }
+    let library_names = linked_libraries
+        .iter()
+        .filter_map(|library| library.strip_prefix("static="))
+        .collect::<BTreeSet<_>>();
+    let mut archives = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
+    for invocation in invocations
+        .iter()
+        .filter(|invocation| invocation.reason == "incan-native-archive-invocation")
+    {
+        let (archive, members) = archive_members(invocation)?;
+        archives.entry(archive).or_default().extend(members);
+    }
+    if archives.is_empty() {
+        return Err("native adoption observed no archive path".to_string());
+    }
+    let mut parsed_compiles = BTreeMap::<PathBuf, (&OvenLegacyNativeInvocation, PlainCompile)>::new();
+    let mut probes = Vec::new();
+    let archived_paths = archives
+        .values()
+        .flat_map(|members| members.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    for invocation in compiles {
+        match plain_compile(invocation) {
+            Ok(parsed) if archived_paths.contains(&parsed.output) => {
+                if parsed_compiles
+                    .insert(parsed.output.clone(), (invocation, parsed))
+                    .is_some()
+                {
+                    return Err("one archived object has more than one observed compile".to_string());
+                }
+            }
+            Ok(parsed)
+                if parsed
+                    .source
+                    .starts_with(common_environment_path(&[invocation], "CARGO_MANIFEST_DIR")?) =>
+            {
+                let name = parsed
+                    .output
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("non-UTF-8 object");
+                return Err(format!("compiled object `{name}` was never archived"));
+            }
+            Ok(_) | Err(_) => probes.push(native_probe_evidence(invocation, compilers)?),
+        }
+    }
+    let mut work = Vec::new();
+    for (archive, members) in archives {
+        let archive_name = archive
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .ok_or_else(|| "archive path has no portable UTF-8 file name".to_string())?;
+        let library = archive_name
+            .strip_prefix("lib")
+            .and_then(|name| name.strip_suffix(".a"))
+            .filter(|name| library_names.contains(name))
+            .ok_or_else(|| format!("archive path `{archive_name}` has no matching `static=<name>` link library"))?;
+        let member_compiles = members
+            .iter()
+            .map(|member| {
+                parsed_compiles.get(member).ok_or_else(|| {
+                    let name = member
+                        .file_name()
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or("non-UTF-8 object");
+                    format!("archive member `{name}` was never compiled")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if members.iter().collect::<BTreeSet<_>>().len() != members.len() {
+            return Err(format!("archive `{archive_name}` contains one object more than once"));
+        }
+        work.push(native_link_work_for_archive(&member_compiles, library, compilers)?);
+    }
+    if parsed_compiles.len() != archived_paths.len() {
+        return Err("the rebuilt archive member set does not equal the non-probe compile outputs".to_string());
+    }
+    let matched = work
+        .iter()
+        .filter_map(|observation| observation.library.as_ref().map(|library| library.name.as_str()))
+        .collect::<BTreeSet<_>>();
+    if matched != library_names {
+        let missing = library_names.difference(&matched).next().copied().unwrap_or("unknown");
+        return Err(format!("static link library `{missing}` has no matching archive path"));
+    }
+    Ok(NativeLinkConversion { work, probes })
+}
+
+/// Convert the ordered members of one reconstructed archive into one typed link work observation.
+fn native_link_work_for_archive(
+    member_compiles: &[&(&OvenLegacyNativeInvocation, PlainCompile)],
+    library: &str,
+    compilers: &[NativeCompiler<'_>],
+) -> Result<RustFactWorkObservation, String> {
+    let compiles = member_compiles
+        .iter()
+        .map(|(invocation, _)| *invocation)
+        .collect::<Vec<_>>();
+    let manifest_dir = common_environment_path(&compiles, "CARGO_MANIFEST_DIR")?;
+    let out_dir = common_environment_path(&compiles, "OUT_DIR")?;
+    let target = common_environment_value(&compiles, "TARGET")?;
+    let observed_executables = compiles
+        .iter()
+        .map(|invocation| {
+            fs::canonicalize(&invocation.executable)
+                .map_err(|error| format!("cannot resolve observed compiler: {error}"))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let observed_executables = observed_executables.iter().collect::<Vec<_>>();
+    let [compiler] = observed_executables.as_slice() else {
+        return Err("one archive combines objects from different compiler executables".to_string());
+    };
+    let authority = compilers
+        .iter()
+        .find(|candidate| fs::canonicalize(candidate.executable).ok().as_ref() == Some(*compiler))
+        .ok_or_else(|| "native compile used a compiler other than explicit --cc or --cxx".to_string())?;
+    let compiler = fs::canonicalize(authority.executable)
+        .map_err(|error| format!("cannot resolve explicit native compiler: {error}"))?;
+    let resource_dir = fs::canonicalize(authority.resource_dir)
+        .map_err(|error| format!("cannot resolve compiler resource directory: {error}"))?;
+    let sysroot = fs::canonicalize(authority.sysroot).map_err(|error| format!("cannot resolve C sysroot: {error}"))?;
+    let owner_root = common_ancestor(&[compiler.as_path(), resource_dir.as_path(), sysroot.as_path()])
+        .ok_or_else(|| "compiler, resource directory, and sysroot have no common owner root".to_string())?;
+    let executable_path = portable_beneath(&owner_root, &compiler, "compiler executable")?;
+    let resource_path = portable_beneath(&owner_root, &resource_dir, "compiler resource directory")?;
+    let sysroot_path = portable_beneath(&owner_root, &sysroot, "C sysroot")?;
+    let mut sources = BTreeMap::<String, RustFactArtifact>::new();
+    let mut objects = Vec::new();
+    let mut object_paths = BTreeMap::<PathBuf, String>::new();
+    let mut owner_paths = BTreeSet::from([executable_path.clone(), resource_path.clone(), sysroot_path.clone()]);
+    for (invocation, parsed) in member_compiles.iter().copied() {
+        if parsed.source.starts_with(&out_dir) {
+            return Err("compile source is generated inside OUT_DIR and cannot be adopted".to_string());
+        }
+        let source_relative = portable_beneath(&manifest_dir, &parsed.source, "compile source")?;
+        let source_name = logical_artifact_name("source", &source_relative);
+        insert_source(
+            &mut sources,
+            source_name.clone(),
+            RustFactArtifact {
+                name: source_name.clone(),
+                kind: RustFactArtifactKind::File,
+                path: source_relative,
+                digest: digest_bytes(
+                    &fs::read(&parsed.source).map_err(|error| format!("cannot read compile source: {error}"))?,
+                ),
+                members: Vec::new(),
+            },
+        )?;
+        let object_name = stable_object_name(&parsed.output)?;
+        if object_paths
+            .insert(parsed.output.clone(), object_name.clone())
+            .is_some()
+            || objects
+                .iter()
+                .any(|object: &RustFactLinkObject| object.name == object_name)
+        {
+            return Err(format!(
+                "native object name `{object_name}` collides after stripping the cc hash prefix"
+            ));
+        }
+        let has_resource_directory = invocation
+            .arguments
+            .iter()
+            .any(|argument| argument == "-resource-dir" || argument.starts_with("-resource-dir="));
+        let has_sysroot = invocation.arguments.iter().any(|argument| {
+            matches!(argument.as_str(), "-isysroot" | "--sysroot") || argument.starts_with("--sysroot=")
+        });
+        let mut arguments = Vec::new();
+        // Make implicit compiler lookup explicit so the sandboxed replay both names and receives the sysroot and
+        // resource directory whose bytes participate in the compiler-owner closure.
+        if !has_sysroot {
+            arguments.push(RustFactArgument::Literal {
+                literal: "-isysroot".to_string(),
+            });
+            arguments.push(RustFactArgument::Owner {
+                owner: sysroot_path.clone(),
+            });
+        }
+        if !has_resource_directory {
+            arguments.push(RustFactArgument::Literal {
+                literal: "-resource-dir".to_string(),
+            });
+            arguments.push(RustFactArgument::Owner {
+                owner: resource_path.clone(),
+            });
+        }
+        let mut index = 0usize;
+        while index < invocation.arguments.len() {
+            let argument = &invocation.arguments[index];
+            if argument == "-c" {
+                arguments.push(RustFactArgument::Literal {
+                    literal: "-c".to_string(),
+                });
+                arguments.push(RustFactArgument::Input {
+                    input: source_name.clone(),
+                });
+                index += 2;
+                continue;
+            }
+            if argument == "-o" {
+                arguments.push(RustFactArgument::Literal {
+                    literal: "-o".to_string(),
+                });
+                arguments.push(RustFactArgument::Output {
+                    output: object_name.clone(),
+                });
+                index += 2;
+                continue;
+            }
+            if matches!(argument.as_str(), "-I" | "-isysroot" | "--sysroot" | "-resource-dir") {
+                let value = invocation
+                    .arguments
+                    .get(index + 1)
+                    .ok_or_else(|| format!("{argument} has no value"))?;
+                arguments.push(RustFactArgument::Literal {
+                    literal: argument.clone(),
+                });
+                arguments.push(path_argument(
+                    value,
+                    invocation,
+                    &manifest_dir,
+                    &out_dir,
+                    &owner_root,
+                    &mut sources,
+                    &mut owner_paths,
+                )?);
+                index += 2;
+                continue;
+            }
+            if let Some((flag, value)) = argument
+                .strip_prefix("--sysroot=")
+                .map(|value| ("--sysroot", value))
+                .or_else(|| {
+                    argument
+                        .strip_prefix("-resource-dir=")
+                        .map(|value| ("-resource-dir", value))
+                })
+            {
+                arguments.push(RustFactArgument::Literal {
+                    literal: flag.to_string(),
+                });
+                arguments.push(path_argument(
+                    value,
+                    invocation,
+                    &manifest_dir,
+                    &out_dir,
+                    &owner_root,
+                    &mut sources,
+                    &mut owner_paths,
+                )?);
+                index += 1;
+                continue;
+            }
+            if let Some(value) = argument.strip_prefix("-I").filter(|value| !value.is_empty()) {
+                arguments.push(RustFactArgument::Literal {
+                    literal: "-I".to_string(),
+                });
+                arguments.push(path_argument(
+                    value,
+                    invocation,
+                    &manifest_dir,
+                    &out_dir,
+                    &owner_root,
+                    &mut sources,
+                    &mut owner_paths,
+                )?);
+                index += 1;
+                continue;
+            }
+            if Path::new(argument).is_absolute() {
+                arguments.push(path_argument(
+                    argument,
+                    invocation,
+                    &manifest_dir,
+                    &out_dir,
+                    &owner_root,
+                    &mut sources,
+                    &mut owner_paths,
+                )?);
+                index += 1;
+                continue;
+            }
+            arguments.push(RustFactArgument::Literal {
+                literal: argument.clone(),
+            });
+            index += 1;
+        }
+        objects.push(RustFactLinkObject {
+            name: object_name,
+            language: source_language(&parsed.source)?,
+            arguments,
+        });
+    }
+    let owner_identity =
+        oven_store::publisher_owner::publisher_owner_identity(&owner_root, owner_paths.iter().map(String::as_str))
+            .map_err(|error| format!("cannot identify compiler owner closure: {error}"))?;
+    let compiler_name = compiler
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| "compiler executable name is not portable UTF-8".to_string())?;
+    Ok(RustFactWorkObservation {
+        role: RustFactProducerRole::Link,
+        name: library.to_string(),
+        target,
+        executable: Some(RustFactExecutable {
+            name: compiler_name.to_string(),
+            owner: owner_identity,
+            path: executable_path,
+            digest: digest_bytes(&fs::read(&compiler).map_err(|error| format!("cannot read compiler: {error}"))?),
+        }),
+        objects,
+        arguments: Vec::new(),
+        environment: Vec::new(),
+        inputs: sources.into_values().collect(),
+        outputs: Vec::new(),
+        library: Some(RustFactLibrary {
+            name: library.to_string(),
+            kind: RustFactLibraryKind::Static,
+        }),
+    })
+}
+
+/// Parsed plain `-c SOURCE -o OBJECT` invocation.
+struct PlainCompile {
+    source: PathBuf,
+    output: PathBuf,
+}
+
+/// Require exactly one source and one output from an ordinary compile invocation.
+fn plain_compile(invocation: &OvenLegacyNativeInvocation) -> Result<PlainCompile, String> {
+    let value_after = |flag: &str| {
+        invocation
+            .arguments
+            .windows(2)
+            .filter(|pair| pair[0] == flag)
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>()
+    };
+    let sources = value_after("-c");
+    let outputs = value_after("-o");
+    let ([source], [output]) = (sources.as_slice(), outputs.as_slice()) else {
+        return Err(
+            "native invocation is not a plain compile with exactly one `-c` source and `-o` object".to_string(),
+        );
+    };
+    Ok(PlainCompile {
+        source: resolve_observed_path(&invocation.working_directory, source)?,
+        output: resolve_observed_path(&invocation.working_directory, output)?,
+    })
+}
+
+/// Normalize one non-archived compiler invocation into stable probe evidence.
+fn native_probe_evidence(
+    invocation: &OvenLegacyNativeInvocation,
+    compilers: &[NativeCompiler<'_>],
+) -> Result<OvenLegacyNativeProbeEvidence, String> {
+    let manifest_dir = common_environment_path(&[invocation], "CARGO_MANIFEST_DIR")?;
+    let out_dir = common_environment_path(&[invocation], "OUT_DIR")?;
+    let executable = fs::canonicalize(&invocation.executable)
+        .map_err(|error| format!("cannot resolve observed probe compiler: {error}"))?;
+    let authority = compilers
+        .iter()
+        .find(|candidate| fs::canonicalize(candidate.executable).ok().as_ref() == Some(&executable))
+        .ok_or_else(|| "native probe used a compiler other than explicit --cc or --cxx".to_string())?;
+    let resource = fs::canonicalize(authority.resource_dir)
+        .map_err(|error| format!("cannot resolve probe compiler resource directory: {error}"))?;
+    let sysroot =
+        fs::canonicalize(authority.sysroot).map_err(|error| format!("cannot resolve probe C sysroot: {error}"))?;
+    let owner_root = common_ancestor(&[executable.as_path(), resource.as_path(), sysroot.as_path()])
+        .ok_or_else(|| "probe compiler, resource directory, and sysroot have no common owner root".to_string())?;
+    let normalize = |value: &str| {
+        let mut normalized = value.to_string();
+        for (root, marker) in [
+            (&manifest_dir, "<package>"),
+            (&out_dir, "<out>"),
+            (&owner_root, "<owner>"),
+        ] {
+            normalized = normalized.replace(root.to_string_lossy().as_ref(), marker);
+        }
+        normalized
+    };
+    let normalized = (
+        "incan.oven.native-compiler-probe/1",
+        normalize(&invocation.executable),
+        invocation
+            .arguments
+            .iter()
+            .map(|argument| normalize(argument))
+            .collect::<Vec<_>>(),
+        invocation.environment.get("TARGET"),
+    );
+    let encoded = serde_json::to_vec(&normalized)
+        .map_err(|error| format!("cannot encode native compiler probe evidence: {error}"))?;
+    Ok(OvenLegacyNativeProbeEvidence {
+        digest: digest_bytes(&encoded),
+        output: invocation.output.clone(),
+    })
+}
+
+/// Convert one path-taking compiler argument into crate input or compiler-owner authority.
+fn path_argument(
+    value: &str,
+    invocation: &OvenLegacyNativeInvocation,
+    manifest_dir: &Path,
+    out_dir: &Path,
+    owner_root: &Path,
+    sources: &mut BTreeMap<String, RustFactArtifact>,
+    owner_paths: &mut BTreeSet<String>,
+) -> Result<RustFactArgument, String> {
+    let path = resolve_observed_path(&invocation.working_directory, value)?;
+    if path.starts_with(out_dir) {
+        return Err("compiler input is generated inside OUT_DIR and cannot be adopted".to_string());
+    }
+    if path.starts_with(manifest_dir) {
+        let relative = if path == manifest_dir {
+            ".".to_string()
+        } else {
+            portable_beneath(manifest_dir, &path, "crate input")?
+        };
+        let name = logical_artifact_name("include", &relative);
+        let artifact = if path.is_dir() {
+            tree_artifact(&name, &relative, &path)?
+        } else {
+            RustFactArtifact {
+                name: name.clone(),
+                kind: RustFactArtifactKind::File,
+                path: relative,
+                digest: digest_bytes(&fs::read(&path).map_err(|error| format!("cannot read crate input: {error}"))?),
+                members: Vec::new(),
+            }
+        };
+        insert_source(sources, name.clone(), artifact)?;
+        return Ok(RustFactArgument::Input { input: name });
+    }
+    if path.starts_with(owner_root) {
+        let relative = portable_beneath(owner_root, &path, "compiler owner input")?;
+        owner_paths.insert(relative.clone());
+        return Ok(RustFactArgument::Owner { owner: relative });
+    }
+    Err("absolute compiler input is outside the crate and compiler owner".to_string())
+}
+
+/// Insert one source while refusing logical-name collisions with different declarations.
+fn insert_source(
+    sources: &mut BTreeMap<String, RustFactArtifact>,
+    name: String,
+    artifact: RustFactArtifact,
+) -> Result<(), String> {
+    if let Some(previous) = sources.insert(name.clone(), artifact.clone())
+        && previous != artifact
+    {
+        return Err(format!("source name `{name}` collides after portable normalization"));
+    }
+    Ok(())
+}
+
+/// Inventory one crate-relative include tree with the executor's canonical tree digest.
+fn tree_artifact(name: &str, relative: &str, root: &Path) -> Result<RustFactArtifact, String> {
+    /// Visit regular descendants while retaining paths relative to the declared tree root.
+    fn visit(root: &Path, directory: &Path, members: &mut Vec<RustFactArtifactMember>) -> Result<(), String> {
+        let mut entries = fs::read_dir(directory)
+            .map_err(|error| format!("cannot read include tree: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("cannot read include tree: {error}"))?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("cannot inspect include tree entry: {error}"))?;
+            if kind.is_symlink() {
+                return Err("crate include tree contains a symlink".to_string());
+            }
+            if kind.is_dir() {
+                visit(root, &path, members)?;
+            } else if kind.is_file() {
+                members.push(RustFactArtifactMember {
+                    path: portable_beneath(root, &path, "include tree member")?,
+                    digest: digest_bytes(
+                        &fs::read(&path).map_err(|error| format!("cannot read include tree member: {error}"))?,
+                    ),
+                });
+            } else {
+                return Err("crate include tree contains a special file".to_string());
+            }
+        }
+        Ok(())
+    }
+    let mut members = Vec::new();
+    visit(root, root, &mut members)?;
+    members.sort_by(|left, right| left.path.cmp(&right.path));
+    let bytes = serde_json::to_vec(&("incan.oven.publisher-artifact-tree/1", &members))
+        .map_err(|error| format!("cannot digest include tree: {error}"))?;
+    Ok(RustFactArtifact {
+        name: name.to_string(),
+        kind: RustFactArtifactKind::Tree,
+        path: relative.to_string(),
+        digest: digest_bytes(&bytes),
+        members,
+    })
+}
+
+/// Return one archive operation's path and ordered object members; index-only operations have no members.
+fn archive_members(invocation: &OvenLegacyNativeInvocation) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let mut archive = None;
+    let mut members = Vec::new();
+    for argument in &invocation.arguments {
+        if archive.is_none() && argument.ends_with(".a") {
+            archive = Some(resolve_observed_path(&invocation.working_directory, argument)?);
+            continue;
+        }
+        if archive.is_some() && argument.ends_with(".o") {
+            members.push(resolve_observed_path(&invocation.working_directory, argument)?);
+        }
+    }
+    let Some(archive) = archive else {
+        return Err("archive invocation did not name an archive path".to_string());
+    };
+    Ok((archive, members))
+}
+
+/// Remove cc-rs's hexadecimal object prefix while retaining a portable `.o` member name.
+fn stable_object_name(path: &Path) -> Result<String, String> {
+    let name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| "object path has no portable UTF-8 file name".to_string())?;
+    if !name.ends_with(".o") {
+        return Err(format!("native compile output `{name}` is not an object file"));
+    }
+    let stable = name
+        .split_once('-')
+        .filter(|(prefix, _)| prefix.len() >= 8 && prefix.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .map_or(name, |(_, suffix)| suffix);
+    Ok(stable.to_string())
+}
+
+/// Map a source suffix to the manifest's native-link language vocabulary.
+fn source_language(path: &Path) -> Result<RustFactLinkLanguage, String> {
+    match path.extension().and_then(std::ffi::OsStr::to_str) {
+        Some("c") => Ok(RustFactLinkLanguage::C),
+        Some("cc" | "cpp" | "cxx") => Ok(RustFactLinkLanguage::Cpp),
+        Some("s" | "S" | "asm") => Ok(RustFactLinkLanguage::Assembly),
+        _ => Err("cannot classify native source language from its extension".to_string()),
+    }
+}
+
+/// Resolve an observed relative path against the captured working directory without accepting a missing path.
+fn resolve_observed_path(working_directory: &str, value: &str) -> Result<PathBuf, String> {
+    let path = Path::new(value);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        Path::new(working_directory).join(path)
+    };
+    fs::canonicalize(&path).map_err(|error| format!("cannot resolve observed path: {error}"))
+}
+
+/// Require one common environment value across every compile invocation.
+fn common_environment_value(invocations: &[&OvenLegacyNativeInvocation], name: &str) -> Result<String, String> {
+    let values = invocations
+        .iter()
+        .map(|invocation| {
+            invocation
+                .environment
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("native compile omitted {name}"))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let values = values.into_iter().collect::<Vec<_>>();
+    let [value] = values.as_slice() else {
+        return Err(format!("native compiles disagree on {name}"));
+    };
+    Ok(value.clone())
+}
+
+/// Resolve one common environment path across every compile invocation.
+fn common_environment_path(invocations: &[&OvenLegacyNativeInvocation], name: &str) -> Result<PathBuf, String> {
+    fs::canonicalize(common_environment_value(invocations, name)?)
+        .map_err(|error| format!("cannot resolve native {name}: {error}"))
+}
+
+/// Compute the longest common ancestor directory of absolute selected paths.
+fn common_ancestor(paths: &[&Path]) -> Option<PathBuf> {
+    let first = paths.first()?;
+    first
+        .ancestors()
+        .find(|ancestor| paths.iter().all(|path| path.starts_with(ancestor)))
+        .map(Path::to_path_buf)
+}
+
+/// Render one physical path below an owner as a non-empty portable relative path.
+fn portable_beneath(owner: &Path, path: &Path, field: &str) -> Result<String, String> {
+    let relative = path
+        .strip_prefix(owner)
+        .map_err(|_| format!("{field} is outside its owner"))?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("{field} does not have a portable relative path"));
+    }
+    relative
+        .to_str()
+        .map(|value| value.replace('\\', "/"))
+        .ok_or_else(|| format!("{field} is not UTF-8"))
+}
+
+/// Derive a conservative logical artifact name from a portable path.
+fn logical_artifact_name(prefix: &str, path: &str) -> String {
+    format!(
+        "{prefix}-{}",
+        path.bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() {
+                    char::from(byte)
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+    )
 }
 
 /// Convert one raw tool observation after proving executable, invocation, and product byte identities.
@@ -912,23 +1682,31 @@ fn admission_refusal(proposal: &HarvestProposal, refusal: HarvestAdmissionRefusa
             (HarvestRefusalReason::EnvironmentObserved, names)
         }
         HarvestAdmissionRefusal::UnresolvedLinkObservations => {
-            let libraries = observations
+            if let Some(detail) = observations
                 .link
                 .iter()
-                .flat_map(|observation| observation.libraries.iter().map(String::as_str))
-                .collect::<Vec<_>>();
-            if libraries.is_empty() {
-                let paths = observations
+                .find_map(|observation| observation.conversion_refusal.clone())
+            {
+                (HarvestRefusalReason::LinkedLibraries, detail)
+            } else {
+                let libraries = observations
                     .link
                     .iter()
-                    .map(|observation| observation.search_paths.len())
-                    .sum::<usize>();
-                (
-                    HarvestRefusalReason::LinkedPaths,
-                    format!("{paths} link search path(s)"),
-                )
-            } else {
-                (HarvestRefusalReason::LinkedLibraries, libraries.join(", "))
+                    .flat_map(|observation| observation.libraries.iter().map(String::as_str))
+                    .collect::<Vec<_>>();
+                if libraries.is_empty() {
+                    let paths = observations
+                        .link
+                        .iter()
+                        .map(|observation| observation.search_paths.len())
+                        .sum::<usize>();
+                    (
+                        HarvestRefusalReason::LinkedPaths,
+                        format!("{paths} link search path(s)"),
+                    )
+                } else {
+                    (HarvestRefusalReason::LinkedLibraries, libraries.join(", "))
+                }
             }
         }
         HarvestAdmissionRefusal::UnresolvedToolObservations => (
@@ -1086,6 +1864,18 @@ fn observe_unit(
             .or_default()
             .insert(probe_output.digest.as_str());
     }
+    if let Some(facts) = facts {
+        for probe_output in facts
+            .publisher_native_probes
+            .iter()
+            .filter_map(|probe| probe.output.as_ref())
+        {
+            probe_outputs
+                .entry(probe_output.relative_path.as_str())
+                .or_default()
+                .insert(probe_output.digest.as_str());
+        }
+    }
     let members = output.map(|output| output.members.as_slice()).unwrap_or_default();
     if let Some(member) = members.iter().find(|member| {
         probe_outputs
@@ -1208,6 +1998,7 @@ fn observe_unit(
             environment: Vec::new(),
             sources: Vec::new(),
             library: None,
+            conversion_refusal: facts.publisher_work_refusal.clone(),
         });
     }
     let publisher_links = facts
@@ -1215,13 +2006,29 @@ fn observe_unit(
         .flat_map(|facts| facts.publisher_work.iter())
         .filter(|work| matches!(work.role, oven_model::manifest::RustFactProducerRole::Link))
         .collect::<Vec<_>>();
-    if let ([observation], [work]) = (link_observations.as_mut_slice(), publisher_links.as_slice()) {
-        observation.name = Some(work.name.clone());
-        observation.executable = work.executable.clone();
-        observation.objects = work.objects.clone();
-        observation.environment = work.environment.clone();
-        observation.sources = work.inputs.clone();
-        observation.library = work.library.clone();
+    if let [observation] = link_observations.as_slice()
+        && !publisher_links.is_empty()
+    {
+        let template = observation.clone();
+        link_observations = publisher_links
+            .iter()
+            .map(|work| {
+                let mut observation = template.clone();
+                observation.libraries = work
+                    .library
+                    .as_ref()
+                    .map(|library| vec![format!("static={}", library.name)])
+                    .unwrap_or_default();
+                observation.name = Some(work.name.clone());
+                observation.executable = work.executable.clone();
+                observation.objects = work.objects.clone();
+                observation.environment = work.environment.clone();
+                observation.sources = work.inputs.clone();
+                observation.library = work.library.clone();
+                observation.conversion_refusal = None;
+                observation
+            })
+            .collect();
     }
 
     // ---- Tool probes retain their target domains, invocation identity and generated product identities ----
@@ -1267,6 +2074,9 @@ fn observe_unit(
             .drain(..)
             .map(|observation| observation.probe_digest)
             .collect();
+    }
+    if let Some(facts) = facts {
+        compiler_probes.extend(facts.publisher_native_probes.iter().map(|probe| probe.digest.clone()));
     }
     if let (Some(facts), Some(output_tree_digest)) = (facts, output.map(|output| output.digest.clone())) {
         for work in facts
@@ -1737,6 +2547,8 @@ mod tests {
             out_dir: PathBuf::from("/transient/out"),
             output,
             publisher_work: Vec::new(),
+            publisher_native_probes: Vec::new(),
+            publisher_work_refusal: None,
         }
     }
 
@@ -2175,7 +2987,431 @@ mod tests {
                 name: name.to_string(),
                 kind: RustFactLibraryKind::Static,
             }),
+            conversion_refusal: None,
         }
+    }
+
+    /// Build one native-trace fixture with a compiler owner, crate source, OUT_DIR objects, and exact archive.
+    fn native_trace_fixture(
+        sources: &[&str],
+    ) -> Result<
+        (
+            tempfile::TempDir,
+            PathBuf,
+            PathBuf,
+            PathBuf,
+            Vec<OvenLegacyNativeInvocation>,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let root = tempdir()?;
+        let owner = root.path().join("toolchain");
+        let compiler = owner.join("usr/bin/clang");
+        let resource = owner.join("usr/lib/clang/21");
+        let sysroot = owner.join("SDKs/Fixture.sdk");
+        let package = root.path().join("package");
+        let out = root.path().join("out");
+        fs::create_dir_all(compiler.parent().ok_or("compiler has no parent")?)?;
+        fs::create_dir_all(&resource)?;
+        fs::create_dir_all(&sysroot)?;
+        fs::create_dir_all(package.join("include"))?;
+        fs::create_dir_all(&out)?;
+        fs::write(&compiler, b"fixture compiler")?;
+        fs::write(package.join("include/fixture.h"), b"#define FIXTURE 1\n")?;
+        let environment = BTreeMap::from([
+            ("CARGO_MANIFEST_DIR".to_string(), package.to_string_lossy().into_owned()),
+            ("CARGO_PKG_NAME".to_string(), "fixture-sys".to_string()),
+            ("CARGO_PKG_VERSION".to_string(), "1.0.0".to_string()),
+            ("OUT_DIR".to_string(), out.to_string_lossy().into_owned()),
+            ("TARGET".to_string(), "aarch64-apple-darwin".to_string()),
+        ]);
+        let mut invocations = Vec::new();
+        let mut members = Vec::new();
+        for (index, source) in sources.iter().enumerate() {
+            let source_path = package.join(source);
+            fs::create_dir_all(source_path.parent().ok_or("source has no parent")?)?;
+            fs::write(
+                &source_path,
+                format!("int fixture_{index}(void) {{ return {index}; }}\n"),
+            )?;
+            let object = out.join(format!("0123456789abcdef-{}.o", source.replace(['/', '.'], "_")));
+            fs::write(&object, format!("object-{index}"))?;
+            members.push(object.clone());
+            invocations.push(OvenLegacyNativeInvocation {
+                reason: "incan-native-compile-invocation".to_string(),
+                executable: compiler.to_string_lossy().into_owned(),
+                working_directory: package.to_string_lossy().into_owned(),
+                arguments: vec![
+                    "-DTRACE_FIXTURE=1".to_string(),
+                    "-I".to_string(),
+                    package.join("include").to_string_lossy().into_owned(),
+                    "-isysroot".to_string(),
+                    sysroot.to_string_lossy().into_owned(),
+                    "-c".to_string(),
+                    source_path.to_string_lossy().into_owned(),
+                    "-o".to_string(),
+                    object.to_string_lossy().into_owned(),
+                ],
+                environment: environment.clone(),
+                output: None,
+            });
+        }
+        members.sort_by_key(|path| stable_object_name(path).unwrap_or_default());
+        let archive = out.join("libfixture.a");
+        fs::write(&archive, b"fixture archive")?;
+        let mut archive_arguments = vec!["cq".to_string(), archive.to_string_lossy().into_owned()];
+        archive_arguments.extend(members.iter().map(|path| path.to_string_lossy().into_owned()));
+        invocations.push(OvenLegacyNativeInvocation {
+            reason: "incan-native-archive-invocation".to_string(),
+            executable: owner.join("usr/bin/ar").to_string_lossy().into_owned(),
+            working_directory: out.to_string_lossy().into_owned(),
+            arguments: archive_arguments,
+            environment,
+            output: None,
+        });
+        Ok((root, compiler, resource, sysroot, invocations))
+    }
+
+    #[test]
+    fn native_trace_converts_blake3_and_zstd_shaped_compiles() -> TestResult {
+        for sources in [vec!["c/blake3_neon.c"], vec!["zstd/a.c", "zstd/b.c", "zstd/asm.S"]] {
+            let (_root, compiler, resource, sysroot, invocations) = native_trace_fixture(&sources)?;
+            let compilers = [NativeCompiler {
+                executable: &compiler,
+                resource_dir: &resource,
+                sysroot: &sysroot,
+            }];
+            let conversion =
+                native_link_work_from_observations(&invocations, &["static=fixture".to_string()], &compilers)?;
+            let work = conversion.work.first().ok_or("native link work missing")?;
+            assert_eq!(work.objects.len(), sources.len());
+            assert!(work.inputs.iter().any(|input| input.kind == RustFactArtifactKind::Tree));
+            assert!(work.objects.iter().all(|object| {
+                object
+                    .arguments
+                    .iter()
+                    .any(|argument| matches!(argument, RustFactArgument::Owner { .. }))
+            }));
+            assert!(work.objects.iter().all(|object| {
+                object.arguments.iter().any(
+                    |argument| matches!(argument, RustFactArgument::Literal { literal } if literal == "-resource-dir"),
+                )
+            }));
+            let record = RustFactWorkRecord::try_from_observation(work.clone())?;
+            assert!(matches!(record, RustFactWorkRecord::Link(_)));
+            let mut observed = facts(&[], Some(retained_products()));
+            observed.linked_libraries = vec!["static=fixture".to_string()];
+            observed.linked_paths = vec!["native=/transient/out".to_string()];
+            observed.publisher_work = vec![work.clone()];
+            let report = harvest_registry_units(
+                &capture(vec![(library("native-fixture", "1.0.0", &[]), Some(observed))]),
+                &evidence(),
+                "release",
+            )?;
+            let proposal = report
+                .proposals
+                .first()
+                .ok_or("converted native binding was not proposed")?;
+            assert_eq!(proposal.admitted_record()?.link[0].library.name, "fixture");
+        }
+        Ok(())
+    }
+
+    /// Convert lzma-style root and nested include directories into complete tree sources.
+    #[test]
+    fn native_trace_converts_crate_root_and_nested_include_trees() -> TestResult {
+        let (_root, compiler, resource, sysroot, mut invocations) = native_trace_fixture(&["src/lzma.c"])?;
+        let manifest_dir = PathBuf::from(
+            invocations
+                .first()
+                .and_then(|invocation| invocation.environment.get("CARGO_MANIFEST_DIR"))
+                .ok_or("CARGO_MANIFEST_DIR missing")?,
+        );
+        fs::write(manifest_dir.join("config.h"), b"#define HAVE_CONFIG_H 1\n")?;
+        let compile = invocations.first_mut().ok_or("compile missing")?;
+        compile
+            .arguments
+            .splice(0..0, ["-I".to_string(), manifest_dir.to_string_lossy().into_owned()]);
+        let compilers = [NativeCompiler {
+            executable: &compiler,
+            resource_dir: &resource,
+            sysroot: &sysroot,
+        }];
+
+        let conversion = native_link_work_from_observations(&invocations, &["static=fixture".to_string()], &compilers)?;
+        let work = conversion.work.first().ok_or("native link work missing")?;
+
+        assert!(work.inputs.iter().any(|input| {
+            input.kind == RustFactArtifactKind::Tree
+                && input.path == "."
+                && input.members.iter().any(|member| member.path == "config.h")
+        }));
+        assert!(work.inputs.iter().any(|input| {
+            input.kind == RustFactArtifactKind::Tree
+                && input.path == "include"
+                && input.members.iter().any(|member| member.path == "fixture.h")
+        }));
+        Ok(())
+    }
+
+    /// Keep cc-rs flag checks as probe evidence while replaying only the object admitted to the archive.
+    #[test]
+    fn native_trace_keeps_flag_probe_evidence_out_of_link_objects() -> TestResult {
+        let (_root, compiler, resource, sysroot, mut invocations) = native_trace_fixture(&["c/blake3_neon.c"])?;
+        let environment = invocations.first().ok_or("compile missing")?.environment.clone();
+        let out = PathBuf::from(environment.get("OUT_DIR").ok_or("OUT_DIR missing")?);
+        let probe_source = out.join("flag_check.c");
+        let probe_output = out.join("flag_check.o");
+        fs::write(&probe_source, b"int main(void) { return 0; }\n")?;
+        fs::write(&probe_output, b"probe object")?;
+        invocations.insert(
+            0,
+            OvenLegacyNativeInvocation {
+                reason: "incan-native-compile-invocation".to_string(),
+                executable: compiler.to_string_lossy().into_owned(),
+                working_directory: out.to_string_lossy().into_owned(),
+                arguments: vec![
+                    "-Werror".to_string(),
+                    "-c".to_string(),
+                    probe_source.to_string_lossy().into_owned(),
+                    "-o".to_string(),
+                    probe_output.to_string_lossy().into_owned(),
+                ],
+                environment,
+                output: Some(super::super::native_trace::OvenLegacyNativeProbeOutput {
+                    relative_path: "flag_check.o".to_string(),
+                    digest: digest_bytes(b"probe object"),
+                }),
+            },
+        );
+        let compilers = [NativeCompiler {
+            executable: &compiler,
+            resource_dir: &resource,
+            sysroot: &sysroot,
+        }];
+
+        let conversion = native_link_work_from_observations(&invocations, &["static=fixture".to_string()], &compilers)?;
+
+        assert_eq!(conversion.work.first().ok_or("link work missing")?.objects.len(), 1);
+        assert_eq!(conversion.probes.len(), 1);
+        assert!(is_sha256_identity(&conversion.probes[0].digest));
+        assert_eq!(
+            conversion.probes[0]
+                .output
+                .as_ref()
+                .map(|output| output.relative_path.as_str()),
+            Some("flag_check.o")
+        );
+        let mut observed = facts(
+            &[],
+            Some(OvenLegacyCargoSelectedGeneratedOutput {
+                relative_root: "generated-outputs/native-probe".to_string(),
+                digest: selected_graph_sha256(b"native probe tree"),
+                members: vec![
+                    OvenLegacyCargoInspectionSourceMember {
+                        path: "libfixture.a".to_string(),
+                        digest: selected_graph_sha256(b"archive"),
+                    },
+                    OvenLegacyCargoInspectionSourceMember {
+                        path: "flag_check.o".to_string(),
+                        digest: digest_bytes(b"probe object"),
+                    },
+                ],
+            }),
+        );
+        observed.out_dir = out;
+        observed.linked_libraries = vec!["static=fixture".to_string()];
+        observed.linked_paths = vec![format!("native={}", observed.out_dir.display())];
+        observed.publisher_work = conversion.work;
+        observed.publisher_native_probes = conversion.probes.clone();
+        let report = harvest_registry_units(
+            &capture(vec![(library("native-probe", "1.0.0", &[]), Some(observed))]),
+            &evidence(),
+            "release",
+        )?;
+        let proposal = report.proposals.first().ok_or("native probe proposal missing")?;
+        assert_eq!(proposal.evidence.compiler_probes, [conversion.probes[0].digest.clone()]);
+        assert!(
+            proposal
+                .admitted_record()?
+                .out
+                .iter()
+                .all(|output| output.name != "flag_check.o")
+        );
+        Ok(())
+    }
+
+    /// Reconstruct one archive from repeated `ar cq` chunks followed by the index-only `ar s` operation.
+    #[test]
+    fn native_trace_converts_chunked_archive_operations() -> TestResult {
+        let (_root, compiler, resource, sysroot, mut invocations) =
+            native_trace_fixture(&["zstd/a.c", "zstd/b.c", "zstd/c.c"])?;
+        let archive = invocations.pop().ok_or("archive missing")?;
+        let archive_path = archive.arguments.get(1).ok_or("archive path missing")?.clone();
+        let members = archive.arguments[2..].to_vec();
+        for chunk in members.chunks(2) {
+            let mut invocation = archive.clone();
+            invocation.arguments = vec!["cq".to_string(), archive_path.clone()];
+            invocation.arguments.extend_from_slice(chunk);
+            invocations.push(invocation);
+        }
+        let mut index = archive;
+        index.arguments = vec!["s".to_string(), archive_path];
+        invocations.push(index);
+        let compilers = [NativeCompiler {
+            executable: &compiler,
+            resource_dir: &resource,
+            sysroot: &sysroot,
+        }];
+
+        let conversion = native_link_work_from_observations(&invocations, &["static=fixture".to_string()], &compilers)?;
+
+        assert_eq!(conversion.work.first().ok_or("link work missing")?.objects.len(), 3);
+        Ok(())
+    }
+
+    /// Bind a C++ object to the declared C++ executable and language instead of the C driver.
+    #[test]
+    fn native_trace_names_the_declared_cxx_driver_for_cpp_objects() -> TestResult {
+        let (_root, compiler, resource, sysroot, mut invocations) = native_trace_fixture(&["c/fixture.cpp"])?;
+        let cxx = compiler.parent().ok_or("compiler has no parent")?.join("clang++");
+        fs::write(&cxx, b"fixture C++ compiler")?;
+        for invocation in invocations
+            .iter_mut()
+            .filter(|invocation| invocation.reason == "incan-native-compile-invocation")
+        {
+            invocation.executable = cxx.to_string_lossy().into_owned();
+        }
+        let compilers = [
+            NativeCompiler {
+                executable: &compiler,
+                resource_dir: &resource,
+                sysroot: &sysroot,
+            },
+            NativeCompiler {
+                executable: &cxx,
+                resource_dir: &resource,
+                sysroot: &sysroot,
+            },
+        ];
+
+        let conversion = native_link_work_from_observations(&invocations, &["static=fixture".to_string()], &compilers)?;
+        let work = conversion.work.first().ok_or("C++ link work missing")?;
+
+        assert_eq!(
+            work.executable.as_ref().map(|executable| executable.name.as_str()),
+            Some("clang++")
+        );
+        assert_eq!(
+            work.objects.first().map(|object| &object.language),
+            Some(&RustFactLinkLanguage::Cpp)
+        );
+        Ok(())
+    }
+
+    /// Refuse every mismatch between observed compiles, rebuilt archive membership, and emitted link libraries.
+    #[test]
+    fn native_trace_refuses_each_archive_membership_mismatch() -> TestResult {
+        let (root, compiler, resource, sysroot, invocations) = native_trace_fixture(&["c/first.c", "c/second.c"])?;
+        let linked = ["static=fixture".to_string()];
+        let compilers = [NativeCompiler {
+            executable: &compiler,
+            resource_dir: &resource,
+            sysroot: &sysroot,
+        }];
+
+        let mut unarchived = invocations.clone();
+        unarchived.last_mut().ok_or("archive missing")?.arguments.pop();
+        let reason = native_link_work_from_observations(&unarchived, &linked, &compilers)
+            .err()
+            .ok_or("compiled but unarchived object was accepted")?;
+        assert!(reason.contains("was never archived"));
+
+        let mut uncompiled = invocations.clone();
+        let extra = root.path().join("extra.o");
+        fs::write(&extra, b"extra")?;
+        uncompiled
+            .last_mut()
+            .ok_or("archive missing")?
+            .arguments
+            .push(extra.to_string_lossy().into_owned());
+        let reason = native_link_work_from_observations(&uncompiled, &linked, &compilers)
+            .err()
+            .ok_or("archived but uncompiled object was accepted")?;
+        assert!(reason.contains("was never compiled"));
+
+        let reason = native_link_work_from_observations(&invocations, &["static=different".to_string()], &compilers)
+            .err()
+            .ok_or("archive without matching link library was accepted")?;
+        assert!(reason.contains("has no matching `static=<name>` link library"));
+        Ok(())
+    }
+
+    #[test]
+    fn native_trace_refuses_absolute_generated_and_missing_archive_inputs() -> TestResult {
+        let (root, compiler, resource, sysroot, invocations) = native_trace_fixture(&["c/fixture.c"])?;
+        let linked = ["static=fixture".to_string()];
+        let compilers = [NativeCompiler {
+            executable: &compiler,
+            resource_dir: &resource,
+            sysroot: &sysroot,
+        }];
+
+        let mut absolute = invocations.clone();
+        absolute[0]
+            .arguments
+            .insert(0, root.path().join("outside.h").to_string_lossy().into_owned());
+        fs::write(root.path().join("outside.h"), b"outside")?;
+        let reason = native_link_work_from_observations(&absolute, &linked, &compilers)
+            .err()
+            .ok_or("absolute non-owner input was accepted")?;
+        assert!(reason.contains("outside the crate and compiler owner"));
+
+        let mut generated = invocations.clone();
+        let out = PathBuf::from(generated[0].environment.get("OUT_DIR").ok_or("OUT_DIR missing")?);
+        let generated_source = out.join("generated.c");
+        fs::write(&generated_source, b"generated")?;
+        let source_index = generated[0]
+            .arguments
+            .iter()
+            .position(|argument| argument == "-c")
+            .ok_or("-c missing")?
+            + 1;
+        generated[0].arguments[source_index] = generated_source.to_string_lossy().into_owned();
+        let generated_reason = native_link_work_from_observations(&generated, &linked, &compilers)
+            .err()
+            .ok_or("generated input was accepted")?;
+        assert!(generated_reason.contains("generated inside OUT_DIR"));
+
+        let mut observed = facts(&[], Some(retained_products()));
+        observed.linked_libraries = linked.to_vec();
+        observed.linked_paths = vec!["native=/transient/out".to_string()];
+        observed.publisher_work_refusal = Some(generated_reason.clone());
+        let report = harvest_registry_units(
+            &capture(vec![(library("native-fixture", "1.0.0", &[]), Some(observed))]),
+            &evidence(),
+            "release",
+        )?;
+        let refusal = report
+            .refusals
+            .iter()
+            .find(|refusal| refusal.package == "native-fixture")
+            .ok_or("native conversion refusal was not retained")?;
+        assert_eq!(refusal.detail, generated_reason);
+        assert!(!refusal.detail.contains(root.path().to_string_lossy().as_ref()));
+
+        let mut missing = invocations;
+        missing.last_mut().ok_or("archive missing")?.arguments.pop();
+        let reason = native_link_work_from_observations(&missing, &linked, &compilers)
+            .err()
+            .ok_or("missing archive member was accepted")?;
+        assert!(
+            reason.contains("exactly one archive")
+                || reason.contains("archive invocation did not name")
+                || reason.contains("archive members")
+                || reason.contains("was never archived")
+        );
+        Ok(())
     }
 
     /// Complete generator work shaped like Cranelift's ISLE source-to-Rust generation.

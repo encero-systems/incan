@@ -1,6 +1,9 @@
 //! Incan compiler CLI entry point
 
 fn main() {
+    if let Some(exit_code) = oven_cargo_compat::run_legacy_native_trace_wrapper() {
+        std::process::exit(exit_code);
+    }
     if let Some(exit_code) = oven_cargo_compat::run_legacy_rustc_trace_wrapper() {
         std::process::exit(exit_code);
     }

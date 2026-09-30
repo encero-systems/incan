@@ -502,6 +502,8 @@ fn build_script_facts(
         out_dir: record.out_dir.clone(),
         output: None,
         publisher_work: Vec::new(),
+        publisher_native_probes: Vec::new(),
+        publisher_work_refusal: None,
     })
 }
 
@@ -1276,6 +1278,23 @@ pub struct OvenLegacyCargoBuildScriptFacts {
     /// Complete publisher work observations supplied by the native/tool capture lanes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub publisher_work: Vec<oven_model::manifest::RustFactWorkObservation>,
+    /// Native compiler probes retained as normalized invocation evidence, never as replayed work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publisher_native_probes: Vec<OvenLegacyNativeProbeEvidence>,
+    /// Precise native/tool conversion failure retained when raw capture could not become typed publisher work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher_work_refusal: Option<String>,
+}
+
+/// One successful native compiler invocation whose output was not admitted to an observed archive.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyNativeProbeEvidence {
+    /// Digest of the invocation after package, output and owner paths are normalized.
+    pub digest: String,
+    /// Optional output captured before the build script could remove or overwrite it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<super::native_trace::OvenLegacyNativeProbeOutput>,
 }
 
 /// Exact retained generated-output tree for one executed compatibility build script.
@@ -1453,6 +1472,8 @@ fn capture_legacy_cargo_selected_units_inner(
                     out_dir: record.out_dir.clone(),
                     output: None,
                     publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
                 })
             })
             .transpose()?;
@@ -1955,6 +1976,8 @@ mod tests {
                     out_dir: output,
                     output: None,
                     publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
                 }),
                 registry_source: None,
             }],
@@ -1991,6 +2014,8 @@ mod tests {
             out_dir: empty,
             output: None,
             publisher_work: Vec::new(),
+            publisher_native_probes: Vec::new(),
+            publisher_work_refusal: None,
         };
         let mut empty_artifacts = BTreeMap::new();
         retain_generated_output(&mut empty_facts, "empty-fixture", &staging, &mut empty_artifacts)?;

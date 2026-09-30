@@ -586,6 +586,18 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		rustc_bin="$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"; \
 		target="$$("$$rustc_bin" -vV | sed -n 's/^host: //p')"; \
 		test -n "$$target"; \
+		if [ "$$(uname -s)" = "Darwin" ]; then \
+			cc_bin="/Library/Developer/CommandLineTools/usr/bin/clang"; \
+			cxx_bin="/Library/Developer/CommandLineTools/usr/bin/clang++"; \
+			c_sysroot="$$(cd /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk && pwd -P)"; \
+		else \
+			cc_bin="/usr/bin/clang"; \
+			cxx_bin="/usr/bin/clang++"; \
+			c_sysroot="/usr"; \
+		fi; \
+		test -x "$$cc_bin"; \
+		test -x "$$cxx_bin"; \
+		test -d "$$c_sysroot"; \
 		mkdir -p "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
 		policy_home="$$(mktemp -d "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX")"; \
 		trap 'rm -rf "$$policy_home"' EXIT HUP INT TERM; \
@@ -620,6 +632,9 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 			--sdk-inventory "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
 			--cargo "$$cargo_bin" \
 			--rustc "$$rustc_bin" \
+			--cc "$$cc_bin" \
+			--cxx "$$cxx_bin" \
+			--c-sysroot "$$c_sysroot" \
 			--policy-engine-store "$$policy_engine_store" \
 			--policy-engine-identity "$$policy_engine_identity" \
 			--policy-engine-target "$$target" \

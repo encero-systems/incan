@@ -119,7 +119,7 @@ pub fn bake_publisher_link(
     for source in &request.link.sources {
         inputs.push(PublisherExecutionInput {
             name: &source.name,
-            path: owner_relative_path(request.source_owner_root, &source.path, "publisher link source")?,
+            path: source_owner_path(request.source_owner_root, source)?,
             digest: source.digest.clone(),
             kind: source.kind,
             members: source.members.clone(),
@@ -193,6 +193,14 @@ pub fn bake_publisher_link(
         archive_digest: product.digest.clone(),
         receipt: execution.receipt,
     })
+}
+
+/// Resolve a declared link source, allowing `.` only for a complete tree rooted at the source owner.
+fn source_owner_path(root: &Path, source: &oven_model::manifest::RustFactArtifact) -> Result<PathBuf, OvenRustcError> {
+    if source.kind == oven_model::manifest::RustFactArtifactKind::Tree && source.path == "." {
+        return Ok(root.to_path_buf());
+    }
+    owner_relative_path(root, &source.path, "publisher link source")
 }
 
 /// Resolve one plain owner-relative path without accepting traversal or absolute paths.
@@ -1125,8 +1133,8 @@ mod publisher_link_tests {
     use std::time::Duration;
 
     use oven_model::manifest::{
-        RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactExecutable, RustFactLibrary,
-        RustFactLibraryKind, RustFactLink, RustFactLinkLanguage, RustFactLinkObject,
+        RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactArtifactMember, RustFactExecutable,
+        RustFactLibrary, RustFactLibraryKind, RustFactLink, RustFactLinkLanguage, RustFactLinkObject,
     };
     use oven_store::digest_bytes;
     use oven_store::process::BoundedProcessLimits;
@@ -1233,6 +1241,71 @@ mod publisher_link_tests {
             .collect::<Vec<_>>();
         assert_eq!(product.receipt.objects[0].logical_argv, selected_argv);
         Ok(())
+    }
+
+    #[test]
+    /// A root tree input resolves to the source owner itself while confinement still excludes its siblings.
+    fn publisher_link_root_tree_input_stays_confined() -> Result<(), Box<dyn Error>> {
+        let root = tempdir()?;
+        let mut link = fixture_link(root.path())?;
+        let source_root = root.path().join("source");
+        fs::write(source_root.join("config.h"), b"root-config")?;
+        fs::write(root.path().join("secret"), b"secret")?;
+        let compiler = root.path().join("tool/bin/fake-cc");
+        fs::write(
+            &compiler,
+            "#!/bin/sh\nset -eu\nsource_root=\"$1\"\nparent=${source_root%/*}\nif IFS= read -r secret < \"$parent/secret\"; then exit 41; fi\nIFS= read -r content < \"$source_root/config.h\" || true\nprintf '%s' \"$content\" > \"$2\"\n",
+        )?;
+        let mut permissions = fs::metadata(&compiler)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&compiler, permissions)?;
+        link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        link.executable.owner =
+            oven_store::publisher_owner::publisher_owner_identity(&root.path().join("tool"), ["bin/fake-cc"])?;
+        let members = vec![
+            RustFactArtifactMember {
+                path: "config.h".to_string(),
+                digest: digest_bytes(b"root-config"),
+            },
+            RustFactArtifactMember {
+                path: "native/fixture.c".to_string(),
+                digest: digest_bytes(b"native-source"),
+            },
+        ];
+        link.sources = vec![RustFactArtifact {
+            name: "crate-root".to_string(),
+            kind: RustFactArtifactKind::Tree,
+            path: ".".to_string(),
+            digest: digest_bytes(&serde_json::to_vec(&(
+                "incan.oven.publisher-artifact-tree/1",
+                &members,
+            ))?),
+            members,
+        }];
+        link.objects[0].arguments[0] = RustFactArgument::Input {
+            input: "crate-root".to_string(),
+        };
+        let output = root.path().join("product");
+
+        match bake_publisher_link(&OvenPublisherLinkBakeRequest {
+            link: &link,
+            selected_target: "aarch64-apple-darwin",
+            archive_format: "darwin",
+            toolchain: "rustc fixture",
+            consuming_unit_identity: &digest_bytes(b"consumer"),
+            executable_owner_root: &root.path().join("tool"),
+            source_owner_root: &source_root,
+            output_root: &output,
+            limits: BoundedProcessLimits {
+                stdout_bytes: 1024,
+                stderr_bytes: 1024,
+                timeout: Some(Duration::from_secs(2)),
+            },
+        }) {
+            Ok(_) => Ok(()),
+            Err(error) if error.to_string().contains("sandbox_apply: Operation not permitted") => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     #[test]
