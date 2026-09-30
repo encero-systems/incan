@@ -349,6 +349,8 @@ mod tests {
     }
 
     /// Write one typed harvest proposal with the requested selection and effects.
+    // Each argument is an independent selected-unit fixture dimension kept visible at its four local call sites.
+    #[allow(clippy::too_many_arguments)]
     fn write_proposal(
         harvest: &Path,
         lock_digest: &str,

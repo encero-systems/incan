@@ -33,6 +33,8 @@ impl AstLowering {
     /// trait the builtin registry maps to a Rust trait, and for a dispatch through the builtin `Ord` trait that does
     /// not reach a local adopter's projection (a derived `Ord`, or an adopter from another module). `__str__` is
     /// rewritten only through a type parameter's bound.
+    // The `Err` side hands the caller back its own receiver and arguments; boxing them would only add an allocation.
+    #[allow(clippy::result_large_err)]
     pub(in crate::lower) fn lower_dunder_as_operation(
         &self,
         method: &str,

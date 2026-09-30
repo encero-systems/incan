@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use incan_test_support as support;
 
-use support::{incan_command, incan_debug_binary, repo_root, strip_ansi_escapes, unique_test_project_name};
+use support::{incan_command, strip_ansi_escapes, unique_test_project_name};
 
 use incan_test_support::canonical_projection;
 
@@ -19,7 +19,6 @@ fn read_generated_rust(path: &std::path::Path) -> Result<String, Box<dyn std::er
     Ok(canonical_projection::reformatted_after_decode(&decoded).unwrap_or(decoded))
 }
 
-use incan_frontend::module::{ExportedTypeLikeDoc, ExportedTypeLikeKind, exported_type_like_docs};
 use incan_frontend::{lexer, parser, typechecker};
 
 /// The block-docstring fixture the checkout shares between roots, read from the harness crate's fixtures at test time;

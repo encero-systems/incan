@@ -1,9 +1,13 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! Rust interop regressions driven through the CLI: receiver borrowing, generic scenarios, and metadata-free inference.
 //!
 //! One of nine roots split out of the former `tests/cli_integration.rs`. The shared command surface lives in
 //! `incan_test_support::cli_project`.
 
 include!("support/cli_rust_interop_tests_root.rs");
+
+use incan_test_support as support;
 
 #[test]
 fn build_typed_web_extractors_and_scalar_captures_issue867() -> Result<(), Box<dyn std::error::Error>> {

@@ -237,6 +237,8 @@ pub(crate) fn loaf_fixture_action_name(action: OvenLoafFixtureAction) -> &'stati
 /// Runs under the exclusive publication lock, right before ordinary reuse, and only when `output/envelope.json` is
 /// absent: a root that already holds a generation is either reused or rebaked by the existing rules, never replaced
 /// from a mirror. A miss is silent; a corrupt mirror is reported as a note and otherwise ignored.
+// The eight arguments are distinct evidence members of the envelope import boundary.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     output: &Path,
     scratch: &Path,

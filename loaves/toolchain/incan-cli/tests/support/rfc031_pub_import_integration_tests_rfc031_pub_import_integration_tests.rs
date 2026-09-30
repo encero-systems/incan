@@ -1,8 +1,6 @@
 use super::*;
-use incan_frontend::library_manifest::{FieldVisibilityExport, LibraryManifest, ModelExport, TypeRef};
-use oven_model::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV};
+use incan_frontend::library_manifest::{LibraryManifest, ModelExport};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;

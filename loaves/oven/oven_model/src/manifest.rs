@@ -1862,7 +1862,7 @@ fn validate_rust_fact_artifacts<'a>(
 }
 
 /// Validate one sorted output contract and return its logical names and portable paths.
-fn validate_rust_fact_outputs<'a>(outputs: &'a [RustFactOutput]) -> Result<(HashSet<&'a str>, Vec<&'a str>), String> {
+fn validate_rust_fact_outputs(outputs: &[RustFactOutput]) -> Result<(HashSet<&str>, Vec<&str>), String> {
     if outputs.windows(2).any(|pair| pair[0].name >= pair[1].name) {
         return Err("outputs must be sorted by unique name".to_string());
     }

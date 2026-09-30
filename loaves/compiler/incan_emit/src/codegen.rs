@@ -3205,6 +3205,9 @@ mod tests {
     #[cfg(feature = "rust_inspect")]
     use std::fs;
 
+    /// Generated crate-root Rust and source-module Rust keyed by module path.
+    type GeneratedProject = (String, HashMap<Vec<String>, String>);
+
     /// Build lowering with the frontend-owned ownership proof for one source type annotation.
     fn lowering_with_mutable_reference_projection(
         source: &str,
@@ -6232,7 +6235,7 @@ def main() -> None:
     fn generate_and_compile_project(
         main_source: &str,
         module_sources: &[(&str, &str)],
-    ) -> Result<(String, HashMap<Vec<String>, String>), Box<dyn std::error::Error>> {
+    ) -> Result<GeneratedProject, Box<dyn std::error::Error>> {
         let main = parse_program_result(main_source)?;
         let modules = module_sources
             .iter()

@@ -509,6 +509,8 @@ fn collect_caller_owned_provider_registry_leaf_authority_with_toolchain_fallback
 ///
 /// Follows the same public-package provider edges [`rematerialize_caller_owned_provider_graph`] follows, so both
 /// walks agree on which providers exist and which are another provider's own nested public-package dependency.
+// The recursive graph walk carries eight independent pieces of traversal and authority state.
+#[allow(clippy::too_many_arguments)]
 fn collect_caller_owned_provider_registry_leaf_authority_graph(
     store: &OvenStore,
     artifact: &LibraryArtifactMetadata,
@@ -584,6 +586,14 @@ fn collect_caller_owned_provider_registry_leaf_authority_graph(
     result
 }
 
+/// Receipt-selected authority and artifacts contributed by one caller-owned provider.
+type CallerOwnedProviderRegistryLeaf = (
+    Option<OvenRegistryLeafAuthority>,
+    Vec<PathBuf>,
+    Vec<OvenCallerOwnedRustcLibrary>,
+    Option<OvenRegistryLeafAuthority>,
+);
+
 /// Return one caller-owned provider's receipt-bound native closure, including compiler runtime artifacts.
 ///
 /// This never bakes or invokes Cargo -- it only selects an already-published receipt, the same select-only step
@@ -599,14 +609,7 @@ fn caller_owned_provider_registry_leaf_authority(
     profile: &str,
     allow_toolchain_fallback: bool,
     include_compiler_runtime_libraries: bool,
-) -> CliResult<
-    Option<(
-        Option<OvenRegistryLeafAuthority>,
-        Vec<PathBuf>,
-        Vec<OvenCallerOwnedRustcLibrary>,
-        Option<OvenRegistryLeafAuthority>,
-    )>,
-> {
+) -> CliResult<Option<CallerOwnedProviderRegistryLeaf>> {
     let Some(project_root) = dependency_project_root(&artifact.crate_root) else {
         return Ok(None);
     };

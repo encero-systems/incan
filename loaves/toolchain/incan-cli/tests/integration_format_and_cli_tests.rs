@@ -1,6 +1,11 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! Integration tests for the Incan compiler frontend
 
 include!("support/integration_tests_root.rs");
+
+use incan_frontend::module::{ExportedTypeLikeDoc, ExportedTypeLikeKind, exported_type_like_docs};
+use support::incan_debug_binary;
 
 /// Regression (GitHub #247): `incan fmt` on disk must preserve body docstrings for all public block-like type
 /// declarations, and [`exported_type_like_docs`] must still see them after the CLI round-trip.

@@ -1,9 +1,16 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! Workspace scope and fan-out, canonical lock publication, and locked/frozen build refusals.
 //!
 //! One of nine roots split out of the former `tests/cli_integration.rs`. The shared command surface lives in
 //! `incan_test_support::cli_project`.
 
 include!("support/cli_workspace_and_lock_tests_root.rs");
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use incan_test_support as support;
 
 #[test]
 fn workspace_inspect_reports_deterministic_scope_and_stale_member_locks() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Split test binaries intentionally use different parts of shared support fragments.
+
 //! RFC 031 pub-import integration tests.
 //!
 //! These regressions each drive a full `incan build` of a library plus one or more consumers, so they are the most
