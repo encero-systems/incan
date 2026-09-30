@@ -4,6 +4,7 @@
 //! digests recorded, and the leaf catalog binds every registry artifact to the plan that sealed it. The publisher
 //! that calls them lives in `legacy_cargo.rs`.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -178,11 +179,53 @@ pub fn copy_registry_source_tree(source_root: &Path, destination_root: &Path) ->
     Ok(())
 }
 
+/// The complete identity of one sealed registry source record: package, version, registry, checksum, staged root and
+/// tree digest. Features are not part of it; they are what the record's compilations selected from that source.
+type RegistrySourceIdentity = (String, String, String, String, String, String);
+
+/// Collapse source records that name one exact registry source into a single record carrying all of their features.
+///
+/// One package version can compile more than once in a closure, for the target and again for the build host when a
+/// procedural macro or build script depends on it. Each compilation is its own registry leaf, but they share one
+/// source tree, and the manifest declares a package version's source once. Records for the same package version whose
+/// checksum, staged root or digest differ are different sources: they stay apart, and the manifest refuses them as a
+/// second source identity.
+fn collapse_registry_source_records(
+    records: impl IntoIterator<Item = OvenRustcRegistrySourcePackage>,
+) -> BTreeMap<RegistrySourceIdentity, OvenRustcRegistrySourcePackage> {
+    let mut collapsed = BTreeMap::<RegistrySourceIdentity, OvenRustcRegistrySourcePackage>::new();
+    for mut record in records {
+        let identity = (
+            record.package.clone(),
+            record.version.clone(),
+            record.source.registry.clone(),
+            record.source.checksum.clone(),
+            record.source.relative_root.clone(),
+            record.source.digest.clone(),
+        );
+        match collapsed.entry(identity) {
+            Entry::Occupied(mut existing) => existing.get_mut().features.append(&mut record.features),
+            Entry::Vacant(slot) => {
+                slot.insert(record);
+            }
+        }
+    }
+    for record in collapsed.values_mut() {
+        record.features.sort();
+        record.features.dedup();
+    }
+    collapsed
+}
+
 /// Build the plan's complete sealed source authority independently from its linkable registry leaves.
 ///
 /// A transitive procedural macro may be required by rust-analyzer's source graph without producing an `.rlib` that
 /// normal dependency selection can expose. Typed Loaf envelopes therefore retain the complete checked inspection
 /// closure here; the older broad transitional request continues to derive source authority from its compiled leaves.
+///
+/// The catalog holds one record per exact source. Leaves compiled from one source, such as a package's target and host
+/// compilations, share a record carrying the union of their features. A package the leaves compiled keeps their
+/// features when the resolved graph names it too; the resolved graph adds a record only for a source no leaf compiled.
 pub fn publisher_registry_source_catalog(
     metadata: &CargoMetadata,
     cargo_lock: &[u8],
@@ -192,15 +235,13 @@ pub fn publisher_registry_source_catalog(
     complete_resolved_source_catalog: bool,
     platform_applicable_metadata: Option<&CargoMetadata>,
 ) -> Result<(Vec<OvenRustcRegistrySourcePackage>, Vec<OvenRustcSupportingArtifact>), OvenLegacyCargoError> {
-    let mut sources = registry_leaves
-        .iter()
-        .map(|leaf| OvenRustcRegistrySourcePackage {
+    let mut sources =
+        collapse_registry_source_records(registry_leaves.iter().map(|leaf| OvenRustcRegistrySourcePackage {
             package: leaf.package.clone(),
             version: leaf.version.clone(),
             features: leaf.features.clone(),
             source: leaf.source.clone(),
-        })
-        .collect::<Vec<_>>();
+        }));
     let inspection_sources = match inspection_packages {
         Some(inspection_packages) => Some(legacy_cargo_inspection_sources_from_metadata(
             metadata,
@@ -223,10 +264,10 @@ pub fn publisher_registry_source_catalog(
         None => None,
     };
     let Some(inspection_sources) = inspection_sources else {
-        sources.sort_by(|left, right| (&left.package, &left.version).cmp(&(&right.package, &right.version)));
-        return Ok((sources, Vec::new()));
+        return Ok((sources.into_values().collect(), Vec::new()));
     };
     let mut source_artifacts = Vec::new();
+    let mut inspected = Vec::with_capacity(inspection_sources.len());
     for source in inspection_sources {
         let relative_root = source
             .source_root
@@ -242,7 +283,7 @@ pub fn publisher_registry_source_catalog(
                 digest: digest_bytes(&regular_file_bytes(&file.source_path)?),
             });
         }
-        sources.push(OvenRustcRegistrySourcePackage {
+        inspected.push(OvenRustcRegistrySourcePackage {
             package: source.package,
             version: source.version,
             features: source.features,
@@ -254,29 +295,12 @@ pub fn publisher_registry_source_catalog(
             },
         });
     }
-    sources.sort_by(|left, right| {
-        (
-            &left.package,
-            &left.version,
-            &left.source.registry,
-            &left.source.checksum,
-        )
-            .cmp(&(
-                &right.package,
-                &right.version,
-                &right.source.registry,
-                &right.source.checksum,
-            ))
-    });
-    sources.dedup_by(|left, right| {
-        left.package == right.package
-            && left.version == right.version
-            && left.source.registry == right.source.registry
-            && left.source.checksum == right.source.checksum
-    });
+    for (identity, record) in collapse_registry_source_records(inspected) {
+        sources.entry(identity).or_insert(record);
+    }
     source_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     source_artifacts.dedup_by(|left, right| left.relative_path == right.relative_path && left.digest == right.digest);
-    Ok((sources, source_artifacts))
+    Ok((sources.into_values().collect(), source_artifacts))
 }
 
 /// Retain exact registry leaves that the named publisher actually compiled into one Loaf.

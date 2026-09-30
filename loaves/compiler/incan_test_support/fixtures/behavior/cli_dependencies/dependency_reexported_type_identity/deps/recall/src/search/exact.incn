@@ -1,0 +1,56 @@
+"""The exact search profile."""
+
+from crate.search.models import (
+    MAX_TOP_K,
+    Candidate,
+    Nomination,
+    SearchError,
+    SearchErrorKind,
+    SearchProfile,
+)
+from crate.ids import EntryId
+
+
+@derive(Clone)
+pub model Index:
+    pub ids: list[EntryId]
+
+
+@derive(Clone)
+pub model ExactResult:
+    """Ranked nominations and the candidates behind them."""
+
+    pub profile: SearchProfile
+    pub nominations: list[Nomination]
+    pub candidates: list[Candidate]
+
+
+pub enum Outcome:
+    Found(Nomination)
+    Missing
+
+
+pub def best_outcome(index: Index) -> Outcome:
+    for identifier in index.ids:
+        return Outcome.Found(Nomination(entry_id=identifier.clone(), rank=len(index.ids), relevance_bps=10000))
+    return Outcome.Missing
+
+
+pub def build_index(ids: list[EntryId]) -> Result[Index, SearchError]:
+    if len(ids) == 0:
+        return Err(SearchError(_kind=SearchErrorKind.EmptyIndex, _detail="no entries"))
+    return Ok(Index(ids=ids))
+
+
+pub def exact_query(index: Index, top_k: int) -> Result[ExactResult, SearchError]:
+    if top_k < 1 or top_k > MAX_TOP_K:
+        return Err(SearchError(_kind=SearchErrorKind.InvalidTopK, _detail="top_k out of range"))
+    mut nominations: list[Nomination] = []
+    mut candidates: list[Candidate] = []
+    mut rank = 0
+    for identifier in index.ids:
+        if rank < top_k:
+            nominations.append(Nomination(entry_id=identifier.clone(), rank=rank, relevance_bps=10000 - rank * 2500))
+            candidates.append(Candidate(entry_id=identifier.clone(), score=100 - rank))
+        rank += 1
+    return Ok(ExactResult(profile=SearchProfile.Exact, nominations=nominations, candidates=candidates))

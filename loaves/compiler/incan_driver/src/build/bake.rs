@@ -85,21 +85,26 @@ pub fn bake_oven_project(
             &open_default_oven_store()?,
             &prepared.provider_plan,
             profile,
+            !prepared.plan_selection.uses_packaged_provider_closure(),
         )?;
         // The conflict decision must cover every selection path -- including an imported packaged-provider closure,
         // whose composed link carries the SDK base's and the provider's own copies of any shared package exactly
         // like a re-materialized one does.
-        if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
-            registry_authority.as_ref(),
-            &closure,
-            prepared.plan_selection.artifact_plan(),
-        )? {
-            return Err(oven_native_closure_refusal(
-                &prepared.crate_name,
-                &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
-            ));
-        }
-        if !prepared.plan_selection.uses_packaged_provider_closure() {
+        if prepared.plan_selection.uses_packaged_provider_closure() {
+            if let Some((package, pinned_by, divergence)) = caller_owned_provider_registry_conflict(
+                registry_authority.as_ref(),
+                &closure,
+                prepared.plan_selection.artifact_plan(),
+            )? {
+                let reason = provider_registry_conflict_reason(&package, pinned_by.as_deref(), divergence.as_deref());
+                return Err(oven_native_closure_refusal(
+                    &prepared.crate_name,
+                    &format!(
+                        "the caller-owned provider is source-free and cannot be recompiled into a coherent closure; {reason}"
+                    ),
+                ));
+            }
+        } else {
             extra_dependency_search_paths = closure.dependency_search_paths.clone();
             registry_authority = closure.merged_authority(registry_authority);
             let re_materialized = rematerialize_caller_owned_libraries_with_authority_context(
@@ -112,6 +117,8 @@ pub fn bake_oven_project(
                 prepared.generator.output_dir(),
                 registry_authority.as_ref(),
                 &extra_dependency_search_paths,
+                &closure.compiler_runtime_libraries,
+                &closure.compiler_runtime_registry_authorities,
                 authority_context,
             )?;
             re_materialized_package_library_names.extend(
@@ -200,6 +207,7 @@ pub fn bake_oven_library(
             &open_default_oven_store()?,
             &selected.provider_plan,
             profile,
+            !selected.plan_selection.uses_packaged_provider_closure(),
         )?;
         // Refuse only where the conflict cannot be resolved. The re-materialization below rebuilds each provider's
         // Rust dependency libraries against the *merged* authority through
@@ -211,14 +219,17 @@ pub fn bake_oven_library(
         // The rejection previously ran on every selection path, so the resolvable case never reached the machinery
         // that resolves it.
         if selected.plan_selection.uses_packaged_provider_closure() {
-            if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
+            if let Some((package, pinned_by, divergence)) = caller_owned_provider_registry_conflict(
                 registry_authority.as_ref(),
                 &closure,
                 selected.plan_selection.artifact_plan(),
             )? {
+                let reason = provider_registry_conflict_reason(&package, pinned_by.as_deref(), divergence.as_deref());
                 return Err(oven_native_closure_refusal(
                     &oven.crate_name,
-                    &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
+                    &format!(
+                        "the caller-owned provider is source-free and cannot be recompiled into a coherent closure; {reason}"
+                    ),
                 ));
             }
         } else {
@@ -234,6 +245,8 @@ pub fn bake_oven_library(
                 &prepared.out_dir,
                 registry_authority.as_ref(),
                 &extra_dependency_search_paths,
+                &closure.compiler_runtime_libraries,
+                &closure.compiler_runtime_registry_authorities,
                 authority_context,
             )?;
             re_materialized_package_library_names.extend(
@@ -1023,7 +1036,7 @@ mod tests {
             .map(|error| error.to_string())
             .unwrap_or_default();
         assert!(refusal.contains("Oven refuses to build `app`"), "{refusal}");
-        assert!(refusal.contains("#1241"), "{refusal}");
+        assert!(refusal.contains("semantically different compiled units"), "{refusal}");
         assert!(refusal.contains("colliding StableCrateId"), "{refusal}");
     }
 

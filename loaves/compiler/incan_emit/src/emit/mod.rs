@@ -319,6 +319,53 @@ impl StructConstructorMetadata {
         }
     }
 
+    /// Whether a declared field type of a compiled dependency names a nominal type by the provider's bare spelling.
+    ///
+    /// A compiled library's manifest records each field type as the provider's own module spells it: `list[EvidenceId]`
+    /// names `EvidenceId` bare, which the consumer's crate binds only when it imported that exact name, so targeting
+    /// it emitted `Vec::<EvidenceId>::new()` for `Card(evidence_ids=[])` (E0425). The supplied value's checked type
+    /// spells the same type from the dependency crate. See #1561.
+    fn names_a_bare_provider_nominal(&self, ty: &IrType) -> bool {
+        matches!(
+            self.provider_identity,
+            Some(ConstructorProviderIdentity::PublicDependency(_))
+        ) && Self::mentions_bare_nominal(ty)
+    }
+
+    /// Whether `ty` names a model, class, enum or newtype by a bare name rather than a path.
+    fn mentions_bare_nominal(ty: &IrType) -> bool {
+        match ty {
+            IrType::Struct(name) | IrType::Enum(name) => !name.contains("::"),
+            IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::Option(inner)
+            | IrType::List(inner)
+            | IrType::Set(inner) => Self::mentions_bare_nominal(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::mentions_bare_nominal(key) || Self::mentions_bare_nominal(value)
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => items.iter().any(Self::mentions_bare_nominal),
+            _ => false,
+        }
+    }
+
+    /// Whether a checked type is known at every position, so it can stand in for a declared target type.
+    fn is_fully_known(ty: &IrType) -> bool {
+        match ty {
+            IrType::Unknown => false,
+            IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::Option(inner)
+            | IrType::List(inner)
+            | IrType::Set(inner) => Self::is_fully_known(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::is_fully_known(key) && Self::is_fully_known(value)
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => items.iter().all(Self::is_fully_known),
+            _ => true,
+        }
+    }
+
     /// Select the external Rust construction surface for one nominal declaration.
     ///
     /// Models seal private constructor inputs outside their owner. Classes retain their complete constructor input
@@ -652,6 +699,9 @@ pub struct IrEmitter<'a> {
     type_module_paths: HashMap<String, Vec<String>>,
     /// Nominal declarations owned by the program currently being emitted.
     local_nominal_type_names: HashSet<String>,
+    /// Crate paths of the nominal types the program being emitted names without binding them, from lowering's
+    /// `IrProgram::unbound_nominal_type_paths` (#1561).
+    unbound_nominal_type_paths: HashMap<String, String>,
     /// Provider module paths owned by linked compiled SDK providers.
     ///
     /// These paths do not use the consumer-only `__incan_std` namespace, so generated support fast paths need an
@@ -817,6 +867,7 @@ impl<'a> IrEmitter<'a> {
             const_bindings: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
             local_nominal_type_names: HashSet::new(),
+            unbound_nominal_type_paths: HashMap::new(),
             compiled_sdk_module_paths: HashSet::new(),
             compiled_sdk_type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
@@ -885,8 +936,24 @@ impl<'a> IrEmitter<'a> {
             // substitution this site made, so it is preferred whenever the declared type does not. See #1507.
             let declared_ty = metadata.field_types.get(field_name);
             let value = if let Some(value) = provided.get(field_name.as_str()) {
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1561 -- `Card(evidence_ids=[])` in a consumer that imports `Card` from a
+                //   compiled library but not `EvidenceId` spelled `Vec::<EvidenceId>::new()` from the manifest's field
+                //   type (E0425).
+                // - Behavior evidence: the `dependency_model_built_with_empty_fields_of_unimported_types` behavior
+                //   fixture.
+                // - Semantic owner: the checker, whose type for the supplied value spells a dependency's type from its
+                //   crate; this arm only prefers that type over the provider's bare spelling.
+                // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves
+                //   nominal types through their canonical identities and has no bare-name spellings.
                 let target_ty = match declared_ty {
                     Some(declared) if metadata.mentions_own_type_param(declared) => Some(&value.ty),
+                    Some(declared)
+                        if metadata.names_a_bare_provider_nominal(declared)
+                            && StructConstructorMetadata::is_fully_known(&value.ty) =>
+                    {
+                        Some(&value.ty)
+                    }
                     other => other,
                 };
                 let value = self.emit_expr_for_use(value, crate::ownership::ValueUseSite::StructField { target_ty })?;

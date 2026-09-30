@@ -393,7 +393,9 @@ pub fn collect_project_requirements(
         }
     }
     // A namespace's extra crates are a provider fact: a consumer of a compiled provider inherits them through its
-    // metadata, so only a provider build derives them from its own imports here.
+    // metadata, and a consumer that compiles the namespace from source links the same list when the provider plan is
+    // applied (`extend_requirements_with_provider_plan`), so only a provider build derives them from its own imports
+    // here.
     let mut stdlib_namespaces = if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         imported_stdlib_namespaces.clone()
     } else {

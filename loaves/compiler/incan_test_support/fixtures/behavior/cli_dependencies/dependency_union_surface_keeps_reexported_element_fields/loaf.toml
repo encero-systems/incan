@@ -1,0 +1,9 @@
+[project]
+name = "dependency_union_surface_keeps_reexported_element_fields"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+hyper = { path = "deps/hyper" }

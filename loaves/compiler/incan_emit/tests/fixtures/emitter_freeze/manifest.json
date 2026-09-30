@@ -39,8 +39,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
-      "sha256": "03d9527ae9a3b55acc3b9173fa2707b992fe28d6768a05da3568d93b4c58d633",
-      "lines": 1112
+      "sha256": "621eb65cc2a992da3b455b96b2f2d562c3fe5022155986f37493bea9f50f0369",
+      "lines": 1120
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
@@ -49,12 +49,12 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls/testing_asserts.rs",
-      "sha256": "5b4a0da902d9ee10f28c695a165e56438811769c6d133003803020acf6109b27",
-      "lines": 370
+      "sha256": "fb3393fac4fe8bbd8ab0c6b0e5ce7a5ebe5d9fe90e7e42cfda208730b18fdce4",
+      "lines": 377
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
-      "sha256": "f365aa01bd2fe4a9cd8388cc917ffa563be13b455b82bce370a43a0a8c394955",
+      "sha256": "82a0b2698857c3afcae3ec9fa7514c610d8df91e09952663a1fe5549e77d6128",
       "lines": 957
     },
     {
@@ -104,8 +104,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
-      "sha256": "bf7e2a58a2c5bd4edd797bbe36a2e3db17c8ea0d746f903d0935fab2890b44bb",
-      "lines": 4490
+      "sha256": "4098771673eed8c5038ad6b8883d47bb077175a751acb7de8296bb80754175c4",
+      "lines": 4545
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs",
@@ -114,8 +114,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-      "sha256": "69f3161285eb9b1fd635f3d66ac8a1d6ad4e8c85238e6e66a95db82c93acfb38",
-      "lines": 4691
+      "sha256": "651dded4ad33409c372e561aef939bf8bbbe864c8ee59daac54b59c2db1f7598",
+      "lines": 4758
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
@@ -124,18 +124,18 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "5a7f1e2d0f90570e0afb0bcaab3a54aed4239954c82635405b7194cf391ba18b",
-      "lines": 4728
+      "sha256": "658bf8d29b206a2386fc57c5f5d149cdba6f95c078f1cc47350a41dedf47161a",
+      "lines": 4738
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
-      "sha256": "8a8b4def9362ac58976f19efb1150d2c1914f986775f595817759cc07a51d35b",
-      "lines": 1990
+      "sha256": "d6baa4105447ff06967a719a25d8e2fec02797f97c385661530ecc9da2c8adc8",
+      "lines": 1992
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
-      "sha256": "833b7c29efd0f620fd53179148017cef0b4aff57b2c72b94e10fc6462767a4d0",
-      "lines": 721
+      "sha256": "90e6f5f0c7c3c4f7b5ab6b4db4367da6051a3831c056319e6ae51b1333cbf2cc",
+      "lines": 731
     }
   ],
   "changes": [
@@ -626,6 +626,109 @@
       "behavior_evidence": "option_and_result_unwrap_or_keep_their_values_issue1561 and closures_returning_constructors_build_with_their_own_result_issue1561 (incan_emit src/tests/result_method_receivers.rs) and the behavior fixtures ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn and emit_calls_and_builtins/closures_returning_constructors_have_their_own_result.incn",
       "semantic_owner": "the ownership planner (ownership::plan_consumed_option_receiver, ownership::result_unwrap_or_default_use_site) and the checker's settled closure result spelled by lowering (pin_settled_closure_result_constructor); Body IR use facts and checked constructor types",
       "retirement_condition": "the Rust-source backend is deleted (#654); Body IR plans the receiver copy and the default from the same use facts and builds each constructor with its checked type, and the Option method call site, the Result unwrap_or default and the constructor seeding stop applying them"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/calls/testing_asserts.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "tests::condition_position_struct_literals::struct_literals_in_condition_positions_build_issue1561 and behavior/emit_calls_and_builtins/struct_literals_in_condition_positions.incn",
+      "semantic_owner": "legacy Rust condition-position syntax",
+      "retirement_condition": "the Rust-source backend is deleted (#654)"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "struct_literals_in_condition_positions behavior fixture; codegen snapshot rust_generic_bounds",
+      "semantic_owner": "emitter: condition-position grouping mirrors the method-call emitter's receiver grouping",
+      "retirement_condition": "the Rust-source backend is deleted (#654)"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "unimported_nominal_types emit tests; behavior fixture emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+      "semantic_owner": "lowering: IrProgram::unbound_nominal_type_paths (AstLowering::unbound_nominal_type_paths)",
+      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route resolves nominal types through their canonical identities"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "dependency_model_built_with_empty_fields_of_unimported_types behavior fixture; a_dependency_models_empty_fields_spell_their_element_types_from_the_dependency_issue1561",
+      "semantic_owner": "checker: the supplied value's checked type spells a dependency's type from its crate",
+      "retirement_condition": "the Rust-source backend is deleted (#654)"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "merge of bugfix/1561-condition-struct-literals and bugfix/1561-followup-suite-fallout",
+      "semantic_owner": "the merged entries' owners",
+      "retirement_condition": "the Rust-source backend is deleted (#654)"
     }
   ]
 }

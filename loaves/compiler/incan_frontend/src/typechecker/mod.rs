@@ -776,6 +776,15 @@ pub struct TypeChecker {
     pub cached_pub_libraries: HashSet<String>,
     /// Physical type routes projected once from checked foreign leaf identities for each imported provider.
     pub foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
+    /// Per imported provider and checked API module: the type names the module's declarations spell whose meaning
+    /// the package root's public names do not carry, mapped to the declaration's provider-qualified key.
+    ///
+    /// A published signature or field names a type as its declaring module spells it, through the module's own
+    /// declarations and imports, private ones included. The root's public names cover the spellings that name the same
+    /// declaration at the root; these maps cover the rest, such as a type only a submodule publishes or a root name
+    /// that names another declaration.
+    pub(in crate::typechecker) pub_library_declaration_scopes:
+        HashMap<String, HashMap<Vec<String>, HashMap<String, String>>>,
     /// Whether a manual [`Self::import_module`] call prepared dependency-only semantics for the next program check.
     dependency_semantics_pending: bool,
     /// Module path for the program being checked (if known).
@@ -986,6 +995,7 @@ impl TypeChecker {
             transitive_stdlib_stub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
             foreign_pub_type_remappings: HashMap::new(),
+            pub_library_declaration_scopes: HashMap::new(),
             dependency_semantics_pending: false,
             current_module_path: None,
             source_import_targets: HashMap::new(),
@@ -1087,15 +1097,19 @@ impl TypeChecker {
     ///
     /// With `expected`, the type of the place the construct is written to, every value must be assignable to it and
     /// the construct yields it. Without it, each value either is assignable to the type unified so far, or the type
-    /// unified so far is assignable to it and it becomes the result, so `i8` and `int` values unify to `int` and
-    /// `Some(5)` and `None` to `Option[int]`. A value that fits neither way is refused with a type mismatch at its span
-    /// and the construct yields `Unknown`. An `Unknown` value has already been refused or is not yet known and a
-    /// `Never` value does not complete, so neither takes part; `None` means no value took part.
+    /// unified so far is assignable to it and it becomes the result, so `i8` and `int` values unify to `int`. A
+    /// `Result` side or `Option` payload one value leaves open takes the type another value gives it, whichever value
+    /// comes first (#1561): `None` and `Some(5)` unify to `Option[int]`, and `Err("x")` and `Ok(1)` to
+    /// `Result[int, str]`. A side no value fixes stays open, and the place the construct is written to settles it.
+    /// A value that fits neither way is refused with a type mismatch at its span and the construct yields `Unknown`.
+    /// An `Unknown` value has already been refused or is not yet known and a `Never` value does not complete, so
+    /// neither takes part; `None` means no value took part.
     ///
     /// Every value whose type is not the result is recorded as written to a place of the result type
     /// ([`Self::record_value_destination_if_compatible`]), so lowering widens a narrower numeric value and wraps an
-    /// `Option` payload in that branch itself. The branches of the generated construct then share one type, as Rust
-    /// requires of the arms of a `match` and the values of a `loop`.
+    /// `Option` payload in that branch itself, and its type is recorded with the open parts the result fills, so the
+    /// `None` or `Err(...)` of one branch is built with the payload or side another branch gives. The branches of the
+    /// generated construct then share one type, as Rust requires of the arms of a `match` and the values of a `loop`.
     pub(in crate::typechecker) fn unify_branch_value_types(
         &mut self,
         values: &[(ResolvedType, Span)],
@@ -1118,10 +1132,13 @@ impl TypeChecker {
                 let mut result_ty = first_ty.clone();
                 for (ty, span) in participating {
                     if self.types_compatible(ty, &result_ty) {
+                        check_expr::fill_open_result_parts(&mut result_ty, ty, false);
                         continue;
                     }
                     if self.types_compatible(&result_ty, ty) {
-                        result_ty = ty.clone();
+                        let mut widened = ty.clone();
+                        check_expr::fill_open_result_parts(&mut widened, &result_ty, false);
+                        result_ty = widened;
                         continue;
                     }
                     self.errors
@@ -1134,6 +1151,11 @@ impl TypeChecker {
         for (ty, span) in values {
             if *ty != result_ty {
                 self.record_value_destination_if_compatible(*span, ty, &result_ty);
+                let mut filled = ty.clone();
+                check_expr::fill_open_result_parts(&mut filled, &result_ty, false);
+                if filled != *ty {
+                    self.record_expr_type(*span, filled);
+                }
             }
         }
         Some(result_ty)
@@ -1734,13 +1756,29 @@ impl TypeChecker {
     }
 
     /// Bind a nominal declaration to the exact artifact already admitted for this consumer dependency route.
+    ///
+    /// `source_path` is the path the caller reached the type through, which for a re-export is the hop it forwards
+    /// through. When the library's identity graph publishes the declaration `canonical` names, the identity carries
+    /// the declaration's own source path instead, so every public path of one type yields one identity.
     fn admitted_public_type_identity(
         &self,
         library: &str,
         source_path: &[String],
         canonical: Option<CanonicalSymbolId>,
     ) -> PublicLibraryTypeIdentity {
-        let mut identity = PublicLibraryTypeIdentity::new(library, source_path).with_canonical(canonical);
+        let manifest_entry = self.provider_plan.library_manifest_index().get(library);
+        let declaration_path = match (&canonical, manifest_entry) {
+            (
+                Some(canonical),
+                Some(crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. }),
+            ) => manifest
+                .contract_metadata
+                .identity_graph
+                .declaration_source_path(canonical),
+            _ => None,
+        };
+        let mut identity =
+            PublicLibraryTypeIdentity::new(library, declaration_path.unwrap_or(source_path)).with_canonical(canonical);
         if let Some(canonical) = &identity.canonical {
             identity.selected_provider = self.provider_plan.declaring_public_provider(library, canonical).ok();
         } else if let Some(crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { metadata, .. }) =
@@ -3473,6 +3511,23 @@ impl TypeChecker {
             .import_binding_path(&adoption.name)
             .and_then(|bound| bound.first())
             .is_some_and(|root| root == stdlib::STDLIB_ROOT)
+    }
+
+    /// The name a method dispatched through a collected adoption names the adopted trait by in this module (#1561).
+    ///
+    /// An adoption keeps the spelling of the module that declares the adopting type, which may be an import alias
+    /// (`from std.derives.comparison import Ord as Ordered`, then `enum Level with Ordered`). Where that spelling names
+    /// another trait, or none, here (see [`Self::adoption_spelling_names_another_trait`]), a call of the trait's method
+    /// on the imported type names the trait by its declaration's own name beside its module path, as the recorded
+    /// dispatch is read in this module: `Level.High.__gt__(Level.Low)` named `comparison::Ordered`, which no module of
+    /// the standard library declares (E0433 against the compiled SDK).
+    pub(in crate::typechecker) fn adoption_trait_name_here(&self, adoption: &TypeBoundInfo) -> String {
+        match adoption.source_name.as_deref() {
+            Some(declaration_name) if self.adoption_spelling_names_another_trait(adoption) => {
+                declaration_name.to_string()
+            }
+            _ => adoption.name.clone(),
+        }
     }
 
     /// Return the transitive supertrait closure for one trait using visible symbols first, then cached `pub::`
@@ -6955,6 +7010,7 @@ impl TypeChecker {
             self.transitive_pub_traits.clear();
             self.cached_pub_libraries.clear();
             self.foreign_pub_type_remappings.clear();
+            self.pub_library_declaration_scopes.clear();
         }
         self.validate_alias_declarations(program);
         self.report_reserved_compiler_names(program);
@@ -8435,6 +8491,7 @@ impl TypeChecker {
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
+        self.pub_library_declaration_scopes.clear();
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
@@ -8487,6 +8544,7 @@ impl TypeChecker {
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
+        self.pub_library_declaration_scopes.clear();
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();

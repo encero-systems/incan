@@ -610,6 +610,13 @@ pub struct IrProgram {
     pub uses_scoped_c_string_views: bool,
     /// Whether this module finishes caller-owned checked byte buffers through the bounded compiler-private helper.
     pub uses_checked_c_span_buffers: bool,
+    /// The crate path (`crate::ids::EvidenceId`) of each nominal type another module of the crate declares and this
+    /// module does not bind, keyed by the name its checked types spell it with (#1561).
+    ///
+    /// Such a type reaches this module through another module's declarations, such as the element type of an imported
+    /// model's field, and the bare name resolves to nothing here, so it is spelled by this path wherever the generated
+    /// code names the type. Empty for a program that is not one module of a crate of several.
+    pub unbound_nominal_type_paths: std::collections::HashMap<String, String>,
 }
 
 impl IrProgram {
@@ -629,6 +636,7 @@ impl IrProgram {
             uses_checked_c_strings: false,
             uses_scoped_c_string_views: false,
             uses_checked_c_span_buffers: false,
+            unbound_nominal_type_paths: std::collections::HashMap::new(),
         }
     }
 }

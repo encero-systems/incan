@@ -340,8 +340,8 @@ pub struct ProjectLockContext {
 
 /// Canonical lock publication retained by one explicit project bake.
 ///
-/// The dependency surface is the exact normal and test closure used to publish `oven.lock`. Keeping it behind this
-/// immutable projection prevents source-authority publication from rediscovering the same project graph.
+/// The dependency surface is the exact normal and test closure owned by the project being baked. A workspace lock
+/// still contains every member, but a member's inspection and test plans must never adopt sibling dependencies.
 pub struct PublishedOvenProjectLock {
     dependency_surface: ResolvedDependencies,
 }
@@ -356,12 +356,16 @@ impl PublishedOvenProjectLock {
 /// Outcome of publishing the canonical lock on behalf of one explicit provider bake.
 pub enum ProviderBakeLockPublication {
     /// The whole-graph lock was collected and written.
-    Published(ProjectLockContext),
+    Published {
+        /// Dependency surface owned by the project that requested the bake.
+        project_dependency_surface: ResolvedDependencies,
+    },
     /// At least one sibling member could not resolve yet. The root lock was written with every member that could,
     /// and the whole-graph fingerprint stays stale until the remaining members resolve.
     Deferred {
         member: String,
-        context: ProjectLockContext,
+        /// Dependency surface owned by the project that requested the bake.
+        project_dependency_surface: ResolvedDependencies,
         reason: String,
     },
 }
@@ -377,6 +381,8 @@ pub struct WorkspaceLockMemberFailure {
 /// A workspace lock collection together with the members it had to leave out.
 pub struct WorkspaceLockCollection {
     context: ProjectLockContext,
+    /// Dependency surface of the member that requested this collection, before workspace union.
+    project_dependency_surface: ResolvedDependencies,
     /// Members skipped because they could not resolve yet, with the reason each gave. Empty for a strict collection.
     unresolved: Vec<(String, CliError)>,
 }

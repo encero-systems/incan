@@ -3,6 +3,8 @@
 //! `inspect_err` takes the payload it observes, and a side of a `Result` that an `Ok(...)` or `Err(...)` leaves open is
 //! built with the type the checker gives it, in a binding, a closure's result, a comprehension, a collection literal
 //! whose other members fix it, a `match` subject, a loop's iterable and a call argument whose other arguments fix it.
+//! The arms of a `match` and the `break` values of a `loop:` share one `Option` or `Result` type, whichever arm fixes
+//! a part the others leave open.
 
 use super::generated_programs::run_with_stdlib;
 
@@ -322,6 +324,89 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(stdout, "1\n2\nonly\n3\nbad\n5\nx\n6\nA\n2\nb\ndone\n");
+    Ok(())
+}
+
+/// The arms of a `match` expression share one type before an open side settles: `None => None` then
+/// `Some(value) => Some(value.upper())` is an `Option[str]`, `None => Err("missing")` then `Some(value) => Ok(...)` a
+/// `Result[str, str]`, whichever arm comes first, also inside lists and tuples, in a function returning the value and
+/// with guards. A side no arm fixes settles to `None`, where an arm that ignores it runs, and to the enclosing
+/// function's side where it returns one. The `break` values of a `loop:` expression share one type the same way.
+#[test]
+fn match_arms_and_loop_values_share_one_type_before_a_side_settles_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+def upper_of(content: Option[str]) -> Option[str]:
+    content_json = match content:
+        None => None
+        Some(value) => Some(value.upper())
+    return content_json
+
+
+def parsed(content: Option[str]) -> Result[str, str]:
+    return match content:
+        None => Err("missing")
+        Some(value) => Ok(value.upper())
+
+
+def all_ok(content: Option[int]) -> Result[int, str]:
+    r = match content:
+        Some(value) => Ok(value)
+        None => Ok(0)
+    return r
+
+
+def main() -> None:
+    println(upper_of(Some("a")).unwrap_or("none"))
+    println(upper_of(None).unwrap_or("none"))
+    content: Option[int] = Some(2)
+    r = match content:
+        None => Err("missing")
+        Some(value) => Ok(value * 10)
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    first_ok = match content:
+        Some(value) => Ok(value)
+        None => Err("missing")
+    println(first_ok.unwrap_or(-1))
+    println(parsed(None).unwrap_or("dflt"))
+    lists = match content:
+        None => [None]
+        Some(value) => [Some(value * 2)]
+    println(lists[0].unwrap_or(0))
+    pairs = match content:
+        None => (None, 0)
+        Some(value) => (Some(str(value)), value)
+    println(pairs[0].unwrap_or("-"))
+    guarded = match content:
+        Some(value) if value > 10 => None
+        Some(value) => Some(value * 3)
+        _ => None
+    println(guarded.unwrap_or(0))
+    settled = match content:
+        Some(value) => Ok(value)
+        None => Ok(0)
+    match settled:
+        Ok(v) => println(v)
+        Err(_) => println("never")
+    println(all_ok(None).unwrap_or(-1))
+    flag = true
+    looped = loop:
+        if flag:
+            break None
+        break Some("a")
+    println(looped.unwrap_or("none"))
+    counted = loop:
+        if flag:
+            break Ok(1)
+        break Ok(2)
+    match counted:
+        Ok(v) => println(v)
+        Err(_) => println("never")
+"#,
+    )?;
+    assert_eq!(stdout, "A\nnone\n20\n2\ndflt\n4\n2\n6\n2\n0\nnone\n1\n");
     Ok(())
 }
 

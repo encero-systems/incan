@@ -1,0 +1,85 @@
+# behavior: a for loop iterates the Iterator adopter a call returns, whatever the call: a method with an argument, a default or a variadic parameter, a generic method, a static method, a function, an adapter and a field read, with the adopter declared here and with it declared in a module this one imports only a function from
+# retires: loaves/compiler/incan_emit/src/tests/iterator_adopters.rs::loops_over_calls_returning_an_iterator_adopter_build_issue1561
+# expect-stdout:
+#   [10, 11, 12, 10, 11, 15, 16, 10, 7, 8, 20, 21, 1, 2, 30]
+#   [10, 11, 12, 10, 14, 10, 10]
+
+from std.derives.collection import Iterator
+from clocks import clock_at
+
+
+model Numbers with Iterator[int]:
+    pub items: list[int]
+    pub index: int
+
+    def __iter__(self) -> Numbers:
+        return self
+
+    def __next__(mut self) -> Option[int]:
+        if self.index >= len(self.items):
+            return None
+        value = self.items[self.index]
+        self.index += 1
+        return Some(value)
+
+    @staticmethod
+    def of(first: int, second: int) -> Numbers:
+        return Numbers(items=[first, second], index=0)
+
+
+class Source:
+    pub base: int
+    pub numbers: Numbers
+
+    def counted(self, count: int = 2) -> Numbers:
+        mut items: list[int] = []
+        for i in range(count):
+            items.append(self.base + i)
+        return Numbers(items=items, index=0)
+
+    def spread(self, *offsets: int) -> Numbers:
+        mut items: list[int] = []
+        for offset in offsets:
+            items.append(self.base + offset)
+        return Numbers(items=items, index=0)
+
+    def tagged[T](self, tag: T) -> Numbers:
+        return Numbers(items=[self.base], index=0)
+
+
+def make(first: int) -> Numbers:
+    return Numbers.of(first, first + 1)
+
+
+def main() -> None:
+    source = Source(base=10, numbers=Numbers.of(1, 2))
+    mut seen: list[int] = []
+    for value in source.counted(3):
+        seen.append(value)
+    for value in source.counted():
+        seen.append(value)
+    for value in source.spread(5, 6):
+        seen.append(value)
+    for value in source.tagged("x"):
+        seen.append(value)
+    for value in Numbers.of(7, 8):
+        seen.append(value)
+    for value in make(20):
+        seen.append(value)
+    for value in source.numbers:
+        seen.append(value)
+    for value in make(30).take(1):
+        seen.append(value)
+    println(seen)
+
+    clock = clock_at(10)
+    mut ticks: list[int] = []
+    for value in clock.counted(3):
+        ticks.append(value)
+    for value in clock.tagged(1):
+        ticks.append(value)
+    for value in clock.spread(4):
+        ticks.append(value)
+    for value in clock.ticks:
+        ticks.append(value)
+    println(ticks)

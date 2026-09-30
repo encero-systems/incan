@@ -311,7 +311,11 @@ impl AstLowering {
 
     /// Return the Rust module path of a module of this crate by its logical path; an empty logical path names the
     /// module being lowered, which the checker spells that way when it checks the module without a module path.
-    fn crate_module_rust_path(&self, logical_path: &[String], context: &CrateNominalContext) -> Option<Vec<String>> {
+    pub(in crate::lower) fn crate_module_rust_path(
+        &self,
+        logical_path: &[String],
+        context: &CrateNominalContext,
+    ) -> Option<Vec<String>> {
         if !logical_path.is_empty() {
             return context
                 .module_rust_paths
@@ -326,7 +330,7 @@ impl AstLowering {
     }
 
     /// Spell an item of this crate by its Rust module path.
-    fn crate_item_path(rust_module_path: &[String], name: &str) -> String {
+    pub(in crate::lower) fn crate_item_path(rust_module_path: &[String], name: &str) -> String {
         std::iter::once("crate")
             .chain(rust_module_path.iter().map(String::as_str))
             .chain(std::iter::once(name))

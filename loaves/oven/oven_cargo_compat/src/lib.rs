@@ -4788,7 +4788,7 @@ mod tests {
         reclaim_unmaterialized_compiler_suite_target_files, release_cohort_generated_project_lock,
         resolve_direct_dependency_packages, run_legacy_cargo, run_legacy_cargo_invocation,
         select_compiler_test_suite_identity, select_existing_project_extension_identity,
-        source_compiler_vocab_support_paths_are_available, stage_compiler_suite_shard_files,
+        source_compiler_vocab_support_paths_are_available, stage_compiler_suite_shard_files, stage_registry_source,
         stage_registry_source_directory, stage_self_contained_sdk_provider_tree, validate_compiler_suite_unit_graph,
         validate_generated_registry_lock, validate_release_cohort_registry_lock,
     };
@@ -4798,8 +4798,9 @@ mod tests {
     };
     use oven_rustc::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
-        OvenRustcArtifactManifest, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-        OvenRustcSupportingArtifact, rustc_host_target, rustc_identity,
+        OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind,
+        OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, rustc_host_target,
+        rustc_identity,
     };
     use oven_store::store::{
         OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits,
@@ -5255,6 +5256,165 @@ mod tests {
                 .iter()
                 .any(|artifact| artifact.relative_path.ends_with("/Cargo.toml"))
         );
+        Ok(())
+    }
+
+    /// A registry package compiled for the target and again for the build host seals one source record.
+    ///
+    /// A workspace member whose procedural macro or build script depends on a registry package the target code also
+    /// uses makes Cargo compile that package twice, once per domain, over one source tree. The catalog must declare
+    /// that tree once, carrying every leaf's features, or the plan it seals refuses itself; the complete-graph
+    /// catalog keeps the compiled leaves' features for that record rather than the resolved graph's.
+    #[test]
+    fn publisher_catalog_seals_one_source_for_a_package_compiled_for_target_and_host()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let staging = fixture.path().join("staging");
+        fs::create_dir_all(&staging)?;
+        let registry = "registry+https://github.com/rust-lang/crates.io-index";
+        let package_root = fixture.path().join("segmentation-1.12.0");
+        fs::create_dir_all(package_root.join("src"))?;
+        fs::write(
+            package_root.join("Cargo.toml"),
+            "[package]\nname = \"segmentation\"\nversion = \"1.12.0\"\n",
+        )?;
+        fs::write(package_root.join("src/lib.rs"), "pub fn graphemes() {}\n")?;
+        let mut source_artifacts = Vec::new();
+        let source = stage_registry_source(
+            &staging,
+            "segmentation",
+            "1.12.0",
+            registry,
+            "segmentation-checksum",
+            &package_root,
+            &mut source_artifacts,
+        )?;
+        let leaf = |domain, features: &[&str], relative_path: &str| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
+            domain,
+            crate_kind: OvenRustcRegistryLeafKind::Rlib,
+            package: "segmentation".to_string(),
+            version: "1.12.0".to_string(),
+            crate_name: "segmentation".to_string(),
+            features: features.iter().map(|feature| (*feature).to_string()).collect(),
+            source: source.clone(),
+            artifact: OvenRustcArtifactExtern {
+                crate_name: "segmentation".to_string(),
+                relative_path: relative_path.to_string(),
+                digest: digest_bytes(relative_path.as_bytes()),
+            },
+        };
+        let target_path = "target/aarch64-apple-darwin/debug/deps/libsegmentation-target.rlib";
+        let host_path = "target/debug/deps/libsegmentation-host.rlib";
+        let sealed_plan = |leaves: Vec<OvenRustcRegistryLeaf>,
+                           registry_sources: Vec<OvenRustcRegistrySourcePackage>|
+         -> Result<OvenRustcArtifactManifest, Box<dyn std::error::Error>> {
+            let mut supporting_artifacts = source_artifacts.clone();
+            supporting_artifacts.extend(leaves.iter().map(|leaf| OvenRustcSupportingArtifact {
+                relative_path: leaf.artifact.relative_path.clone(),
+                digest: leaf.artifact.digest.clone(),
+            }));
+            let plan = OvenRustcArtifactManifest {
+                schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                intent: OvenBuildIntent {
+                    target: "aarch64-apple-darwin".to_string(),
+                    toolchain: "rustc".to_string(),
+                    profile: "debug".to_string(),
+                    features: Vec::new(),
+                },
+                dependency_search_paths: Vec::new(),
+                native_search_paths: Vec::new(),
+                externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
+                entrypoint_externs: BTreeMap::new(),
+                registry_leaves: leaves,
+                registry_sources,
+                compile_environment: BTreeMap::new(),
+                vocab_auxiliary_targets: Vec::new(),
+                supporting_artifacts,
+            };
+            plan.validate_shape(&plan.intent)?;
+            Ok(plan)
+        };
+
+        // ---- Leaf-derived catalog: no resolved graph to consult ----
+        let no_metadata = CargoMetadata {
+            packages: Vec::new(),
+            resolve: None,
+        };
+        let identical_leaves = vec![
+            leaf(OvenRustcRegistryLeafDomain::Target, &[], target_path),
+            leaf(OvenRustcRegistryLeafDomain::Host, &[], host_path),
+        ];
+        let (identical_sources, _) =
+            publisher_registry_source_catalog(&no_metadata, b"", &staging, None, &identical_leaves, false, None)?;
+        let identical = sealed_plan(identical_leaves, identical_sources)?;
+        assert_eq!(identical.registry_sources.len(), 1);
+        assert_eq!(identical.registry_sources[0].source, source);
+        assert!(identical.registry_sources[0].features.is_empty());
+
+        let divergent_leaves = vec![
+            leaf(OvenRustcRegistryLeafDomain::Target, &["std"], target_path),
+            leaf(OvenRustcRegistryLeafDomain::Host, &["alloc", "std"], host_path),
+        ];
+        let (divergent_sources, _) =
+            publisher_registry_source_catalog(&no_metadata, b"", &staging, None, &divergent_leaves, false, None)?;
+        let divergent = sealed_plan(divergent_leaves.clone(), divergent_sources)?;
+        assert_eq!(divergent.registry_sources.len(), 1);
+        assert_eq!(divergent.registry_sources[0].features, ["alloc", "std"]);
+
+        // ---- Complete-graph catalog: the resolved graph also names the compiled package ----
+        let metadata = CargoMetadata {
+            packages: vec![
+                CargoMetadataPackage {
+                    id: "root".to_string(),
+                    name: "fixture".to_string(),
+                    version: "0.1.0".to_string(),
+                    manifest_path: fixture.path().join("Cargo.toml"),
+                    source: None,
+                },
+                CargoMetadataPackage {
+                    id: "segmentation".to_string(),
+                    name: "segmentation".to_string(),
+                    version: "1.12.0".to_string(),
+                    manifest_path: package_root.join("Cargo.toml"),
+                    source: Some(registry.to_string()),
+                },
+            ],
+            resolve: Some(CargoMetadataResolve {
+                root: Some("root".to_string()),
+                nodes: vec![
+                    CargoMetadataResolveNode {
+                        id: "root".to_string(),
+                        features: Vec::new(),
+                        dependencies: vec!["segmentation".to_string()],
+                        deps: Vec::new(),
+                    },
+                    CargoMetadataResolveNode {
+                        id: "segmentation".to_string(),
+                        features: vec!["alloc".to_string(), "graphemes".to_string(), "std".to_string()],
+                        dependencies: Vec::new(),
+                        deps: Vec::new(),
+                    },
+                ],
+            }),
+        };
+        let lock = format!(
+            "version = 4\n\n[[package]]\nname = \"segmentation\"\nversion = \"1.12.0\"\nsource = \"{registry}\"\nchecksum = \"segmentation-checksum\"\n"
+        );
+        let (complete_sources, _) = publisher_registry_source_catalog(
+            &metadata,
+            lock.as_bytes(),
+            &staging,
+            None,
+            &divergent_leaves,
+            true,
+            None,
+        )?;
+        let complete = sealed_plan(divergent_leaves, complete_sources)?;
+        assert_eq!(complete.registry_sources.len(), 1);
+        assert_eq!(complete.registry_sources[0].source, source);
+        assert_eq!(complete.registry_sources[0].features, ["alloc", "std"]);
         Ok(())
     }
 

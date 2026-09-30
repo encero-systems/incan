@@ -1,0 +1,14 @@
+"""A card and the identifiers it holds."""
+
+from crate.ids import EvidenceId, Tag
+
+
+@derive(Clone)
+pub model Card:
+    pub title: str
+    pub evidence_ids: list[EvidenceId]
+    pub tags: dict[str, Tag]
+    pub first: Option[EvidenceId]
+
+    def summary(self) -> str:
+        return f"{self.title} {len(self.evidence_ids)} {len(self.tags)}"

@@ -292,6 +292,11 @@ impl AstLowering {
     /// [`Self::project_resolved_method_target`] reads the identity the checker recorded at a written call; a call
     /// lowering synthesizes, such as the `message()` an `Error` adopter displays through (#1778), passes the identity
     /// the checker selected for it instead, so both spell the method the same way.
+    ///
+    /// A trait-dispatched call is named through the same standard-library projection as any other call. The trait
+    /// method a source standard-library type implements in its own body (`BytesIO.write(value, endian)` for
+    /// `BinaryWrite[u32]`) is declared under the module it is mounted at, while its callers see it under `std.*`;
+    /// naming a trait-dispatched call without that projection named no emitted item (E0599, #1561).
     pub(in crate::lower) fn project_method_target_for_identity(
         &self,
         identity: Option<&incan_semantics_core::CanonicalSymbolId>,
@@ -306,12 +311,9 @@ impl AstLowering {
         {
             return (source_method.to_string(), dispatch);
         }
-        let rebase_source_stdlib = !matches!(dispatch, Some(IrMethodDispatch::Trait(_)));
         let Some(projection) = identity.and_then(|identity| {
             self.compiled_provider_method_reference_name_for_identity(identity, &receiver.ty, source_method)
-                .or_else(|| {
-                    self.emitted_method_reference_name_for_identity(identity, source_method, rebase_source_stdlib)
-                })
+                .or_else(|| self.emitted_method_reference_name_for_identity(identity, source_method))
         }) else {
             return (source_method.to_string(), dispatch);
         };
@@ -3922,7 +3924,7 @@ mod tests {
         let adopter = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Score".to_string()));
         let (method, dispatch) =
             lowering.project_method_target_for_identity(Some(&identity), "__ge__", &adopter, Some(trait_dispatch(ord)));
-        assert_eq!(method, AstLowering::emitted_source_identity_name(&identity, false));
+        assert_eq!(method, AstLowering::emitted_source_identity_name(&identity));
         assert!(matches!(dispatch, Some(IrMethodDispatch::SourceProjection(_))));
 
         let other = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Other".to_string()));

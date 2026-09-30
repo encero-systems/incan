@@ -4375,6 +4375,7 @@ mod tests {
             uses_checked_c_strings: false,
             uses_scoped_c_string_views: false,
             uses_checked_c_span_buffers: false,
+            unbound_nominal_type_paths: std::collections::HashMap::new(),
         }
     }
 
@@ -4435,6 +4436,7 @@ mod tests {
             uses_checked_c_strings: false,
             uses_scoped_c_string_views: false,
             uses_checked_c_span_buffers: false,
+            unbound_nominal_type_paths: std::collections::HashMap::new(),
         };
 
         infer_trait_bounds(&mut program);

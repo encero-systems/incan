@@ -1,0 +1,84 @@
+# behavior: the arms of a match and the break values of a loop share one Option or Result type whichever arm fixes the payload or side the others leave open, also inside lists and tuples and with guards, and a side none of them fixes settles to None, or to the function's Result side, where an arm ignoring it runs
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::match_arms_and_loop_values_share_one_type_before_a_side_settles_issue1561
+# expect-stdout:
+#   A
+#   none
+#   20
+#   2
+#   dflt
+#   4
+#   2
+#   6
+#   2
+#   0
+#   none
+#   1
+
+def upper_of(content: Option[str]) -> Option[str]:
+    content_json = match content:
+        None => None
+        Some(value) => Some(value.upper())
+    return content_json
+
+
+def parsed(content: Option[str]) -> Result[str, str]:
+    return match content:
+        None => Err("missing")
+        Some(value) => Ok(value.upper())
+
+
+def all_ok(content: Option[int]) -> Result[int, str]:
+    r = match content:
+        Some(value) => Ok(value)
+        None => Ok(0)
+    return r
+
+
+def main() -> None:
+    println(upper_of(Some("a")).unwrap_or("none"))
+    println(upper_of(None).unwrap_or("none"))
+    content: Option[int] = Some(2)
+    r = match content:
+        None => Err("missing")
+        Some(value) => Ok(value * 10)
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+    first_ok = match content:
+        Some(value) => Ok(value)
+        None => Err("missing")
+    println(first_ok.unwrap_or(-1))
+    println(parsed(None).unwrap_or("dflt"))
+    lists = match content:
+        None => [None]
+        Some(value) => [Some(value * 2)]
+    println(lists[0].unwrap_or(0))
+    pairs = match content:
+        None => (None, 0)
+        Some(value) => (Some(str(value)), value)
+    println(pairs[0].unwrap_or("-"))
+    guarded = match content:
+        Some(value) if value > 10 => None
+        Some(value) => Some(value * 3)
+        _ => None
+    println(guarded.unwrap_or(0))
+    settled = match content:
+        Some(value) => Ok(value)
+        None => Ok(0)
+    match settled:
+        Ok(v) => println(v)
+        Err(_) => println("never")
+    println(all_ok(None).unwrap_or(-1))
+    flag = true
+    looped = loop:
+        if flag:
+            break None
+        break Some("a")
+    println(looped.unwrap_or("none"))
+    counted = loop:
+        if flag:
+            break Ok(1)
+        break Ok(2)
+    match counted:
+        Ok(v) => println(v)
+        Err(_) => println("never")

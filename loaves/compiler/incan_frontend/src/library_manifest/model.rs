@@ -873,6 +873,42 @@ impl LibraryIdentityGraph {
         let first = candidates.next()?;
         candidates.all(|candidate| candidate == first).then_some(first)
     }
+
+    /// Return every canonical identity published at one exact package-visible path, in graph order.
+    pub fn canonicals_at_public_path(&self, public_path: &[String]) -> Vec<CanonicalSymbolId> {
+        let mut canonicals = Vec::new();
+        for canonical in self
+            .exports
+            .iter()
+            .filter(|entry| entry.public_path == public_path)
+            .filter_map(|entry| entry.canonical.as_ref()?.hydrate())
+        {
+            if !canonicals.contains(&canonical) {
+                canonicals.push(canonical);
+            }
+        }
+        canonicals
+    }
+
+    /// Return the source path of the declaration `canonical` identifies, as the declaration's direct entry publishes
+    /// it.
+    ///
+    /// A declaration published at several paths -- its declaring module's namespace, a facade that re-exports it, the
+    /// package root -- carries the same canonical identity at each of them, while each re-export entry's
+    /// `source_path` names the hop it forwards through. Only a direct entry's `source_path` is the declaration's own.
+    pub fn declaration_source_path(&self, canonical: &CanonicalSymbolId) -> Option<&[String]> {
+        self.exports
+            .iter()
+            .find(|entry| {
+                entry.projection == ExportIdentityProjection::Direct
+                    && entry
+                        .canonical
+                        .as_ref()
+                        .and_then(CanonicalIdentityExport::hydrate)
+                        .is_some_and(|candidate| candidate == *canonical)
+            })
+            .map(|entry| entry.source_path.as_slice())
+    }
 }
 
 /// Return the legacy identity graph schema version when deserializing manifests that predate the field.

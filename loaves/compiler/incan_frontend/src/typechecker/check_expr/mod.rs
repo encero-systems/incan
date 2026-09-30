@@ -38,6 +38,8 @@ mod match_coverage;
 mod ops;
 mod printed_form;
 
+pub(in crate::typechecker) use collections::fill_open_result_parts;
+
 /// The generic callable a local partial names as its target, with what instantiating it needs (RFC 084).
 ///
 /// A local partial is a value, and a value is not generic, so the partial instantiates the target: its presets and its

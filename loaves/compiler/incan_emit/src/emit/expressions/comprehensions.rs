@@ -66,7 +66,7 @@ impl<'a> IrEmitter<'a> {
                 })
             }
             IrGeneratorClause::If(condition) => {
-                let condition_tokens = self.emit_expr(condition)?;
+                let condition_tokens = self.emit_condition_position_expr(condition)?;
                 let body = self.emit_generator_chain(element, tail)?;
                 Ok(quote! {
                     if #condition_tokens {
@@ -222,7 +222,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter_wrapped
@@ -244,7 +244,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter_wrapped
@@ -352,7 +352,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered dict comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter
@@ -374,7 +374,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered dict comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter
@@ -516,7 +516,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 (#iter)
                     .filter_map(|#pattern| {
@@ -619,7 +619,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 if #filter_tokens {
                     __incan_list.push(#elem);
@@ -640,7 +640,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 (#iter)
                     .filter_map(|#pattern| {
@@ -739,7 +739,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 if #filter_tokens {
                     __incan_dict.insert(#key, #value);
