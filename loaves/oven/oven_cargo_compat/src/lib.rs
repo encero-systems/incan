@@ -397,6 +397,11 @@ pub struct OvenLegacyCargoPrepareRequest<'a> {
     /// semantics remain unchanged. It prevents compiler-shipped sealed Loaf data from consuming policy capacity with
     /// linker-irrelevant debug sections.
     pub compact_debug_info: bool,
+    /// Whether this release-family bake retains Cargo's raw compiler products for byte-equivalence evidence.
+    ///
+    /// Ordinary project extensions must leave this false: capture evidence is not a direct-Rustc input and must not
+    /// enter the artifact set partitioned against an installed base Loaf.
+    pub retain_equivalence_artifacts: bool,
     /// Whether this explicit source-built project publication must seal the compiler-owned vocabulary helper.
     ///
     /// This is admitted only by the source-built compiler's explicit Oven bake. The normal build, run, and test
@@ -1381,6 +1386,9 @@ pub fn prepare_direct_rustc_plan(
     };
     let mut materialized_directories = Vec::new();
     if let Some(selected_units) = selected_units.as_mut() {
+        if request.retain_equivalence_artifacts {
+            supporting_artifacts.extend(retain_legacy_cargo_selected_artifacts(selected_units, &staging)?);
+        }
         supporting_artifacts.extend(retain_legacy_cargo_selected_generated_outputs(
             selected_units,
             &staging,
@@ -8101,6 +8109,7 @@ version = "1.0.0"
             direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
             provider_compilations: &[],
             compact_debug_info: false,
+            retain_equivalence_artifacts: false,
             source_compiler_vocab_support: false,
             base_loaf: None,
         })?;
@@ -8365,6 +8374,7 @@ version = "1.0.0"
             direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
             provider_compilations: &[],
             compact_debug_info: false,
+            retain_equivalence_artifacts: false,
             source_compiler_vocab_support: false,
             base_loaf: None,
         })?;
@@ -8375,6 +8385,163 @@ version = "1.0.0"
         assert!(
             !cargo_marker.exists(),
             "a compatible stored project Loaf must return before invoking the supplied Cargo executable"
+        );
+        Ok(())
+    }
+
+    /// Publish one capture-scope fixture with the same ordinary project policy used by the regression below.
+    #[cfg(unix)]
+    fn prepare_capture_scope_fixture(
+        store: &OvenStore,
+        project: &Path,
+        name: &str,
+        cargo: &Path,
+        rustc: &Path,
+        base_loaf: Option<OvenLegacyCargoBaseLoaf<'_>>,
+    ) -> Result<(oven_store::OvenReceipt, super::OvenLegacyCargoPrepareResult), Box<dyn std::error::Error>> {
+        let target = rustc_host_target(rustc)?;
+        let toolchain = rustc_identity(rustc)?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(project, name, "0.1.0", &target, &toolchain, "debug", Vec::new())
+                .with_generated_source("generated-root", project.join("src/main.rs")),
+        )?;
+        let result = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+            compiler: CompilerIdentity::new("0.0.0-test", 0),
+            provider_hooks: Arc::new(oven_store::NoProviderHooks),
+            store,
+            receipt: receipt.clone(),
+            generated_project: project.to_path_buf(),
+            cargo: cargo.to_path_buf(),
+            rustc: rustc.to_path_buf(),
+            cc: None,
+            cxx: None,
+            c_sysroot: None,
+            sdk_inventory: None,
+            compiler_loaf_root: None,
+            domain: "capture-scope-fixture".to_string(),
+            publication_kind: OvenLegacyCargoPublicationKind::Executable,
+            source_evidence_key: "generated-root".to_string(),
+            compile_environment: Default::default(),
+            inspection_packages: None,
+            direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
+            provider_compilations: &[],
+            compact_debug_info: true,
+            retain_equivalence_artifacts: false,
+            source_compiler_vocab_support: false,
+            base_loaf,
+        })?;
+        Ok((receipt, result))
+    }
+
+    /// A project extension reuses a dependency carried by its selected base without inheriting Cargo capture evidence.
+    #[cfg(unix)]
+    #[test]
+    fn explicit_project_bake_excludes_capture_evidence_shared_with_its_base() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = tempfile::tempdir()?;
+        let shared = fixture.path().join("shared");
+        let project_only = fixture.path().join("project-only");
+        let base_project = fixture.path().join("base-project");
+        let extension_project = fixture.path().join("extension-project");
+        for (root, name, body) in [
+            (&shared, "incan_std_core", "pub fn shared() -> u8 { 1 }\n"),
+            (&project_only, "project_only", "pub fn project_only() -> u8 { 2 }\n"),
+        ] {
+            fs::create_dir_all(root.join("src"))?;
+            fs::write(
+                root.join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+            )?;
+            fs::write(root.join("src/lib.rs"), body)?;
+        }
+        for root in [&base_project, &extension_project] {
+            fs::create_dir_all(root.join("src"))?;
+        }
+        fs::write(
+            base_project.join("Cargo.toml"),
+            "[package]\nname = \"base_project\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nincan_std_core = { path = \"../shared\" }\n",
+        )?;
+        fs::write(
+            base_project.join("src/main.rs"),
+            "fn main() { let _ = incan_std_core::shared(); }\n",
+        )?;
+        fs::write(
+            extension_project.join("Cargo.toml"),
+            "[package]\nname = \"extension_project\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nincan_std_core = { path = \"../shared\" }\nproject_only = { path = \"../project-only\" }\n",
+        )?;
+        fs::write(
+            extension_project.join("src/main.rs"),
+            "fn main() { let _ = (incan_std_core::shared(), project_only::project_only()); }\n",
+        )?;
+
+        let cargo = crate::cargo_process::resolved_cargo_executable()?;
+        let rustc_output = Command::new("rustup").args(["which", "rustc"]).output()?;
+        assert!(rustc_output.status.success(), "rustup which rustc failed");
+        let rustc = PathBuf::from(String::from_utf8(rustc_output.stdout)?.trim());
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            OvenStoreLimits::new(512 * 1024 * 1024, 512 * 1024 * 1024, 512 * 1024 * 1024),
+        );
+        let (base_receipt, base_result) =
+            prepare_capture_scope_fixture(&store, &base_project, "base_project", &cargo, &rustc, None)?;
+        let (_manifest, _artifact_root, payload, _lease) =
+            store.select_payload_for_execution(&base_result.plan_identity)?;
+        let mut base_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload)?;
+        assert!(
+            base_plan
+                .externs
+                .iter()
+                .any(|artifact| artifact.crate_name == "incan_std_core")
+        );
+        let base_root = tempfile::tempdir()?;
+        let lock_path = base_root.path().join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
+        fs::create_dir_all(lock_path.parent().ok_or("base lock parent missing")?)?;
+        let lock = fs::read(base_project.join("Cargo.lock"))?;
+        fs::write(&lock_path, &lock)?;
+        base_plan.supporting_artifacts.push(OvenRustcSupportingArtifact {
+            relative_path: OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH.to_string(),
+            digest: digest_bytes(&lock),
+        });
+        canonicalize_supporting_artifacts(&mut base_plan.supporting_artifacts)?;
+
+        let base = OvenLegacyCargoBaseLoaf {
+            loaf_identity: "sha256:capture-scope-base".to_string(),
+            build_unit_identity: base_receipt.build_unit_identity,
+            artifacts: &base_plan,
+            artifact_root: base_root.path(),
+        };
+        let (_extension_receipt, extension_result) = prepare_capture_scope_fixture(
+            &store,
+            &extension_project,
+            "extension_project",
+            &cargo,
+            &rustc,
+            Some(base),
+        )?;
+        let (manifest, _artifact_root, payload, _lease) =
+            store.select_payload_for_execution(&extension_result.plan_identity)?;
+        assert_eq!(manifest.kind, OvenArtifactKind::ProjectPayload);
+        let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&payload)?;
+        assert!(
+            payload
+                .complete_plan
+                .externs
+                .iter()
+                .any(|artifact| artifact.crate_name == "incan_std_core")
+        );
+        assert!(
+            payload
+                .complete_plan
+                .supporting_artifacts
+                .iter()
+                .all(|artifact| !artifact.relative_path.starts_with("cargo-capture-artifacts/"))
+        );
+        assert!(
+            manifest
+                .materialized_files
+                .iter()
+                .all(|artifact| !artifact.relative_path.starts_with("cargo-capture-artifacts/"))
         );
         Ok(())
     }

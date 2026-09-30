@@ -112,7 +112,7 @@ pub(crate) struct UnitManifest {
     #[serde(default)]
     pub(crate) native_objects: Vec<PathDigest>,
     pub(crate) artifacts: Vec<ArtifactManifest>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) asset_archive: Option<ArchiveManifest>,
 }
 

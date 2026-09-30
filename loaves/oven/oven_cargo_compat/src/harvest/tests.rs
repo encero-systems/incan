@@ -57,6 +57,7 @@ fn library(package: &str, version: &str, features: &[&str]) -> OvenLegacyCargoSe
         crate_types: vec!["lib".to_string()],
         source_path: PathBuf::from(format!("/transient/{package}/src/lib.rs")),
         artifact_paths: Vec::new(),
+        retained_artifacts: Vec::new(),
         root_module: "src/lib.rs".to_string(),
         edition: "2021".to_string(),
         mode: "build".to_string(),

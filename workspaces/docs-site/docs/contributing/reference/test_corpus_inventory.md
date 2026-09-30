@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3548 | 245 | 8 |
 | re-point | 522 | 86 | 1051 |
 | retire | 1495 | 153 | 0 |
-| unaffected | 1618 | 158 | 5 |
+| unaffected | 1622 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7183** | **642** | **1064** |
+| **Total** | **7187** | **642** | **1064** |
 
 - Retire-class tests: 1495, of which twinned 1020, dies 294, open 181 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -150,10 +150,10 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/output_materialization.rs` | 2 | 1273 | 411 | unaffected | - | - | - | #1561 | replacement 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_paths.rs` | 5 | 971 | 228 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_selection.rs` | 1 | 1091 | 358 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/oven_project.rs` | 7 | 1356 | 160 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/oven_project.rs` | 7 | 1357 | 160 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/package_loafs.rs` | 2 | 1015 | 436 | unaffected | - | - | - | #1561 | text 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/plan_authority.rs` | 4 | 1255 | 191 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/plan_selection.rs` | 7 | 1194 | 554 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/plan_selection.rs` | 7 | 1195 | 554 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/prepare_project.rs` | 1 | 497 | 74 | retire | 0/1 | 1 | - | #1561 | codegen 1, run 1, checker 1 | prunes the generated project's Cargo dependencies; generated Cargo project shape; dies with the generated-project route |
 | `loaves/compiler/incan_driver/src/build/provider_compilation.rs` | 7 | 1044 | 546 | unaffected | - | - | - | #1561 | checker 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/provider_metadata.rs` | 5 | 1069 | 266 | keep | - | - | - | #1561 | checker 3, parser 3 | provider operation metadata projected from checked declaration facts. |
@@ -3036,7 +3036,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1325 tests in 114 files)"
+??? note "Unaffected crates (1329 tests in 114 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3085,22 +3085,22 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/kernel/incan_vocab/src/lib.rs` | 6 | 514 | 205 | unaffected | - | - | - | #1561 | checker 6 | vocab registration contract crate. Reviewed at crate level. |
 
-    #### `loaves/oven/oven_cargo_compat` (186 tests in 12 files: unaffected 186)
+    #### `loaves/oven/oven_cargo_compat` (188 tests in 12 files: unaffected 188)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_cargo_compat/src/cargo_process.rs` | 4 | 306 | 169 | unaffected | - | - | - | #1561 | run 2 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/compiler_suite_foundation.rs` | 7 | 1546 | 982 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/harvest/native/argv.rs` | 6 | 265 | 102 | unaffected | - | - | - | #1561 | - | Oven ring; declarative native-argument classification, no compiler-crate dependency (scripts/check_oven_ring.py). |
-    | `loaves/oven/oven_cargo_compat/src/harvest/tests.rs` | 35 | 1952 | 1952 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/lib.rs` | 69 | 9726 | 4915 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/loaf_bake.rs` | 11 | 1663 | 807 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/harvest/tests.rs` | 35 | 1953 | 1953 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/lib.rs` | 70 | 9893 | 5074 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/loaf_bake.rs` | 11 | 1665 | 808 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/loaf_bake/vocab_support.rs` | 3 | 1023 | 290 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/native_trace.rs` | 4 | 341 | 104 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/registry_sources.rs` | 2 | 725 | 131 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/registry_sources.rs` | 2 | 726 | 132 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/rustc_trace.rs` | 6 | 536 | 139 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 25 | 5253 | 2418 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 14 | 2809 | 979 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 25 | 5257 | 2422 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 15 | 2932 | 1036 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
     #### `loaves/oven/oven_interop` (20 tests in 1 file: unaffected 20)
 
@@ -3232,17 +3232,17 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/toolchain/incan-ci-tools/src/manifest_inventory.rs` | 5 | 1429 | 116 | unaffected | - | - | - | #1965 | - | Cargo manifest retirement inventory and reproducibility checks; no compiler semantics. |
     | `loaves/toolchain/incan-ci-tools/src/tool_outputs.rs` | 9 | 1420 | 191 | unaffected | - | - | - | #1965 | - | CI bootstrap input evidence and output transport; no compiler semantics. |
 
-    #### `loaves/toolchain/oven-cli` (119 tests in 12 files: unaffected 119)
+    #### `loaves/toolchain/oven-cli` (121 tests in 12 files: unaffected 121)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 58 | 6884 | 3348 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 58 | 6885 | 3348 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/case_partition.rs` | 6 | 379 | 171 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs` | 9 | 1131 | 332 | unaffected | - | - | - | #1561 | - | Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/gate.rs` | 5 | 779 | 289 | unaffected | - | - | - | #1561 | - | Oven release gate; validates data-driven checkout pins and semantic registry evidence, no compiler semantics. Reviewed at crate level. |
-    | `loaves/toolchain/oven-cli/src/commands/oven/harvest.rs` | 4 | 456 | 79 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven/harvest.rs` | 4 | 457 | 79 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/inventory.rs` | 4 | 515 | 183 | unaffected | - | - | - | #1561 | - | Oven CLI; validates typed harvest closure evidence, no compiler semantics. Reviewed at crate level. |
-    | `loaves/toolchain/oven-cli/src/commands/oven/loaf_bake.rs` | 3 | 2583 | 70 | unaffected | - | - | - | #1561 | - | Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven/loaf_bake.rs` | 5 | 2910 | 273 | unaffected | - | - | - | #1561 | - | Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/partition_reconciliation.rs` | 2 | 354 | 111 | unaffected | - | - | - | #1561 | - | Oven CI evidence reconciliation; no compiler semantics. |
     | `loaves/toolchain/oven-cli/src/commands/oven/sdk_handoff.rs` | 10 | 663 | 221 | unaffected | - | - | - | #1965 | - | CI transport of one compiler-selected SDK provider; no compiler semantics. |
     | `loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs` | 2 | 899 | 32 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |

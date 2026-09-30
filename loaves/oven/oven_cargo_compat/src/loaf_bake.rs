@@ -168,6 +168,7 @@ pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
         },
         provider_compilations: &[],
         compact_debug_info: true,
+        retain_equivalence_artifacts: true,
         source_compiler_vocab_support: false,
         base_loaf: None,
     })?;
@@ -884,6 +885,7 @@ mod tests {
             crate_types: vec!["lib".to_string()],
             source_path: PathBuf::from("/sealed/blake2/src/lib.rs"),
             artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
             root_module: "src/lib.rs".to_string(),
             edition: "2021".to_string(),
             mode: "build".to_string(),

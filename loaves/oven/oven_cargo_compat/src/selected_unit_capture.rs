@@ -1124,6 +1124,13 @@ pub struct OvenLegacyCargoSelectedUnit {
     /// the portable capture wire and identity; the sealed artifact digest and selected-unit identity replace them.
     #[serde(default, skip_serializing)]
     pub artifact_paths: Vec<PathBuf>,
+    /// Digest-bound copies of the compiler artifacts retained below the exported Loaf root.
+    ///
+    /// Cargo's target directory is publisher scratch and may disappear immediately after capture. These records
+    /// identify the exact bytes copied while that directory still existed; later evidence consumers must verify the
+    /// declared digest and may not substitute another same-shaped file.
+    #[serde(default)]
+    pub retained_artifacts: Vec<OvenLegacyCargoRetainedArtifact>,
     /// Package-root-relative crate root derived from Cargo metadata and the selected target record.
     pub root_module: String,
     pub edition: String,
@@ -1150,6 +1157,18 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub build_script: Option<OvenLegacyCargoBuildScriptFacts>,
     /// Exact staged registry source evidence, when this is a registry-backed unit.
     pub registry_source: Option<OvenLegacyCargoSelectedRegistrySource>,
+}
+
+/// One compiler artifact copied out of Cargo's transient target directory at capture time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyCargoRetainedArtifact {
+    /// Loaf-root-relative path of the retained bytes.
+    pub relative_path: String,
+    /// Original artifact extension used to pair the Cargo and direct-rustc products exactly.
+    pub extension: Option<String>,
+    /// Digest of the retained raw bytes.
+    pub digest: String,
 }
 
 /// The portable facts of one selected unit: what its compilation was, independent of where it ran.
@@ -1576,6 +1595,7 @@ fn capture_legacy_cargo_selected_units_inner(
             crate_types: unit.target.crate_types.clone(),
             source_path: unit.target.src_path.clone(),
             artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
             root_module,
             edition: unit.target.edition.clone(),
             mode: unit.mode.clone(),
@@ -1598,6 +1618,52 @@ fn capture_legacy_cargo_selected_units_inner(
         build_script_tool_probes: Vec::new(),
         compiler: None,
     })
+}
+
+/// Copy every traced compiler artifact into publisher staging before Cargo's target directory is discarded.
+pub fn retain_legacy_cargo_selected_artifacts(
+    capture: &mut OvenLegacyCargoSelectedUnitCapture,
+    staging: &Path,
+) -> Result<Vec<OvenRustcSupportingArtifact>, OvenLegacyCargoError> {
+    let mut supporting = Vec::new();
+    for unit in &mut capture.units {
+        let mut retained = Vec::new();
+        for source in &unit.artifact_paths {
+            let bytes = regular_file_bytes(source)?;
+            let digest = digest_bytes(&bytes);
+            let content_identity = digest.strip_prefix("sha256:").ok_or_else(|| {
+                OvenLegacyCargoError::Plan("retained Cargo artifact digest is not a SHA-256 identity".to_string())
+            })?;
+            let relative_path = format!("cargo-capture-artifacts/{content_identity}");
+            let destination = staging.join(&relative_path);
+            let parent = destination.parent().ok_or_else(|| {
+                OvenLegacyCargoError::Plan("retained Cargo artifact has no parent directory".to_string())
+            })?;
+            std::fs::create_dir_all(parent).map_err(|source| OvenLegacyCargoError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+            std::fs::write(&destination, &bytes).map_err(|source| OvenLegacyCargoError::Io {
+                path: destination.clone(),
+                source,
+            })?;
+            let retained_digest = digest_bytes(&regular_file_bytes(&destination)?);
+            if retained_digest != digest {
+                return Err(OvenLegacyCargoError::Plan(format!(
+                    "Cargo artifact for `{}` changed while it was retained",
+                    unit.package
+                )));
+            }
+            retained.push(OvenLegacyCargoRetainedArtifact {
+                relative_path: relative_path.clone(),
+                extension: source.extension().and_then(|value| value.to_str()).map(str::to_string),
+                digest: digest.clone(),
+            });
+            supporting.push(OvenRustcSupportingArtifact { relative_path, digest });
+        }
+        unit.retained_artifacts = retained;
+    }
+    Ok(supporting)
 }
 
 /// Copy every declared build-script output directory into publisher staging and retain its exact member inventory.
@@ -2055,6 +2121,7 @@ mod tests {
                 crate_types: vec!["bin".to_string()],
                 source_path: PathBuf::from("/fixture/build.rs"),
                 artifact_paths: Vec::new(),
+                retained_artifacts: Vec::new(),
                 root_module: "build.rs".to_string(),
                 edition: "2024".to_string(),
                 mode: "run-custom-build".to_string(),
@@ -2121,6 +2188,62 @@ mod tests {
         assert!(empty_output.members.is_empty());
         assert!(empty_artifacts.is_empty());
         assert!(staging.join(empty_output.relative_root).is_dir());
+        Ok(())
+    }
+
+    /// Retained compiler bytes and their digest binding survive after publisher scratch is removed and serialization.
+    #[test]
+    fn selected_unit_capture_retains_artifacts_before_transient_output_disappears()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let transient = scratch.path().join("target/libfixture.rlib");
+        fs::create_dir_all(transient.parent().ok_or("artifact has no parent")?)?;
+        fs::write(&transient, b"Cargo artifact bytes")?;
+        let mut unit: OvenLegacyCargoSelectedUnit = serde_json::from_value(serde_json::json!({
+            "package_id": "fixture 1.0.0", "package": "fixture", "package_version": "1.0.0",
+            "package_source": null, "target_name": "fixture", "target_kinds": ["lib"], "crate_types": ["lib"],
+            "source_path": "/transient/src/lib.rs", "root_module": "src/lib.rs", "edition": "2024",
+            "mode": "build", "platform": "fixture-target", "target_is_explicit": true, "cfg": [],
+            "compiler_arguments": [], "compile_environment": {}, "effective_features": [], "dependencies": [],
+            "sysroot_externs": [], "build_script": null, "registry_source": null
+        }))?;
+        unit.artifact_paths = vec![transient.clone()];
+        let mut capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![unit],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let staging = scratch.path().join("staging");
+        let supporting = retain_legacy_cargo_selected_artifacts(&mut capture, &staging)?;
+        fs::remove_file(transient)?;
+        let retained = capture.units[0]
+            .retained_artifacts
+            .first()
+            .ok_or("capture lost its retained artifact")?;
+        assert_eq!(retained.extension.as_deref(), Some("rlib"));
+        assert_eq!(retained.digest, digest_bytes(b"Cargo artifact bytes"));
+        assert_eq!(
+            retained.relative_path,
+            format!(
+                "cargo-capture-artifacts/{}",
+                retained
+                    .digest
+                    .strip_prefix("sha256:")
+                    .ok_or("retained digest is not SHA-256")?
+            )
+        );
+        assert_eq!(supporting[0].digest, retained.digest);
+        assert_eq!(
+            fs::read(staging.join(&retained.relative_path))?,
+            b"Cargo artifact bytes"
+        );
+        let round_trip: OvenLegacyCargoSelectedUnitCapture = serde_json::from_slice(&serde_json::to_vec(&capture)?)?;
+        assert_eq!(
+            round_trip.units[0].retained_artifacts,
+            capture.units[0].retained_artifacts
+        );
         Ok(())
     }
 

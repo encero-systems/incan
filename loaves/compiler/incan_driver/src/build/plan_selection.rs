@@ -154,6 +154,7 @@ fn bake_generated_project_test_dependency_plan(
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
         provider_compilations: &[],
         compact_debug_info: true,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: false,
         base_loaf: base_loaf.map(|base| OvenLegacyCargoBaseLoaf {
             loaf_identity: base.loaf_identity.clone(),

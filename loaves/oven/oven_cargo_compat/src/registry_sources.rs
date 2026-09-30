@@ -615,6 +615,7 @@ mod tests {
             crate_types: vec!["lib".to_string()],
             source_path: PathBuf::from("/sealed/fixture/src/lib.rs"),
             artifact_paths: vec![output],
+            retained_artifacts: Vec::new(),
             root_module: "src/lib.rs".to_string(),
             edition: "2021".to_string(),
             mode: "build".to_string(),

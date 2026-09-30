@@ -286,6 +286,7 @@ pub fn oven_legacy_cargo_prepare(options: OvenLegacyCargoPrepareCommandOptions) 
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
         provider_compilations: &[],
         compact_debug_info: false,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: false,
         base_loaf: None,
     })

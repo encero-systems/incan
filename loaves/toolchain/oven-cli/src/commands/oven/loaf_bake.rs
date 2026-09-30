@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use std::time::Instant;
@@ -386,6 +386,7 @@ fn write_release_equivalence_captures(
     finalized: &oven_cargo_compat::OvenFinalizedCompilerSupportSelectedGraph,
     build: &oven_rustc::rustc::OvenRuntimeFoundationBuild,
     publisher_owners: &[PublisherGeneratedOwnerRoot],
+    cargo_artifact_root: &Path,
     asset_root: &Path,
     output_root: &Path,
 ) -> CliResult<()> {
@@ -403,169 +404,17 @@ fn write_release_equivalence_captures(
     let mut cargo_units = Vec::new();
     let mut oven_units = Vec::new();
     for (ordinal, rebuilt) in build.outputs().iter().enumerate() {
-        let graph_unit = finalized
-            .graph
-            .graph()
-            .units
-            .iter()
-            .find(|unit| unit.identity == rebuilt.selected_identity)
-            .ok_or_else(|| {
-                CliError::failure(format!(
-                    "rebuilt unit `{}` is absent from the selected graph",
-                    rebuilt.selected_identity
-                ))
-            })?;
-        let capture_index = finalized
-            .unit_identities
-            .iter()
-            .find_map(|(index, identity)| (identity == &rebuilt.selected_identity).then_some(*index))
-            .ok_or_else(|| {
-                CliError::failure(format!(
-                    "rebuilt unit `{}` has no Cargo capture binding",
-                    rebuilt.selected_identity
-                ))
-            })?;
-        let captured = finalized
-            .capture
-            .units
-            .get(capture_index)
-            .ok_or_else(|| CliError::failure(format!("Cargo capture unit {capture_index} is absent")))?;
-        let cargo_artifact = captured
-            .artifact_paths
-            .iter()
-            .find(|path| path.is_file() && path.extension() == rebuilt.artifact.extension())
-            .or_else(|| captured.artifact_paths.iter().find(|path| path.is_file()))
-            .ok_or_else(|| {
-                CliError::failure(format!(
-                    "Cargo capture for `{}` has no retained artifact",
-                    captured.package
-                ))
-            })?;
-        let extension = rebuilt
-            .artifact
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("bin");
-        let role = equivalence_artifact_role(extension);
-        let artifact_path = format!("units/{ordinal:04}/artifact.{extension}");
-        let mut cargo_native = captured
-            .dependencies
-            .iter()
-            .filter_map(|dependency| dependency.build_script.as_ref())
-            .flat_map(|script| {
-                script.publisher_native_probes.iter().filter_map(move |probe| {
-                    probe
-                        .output
-                        .as_ref()
-                        .map(|output| script.out_dir.join(&output.relative_path))
-                })
-            })
-            .filter(|path| path.is_file())
-            .collect::<Vec<_>>();
-        cargo_native.sort();
-        cargo_native.dedup();
-        let mut oven_native = publisher_owners
-            .iter()
-            .filter(|owner| owner.package == graph_unit.package)
-            .flat_map(|owner| owner.native_objects.iter().cloned())
-            .collect::<Vec<_>>();
-        oven_native.sort();
-        let manifest_digest = captured
-            .registry_source
-            .as_ref()
-            .and_then(|source| source.members.iter().find(|member| member.path == "Cargo.toml"))
-            .map(|member| member.digest.clone())
-            .unwrap_or_else(|| graph_unit.source.digest.clone());
-        let unit = UnitManifest {
-            binding: format!(
-                "{} {} {:?} {} [{}]",
-                graph_unit.package,
-                graph_unit.package_version,
-                graph_unit.domain,
-                setup.profile,
-                graph_unit.features.join(",")
-            ),
-            package: graph_unit.package.clone(),
-            version: graph_unit.package_version.clone(),
-            unit_identity: graph_unit.identity.clone(),
-            features: graph_unit.features.clone(),
-            source_digest: graph_unit.source.digest.clone(),
-            manifest_digest,
-            identity_inputs: IdentityInputs {
-                cfg: graph_unit.cfg.clone(),
-                out: graph_unit
-                    .generated_inputs
-                    .iter()
-                    .map(|input| super::equivalence::PathDigest {
-                        path: input.name.clone(),
-                        digest: input.digest.clone(),
-                    })
-                    .collect(),
-                native: graph_unit
-                    .linked_libraries
-                    .iter()
-                    .enumerate()
-                    .map(|(index, library)| {
-                        serde_json::to_vec(library)
-                            .map(|bytes| NameDigest {
-                                name: format!("native-{index:04}"),
-                                digest: digest_bytes(&bytes),
-                            })
-                            .map_err(|error| {
-                                CliError::failure(format!("could not encode native identity input: {error}"))
-                            })
-                    })
-                    .collect::<CliResult<Vec<_>>>()?,
-                tools: Vec::new(),
-                dependencies: graph_unit
-                    .dependencies
-                    .iter()
-                    .map(|dependency| DependencyIdentity {
-                        name: dependency.alias.clone(),
-                        unit_identity: dependency.unit.clone(),
-                    })
-                    .collect(),
-            },
-            native_objects: Vec::new(),
-            artifacts: Vec::new(),
-            asset_archive: None,
-        };
-        cargo_units.push((
-            unit.clone(),
-            vec![CaptureFileInput {
-                role: role.to_string(),
-                path: artifact_path.clone(),
-                source: cargo_artifact.clone(),
-            }],
-            cargo_native
-                .into_iter()
-                .enumerate()
-                .map(|(index, source)| CaptureFileInput {
-                    role: "native-object".to_string(),
-                    path: format!("units/{ordinal:04}/native/{index:04}.o"),
-                    source,
-                })
-                .collect(),
-            None,
-        ));
-        oven_units.push((
-            unit,
-            vec![CaptureFileInput {
-                role: role.to_string(),
-                path: artifact_path,
-                source: rebuilt.artifact.clone(),
-            }],
-            oven_native
-                .into_iter()
-                .enumerate()
-                .map(|(index, source)| CaptureFileInput {
-                    role: "native-object".to_string(),
-                    path: format!("units/{ordinal:04}/native/{index:04}.o"),
-                    source,
-                })
-                .collect(),
-            Some(asset_root.join(oven_rustc::rustc::OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME)),
-        ));
+        let (cargo, oven) = release_capture_unit_inputs(
+            finalized,
+            rebuilt,
+            publisher_owners,
+            cargo_artifact_root,
+            asset_root,
+            &setup.profile,
+            ordinal,
+        )?;
+        cargo_units.push(cargo);
+        oven_units.push(oven);
     }
     let root = output_root.join("equivalence");
     write_capture_manifest(
@@ -588,6 +437,279 @@ fn write_release_equivalence_captures(
         },
     )
     .map_err(|error| CliError::failure(format!("could not write Oven equivalence capture: {error}")))
+}
+
+/// Assemble the paired physical inputs for one rebuilt release unit.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one evidence pair names its two owners and normalized coordinate"
+)]
+fn release_capture_unit_inputs(
+    finalized: &oven_cargo_compat::OvenFinalizedCompilerSupportSelectedGraph,
+    rebuilt: &oven_rustc::rustc::OvenRuntimeRebuildOutput,
+    publisher_owners: &[PublisherGeneratedOwnerRoot],
+    cargo_artifact_root: &Path,
+    asset_root: &Path,
+    profile: &str,
+    ordinal: usize,
+) -> CliResult<(
+    super::equivalence::CaptureUnitInput,
+    super::equivalence::CaptureUnitInput,
+)> {
+    let graph_unit = finalized
+        .graph
+        .graph()
+        .units
+        .iter()
+        .find(|unit| unit.identity == rebuilt.selected_identity)
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "rebuilt unit `{}` is absent from the selected graph",
+                rebuilt.selected_identity
+            ))
+        })?;
+    let capture_index = finalized
+        .unit_identities
+        .iter()
+        .find_map(|(index, identity)| (identity == &rebuilt.selected_identity).then_some(*index))
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "rebuilt unit `{}` has no Cargo capture binding",
+                rebuilt.selected_identity
+            ))
+        })?;
+    let captured = finalized
+        .capture
+        .units
+        .get(capture_index)
+        .ok_or_else(|| CliError::failure(format!("Cargo capture unit {capture_index} is absent")))?;
+    let extension = rebuilt
+        .artifact
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("bin");
+    let cargo_artifact = retained_cargo_artifact(captured, Some(extension), cargo_artifact_root)?;
+    let cargo_native = retained_cargo_native_artifacts(captured, cargo_artifact_root)?;
+    let mut oven_native = publisher_owners
+        .iter()
+        .filter(|owner| owner.package == graph_unit.package)
+        .flat_map(|owner| owner.native_objects.iter().cloned())
+        .collect::<Vec<_>>();
+    oven_native.sort();
+    let unit = release_unit_manifest(graph_unit, captured, profile)?;
+    let artifact_path = format!("units/{ordinal:04}/artifact.{extension}");
+    let inputs = |source, native: Vec<PathBuf>, archive| {
+        (
+            vec![CaptureFileInput {
+                role: equivalence_artifact_role(extension).to_string(),
+                path: artifact_path.clone(),
+                source,
+            }],
+            native
+                .into_iter()
+                .enumerate()
+                .map(|(index, source)| CaptureFileInput {
+                    role: "native-object".to_string(),
+                    path: format!("units/{ordinal:04}/native/{index:04}.o"),
+                    source,
+                })
+                .collect(),
+            archive,
+        )
+    };
+    let (cargo_artifacts, cargo_native, _) = inputs(cargo_artifact, cargo_native, None);
+    let (oven_artifacts, oven_native, oven_archive) = inputs(
+        rebuilt.artifact.clone(),
+        oven_native,
+        Some(asset_root.join(oven_rustc::rustc::OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME)),
+    );
+    Ok((
+        (unit.clone(), cargo_artifacts, cargo_native, None),
+        (unit, oven_artifacts, oven_native, oven_archive),
+    ))
+}
+
+/// Project one selected graph unit into the shared semantic half of both capture records.
+fn release_unit_manifest(
+    graph_unit: &oven_rustc::rustc::OvenSelectedRustFacetUnit,
+    captured: &oven_cargo_compat::OvenLegacyCargoSelectedUnit,
+    profile: &str,
+) -> CliResult<UnitManifest> {
+    let manifest_digest = captured
+        .registry_source
+        .as_ref()
+        .and_then(|source| source.members.iter().find(|member| member.path == "Cargo.toml"))
+        .map(|member| member.digest.clone())
+        .unwrap_or_else(|| graph_unit.source.digest.clone());
+    let native = graph_unit
+        .linked_libraries
+        .iter()
+        .enumerate()
+        .map(|(index, library)| {
+            serde_json::to_vec(library)
+                .map(|bytes| NameDigest {
+                    name: format!("native-{index:04}"),
+                    digest: digest_bytes(&bytes),
+                })
+                .map_err(|error| CliError::failure(format!("could not encode native identity input: {error}")))
+        })
+        .collect::<CliResult<Vec<_>>>()?;
+    Ok(UnitManifest {
+        binding: format!(
+            "{} {} {:?} {} [{}]",
+            graph_unit.package,
+            graph_unit.package_version,
+            graph_unit.domain,
+            profile,
+            graph_unit.features.join(",")
+        ),
+        package: graph_unit.package.clone(),
+        version: graph_unit.package_version.clone(),
+        unit_identity: graph_unit.identity.clone(),
+        features: graph_unit.features.clone(),
+        source_digest: graph_unit.source.digest.clone(),
+        manifest_digest,
+        identity_inputs: IdentityInputs {
+            cfg: graph_unit.cfg.clone(),
+            out: graph_unit
+                .generated_inputs
+                .iter()
+                .map(|input| super::equivalence::PathDigest {
+                    path: input.name.clone(),
+                    digest: input.digest.clone(),
+                })
+                .collect(),
+            native,
+            tools: Vec::new(),
+            dependencies: graph_unit
+                .dependencies
+                .iter()
+                .map(|dependency| DependencyIdentity {
+                    name: dependency.alias.clone(),
+                    unit_identity: dependency.unit.clone(),
+                })
+                .collect(),
+        },
+        native_objects: Vec::new(),
+        artifacts: Vec::new(),
+        asset_archive: None,
+    })
+}
+
+/// Resolve and verify the one retained Cargo artifact for a rebuilt product extension.
+fn retained_cargo_artifact(
+    unit: &oven_cargo_compat::OvenLegacyCargoSelectedUnit,
+    extension: Option<&str>,
+    loaf_root: &Path,
+) -> CliResult<PathBuf> {
+    let matches = unit
+        .retained_artifacts
+        .iter()
+        .filter(|artifact| artifact.extension.as_deref() == extension)
+        .collect::<Vec<_>>();
+    let [artifact] = matches.as_slice() else {
+        return Err(CliError::failure(format!(
+            "Cargo capture for `{}` has {} retained artifacts with extension {:?}; expected exactly one",
+            unit.package,
+            matches.len(),
+            extension
+        )));
+    };
+    verified_retained_file(&unit.package, &artifact.relative_path, &artifact.digest, loaf_root)
+}
+
+/// Resolve every captured native probe output through its retained build-script output inventory.
+fn retained_cargo_native_artifacts(
+    unit: &oven_cargo_compat::OvenLegacyCargoSelectedUnit,
+    loaf_root: &Path,
+) -> CliResult<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for script in unit
+        .dependencies
+        .iter()
+        .filter_map(|dependency| dependency.build_script.as_ref())
+    {
+        for probe in &script.publisher_native_probes {
+            let Some(output) = probe.output.as_ref() else {
+                continue;
+            };
+            let retained = script.output.as_ref().ok_or_else(|| {
+                CliError::failure(format!(
+                    "Cargo capture for `{}` has native probe output without a retained output tree",
+                    unit.package
+                ))
+            })?;
+            let members = retained
+                .members
+                .iter()
+                .filter(|member| member.path == output.relative_path && member.digest == output.digest)
+                .count();
+            if members != 1 {
+                return Err(CliError::failure(format!(
+                    "Cargo capture for `{}` native probe `{}` matched {members} retained members",
+                    unit.package, output.relative_path
+                )));
+            }
+            let relative = Path::new(&retained.relative_root).join(&output.relative_path);
+            let relative = relative.to_str().ok_or_else(|| {
+                CliError::failure(format!(
+                    "Cargo capture for `{}` has a non-UTF-8 retained native path",
+                    unit.package
+                ))
+            })?;
+            paths.push(verified_retained_file(
+                &unit.package,
+                relative,
+                &output.digest,
+                loaf_root,
+            )?);
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+/// Verify one digest-bound, safe Loaf-relative retained file and return its physical path.
+fn verified_retained_file(package: &str, relative_path: &str, digest: &str, loaf_root: &Path) -> CliResult<PathBuf> {
+    let relative = Path::new(relative_path);
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(CliError::failure(format!(
+            "Cargo capture for `{}` has unsafe retained artifact path `{}`",
+            package, relative_path
+        )));
+    }
+    let path = loaf_root.join(relative);
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        CliError::failure(format!(
+            "could not inspect retained Cargo artifact {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(CliError::failure(format!(
+            "retained Cargo artifact is not a regular file: {}",
+            path.display()
+        )));
+    }
+    let bytes = fs::read(&path).map_err(|error| {
+        CliError::failure(format!(
+            "could not read retained Cargo artifact {}: {error}",
+            path.display()
+        ))
+    })?;
+    let actual = digest_bytes(&bytes);
+    if actual != digest {
+        return Err(CliError::failure(format!(
+            "Cargo capture for `{}` retained artifact digest mismatch: declared {}, found {actual}",
+            package, digest
+        )));
+    }
+    Ok(path)
 }
 
 /// Record one executable's raw bytes and first version line for equivalence setup identity.
@@ -1672,6 +1794,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 finalized,
                 &build,
                 &publisher_generated_owners,
+                &loaf_root,
                 &staged_root.join(&foundation_member.foundation_relative_path),
                 &staged_root,
             )?;
@@ -2274,6 +2397,7 @@ pub(crate) fn finish_loaf_bake(
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
         provider_compilations: &[],
         compact_debug_info: false,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: false,
         base_loaf: None,
     })
@@ -2516,6 +2640,107 @@ mod publisher_tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+    /// Build one manifest unit shared by the Cargo and Oven sides of the publisher evidence proof.
+    fn evidence_unit() -> UnitManifest {
+        UnitManifest {
+            binding: "fixture 1.0.0 Target release []".to_string(),
+            package: "fixture".to_string(),
+            version: "1.0.0".to_string(),
+            unit_identity: digest_bytes(b"unit"),
+            features: Vec::new(),
+            source_digest: digest_bytes(b"source"),
+            manifest_digest: digest_bytes(b"manifest"),
+            identity_inputs: IdentityInputs {
+                cfg: Vec::new(),
+                out: Vec::new(),
+                native: Vec::new(),
+                tools: Vec::new(),
+                dependencies: Vec::new(),
+            },
+            native_objects: Vec::new(),
+            artifacts: Vec::new(),
+            asset_archive: None,
+        }
+    }
+
+    /// Build the shared compiler setup required by both sides of one equivalence comparison.
+    fn evidence_setup() -> CaptureSetup {
+        CaptureSetup {
+            cargo: ExecutableIdentity {
+                version: "cargo fixture".to_string(),
+                digest: digest_bytes(b"cargo"),
+            },
+            rustc: ExecutableIdentity {
+                version: "rustc fixture".to_string(),
+                digest: digest_bytes(b"rustc"),
+            },
+            host: "fixture-host".to_string(),
+            target: "fixture-target".to_string(),
+            profile: "release".to_string(),
+        }
+    }
+
+    /// Copy one test evidence tree without preserving any absolute source coordinate.
+    fn copy_evidence_tree(source: &Path, destination: &Path) -> TestResult {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                copy_evidence_tree(&source_path, &destination_path)?;
+            } else {
+                fs::copy(source_path, destination_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Compile one deterministic library artifact through the real retained-compiler command boundary.
+    fn compile_evidence_artifact(rustc: &Path, source: &Path, output: &Path, remap_root: &Path) -> TestResult {
+        fs::create_dir_all(output.parent().ok_or("compiled artifact has no parent")?)?;
+        let remap = format!("{}=/fixture", remap_root.display());
+        let result = Command::new(rustc)
+            .args([
+                "--crate-name",
+                "equivalence_fixture",
+                "--crate-type",
+                "rlib",
+                "--edition",
+                "2024",
+            ])
+            .args(["-C", "metadata=equivalence-fixture", "-C", "embed-bitcode=no"])
+            .arg("--remap-path-prefix")
+            .arg(remap)
+            .arg(source)
+            .arg("-o")
+            .arg(output)
+            .output()?;
+        if !result.status.success() {
+            return Err(format!("fixture rustc failed: {}", String::from_utf8_lossy(&result.stderr)).into());
+        }
+        Ok(())
+    }
+
+    /// Resolve the pinned release compiler used by the runtime-foundation publisher tests.
+    fn publisher_rebuild_release_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let output = Command::new("rustup")
+            .args(["which", "--toolchain", "1.98.0", "rustc"])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "rustup could not locate the pinned Rust 1.98.0 compiler: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let path = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+        if !path.is_file() {
+            return Err(format!("pinned release compiler is not a file: {}", path.display()).into());
+        }
+        Ok(path)
+    }
+
     #[test]
     fn publisher_owner_selection_requires_the_record_identity() -> TestResult {
         let matching = tempfile::tempdir()?;
@@ -2577,6 +2802,108 @@ mod publisher_tests {
         assert_eq!(claim["builder_kind"], "local");
         assert_eq!(claim["unit_identity"], digest_bytes(b"unit"));
         assert_eq!(claim["attestation_reference"], digest_bytes(b"receipt"));
+        Ok(())
+    }
+
+    /// The release evidence stage consumes only digest-bound Loaf bytes and refuses absence, mutation, or ambiguity.
+    #[test]
+    fn publisher_retained_cargo_artifact_is_exact_and_digest_bound() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let relative = "cargo-capture-artifacts/0000/0000";
+        let retained = root.path().join(relative);
+        fs::create_dir_all(retained.parent().ok_or("retained artifact has no parent")?)?;
+        fs::write(&retained, b"artifact bytes")?;
+        let mut unit: oven_cargo_compat::OvenLegacyCargoSelectedUnit = serde_json::from_value(serde_json::json!({
+            "package_id": "fixture 1.0.0", "package": "fixture", "package_version": "1.0.0",
+            "package_source": null, "target_name": "fixture", "target_kinds": ["lib"], "crate_types": ["lib"],
+            "source_path": "/transient/src/lib.rs", "retained_artifacts": [{
+                "relative_path": relative, "extension": "rlib", "digest": digest_bytes(b"artifact bytes")
+            }],
+            "root_module": "src/lib.rs", "edition": "2024", "mode": "build", "platform": "fixture-target",
+            "target_is_explicit": true, "cfg": [], "compiler_arguments": [], "compile_environment": {},
+            "effective_features": [], "dependencies": [], "sysroot_externs": [], "build_script": null,
+            "registry_source": null
+        }))?;
+        assert_eq!(retained_cargo_artifact(&unit, Some("rlib"), root.path())?, retained);
+
+        fs::write(&retained, b"changed")?;
+        assert!(retained_cargo_artifact(&unit, Some("rlib"), root.path()).is_err());
+        fs::write(&retained, b"artifact bytes")?;
+        unit.retained_artifacts.push(unit.retained_artifacts[0].clone());
+        assert!(retained_cargo_artifact(&unit, Some("rlib"), root.path()).is_err());
+        unit.retained_artifacts.pop();
+        fs::remove_file(&retained)?;
+        assert!(retained_cargo_artifact(&unit, Some("rlib"), root.path()).is_err());
+        Ok(())
+    }
+
+    /// Production capture writing and equivalence validation remain complete after the evidence tree is copied.
+    #[test]
+    fn publisher_rebuild_evidence_validates_clean_and_relocated_manifests() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source");
+        fs::create_dir(&source)?;
+        let source_file = source.join("lib.rs");
+        fs::write(&source_file, b"pub fn evidence_fixture() -> u32 { 1561 }\n")?;
+        let rustc = publisher_rebuild_release_rustc()?;
+        let cargo_artifact = root.path().join("cargo/libfixture.rlib");
+        let oven_artifact = root.path().join("oven/libfixture.rlib");
+        compile_evidence_artifact(&rustc, &source_file, &cargo_artifact, root.path())?;
+        compile_evidence_artifact(&rustc, &source_file, &oven_artifact, root.path())?;
+        let archive = source.join("foundation.loaf");
+        fs::write(&archive, b"foundation witness")?;
+        let evidence = root.path().join("equivalence");
+        let cargo_manifest = evidence.join("cargo-capture.json");
+        let oven_manifest = evidence.join("oven-capture.json");
+        write_capture_manifest(
+            &cargo_manifest,
+            CaptureManifestInput {
+                producer: "cargo-harvest",
+                cargo_free: false,
+                setup: evidence_setup(),
+                units: vec![(
+                    evidence_unit(),
+                    vec![CaptureFileInput {
+                        role: "rlib".to_string(),
+                        path: "units/0000/artifact.rlib".to_string(),
+                        source: cargo_artifact,
+                    }],
+                    Vec::new(),
+                    None,
+                )],
+            },
+        )?;
+        write_capture_manifest(
+            &oven_manifest,
+            CaptureManifestInput {
+                producer: "oven-publisher",
+                cargo_free: true,
+                setup: evidence_setup(),
+                units: vec![(
+                    evidence_unit(),
+                    vec![CaptureFileInput {
+                        role: "rlib".to_string(),
+                        path: "units/0000/artifact.rlib".to_string(),
+                        source: oven_artifact,
+                    }],
+                    Vec::new(),
+                    Some(archive),
+                )],
+            },
+        )?;
+        super::super::equivalence::oven_equivalence(
+            &cargo_manifest,
+            &oven_manifest,
+            &evidence.join("attestation.json"),
+        )?;
+
+        let relocated = root.path().join("relocated");
+        copy_evidence_tree(&evidence, &relocated)?;
+        super::super::equivalence::oven_equivalence(
+            &relocated.join("cargo-capture.json"),
+            &relocated.join("oven-capture.json"),
+            &relocated.join("relocated-attestation.json"),
+        )?;
         Ok(())
     }
 }
