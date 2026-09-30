@@ -2840,6 +2840,7 @@ mod tests {
 
     use oven_rustc::loaf::{
         OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafAccounting, OvenLoafCompatibility, OvenLoafProvenance,
+        stage_release_runtime_foundation_toolchain,
     };
     use oven_rustc::rustc::OvenRustcRegistrySource;
     use oven_rustc::rustc::{
@@ -2848,9 +2849,8 @@ mod tests {
         OvenRustcArtifactManifest, OvenRustcRegistrySourcePackage, OvenSelectedRustFacetCfgSnapshot,
         OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetIntent, OvenSelectedRustFacetPurpose,
         OvenSelectedRustFacetTargetSpec, compiler_support_root_intent_digest, execute_runtime_foundation_rebuild,
-        publish_runtime_foundation_asset_with_generated_owners, resolve_active_rustc,
-        rustc_host_and_target_cfg_snapshots, rustc_host_target, rustc_identity, selected_graph_sha256,
-        selected_graph_source_digest,
+        publish_runtime_foundation_asset_with_generated_owners, rustc_host_and_target_cfg_snapshots, rustc_host_target,
+        rustc_identity, selected_graph_sha256, selected_graph_source_digest,
     };
     use oven_store::{
         OvenGeneratedProjectRequest, receipt_generated_project, receipt_with_compiler_support_root_intent,
@@ -3199,6 +3199,9 @@ mod tests {
         out_dir: PathBuf,
         members: Vec<super::super::OvenLegacyCargoInspectionSourceMember>,
         source_digest: String,
+        proc_macro_root: PathBuf,
+        proc_macro_members: Vec<super::super::OvenLegacyCargoInspectionSourceMember>,
+        proc_macro_digest: String,
     }
 
     /// Capture and retained registry-source facts consumed by the synthetic publisher pipeline.
@@ -3223,7 +3226,7 @@ mod tests {
         fs::write(package_root.join("build.rs"), b"fn main() {}\n")?;
         fs::write(
             package_root.join("src/lib.rs"),
-            b"#![deny(warnings)]\ninclude!(concat!(env!(\"OUT_DIR\"), \"/nested/generated.rs\"));\n#[cfg(aurora_generated)]\npub const BUILD_MARKER: &str = env!(\"AURORA_BUILD_MARKER\");\n#[cfg(not(aurora_generated))]\ncompile_error!(\"captured rustc-cfg was not replayed\");\npub const PACKAGE: &str = env!(\"CARGO_PKG_NAME\");\npub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\nfn lint_cap_probe() {}\n",
+            b"#![deny(warnings)]\nuse aurora_macro::marker;\nmarker!();\ninclude!(concat!(env!(\"OUT_DIR\"), \"/nested/generated.rs\"));\n#[cfg(aurora_generated)]\npub const BUILD_MARKER: &str = env!(\"AURORA_BUILD_MARKER\");\n#[cfg(not(aurora_generated))]\ncompile_error!(\"captured rustc-cfg was not replayed\");\npub const PACKAGE: &str = env!(\"CARGO_PKG_NAME\");\npub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\nfn lint_cap_probe() {}\n",
         )?;
         fs::write(
             out_dir.join("nested/generated.rs"),
@@ -3244,42 +3247,160 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let source_digest = selected_graph_source_digest(&selected_members)?;
+        let proc_macro_root = scratch.join("loaf/registry-sources/aurora-macro-2.1.0");
+        fs::create_dir_all(proc_macro_root.join("src"))?;
+        fs::write(
+            proc_macro_root.join("Cargo.toml"),
+            b"[package]\nname = \"aurora-macro\"\nversion = \"2.1.0\"\nedition = \"2021\"\n\n[lib]\nproc-macro = true\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(
+            proc_macro_root.join("src/lib.rs"),
+            b"extern crate proc_macro;\nuse proc_macro::TokenStream;\n#[proc_macro]\npub fn marker(_input: TokenStream) -> TokenStream { TokenStream::new() }\n",
+        )?;
+        let proc_macro_members = ["Cargo.toml", "src/lib.rs"]
+            .into_iter()
+            .map(|path| {
+                Ok(super::super::OvenLegacyCargoInspectionSourceMember {
+                    path: path.to_string(),
+                    digest: digest(&fs::read(proc_macro_root.join(path))?),
+                })
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        let proc_macro_digest = selected_graph_source_digest(
+            &proc_macro_members
+                .iter()
+                .map(|member| OvenSelectedRustFacetSourceMember {
+                    path: member.path.clone(),
+                    digest: member.digest.clone(),
+                })
+                .collect::<Vec<_>>(),
+        )?;
         Ok(PublisherRebuildSourceFixture {
             package_root,
             out_dir,
             members,
             source_digest,
+            proc_macro_root,
+            proc_macro_members,
+            proc_macro_digest,
         })
     }
 
-    /// Assemble captured physical facts for one made-up registry unit and its run-custom-build edge.
-    fn publisher_rebuild_capture_fixture(
-        scratch: &Path,
+    /// Build the release-profile proc-macro unit whose strip helper must come from the retained Rust sysroot.
+    fn publisher_rebuild_proc_macro_unit(
+        source: &PublisherRebuildSourceFixture,
+        host: &str,
+    ) -> Result<super::super::OvenLegacyCargoSelectedUnit, Box<dyn std::error::Error>> {
+        let mut unit = capture()?.units.remove(0);
+        unit.package_id = "registry+https://example.invalid/aurora-index#aurora-macro@2.1.0".to_string();
+        unit.package = "aurora-macro".to_string();
+        unit.package_version = "2.1.0".to_string();
+        unit.package_source = Some("registry+https://example.invalid/aurora-index".to_string());
+        unit.target_name = "aurora_macro".to_string();
+        unit.target_kinds = vec!["proc-macro".to_string()];
+        unit.crate_types = vec!["proc-macro".to_string()];
+        unit.source_path = source.proc_macro_root.join("src/lib.rs");
+        unit.platform = Some(host.to_string());
+        unit.target_is_explicit = Some(false);
+        unit.effective_features.clear();
+        unit.cfg.clear();
+        unit.compiler_arguments = vec![OvenSelectedRustFacetCompilerArgument::Codegen {
+            name: "strip".to_string(),
+            value: "debuginfo".to_string(),
+        }];
+        unit.compile_environment.clear();
+        unit.sysroot_externs = vec!["proc_macro".to_string()];
+        unit.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            registry: "registry+https://example.invalid/aurora-index".to_string(),
+            checksum: "aurora-macro-checksum".to_string(),
+            digest: source.proc_macro_digest.clone(),
+            root_module: "src/lib.rs".to_string(),
+            members: source.proc_macro_members.clone(),
+        });
+        Ok(unit)
+    }
+
+    /// Observe the real compiler context used by the end-to-end publisher fixture.
+    fn publisher_rebuild_compiler_context(
         rustc: &Path,
-    ) -> Result<PublisherRebuildCaptureFixture, Box<dyn std::error::Error>> {
-        let PublisherRebuildSourceFixture {
-            package_root,
-            out_dir,
-            members,
-            source_digest,
-        } = write_publisher_rebuild_sources(scratch)?;
+    ) -> Result<super::super::OvenLegacyCargoSelectedCompilerContext, Box<dyn std::error::Error>> {
         let host = rustc_host_target(rustc)?;
         let toolchain = rustc_identity(rustc)?;
         let (host_cfg, target_cfg) = rustc_host_and_target_cfg_snapshots(rustc, &host)?;
-        let compiler = super::super::OvenLegacyCargoSelectedCompilerContext {
+        Ok(super::super::OvenLegacyCargoSelectedCompilerContext {
             host: host.clone(),
-            target: host.clone(),
+            target: host,
             toolchain: toolchain.clone(),
             rustc_identity: toolchain,
             host_cfg,
             target_cfg,
-        };
+        })
+    }
+
+    /// Resolve the repository's pinned release compiler for the release-foundation rebuild proof.
+    fn publisher_rebuild_release_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let output = std::process::Command::new("rustup")
+            .args(["which", "--toolchain", "1.98.0", "rustc"])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "rustup could not locate the pinned Rust 1.98.0 compiler: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let path = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+        if !path.is_file() {
+            return Err(format!("pinned release compiler is not a file: {}", path.display()).into());
+        }
+        Ok(path)
+    }
+
+    /// Project both retained registry packages into the inspection-source catalog consumed by policy admission.
+    fn publisher_rebuild_inspection_sources(
+        source: &PublisherRebuildSourceFixture,
+    ) -> Vec<super::super::OvenLegacyCargoInspectionSource> {
+        vec![
+            super::super::OvenLegacyCargoInspectionSource {
+                package: "aurora-codec".to_string(),
+                version: "7.4.2".to_string(),
+                registry: "registry+https://example.invalid/aurora-index".to_string(),
+                checksum: "aurora-checksum".to_string(),
+                features: Vec::new(),
+                source_root: source.package_root.clone(),
+                source_digest: source.source_digest.clone(),
+                members: source.members.clone(),
+            },
+            super::super::OvenLegacyCargoInspectionSource {
+                package: "aurora-macro".to_string(),
+                version: "2.1.0".to_string(),
+                registry: "registry+https://example.invalid/aurora-index".to_string(),
+                checksum: "aurora-macro-checksum".to_string(),
+                features: Vec::new(),
+                source_root: source.proc_macro_root.clone(),
+                source_digest: source.proc_macro_digest.clone(),
+                members: source.proc_macro_members.clone(),
+            },
+        ]
+    }
+
+    /// Build the target library and its captured-but-inert build-script execution unit.
+    fn publisher_rebuild_library_units(
+        source: &PublisherRebuildSourceFixture,
+        host: &str,
+    ) -> Result<
+        (
+            super::super::OvenLegacyCargoSelectedUnit,
+            super::super::OvenLegacyCargoSelectedUnit,
+        ),
+        Box<dyn std::error::Error>,
+    > {
         let registry = super::super::OvenLegacyCargoSelectedRegistrySource {
             registry: "registry+https://example.invalid/aurora-index".to_string(),
             checksum: "aurora-checksum".to_string(),
-            digest: source_digest.clone(),
+            digest: source.source_digest.clone(),
             root_module: "src/lib.rs".to_string(),
-            members: members.clone(),
+            members: source.members.clone(),
         };
         let mut library = capture()?.units.remove(0);
         library.package_id = "registry+https://example.invalid/aurora-index#aurora-codec@7.4.2".to_string();
@@ -3287,28 +3408,31 @@ mod tests {
         library.package_version = "7.4.2".to_string();
         library.package_source = Some("registry+https://example.invalid/aurora-index".to_string());
         library.target_name = "aurora_codec".to_string();
-        library.source_path = package_root.join("src/lib.rs");
-        library.platform = Some(host.clone());
+        library.source_path = source.package_root.join("src/lib.rs");
+        library.platform = Some(host.to_string());
         library.target_is_explicit = Some(true);
         library.effective_features.clear();
         library.cfg.clear();
         library.compiler_arguments.clear();
         library.compile_environment = BTreeMap::from([
-            ("CARGO_MANIFEST_DIR".to_string(), package_root.display().to_string()),
+            (
+                "CARGO_MANIFEST_DIR".to_string(),
+                source.package_root.display().to_string(),
+            ),
             (
                 "CARGO_MANIFEST_PATH".to_string(),
-                package_root.join("Cargo.toml").display().to_string(),
+                source.package_root.join("Cargo.toml").display().to_string(),
             ),
             ("CARGO_PKG_NAME".to_string(), "aurora-codec".to_string()),
             ("CARGO_PKG_VERSION".to_string(), "7.4.2".to_string()),
-            ("OUT_DIR".to_string(), out_dir.display().to_string()),
+            ("OUT_DIR".to_string(), source.out_dir.display().to_string()),
         ]);
         library.registry_source = Some(registry.clone());
         let mut build_script = library.clone();
         build_script.target_name = "build-script-build".to_string();
         build_script.target_kinds = vec!["custom-build".to_string()];
         build_script.crate_types = vec!["bin".to_string()];
-        build_script.source_path = package_root.join("build.rs");
+        build_script.source_path = source.package_root.join("build.rs");
         build_script.root_module = "build.rs".to_string();
         build_script.mode = "run-custom-build".to_string();
         build_script.compile_environment.clear();
@@ -3317,21 +3441,41 @@ mod tests {
             root_module: "build.rs".to_string(),
             ..registry
         });
-        library.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
-            unit_index: 2,
-            extern_crate_name: None,
-            build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
-                cfgs: vec!["aurora_generated".to_string()],
-                environment: BTreeMap::from([("AURORA_BUILD_MARKER".to_string(), "saffron".to_string())]),
-                linked_libraries: Vec::new(),
-                linked_paths: Vec::new(),
-                out_dir: out_dir.clone(),
-                output: None,
-                publisher_work: Vec::new(),
-                publisher_native_probes: Vec::new(),
-                publisher_work_refusal: None,
-            }),
-        }];
+        library.dependencies = vec![
+            super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 2,
+                extern_crate_name: None,
+                build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                    cfgs: vec!["aurora_generated".to_string()],
+                    environment: BTreeMap::from([("AURORA_BUILD_MARKER".to_string(), "saffron".to_string())]),
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: source.out_dir.clone(),
+                    output: None,
+                    publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
+                }),
+            },
+            super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 3,
+                extern_crate_name: Some("aurora_macro".to_string()),
+                build_script: None,
+            },
+        ];
+        Ok((library, build_script))
+    }
+
+    /// Assemble captured physical facts for a stripped proc macro, its library consumer and one build-script edge.
+    fn publisher_rebuild_capture_fixture(
+        scratch: &Path,
+        rustc: &Path,
+    ) -> Result<PublisherRebuildCaptureFixture, Box<dyn std::error::Error>> {
+        let source = write_publisher_rebuild_sources(scratch)?;
+        let compiler = publisher_rebuild_compiler_context(rustc)?;
+        let host = compiler.host.clone();
+        let (library, build_script) = publisher_rebuild_library_units(&source, &host)?;
+        let proc_macro = publisher_rebuild_proc_macro_unit(&source, &host)?;
         let mut root = library.clone();
         root.package_id = "path+file:///fixture#publisher-harness@1.0.0".to_string();
         root.package = "publisher-harness".to_string();
@@ -3349,21 +3493,12 @@ mod tests {
         }];
         let capture = OvenLegacyCargoSelectedUnitCapture {
             roots: vec![0],
-            units: vec![root, library, build_script],
+            units: vec![root, library, build_script, proc_macro],
             rustc_invocations_observed: true,
             build_script_tool_probes: Vec::new(),
             compiler: Some(compiler),
         };
-        let sources = vec![super::super::OvenLegacyCargoInspectionSource {
-            package: "aurora-codec".to_string(),
-            version: "7.4.2".to_string(),
-            registry: "registry+https://example.invalid/aurora-index".to_string(),
-            checksum: "aurora-checksum".to_string(),
-            features: Vec::new(),
-            source_root: package_root,
-            source_digest,
-            members,
-        }];
+        let sources = publisher_rebuild_inspection_sources(&source);
         Ok(PublisherRebuildCaptureFixture {
             capture,
             sources,
@@ -3407,9 +3542,12 @@ mod tests {
     /// Build the minimal compatibility Loaf whose source plan feeds one publisher rebuild foundation.
     fn publisher_rebuild_loaf(
         finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+        sources: &[super::super::OvenLegacyCargoInspectionSource],
     ) -> Result<OvenLoaf, Box<dyn std::error::Error>> {
         let graph = finalized.graph.graph();
-        let unit = graph.units.first().ok_or("publisher graph has no registry unit")?;
+        if graph.units.is_empty() {
+            return Err("publisher graph has no registry unit".into());
+        }
         let intent = oven_store::OvenBuildIntent {
             target: graph.selection.intent.target.clone(),
             toolchain: graph.selection.intent.toolchain.clone(),
@@ -3425,29 +3563,45 @@ mod tests {
             entrypoint_dependency_search_paths: BTreeMap::new(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
-            registry_sources: vec![OvenRustcRegistrySourcePackage {
-                package: unit.package.clone(),
-                version: unit.package_version.clone(),
-                features: unit.features.clone(),
-                source: OvenRustcRegistrySource {
-                    registry: "registry+https://example.invalid/aurora-index".to_string(),
-                    checksum: "aurora-checksum".to_string(),
-                    relative_root: unit.source.root.clone(),
-                    digest: unit.source.digest.clone(),
-                },
-            }],
+            registry_sources: graph
+                .units
+                .iter()
+                .map(|unit| {
+                    let source = sources
+                        .iter()
+                        .find(|source| source.package == unit.package && source.version == unit.package_version)
+                        .ok_or("publisher unit has no inspection source")?;
+                    Ok(OvenRustcRegistrySourcePackage {
+                        package: unit.package.clone(),
+                        version: unit.package_version.clone(),
+                        features: unit.features.clone(),
+                        source: OvenRustcRegistrySource {
+                            registry: source.registry.clone(),
+                            checksum: source.checksum.clone(),
+                            relative_root: unit.source.root.clone(),
+                            digest: unit.source.digest.clone(),
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?,
             compile_environment: BTreeMap::new(),
             vocab_auxiliary_targets: Vec::new(),
-            supporting_artifacts: vec![oven_rustc::rustc::OvenRustcSupportingArtifact {
-                relative_path: format!("{}/Cargo.toml", unit.source.root),
-                digest: unit
-                    .source_members
-                    .iter()
-                    .find(|member| member.path == "Cargo.toml")
-                    .ok_or("publisher unit has no Cargo.toml")?
-                    .digest
-                    .clone(),
-            }],
+            supporting_artifacts: graph
+                .units
+                .iter()
+                .map(|unit| {
+                    Ok(oven_rustc::rustc::OvenRustcSupportingArtifact {
+                        relative_path: format!("{}/Cargo.toml", unit.source.root),
+                        digest: unit
+                            .source_members
+                            .iter()
+                            .find(|member| member.path == "Cargo.toml")
+                            .ok_or("publisher unit has no Cargo.toml")?
+                            .digest
+                            .clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?,
         };
         Ok(OvenLoaf {
             schema_version: OVEN_LOAF_SCHEMA_VERSION,
@@ -3477,7 +3631,7 @@ mod tests {
     fn publisher_rebuild_pipeline_compiles_nested_generated_output_end_to_end() -> Result<(), Box<dyn std::error::Error>>
     {
         let scratch = tempdir()?;
-        let rustc = resolve_active_rustc()?;
+        let rustc = publisher_rebuild_release_rustc()?;
         let PublisherRebuildCaptureFixture {
             mut capture,
             sources,
@@ -3488,7 +3642,12 @@ mod tests {
         assert!(retained[0].relative_path.ends_with("/nested/generated.rs"));
 
         let compiler = capture.compiler.as_ref().ok_or("capture has no compiler context")?;
-        let toolchain_owner = digest(compiler.rustc_identity.as_bytes());
+        let toolchain_root = scratch.path().join("toolchain");
+        let (toolchain_owner, toolchain_members) =
+            stage_release_runtime_foundation_toolchain(&rustc, &compiler.target, &toolchain_root)?;
+        assert!(toolchain_members.iter().any(|member| {
+            member.relative_path == Path::new("lib/rustlib").join(&compiler.host).join("bin/rust-objcopy")
+        }));
         let receipt_root = scratch.path().join("receipt");
         fs::create_dir_all(&receipt_root)?;
         let receipt_source = receipt_root.join("publisher.rs");
@@ -3542,7 +3701,10 @@ mod tests {
         )?;
 
         let request = encode_selected_graph_policy_request(&finalized.graph, &capture, &sources, &toolchain_owner)?;
-        let closure = &request["units"][0]["closure"];
+        let closure = &request["units"]
+            .as_array()
+            .and_then(|units| units.iter().find(|unit| unit["package"]["name"] == "aurora-codec"))
+            .ok_or("policy request has no aurora-codec unit")?["closure"];
         assert_eq!(closure["environment"]["AURORA_BUILD_MARKER"]["value"], "saffron");
         assert_eq!(closure["environment"]["CARGO_PKG_VERSION"]["value"], "7.4.2");
         assert!(
@@ -3552,12 +3714,10 @@ mod tests {
         );
         let response = selected_policy_response(&request)?;
         let selection = runtime_foundation_inventories_from_policy_response(&finalized.graph, &response)?;
-        let loaf = publisher_rebuild_loaf(&finalized)?;
+        let loaf = publisher_rebuild_loaf(&finalized, &sources)?;
         let foundation = runtime_foundation_for_publisher_rebuild(&finalized, &loaf, &toolchain_owner)?;
         let asset = OvenRuntimeFoundationAsset::sealed(foundation, selection.inventories)?;
-        let toolchain_root = scratch.path().join("toolchain");
         let install_root = scratch.path().join("install");
-        fs::create_dir_all(&toolchain_root)?;
         fs::create_dir_all(&install_root)?;
         let admitted = publish_runtime_foundation_asset_with_generated_owners(
             asset,
@@ -3570,11 +3730,16 @@ mod tests {
         let build = execute_runtime_foundation_rebuild(
             materialized.foundation(),
             materialized.materialized(),
-            &OvenRuntimeCompilerClosure::new(&rustc, toolchain_owner),
+            &OvenRuntimeCompilerClosure::new(toolchain_root.join("bin/rustc"), toolchain_owner),
             &scratch.path().join("rebuild"),
         )?;
-        assert_eq!(build.compiler_launches(), 1);
-        assert!(build.outputs()[0].artifact.is_file());
+        assert_eq!(build.compiler_launches(), 2);
+        assert!(build.outputs().iter().all(|output| output.artifact.is_file()));
+        assert!(build.outputs().iter().any(|output| {
+            output.crate_name == "aurora_macro"
+                && output.artifact.extension().and_then(|extension| extension.to_str())
+                    == Some(std::env::consts::DLL_EXTENSION)
+        }));
         Ok(())
     }
 

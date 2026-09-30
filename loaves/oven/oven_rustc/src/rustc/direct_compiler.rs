@@ -302,10 +302,10 @@ fn link_target_matches(predicate: &str, target: &str) -> Result<bool, OvenRustcE
 /// Schema of the owner descriptor a retained compiler closure is selected by.
 ///
 /// A warm closure whose descriptor matches is the batch authority without the ambient sysroot being rescanned, so
-/// the version moves whenever the closure's member set does: version 2 closures carry the host's self-contained
-/// linker, and a version 1 closure (libraries only) is left unselected rather than admitted to a link it cannot
-/// perform.
-pub(crate) const OVEN_DIRECT_RUSTC_COMPILER_OWNER_SCHEMA_VERSION: u32 = 2;
+/// the version moves whenever the closure's member set does: version 3 closures carry every compiler-owned host
+/// helper below `lib/rustlib/<host>/bin`, and older closures are left unselected rather than admitted to a compile
+/// whose strip, link, profile or component-link helper may be absent.
+pub(crate) const OVEN_DIRECT_RUSTC_COMPILER_OWNER_SCHEMA_VERSION: u32 = 3;
 pub(crate) const OVEN_DIRECT_RUSTC_COMPILER_DOMAIN_PREFIX: &str = "native-compiler";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
