@@ -341,19 +341,14 @@ fn runtime_foundation_generated_member_sources(
             let Some(root) = roots.get(input.source.owner.as_str()) else {
                 continue;
             };
-            if input.members.is_empty() {
-                let source = safe_path(root, &input.source.path, "publisher generated input")?;
-                insert_generated_member_source(&mut sources, input.source.path.clone(), source)?;
-            } else {
-                for member in &input.members {
-                    let relative = runtime_foundation_asset_member_path(
-                        &input.source.path,
-                        &member.path,
-                        "publisher generated member",
-                    )?;
-                    let source = safe_path(root, &relative, "publisher generated member")?;
-                    insert_generated_member_source(&mut sources, relative, source)?;
-                }
+            for member in &input.members {
+                let relative = runtime_foundation_asset_member_path(
+                    &input.source.path,
+                    &member.path,
+                    "publisher generated member",
+                )?;
+                let source = safe_path(root, &relative, "publisher generated member")?;
+                insert_generated_member_source(&mut sources, relative, source)?;
             }
         }
         for library in &unit.linked_libraries {
@@ -558,15 +553,6 @@ fn record_runtime_foundation_unit_members(
     }
     for generated in &unit.generated_inputs {
         if !sealed_below_root(&generated.source.owner) {
-            continue;
-        }
-        if generated.members.is_empty() {
-            record_runtime_foundation_asset_file(
-                members,
-                &generated.source.path,
-                Some(&generated.digest),
-                "runtime foundation generated file",
-            )?;
             continue;
         }
         record_runtime_foundation_asset_directory(

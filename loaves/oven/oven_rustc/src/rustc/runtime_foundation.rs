@@ -1758,27 +1758,33 @@ mod tests {
         Ok(())
     }
 
-    /// A generated input sealed under its own GeneratedOutput owner is published into the asset like one the
-    /// constituent owns directly, so the asset can materialize it again after mirroring.
+    /// Generated trees sealed under their own GeneratedOutput owner are published member by member, while a checked
+    /// empty tree remains a directory; both forms materialize again after mirroring.
     #[test]
     fn runtime_foundation_asset_publisher_carries_generated_output_owned_inputs()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut foundation = foundation()?;
+        let mut populated_foundation = foundation()?;
         let generated_owner = selected_graph_sha256(b"generated-output\0generated/serde\0digest");
-        edit_serde_unit(&mut foundation, |unit| {
+        edit_serde_unit(&mut populated_foundation, |unit| {
             for input in &mut unit.generated_inputs {
                 input.source.owner = generated_owner.clone();
             }
         })?;
-        foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
-            identity: generated_owner,
-            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
-        });
-        foundation
+        populated_foundation
+            .selected_graph
+            .owners
+            .push(OvenSelectedRustFacetOwner {
+                identity: generated_owner.clone(),
+                kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+            });
+        populated_foundation
             .selected_graph
             .owners
             .sort_by(|left, right| left.identity.cmp(&right.identity));
-        let asset = OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?)?;
+        let asset = OvenRuntimeFoundationAsset::sealed(
+            populated_foundation.clone(),
+            source_inventories(&populated_foundation)?,
+        )?;
         let source_root = tempfile::tempdir()?;
         let toolchain_root = tempfile::tempdir()?;
         let install_root = tempfile::tempdir()?;
@@ -1790,6 +1796,46 @@ mod tests {
         assert_eq!(admitted.foundation_identity(), asset.foundation_identity);
         assert!(destination.join("generated/serde/private.rs").is_file());
         let _ = admitted.materialize_asset_for_publication()?;
+
+        let mut empty_foundation = foundation()?;
+        let empty_digest = crate::rustc::selected_graph_generated_input_digest(&[])?;
+        edit_serde_unit(&mut empty_foundation, |unit| {
+            for input in &mut unit.generated_inputs {
+                input.source.owner = generated_owner.clone();
+                input.members.clear();
+                input.digest = empty_digest.clone();
+            }
+        })?;
+        empty_foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner,
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        empty_foundation
+            .selected_graph
+            .owners
+            .sort_by(|left, right| left.identity.cmp(&right.identity));
+        empty_foundation
+            .artifacts
+            .supporting_artifacts
+            .retain(|artifact| artifact.relative_path != "generated/serde/private.rs");
+        let empty_asset =
+            OvenRuntimeFoundationAsset::sealed(empty_foundation.clone(), source_inventories(&empty_foundation)?)?;
+        let empty_source = tempfile::tempdir()?;
+        let empty_toolchain = tempfile::tempdir()?;
+        let empty_install = tempfile::tempdir()?;
+        write_materialization_fixture(empty_source.path(), empty_toolchain.path())?;
+        fs::remove_file(empty_source.path().join("generated/serde/private.rs"))?;
+        let empty_destination = empty_install.path().join("runtime-foundation");
+
+        let empty_admitted = publish_runtime_foundation_asset(
+            empty_asset,
+            empty_source.path(),
+            empty_toolchain.path(),
+            &empty_destination,
+        )?;
+
+        assert!(empty_destination.join("generated/serde").is_dir());
+        let _ = empty_admitted.materialize_asset_for_publication()?;
         Ok(())
     }
 
