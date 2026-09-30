@@ -1021,7 +1021,8 @@ fn rustc_non_feature_cfgs(arguments: &[String]) -> Vec<String> {
     cfg
 }
 
-/// Retain the portable byte- and success-affecting arguments needed to reproduce one Cargo-selected unit.
+/// Retain the portable byte- and success-affecting arguments needed to reproduce one Cargo-selected unit. A bare
+/// `-C name` is rustc's boolean spelling of `name=yes`.
 fn rustc_rebuild_arguments(
     arguments: &[String],
 ) -> Result<Vec<OvenSelectedRustFacetCompilerArgument>, OvenLegacyCargoError> {
@@ -1033,9 +1034,7 @@ fn rustc_rebuild_arguments(
             let value = arguments.get(index + 1).ok_or_else(|| {
                 OvenLegacyCargoError::Plan(format!("rustc option `{argument}` has no value in captured invocation"))
             })?;
-            let (name, setting) = value.split_once('=').ok_or_else(|| {
-                OvenLegacyCargoError::Plan(format!("rustc code-generation option `{value}` has no exact value"))
-            })?;
+            let (name, setting) = value.split_once('=').unwrap_or((value.as_str(), "yes"));
             if OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS.contains(&name) {
                 retained.push(OvenSelectedRustFacetCompilerArgument::Codegen {
                     name: name.to_string(),
@@ -1805,6 +1804,28 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
+
+    #[test]
+    /// Bare boolean code-generation flags are rustc's `name=yes`; options outside the retained set never refuse.
+    fn rebuild_arguments_accept_bare_codegen_flags() -> Result<(), Box<dyn std::error::Error>> {
+        let arguments = ["-C", "prefer-dynamic", "-C", "debug-assertions", "-C", "opt-level=3"]
+            .map(ToString::to_string)
+            .to_vec();
+        assert_eq!(
+            rustc_rebuild_arguments(&arguments)?,
+            vec![
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "debug-assertions".to_string(),
+                    value: "yes".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "opt-level".to_string(),
+                    value: "3".to_string(),
+                },
+            ]
+        );
+        Ok(())
+    }
 
     #[test]
     fn capture_preserves_unit_edges_and_structured_build_script_facts() -> Result<(), Box<dyn std::error::Error>> {
