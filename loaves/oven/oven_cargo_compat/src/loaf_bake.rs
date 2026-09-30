@@ -46,6 +46,9 @@ pub struct OvenLoafBakerContext<'a> {
     pub capacity_roots: [&'a Path; 2],
     pub transient_limit: u64,
     pub cargo: &'a Path,
+    /// Compiler used only for publisher-owned auxiliary targets that are not members of the retained host closure.
+    pub auxiliary_target_rustc: &'a Path,
+    /// Retained compiler path used for the host Cargo capture and every direct-rustc replay.
     pub rustc: &'a Path,
     /// Explicit real C compiler traced for native-link adoption.
     pub cc: &'a Path,
@@ -892,6 +895,8 @@ mod tests {
             platform: Some("aarch64-apple-darwin".to_string()),
             target_is_explicit: Some(true),
             cfg: cfg.iter().map(|value| (*value).to_string()).collect(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
             compiler_arguments: Vec::new(),
             compile_environment: Default::default(),
             effective_features: vec!["std".to_string()],

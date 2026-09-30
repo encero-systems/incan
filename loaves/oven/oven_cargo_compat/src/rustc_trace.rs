@@ -19,9 +19,12 @@ use super::OvenLegacyCargoError;
 pub const OVEN_RUSTC_TRACE_PATH_ENV: &str = "INCAN_OVEN_RUSTC_TRACE_PATH";
 /// Marker that makes the `incan` or `oven` executable dispatch the rustc wrapper protocol before CLI parsing.
 pub const OVEN_RUSTC_TRACE_WRAPPER_ENV: &str = "INCAN_OVEN_RUSTC_TRACE_WRAPPER";
+/// Ordered publisher arguments injected into every Cargo rustc invocation, including host-side units.
+pub const OVEN_RUSTC_TRACE_EXTRA_ARGUMENTS_ENV: &str = "INCAN_OVEN_RUSTC_TRACE_EXTRA_ARGUMENTS";
 const MAX_RUSTC_TRACE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RUSTC_TRACE_RECORD_BYTES: usize = 1024 * 1024;
 const MAX_RUSTC_TRACE_RECORDS: usize = 100_000;
+const PROC_MACRO_UUID_SALT_ENV: &str = "RC_UUID_SALT";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,14 +72,37 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
     let mut arguments = env::args_os().skip(1);
     let rustc = arguments.next().ok_or(())?;
     let rustc = rustc.into_string().map_err(|_| ())?;
-    let arguments = arguments
+    let mut arguments = arguments
         .map(|argument| argument.into_string())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| ())?;
-    let environment = env::vars()
+    if let Some(encoded) = env::var_os(OVEN_RUSTC_TRACE_EXTRA_ARGUMENTS_ENV) {
+        let encoded = encoded.into_string().map_err(|_| ())?;
+        let extra = serde_json::from_str::<Vec<String>>(&encoded).map_err(|_| ())?;
+        arguments.extend(extra);
+    }
+    let proc_macro = compiler_argument_value(&arguments, "--crate-type") == Some("proc-macro");
+    let uuid_salt =
+        append_stable_proc_macro_install_name(&mut arguments, cfg!(all(target_vendor = "apple", target_os = "macos")))?;
+    // Cargo names registry crate roots absolutely even though their manifest directory is already authoritative.
+    // Rustc folds that physical spelling into multi-file metadata before path remapping, so run and record the
+    // equivalent package-relative spelling from the manifest directory. This is part of the observed Cargo build,
+    // not a later artifact normalization.
+    let compiler_working_directory = if proc_macro {
+        None
+    } else {
+        normalize_cargo_crate_root(&mut arguments)?
+    };
+    let mut environment: BTreeMap<String, String> = env::vars()
         .filter(|(name, _)| rustc_compile_environment_name(name))
         .collect();
-    let working_directory = env::current_dir()
+    if let Some(uuid_salt) = &uuid_salt {
+        environment.insert(PROC_MACRO_UUID_SALT_ENV.to_string(), uuid_salt.clone());
+    }
+    let working_directory = compiler_working_directory
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(env::current_dir)
         .and_then(std::fs::canonicalize)
         .map_err(|_| ())?
         .into_os_string()
@@ -88,7 +114,13 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         None
     };
     let stdin_digest = stdin_source.as_deref().map(super::digest_bytes);
-    let status = run_traced_rustc(&rustc, &arguments, stdin_source)?;
+    let status = run_traced_rustc_in(
+        &rustc,
+        &arguments,
+        stdin_source,
+        compiler_working_directory.as_deref(),
+        uuid_salt.as_deref(),
+    )?;
     let exit_code = status.code().unwrap_or(1);
     if !status.success()
         || arguments
@@ -146,6 +178,7 @@ fn rustc_compile_environment_name(name: &str) -> bool {
             | "HOST"
             | "OPT_LEVEL"
             | "OUT_DIR"
+            | PROC_MACRO_UUID_SALT_ENV
             | "PROFILE"
             | "TARGET"
     ) || name.starts_with("CARGO_FEATURE_")
@@ -164,13 +197,35 @@ fn read_bounded_rustc_stdin(mut source: impl Read) -> Result<Vec<u8>, ()> {
 }
 
 /// Run rustc while delivering captured stdin concurrently so an early exit always closes the pipe writer.
+#[cfg(test)]
 fn run_traced_rustc(
     rustc: &str,
     arguments: &[String],
     stdin_source: Option<Vec<u8>>,
 ) -> Result<std::process::ExitStatus, ()> {
+    run_traced_rustc_in(rustc, arguments, stdin_source, None, None)
+}
+
+/// Run one traced compiler from an explicitly captured Cargo working directory when normalization requires it.
+fn run_traced_rustc_in(
+    rustc: &str,
+    arguments: &[String],
+    stdin_source: Option<Vec<u8>>,
+    working_directory: Option<&Path>,
+    uuid_salt: Option<&str>,
+) -> Result<std::process::ExitStatus, ()> {
     let mut command = Command::new(rustc);
     command.args(arguments);
+    if let Some(uuid_salt) = uuid_salt {
+        command.env(PROC_MACRO_UUID_SALT_ENV, uuid_salt);
+        // Cargo's bounded native-tool capture sets a CommandLineTools SDKROOT while the Cargo-free executor would
+        // otherwise inherit the caller's Xcode SDKROOT. Apple ld folds that ambient path into a proc-macro's
+        // content-derived UUID even when every section is otherwise identical, so neither side may inherit it.
+        command.env_remove("SDKROOT");
+    }
+    if let Some(working_directory) = working_directory {
+        command.current_dir(working_directory);
+    }
     let Some(bytes) = stdin_source else {
         return command.status().map_err(|_| ());
     };
@@ -186,8 +241,95 @@ fn run_traced_rustc(
     Ok(status)
 }
 
+/// Replace an absolute Cargo crate root below `CARGO_MANIFEST_DIR` with its package-relative spelling.
+fn normalize_cargo_crate_root(arguments: &mut [String]) -> Result<Option<PathBuf>, ()> {
+    let Some(source) = rustc_positional_source(arguments) else {
+        return Ok(None);
+    };
+    if Path::new(source).is_relative() || source == "-" {
+        return Ok(None);
+    }
+    let manifest = env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from).ok_or(())?;
+    normalize_cargo_crate_root_for_manifest(arguments, &manifest)
+}
+
+/// Normalize one absolute crate root against an already captured Cargo manifest directory.
+fn normalize_cargo_crate_root_for_manifest(arguments: &mut [String], manifest: &Path) -> Result<Option<PathBuf>, ()> {
+    let Some(index) = rustc_positional_source_index(arguments) else {
+        return Ok(None);
+    };
+    let source = Path::new(&arguments[index]);
+    if source.is_relative() || source == Path::new("-") {
+        return Ok(None);
+    }
+    let relative = source.strip_prefix(manifest).map_err(|_| ())?;
+    arguments[index] = relative.to_string_lossy().into_owned();
+    Ok(Some(manifest.to_path_buf()))
+}
+
+/// Give Apple proc-macro dylibs reproducible linker identity before Cargo and Oven compile the captured unit.
+///
+/// Apple's linker otherwise derives `LC_ID_DYLIB` from rustc's physical output path. Cargo's capture directory and
+/// Oven's closure directory are intentionally different, so that default changes the load-command size, section
+/// offsets, UUID, and every downstream crate hash even when all compiler-visible source facts are identical. The
+/// reproducible mode also excludes physical input properties from the content-derived UUID and ad-hoc signature.
+fn append_stable_proc_macro_install_name(arguments: &mut Vec<String>, apple_host: bool) -> Result<Option<String>, ()> {
+    if !apple_host || compiler_argument_value(arguments, "--crate-type") != Some("proc-macro") {
+        return Ok(None);
+    }
+    let crate_name = compiler_argument_value(arguments, "--crate-name")
+        .ok_or(())?
+        .to_string();
+    let extra_filename = codegen_argument_value(arguments, "extra-filename")
+        .unwrap_or_default()
+        .to_string();
+    let install_name = format!("@rpath/lib{crate_name}{extra_filename}.dylib");
+    arguments.extend([
+        "-C".to_string(),
+        "link-arg=-Wl,-reproducible".to_string(),
+        "-C".to_string(),
+        "link-arg=-install_name".to_string(),
+        "-C".to_string(),
+        format!("link-arg={install_name}"),
+    ]);
+    Ok(Some(format!("incan-oven:{crate_name}{extra_filename}")))
+}
+
+/// Read one joined or separate long rustc option without assigning meaning to positional arguments.
+fn compiler_argument_value<'a>(arguments: &'a [String], option: &str) -> Option<&'a str> {
+    arguments.iter().enumerate().find_map(|(index, argument)| {
+        if argument == option {
+            return arguments.get(index + 1).map(String::as_str);
+        }
+        argument.strip_prefix(option).and_then(|value| value.strip_prefix('='))
+    })
+}
+
+/// Read the final value of one joined or separate `-C` rustc option.
+fn codegen_argument_value<'a>(arguments: &'a [String], option: &str) -> Option<&'a str> {
+    arguments
+        .iter()
+        .enumerate()
+        .filter_map(|(index, argument)| {
+            let value = if argument == "-C" || argument == "--codegen" {
+                arguments.get(index + 1)?.as_str()
+            } else if let Some(value) = argument.strip_prefix("-C") {
+                value
+            } else {
+                argument.strip_prefix("--codegen=")?
+            };
+            value.strip_prefix(option)?.strip_prefix('=')
+        })
+        .next_back()
+}
+
 /// Return the single positional rustc source after excluding values consumed by known value-taking options.
 pub(crate) fn rustc_positional_source(arguments: &[String]) -> Option<&str> {
+    rustc_positional_source_index(arguments).map(|index| arguments[index].as_str())
+}
+
+/// Return the index of the single positional rustc source after excluding known option values.
+fn rustc_positional_source_index(arguments: &[String]) -> Option<usize> {
     let mut source = None;
     let mut index = 0;
     while index < arguments.len() {
@@ -200,7 +342,7 @@ pub(crate) fn rustc_positional_source(arguments: &[String]) -> Option<&str> {
             index += 1;
             continue;
         }
-        if source.replace(argument).is_some() {
+        if source.replace(index).is_some() {
             return None;
         }
         index += 1;
@@ -492,6 +634,54 @@ mod tests {
 
         let option_value = vec!["--extern".to_string(), "-".to_string(), "src/lib.rs".to_string()];
         assert_eq!(rustc_positional_source(&option_value), Some("src/lib.rs"));
+    }
+
+    #[test]
+    fn cargo_crate_root_normalization_pins_the_relative_compiler_argument() -> Result<(), Box<dyn std::error::Error>> {
+        let mut arguments = vec![
+            "--crate-name".to_string(),
+            "fixture".to_string(),
+            "/cargo/registry/fixture/src/lib.rs".to_string(),
+            "--out-dir".to_string(),
+            "/cargo/target".to_string(),
+        ];
+        let working = normalize_cargo_crate_root_for_manifest(&mut arguments, Path::new("/cargo/registry/fixture"))
+            .map_err(|()| "crate root normalization failed")?;
+        assert_eq!(working, Some(PathBuf::from("/cargo/registry/fixture")));
+        assert_eq!(rustc_positional_source(&arguments), Some("src/lib.rs"));
+        Ok(())
+    }
+
+    /// Apple proc-macro capture pins the install name that would otherwise expose Cargo's staging directory.
+    #[test]
+    fn proc_macro_install_name_is_portable_and_captured() -> Result<(), Box<dyn std::error::Error>> {
+        let mut arguments = vec![
+            "--crate-name".to_string(),
+            "fixture_macros".to_string(),
+            "--crate-type=proc-macro".to_string(),
+            "-C".to_string(),
+            "extra-filename=-sealed".to_string(),
+            "src/lib.rs".to_string(),
+        ];
+        let salt =
+            append_stable_proc_macro_install_name(&mut arguments, true).map_err(|()| "install-name capture failed")?;
+        assert_eq!(salt.as_deref(), Some("incan-oven:fixture_macros-sealed"));
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["-C", "link-arg=-Wl,-reproducible"])
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["-C", "link-arg=-install_name"])
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["-C", "link-arg=@rpath/libfixture_macros-sealed.dylib"])
+        );
+        Ok(())
     }
 
     #[test]

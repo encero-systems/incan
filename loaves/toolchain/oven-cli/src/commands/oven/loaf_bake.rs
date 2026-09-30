@@ -37,9 +37,10 @@ use oven_rustc::loaf::{
 };
 use oven_rustc::rustc::direct_compiler::{OvenPublisherLinkBakeRequest, bake_publisher_link, publisher_archive_format};
 use oven_rustc::rustc::{
-    OvenPublisherLinkProduct, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset, OvenSelectedRustFacetOwnerRoot,
-    ValidatedOvenSelectedRustFacetGraph, execute_runtime_foundation_rebuild, finalize_publisher_link_product,
-    finalize_publisher_tool_product, publish_runtime_closure, publish_runtime_foundation_asset_with_generated_owners,
+    OvenPublisherLinkProduct, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset,
+    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwnerRoot, ValidatedOvenSelectedRustFacetGraph,
+    execute_runtime_foundation_rebuild, finalize_publisher_link_product, finalize_publisher_tool_product,
+    publish_runtime_closure, publish_runtime_foundation_asset_with_generated_owners, rustc_host_target,
 };
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
 use oven_store::publisher_execution::{
@@ -121,10 +122,6 @@ struct PublisherGeneratedOwnerRoot {
     unit_identity: String,
     /// Receipt that attests the product closure.
     attestation_reference: String,
-    /// Retained native objects compared independently of their archive container.
-    native_objects: Vec<PathBuf>,
-    /// Package coordinate used to pair retained native objects after graph rekeying.
-    package: String,
     /// Original capture index used to resolve the final identity after all products rekey the graph.
     capture_index: usize,
 }
@@ -252,13 +249,6 @@ fn execute_adopted_publisher_work(
                 binding: publisher_binding(adoption, link.name.as_str()),
                 unit_identity: consuming_identity,
                 attestation_reference: product.receipt.identity.clone(),
-                native_objects: product
-                    .receipt
-                    .objects
-                    .iter()
-                    .map(|object| product.product_root.join(&object.name))
-                    .collect(),
-                package: adoption.package.clone(),
                 capture_index,
             });
         }
@@ -304,8 +294,6 @@ fn execute_adopted_publisher_work(
                 binding: publisher_binding(adoption, tool.name.as_str()),
                 unit_identity: consuming_identity,
                 attestation_reference: receipt.identity,
-                native_objects: Vec::new(),
-                package: adoption.package.clone(),
                 capture_index,
             });
         }
@@ -385,7 +373,6 @@ fn write_release_equivalence_captures(
     options: &OvenLoafBakeCommandOptions,
     finalized: &oven_cargo_compat::OvenFinalizedCompilerSupportSelectedGraph,
     build: &oven_rustc::rustc::OvenRuntimeFoundationBuild,
-    publisher_owners: &[PublisherGeneratedOwnerRoot],
     cargo_artifact_root: &Path,
     asset_root: &Path,
     output_root: &Path,
@@ -407,7 +394,6 @@ fn write_release_equivalence_captures(
         let (cargo, oven) = release_capture_unit_inputs(
             finalized,
             rebuilt,
-            publisher_owners,
             cargo_artifact_root,
             asset_root,
             &setup.profile,
@@ -447,7 +433,6 @@ fn write_release_equivalence_captures(
 fn release_capture_unit_inputs(
     finalized: &oven_cargo_compat::OvenFinalizedCompilerSupportSelectedGraph,
     rebuilt: &oven_rustc::rustc::OvenRuntimeRebuildOutput,
-    publisher_owners: &[PublisherGeneratedOwnerRoot],
     cargo_artifact_root: &Path,
     asset_root: &Path,
     profile: &str,
@@ -490,12 +475,7 @@ fn release_capture_unit_inputs(
         .unwrap_or("bin");
     let cargo_artifact = retained_cargo_artifact(captured, Some(extension), cargo_artifact_root)?;
     let cargo_native = retained_cargo_native_artifacts(captured, cargo_artifact_root)?;
-    let mut oven_native = publisher_owners
-        .iter()
-        .filter(|owner| owner.package == graph_unit.package)
-        .flat_map(|owner| owner.native_objects.iter().cloned())
-        .collect::<Vec<_>>();
-    oven_native.sort();
+    let oven_native = publisher_native_objects_for_unit(asset_root, &graph_unit.linked_libraries, &cargo_native)?;
     let unit = release_unit_manifest(graph_unit, captured, profile)?;
     let artifact_path = format!("units/{ordinal:04}/artifact.{extension}");
     let inputs = |source, native: Vec<PathBuf>, archive| {
@@ -527,6 +507,50 @@ fn release_capture_unit_inputs(
         (unit.clone(), cargo_artifacts, cargo_native, None),
         (unit, oven_artifacts, oven_native, oven_archive),
     ))
+}
+
+/// Pair Cargo's retained native probes with the exact generated-output directories selected by the unit.
+fn publisher_native_objects_for_unit(
+    asset_root: &Path,
+    linked_libraries: &[OvenSelectedRustFacetLinkedLibrary],
+    cargo_native: &[PathBuf],
+) -> CliResult<Vec<PathBuf>> {
+    let selected_output_roots = linked_libraries
+        .iter()
+        .filter_map(|library| match library {
+            OvenSelectedRustFacetLinkedLibrary::Archive { artifact, .. } => Path::new(&artifact.path).parent(),
+            OvenSelectedRustFacetLinkedLibrary::Provider { .. } => None,
+        })
+        .collect::<BTreeSet<_>>();
+    cargo_native
+        .iter()
+        .map(|cargo_object| {
+            let name = cargo_object.file_name().ok_or_else(|| {
+                CliError::failure(format!(
+                    "retained Cargo native object has no file name: {}",
+                    cargo_object.display()
+                ))
+            })?;
+            let mut matches = selected_output_roots
+                .iter()
+                .map(|output_root| asset_root.join(output_root).join(name))
+                .filter(|candidate| {
+                    fs::symlink_metadata(candidate)
+                        .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+                })
+                .collect::<Vec<_>>();
+            matches.sort();
+            matches.dedup();
+            let [matched] = matches.as_slice() else {
+                return Err(CliError::failure(format!(
+                    "retained Cargo native object `{}` matched {} products under the selected generated-output roots",
+                    name.to_string_lossy(),
+                    matches.len()
+                )));
+            };
+            Ok((*matched).clone())
+        })
+        .collect()
 }
 
 /// Project one selected graph unit into the shared semantic half of both capture records.
@@ -982,6 +1006,28 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 .to_string(),
         ));
     }
+    // Stage the release compiler before Cargo observes any unit. Rustc folds its executable location into metadata
+    // for multi-file crates, so harvesting through the caller's rustup path and rebuilding through this retained copy
+    // produces different rlib bytes despite an identical `rustc -vV` identity.
+    let release_toolchain = if envelope == OvenLoafEnvelope::Release {
+        let relative_path = PathBuf::from("runtime-foundations/rust-toolchain");
+        let root = staged_root.join(&relative_path);
+        let target = rustc_host_target(&options.rustc).map_err(oven_error)?;
+        let (compiler_closure_identity, members) =
+            stage_release_runtime_foundation_toolchain(&options.rustc, &target, &root).map_err(oven_error)?;
+        Some(StagedReleaseToolchain {
+            relative_path,
+            root,
+            compiler_closure_identity,
+            members,
+        })
+    } else {
+        None
+    };
+    let bake_rustc = release_toolchain
+        .as_ref()
+        .map(|toolchain| toolchain.root.join("bin/rustc"))
+        .unwrap_or_else(|| options.rustc.clone());
     let publisher_input = release_policy_publisher_input(
         envelope,
         options.policy_engine_store.as_deref(),
@@ -1038,7 +1084,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         &options.compiler_root,
         &current_executable,
         &options.sdk_inventory,
-        &options.rustc,
+        &bake_rustc,
     )?;
     let mut phase_timing = OvenLoafBakePhaseTiming {
         preflight_elapsed_ms: started.elapsed().as_millis(),
@@ -1246,7 +1292,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             .env("INCAN_HOME", project_root.join(".oven-home"));
         #[cfg(feature = "rust_inspect")]
         command.env(OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, &baker_inspection_authority);
-        pin_loaf_fixture_rustc(&mut command, &options.rustc);
+        pin_loaf_fixture_rustc(&mut command, &bake_rustc);
         isolate_loaf_fixture_toolchain_data(&mut command, &probe_toolchain_data_root);
         match (specification.action, specification.profile) {
             (OvenLoafFixtureAction::Build, "release") => {
@@ -1296,7 +1342,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 capacity_roots: [&options.output, scratch.path()],
                 transient_limit: max_physical_bytes,
                 cargo: &options.cargo,
-                rustc: &options.rustc,
+                auxiliary_target_rustc: &options.rustc,
+                rustc: &bake_rustc,
                 cc: &options.cc,
                 cxx: &options.cxx,
                 c_sysroot: &options.c_sysroot,
@@ -1319,7 +1366,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             let compiler_closure = match harvest_compiler_closure.as_deref() {
                 Some(identity) => identity.to_string(),
                 None => {
-                    let identity = direct_rustc_compiler_closure_identity(&options.rustc, &receipt.intent.target)
+                    let identity = direct_rustc_compiler_closure_identity(&bake_rustc, &receipt.intent.target)
                         .map_err(oven_error)?;
                     harvest_compiler_closure = Some(identity.clone());
                     identity
@@ -1422,21 +1469,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // The selected graph names its Toolchain owner by the bounded compiler/sysroot closure digest, which is the
     // identity of the physical members the generation retains for that owner. Stage that closure first so the graph
     // is sealed against exactly what will ship, rather than against the compiler's version string.
-    let release_toolchain = if let Some(foundation) = release_foundation_capture.as_ref() {
-        let relative_path = PathBuf::from("runtime-foundations/rust-toolchain");
-        let root = staged_root.join(&relative_path);
-        let (compiler_closure_identity, members) =
-            stage_release_runtime_foundation_toolchain(&options.rustc, &foundation.receipt.intent.target, &root)
-                .map_err(oven_error)?;
-        Some(StagedReleaseToolchain {
-            relative_path,
-            root,
-            compiler_closure_identity,
-            members,
-        })
-    } else {
-        None
-    };
     // The harvest named the compiler by the same closure digest the retained Toolchain owner carries; a
     // disagreement would mean the proposals describe a compiler this generation does not ship.
     if let (Some(harvested), Some(toolchain)) = (harvest_compiler_closure.as_deref(), release_toolchain.as_ref())
@@ -1793,7 +1825,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &options,
                 finalized,
                 &build,
-                &publisher_generated_owners,
                 &loaf_root,
                 &staged_root.join(&foundation_member.foundation_relative_path),
                 &staged_root,
@@ -2790,8 +2821,6 @@ mod publisher_tests {
             binding: "native-sys 1.0 target release [] native".to_string(),
             unit_identity: digest_bytes(b"unit"),
             attestation_reference: digest_bytes(b"receipt"),
-            native_objects: Vec::new(),
-            package: "native-sys".to_string(),
             capture_index: 0,
         };
         let archive = digest_bytes(b"archive");
@@ -2802,6 +2831,32 @@ mod publisher_tests {
         assert_eq!(claim["builder_kind"], "local");
         assert_eq!(claim["unit_identity"], digest_bytes(b"unit"));
         assert_eq!(claim["attestation_reference"], digest_bytes(b"receipt"));
+        Ok(())
+    }
+
+    #[test]
+    fn publisher_native_evidence_follows_the_selected_archive_owner() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let matching_root = root.path().join("generated-outputs/fixture");
+        let unrelated_root = root.path().join("generated-outputs/unrelated");
+        fs::create_dir_all(&matching_root)?;
+        fs::create_dir_all(&unrelated_root)?;
+        fs::write(matching_root.join("flag_check"), b"matching bytes")?;
+        fs::write(unrelated_root.join("flag_check"), b"unrelated bytes")?;
+        let linked = [OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: oven_rustc::rustc::OvenSelectedRustFacetPath {
+                owner: digest_bytes(b"selected owner"),
+                path: "generated-outputs/fixture/libfixture.a".to_string(),
+            },
+            digest: digest_bytes(b"archive"),
+        }];
+
+        assert_eq!(
+            publisher_native_objects_for_unit(root.path(), &linked, &[PathBuf::from("cargo/flag_check")],)?,
+            vec![matching_root.join("flag_check")]
+        );
         Ok(())
     }
 

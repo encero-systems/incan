@@ -622,6 +622,8 @@ mod tests {
             platform: Some(platform.to_string()),
             target_is_explicit: Some(true),
             cfg: vec![cfg.to_string()],
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
             compiler_arguments: Vec::new(),
             compile_environment: Default::default(),
             effective_features: vec!["std".to_string()],

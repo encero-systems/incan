@@ -1507,6 +1507,7 @@ pub fn prepare_direct_rustc_plan(
             compiler_root: &compiler_root,
             cargo: &request.cargo,
             rustc: &request.rustc,
+            auxiliary_target_rustc: &request.rustc,
             cargo_target: &compiler_support_target,
             capacity_roots: &[&staging],
             transient_limit,
@@ -3177,6 +3178,68 @@ fn stage_release_cohort_project_lock(
     Ok(metadata)
 }
 
+/// Derive stable rustc path remaps for package sources outside the generated publisher package.
+///
+/// Cargo metadata is the authority for the registry or local roots Cargo actually selected. Registry and Git caches
+/// share one virtual Cargo home; path-backed roots are keyed by manifest bytes. Both forms let the direct rebuild
+/// reproduce Cargo's embedded paths after the source is retained under a different physical root.
+fn package_source_remap_flags(
+    metadata: &CargoMetadata,
+    package_root: &Path,
+) -> Result<Vec<String>, OvenLegacyCargoError> {
+    let mut remaps = BTreeMap::new();
+    for package in &metadata.packages {
+        let manifest = verified_regular_file(&package.manifest_path, "local package manifest")?;
+        let package_source_root = manifest
+            .parent()
+            .ok_or_else(|| OvenLegacyCargoError::InvalidInput {
+                field: "local package manifest",
+                message: format!("{} has no package directory", manifest.display()),
+            })?
+            .to_path_buf();
+        if package_source_root == package_root {
+            continue;
+        }
+        let cache_root = manifest
+            .ancestors()
+            .find(|ancestor| {
+                ancestor
+                    .file_name()
+                    .is_some_and(|name| name == "registry" || name == "git")
+            })
+            .and_then(Path::parent);
+        let (root, destination) = if package.source.is_some()
+            && let Some(cache_root) = cache_root
+        {
+            (cache_root.to_path_buf(), "/incan/cargo-home".to_string())
+        } else {
+            let identity = digest_bytes(&regular_file_bytes(&manifest)?);
+            let identity = identity.strip_prefix("sha256:").unwrap_or(&identity);
+            (package_source_root, format!("/incan/path/{identity}"))
+        };
+        if let Some(previous) = remaps.insert(root.clone(), destination.clone())
+            && previous != destination
+        {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "package source root {} has conflicting stable path identities",
+                root.display()
+            )));
+        }
+    }
+    let mut remaps = remaps.into_iter().collect::<Vec<_>>();
+    remaps.sort_by(|(left_path, left_destination), (right_path, right_destination)| {
+        right_path
+            .components()
+            .count()
+            .cmp(&left_path.components().count())
+            .then_with(|| left_destination.cmp(right_destination))
+    });
+    Ok(remaps
+        .into_iter()
+        .map(|(root, destination)| format!("--remap-path-prefix={}={destination}", root.display()))
+        .collect())
+}
+
 /// Run one named Cargo publisher invocation while continuously enforcing its enclosing transient allocation allowance.
 #[allow(clippy::too_many_arguments)]
 fn run_legacy_cargo_invocation_with_native(
@@ -3206,6 +3269,7 @@ fn run_legacy_cargo_invocation_with_native(
             field: "Cargo manifest",
             message: format!("{} has no package directory", cargo_manifest.display()),
         })?;
+    let metadata = read_legacy_cargo_metadata_with_lock_policy(&cargo, cargo_manifest, features, false)?;
     let mut command = Command::new(&cargo);
     command
         .current_dir(package_root)
@@ -3326,18 +3390,11 @@ fn run_legacy_cargo_invocation_with_native(
     // unmapped, a release base baked on one machine and an extension baked on another publish the same identity
     // with different bytes, and rustc refuses to load both halves of that split in one crate graph (colliding
     // StableCrateId values). Remapping every machine-variant root to a stable virtual prefix makes identical units
-    // byte-identical everywhere, so shared leaves reconcile by digest instead. RUSTFLAGS do not enter the
-    // extra-filename hash, so these per-machine flag strings never fork unit identities.
-    let cargo_home = std::env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")));
+    // byte-identical everywhere, so shared leaves reconcile by digest instead. The trace wrapper injects these
+    // arguments after Cargo has selected each host or target unit, so the same flags reach both domains without
+    // machine-local strings entering Cargo's extra-filename hash.
     let mut remap_flags: Vec<String> = Vec::new();
-    if let Some(cargo_home) = &cargo_home {
-        remap_flags.push(format!(
-            "--remap-path-prefix={}=/incan/cargo-home",
-            cargo_home.display()
-        ));
-    }
+    remap_flags.extend(package_source_remap_flags(&metadata, package_root)?);
     remap_flags.push(format!("--remap-path-prefix={}=/incan/package", package_root.display()));
     remap_flags.push(format!("--remap-path-prefix={}=/incan/target", target.display()));
     // Standard-library spans leak through inlined core/alloc generics. A toolchain with the `rust-src` component
@@ -3365,7 +3422,8 @@ fn run_legacy_cargo_invocation_with_native(
         remap_flags.push("-C".to_string());
         remap_flags.push("metadata=incan-extension".to_string());
     }
-    command.env("CARGO_ENCODED_RUSTFLAGS", remap_flags.join("\u{1f}"));
+    let traced_rustc_arguments = serde_json::to_string(&remap_flags)
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("cannot encode publisher rustc arguments: {error}")))?;
     command
         .env("RUSTC", &rustc)
         .stdout(Stdio::from(stdout))
@@ -3374,7 +3432,8 @@ fn run_legacy_cargo_invocation_with_native(
         command
             .env("RUSTC_WRAPPER", rustc_wrapper)
             .env(OVEN_RUSTC_TRACE_WRAPPER_ENV, "1")
-            .env(OVEN_RUSTC_TRACE_PATH_ENV, &rustc_trace_path);
+            .env(OVEN_RUSTC_TRACE_PATH_ENV, &rustc_trace_path)
+            .env(OVEN_RUSTC_TRACE_EXTRA_ARGUMENTS_ENV, traced_rustc_arguments);
     }
     if let (Some(native_wrapper), Some(cc), Some(cxx), Some(c_sysroot)) = (native_wrapper.as_ref(), cc, cxx, c_sysroot)
     {
@@ -8559,7 +8618,7 @@ version = "1.0.0"
         fs::write(
             &cargo,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{{\"reason\":\"incan-rustc-invocation\",\"rustc\":\"rustc\",\"arguments\":[\"--crate-name\",\"fixture\"],\"environment\":{{}}}}' > \"$INCAN_OVEN_RUSTC_TRACE_PATH\"\nprintf '%s\\n' '{{\"reason\":\"build-finished\",\"success\":true}}'\n",
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{{\"reason\":\"incan-rustc-invocation\",\"rustc\":\"rustc\",\"arguments\":[\"--crate-name\",\"fixture\"],\"environment\":{{}}}}' > \"$INCAN_OVEN_RUSTC_TRACE_PATH\"\nprintf '%s\\n' '{{\"reason\":\"build-finished\",\"success\":true}}'\n",
                 log.display()
             ),
         )?;
@@ -8709,7 +8768,7 @@ version = "1.0.0"
         fs::write(
             &cargo,
             format!(
-                "#!/bin/sh\npwd > \"{}\"\nprintf '%s' \"$CARGO_PROFILE_DEV_DEBUG\" > \"{}\"\nprintf '%s' \"$CARGO_INCREMENTAL\" > \"{}\"\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\npwd > \"{}\"\nprintf '%s' \"$CARGO_PROFILE_DEV_DEBUG\" > \"{}\"\nprintf '%s' \"$CARGO_INCREMENTAL\" > \"{}\"\nprintf '%s\\n' \"$@\" > \"{}\"\n",
                 observed_directory.display(),
                 observed_debug_setting.display(),
                 observed_incremental_setting.display(),
@@ -8881,7 +8940,7 @@ version = "1.0.0"
         fs::write(
             &cargo,
             format!(
-                "#!/bin/sh\nsleep 30 &\nprintf '%s\\n' \"$!\" > \"{}\"\ndd if=/dev/urandom of=\"{}\" bs=131072 count=1 2>/dev/null\nwait\n",
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nsleep 30 &\nprintf '%s\\n' \"$!\" > \"{}\"\ndd if=/dev/urandom of=\"{}\" bs=131072 count=1 2>/dev/null\nwait\n",
                 descendant_pid.display(),
                 retained_output.display(),
             ),
@@ -8959,7 +9018,10 @@ version = "1.0.0"
         let arguments = fixture.path().join("cargo-arguments");
         fs::write(
             &cargo,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\n", arguments.display()),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                arguments.display()
+            ),
         )?;
         fs::write(&rustc, "#!/bin/sh\nexit 0\n")?;
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
@@ -9855,7 +9917,10 @@ version = "1.0.0"
         let manifest = fixture.path().join("Cargo.toml");
         fs::write(
             &cargo,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\n", arguments.display()),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                arguments.display()
+            ),
         )?;
         fs::write(&rustc, "#!/bin/sh\nexit 0\n")?;
         fs::write(&manifest, "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n")?;

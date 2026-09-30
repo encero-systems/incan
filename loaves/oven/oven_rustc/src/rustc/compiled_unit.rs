@@ -377,11 +377,12 @@ mod tests {
 
     use super::*;
     use crate::rustc::{
-        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetGraph,
-        OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-        OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
-        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
+        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
+        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPurpose,
+        OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+        OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, selected_graph_sha256,
+        selected_graph_source_digest, selected_graph_unit_identity,
     };
 
     const COMPILER_CLOSURE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -476,6 +477,8 @@ mod tests {
             source_members: members,
             features: vec!["feature_a".to_string()],
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
             compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment,
@@ -576,6 +579,8 @@ mod tests {
             source_members: members,
             features: vec!["feature_a".to_string()],
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
             compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
@@ -720,6 +725,8 @@ mod tests {
             source_members: dependency_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
             compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
@@ -759,7 +766,12 @@ mod tests {
             source_members: root_members,
             features: Vec::new(),
             cfg: Vec::new(),
-            compiler_arguments: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments: vec![OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "fixture_dependency".to_string(),
+                metadata: false,
+            }],
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {

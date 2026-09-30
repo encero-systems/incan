@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     OvenMaterializedRustFacetGraph, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
-    OvenRustcError, OvenSelectedRustFacetDomain, OvenSelectedRustFacetGraph, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetOwnerRoot, OvenSelectedRustFacetPath, OvenSelectedRustFacetSourceMember,
-    OvenSelectedRustFacetSupplementalSourceMembers, ValidatedOvenSelectedRustFacetGraph,
-    materialize_selected_rust_facet_graph_with_supplemental_source_members,
+    OvenRustcError, OvenRustcSupportingArtifact, OvenSelectedRustFacetDomain, OvenSelectedRustFacetGraph,
+    OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot, OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetSupplementalSourceMembers,
+    ValidatedOvenSelectedRustFacetGraph, materialize_selected_rust_facet_graph_with_supplemental_source_members,
 };
 
 mod asset;
@@ -32,6 +32,21 @@ pub const OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION: u32 = 4;
 
 /// Canonical descriptor filename retained at the root of one installed runtime-foundation asset.
 pub const OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME: &str = "foundation.json";
+
+/// Resolve a link artifact's admitted pipelined metadata sibling without scanning the artifact directory.
+fn materialized_metadata_artifact(
+    artifact_root: &std::path::Path,
+    supporting_artifacts: &[OvenRustcSupportingArtifact],
+    link_relative_path: &str,
+) -> Option<PathBuf> {
+    let mut metadata_relative = PathBuf::from(link_relative_path);
+    metadata_relative.set_extension("rmeta");
+    let metadata_relative_text = metadata_relative.to_str()?;
+    supporting_artifacts
+        .iter()
+        .any(|artifact| artifact.relative_path == metadata_relative_text)
+        .then(|| artifact_root.join(metadata_relative))
+}
 
 /// A versioned SDK-owned authority for one direct-Rustc compiler-runtime closure.
 ///
@@ -149,6 +164,8 @@ pub struct OvenMaterializedRuntimeFoundationPrebuiltDependency {
     pub domain: OvenSelectedRustFacetDomain,
     /// Foundation-owned immutable artifact path verified during publication materialization.
     pub artifact: PathBuf,
+    /// Foundation-owned pipelined metadata artifact when Cargo selected that artifact form.
+    pub metadata_artifact: Option<PathBuf>,
     /// Digest recorded for the exact artifact path.
     pub digest: String,
 }
@@ -536,6 +553,11 @@ impl ValidatedOvenRuntimeFoundation {
                         selected_identity: dependency.selected_identity,
                         domain: dependency.domain,
                         artifact,
+                        metadata_artifact: materialized_metadata_artifact(
+                            &artifact_root,
+                            &self.artifacts.supporting_artifacts,
+                            &dependency.artifact.relative_path,
+                        ),
                         digest: dependency.artifact.digest,
                     })
                 })
@@ -681,12 +703,12 @@ mod tests {
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
         OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetDependency, OvenSelectedRustFacetEnvironmentValue,
-        OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner,
-        OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose,
-        OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember,
-        OvenSelectedRustFacetTargetSpec, selected_graph_sha256, selected_graph_source_digest,
-        selected_graph_unit_identity,
+        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetDependency,
+        OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetIntent,
+        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
+        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
+        OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, selected_graph_sha256,
+        selected_graph_source_digest, selected_graph_unit_identity,
     };
     use crate::rustc::{
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
@@ -832,6 +854,13 @@ mod tests {
                 return Err("fixture uses only registry and compiler source kinds".into());
             }
         };
+        let compiler_arguments = dependencies
+            .iter()
+            .map(|dependency| OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: dependency.alias.clone(),
+                metadata: false,
+            })
+            .collect();
         let mut unit = OvenSelectedRustFacetUnit {
             sysroot_externs: Vec::new(),
             identity: String::new(),
@@ -853,7 +882,14 @@ mod tests {
             source_members: members,
             features: Vec::new(),
             cfg: Vec::new(),
-            compiler_arguments: Vec::new(),
+            compiler_crate_type: match crate_kind {
+                OvenSelectedRustFacetCrateKind::Rlib => "lib",
+                OvenSelectedRustFacetCrateKind::Binary => "bin",
+                OvenSelectedRustFacetCrateKind::ProcMacro => "proc-macro",
+            }
+            .to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments,
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.to_string(),

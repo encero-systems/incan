@@ -11,7 +11,7 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 10;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 13;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
 pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/5";
 
@@ -281,6 +281,11 @@ pub enum OvenSelectedRustFacetDomain {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OvenSelectedRustFacetCompilerArgument {
+    /// The exact Cargo output set passed through `--emit`.
+    Emit {
+        /// Comma-separated rustc emit kinds in Cargo's captured order.
+        value: String,
+    },
     /// One `-C name=value` code-generation setting exactly as Cargo passed it.
     Codegen {
         /// Admitted rustc code-generation option name.
@@ -293,6 +298,58 @@ pub enum OvenSelectedRustFacetCompilerArgument {
         /// Rustc check-cfg grammar retained verbatim from the captured invocation.
         value: String,
     },
+    /// One `--cfg` value in Cargo's exact compiler argument order.
+    Cfg {
+        /// Complete cfg value, including a quoted value when present.
+        value: String,
+    },
+    /// The exact lint cap Cargo selected for this physical unit.
+    CapLints {
+        /// One rustc lint level such as `warn` or `allow`.
+        value: String,
+    },
+    /// One crate-authored rustc lint setting retained because lint state contributes to encoded metadata.
+    Lint {
+        /// Rustc lint level such as `allow`, `warn`, `deny`, `forbid`, or `force-warn`.
+        level: String,
+        /// Rustc lint name governed by the level.
+        name: String,
+    },
+    /// One path-backed `--extern` alias in Cargo's exact compiler argument order.
+    Extern {
+        /// Rust-facing dependency alias whose materialized path is resolved from the selected graph edge.
+        alias: String,
+        /// Whether Cargo supplied the pipelined metadata artifact instead of the link artifact.
+        metadata: bool,
+    },
+}
+
+/// Portable virtual paths produced by Cargo's captured remap arguments for one rustc invocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenSelectedRustFacetCompilerPaths {
+    /// Whether Cargo passed the crate root relative to its working directory instead of as an absolute path.
+    pub root_module_is_relative: bool,
+    /// Virtual package root under which rustc recorded source paths.
+    pub source_root: String,
+    /// Virtual working directory rustc recorded for relative source coordinates.
+    pub working_directory: String,
+    /// Virtual `--out-dir` used for this unit's Cargo artifacts.
+    pub output_directory: String,
+    /// Virtual build-script `OUT_DIR`, when the unit consumed one.
+    pub out_dir: Option<String>,
+}
+
+/// Build stable virtual compiler paths for selected-graph unit fixtures.
+#[cfg(test)]
+pub(crate) fn fixture_compiler_paths() -> OvenSelectedRustFacetCompilerPaths {
+    OvenSelectedRustFacetCompilerPaths {
+        root_module_is_relative: true,
+        source_root: "/incan/source".to_string(),
+        working_directory: "/incan/source".to_string(),
+        output_directory: "/incan/target/deps".to_string(),
+        out_dir: None,
+    }
 }
 
 /// Portable rustc code-generation options admitted from a Cargo selected-unit capture.
@@ -302,10 +359,12 @@ pub const OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS: &[&str] = &[
     "debuginfo",
     "embed-bitcode",
     "extra-filename",
+    "link-arg",
     "metadata",
     "opt-level",
     "overflow-checks",
     "panic",
+    "prefer-dynamic",
     "strip",
 ];
 
@@ -343,6 +402,10 @@ pub struct OvenSelectedRustFacetUnit {
     pub features: Vec<String>,
     /// Sorted complete cfg facts supplied to inspection; an explicitly checked empty set remains empty.
     pub cfg: Vec<String>,
+    /// Exact crate-type spelling passed by Cargo (`lib`, `rlib`, or `proc-macro`).
+    pub compiler_crate_type: String,
+    /// Cargo's remapped virtual path coordinates for byte-exact compiler replay.
+    pub compiler_paths: OvenSelectedRustFacetCompilerPaths,
     /// Ordered byte- or success-affecting compiler arguments observed for this exact physical unit.
     #[serde(default)]
     pub compiler_arguments: Vec<OvenSelectedRustFacetCompilerArgument>,
@@ -895,6 +958,39 @@ impl OvenSelectedRustFacetGraph {
             if !unit.source_members.iter().any(|member| member.path == unit.root_module) {
                 return Err(selected_graph_missing(format!("{field}.root_module source member")));
             }
+            let expected_crate_types: &[&str] = match unit.crate_kind {
+                OvenSelectedRustFacetCrateKind::Rlib => &["lib", "rlib"],
+                OvenSelectedRustFacetCrateKind::ProcMacro => &["proc-macro"],
+                OvenSelectedRustFacetCrateKind::Binary => &["bin"],
+            };
+            if !expected_crate_types.contains(&unit.compiler_crate_type.as_str()) {
+                return Err(selected_graph_invalid(
+                    format!("{field}.compiler_crate_type"),
+                    "does not produce the selected crate kind",
+                ));
+            }
+            for (name, path) in [
+                ("source_root", unit.compiler_paths.source_root.as_str()),
+                ("working_directory", unit.compiler_paths.working_directory.as_str()),
+                ("output_directory", unit.compiler_paths.output_directory.as_str()),
+            ] {
+                validate_selected_graph_text(path, &format!("{field}.compiler_paths.{name}"))?;
+                if !path.starts_with('/') {
+                    return Err(selected_graph_invalid(
+                        format!("{field}.compiler_paths.{name}"),
+                        "must be an absolute portable compiler path",
+                    ));
+                }
+            }
+            if let Some(out_dir) = &unit.compiler_paths.out_dir {
+                validate_selected_graph_text(out_dir, &format!("{field}.compiler_paths.out_dir"))?;
+                if !out_dir.starts_with('/') {
+                    return Err(selected_graph_invalid(
+                        format!("{field}.compiler_paths.out_dir"),
+                        "must be an absolute portable compiler path",
+                    ));
+                }
+            }
             if selected_graph_source_digest(&unit.source_members)? != unit.source.digest {
                 return Err(selected_graph_invalid(
                     format!("{field}.source.digest"),
@@ -974,6 +1070,27 @@ impl OvenSelectedRustFacetGraph {
                 return Err(selected_graph_invalid(
                     format!("{field}.dependencies"),
                     "repeat a Rust-facing alias",
+                ));
+            }
+            let extern_order = unit
+                .compiler_arguments
+                .iter()
+                .filter_map(|argument| match argument {
+                    OvenSelectedRustFacetCompilerArgument::Extern { alias, .. } => Some(alias.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let dependency_aliases = unit
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.alias.as_str())
+                .collect::<BTreeSet<_>>();
+            if extern_order.len() != dependency_aliases.len()
+                || extern_order.iter().copied().collect::<BTreeSet<_>>() != dependency_aliases
+            {
+                return Err(selected_graph_invalid(
+                    format!("{field}.compiler_arguments"),
+                    "extern order does not name every selected dependency exactly once",
                 ));
             }
             for (generated_index, generated) in unit.generated_inputs.iter().enumerate() {

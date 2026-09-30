@@ -119,6 +119,7 @@ pub(super) fn bake_compiler_vocab_support(
         compiler_root: context.compiler_root,
         cargo: context.cargo,
         rustc: context.rustc,
+        auxiliary_target_rustc: context.auxiliary_target_rustc,
         cargo_target: context.compiler_support_target,
         capacity_roots: &context.capacity_roots,
         transient_limit: context.transient_limit,
@@ -140,6 +141,7 @@ pub fn bake_source_compiler_vocab_support(
         compiler_root,
         cargo,
         rustc,
+        auxiliary_target_rustc,
         cargo_target,
         capacity_roots,
         transient_limit,
@@ -231,7 +233,9 @@ pub fn bake_source_compiler_vocab_support(
         wasm_command.arg("--release");
     }
     clear_inherited_cargo_environment_for_cargo(&mut wasm_command);
-    wasm_command.env("RUSTC", rustc).env("CARGO_NET_OFFLINE", "true");
+    wasm_command
+        .env("RUSTC", auxiliary_target_rustc)
+        .env("CARGO_NET_OFFLINE", "true");
     if plan.intent.profile == "debug" {
         wasm_command.env("CARGO_PROFILE_DEV_DEBUG", "0");
     }

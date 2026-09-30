@@ -783,6 +783,8 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
             compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
@@ -831,6 +833,8 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: vec!["root-feature".to_string()],
             cfg: vec!["feature=\"root-feature\"".to_string()],
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
             compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
@@ -904,6 +908,8 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
             compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
@@ -1274,6 +1280,12 @@ mod selected_rust_facet_graph_tests {
         unit.role = role;
         unit.domain = domain;
         unit.crate_kind = crate_kind;
+        unit.compiler_crate_type = match crate_kind {
+            OvenSelectedRustFacetCrateKind::Rlib => "lib",
+            OvenSelectedRustFacetCrateKind::Binary => "bin",
+            OvenSelectedRustFacetCrateKind::ProcMacro => "proc-macro",
+        }
+        .to_string();
         unit.identity = selected_graph_unit_identity(&selection, &unit)?;
         let identity = unit.identity.clone();
         Ok(OvenSelectedRustFacetGraph {
@@ -1502,6 +1514,7 @@ mod selected_rust_facet_graph_tests {
         let mut host = graph.units[root_index].clone();
         host.domain = OvenSelectedRustFacetDomain::Host;
         host.dependencies.clear();
+        host.compiler_arguments.clear();
         host.identity = selected_graph_unit_identity(&graph.selection, &host)?;
         graph.exposed_roots.insert(
             "fixture_host".to_string(),
@@ -2216,9 +2229,19 @@ mod selected_rust_facet_graph_tests {
         };
         details.target = graph.selection.host.clone();
         reidentify_unit(&mut graph, root)?;
+        let mut identities = graph
+            .units
+            .iter()
+            .map(|unit| unit.identity.as_str())
+            .collect::<Vec<_>>();
+        identities.sort_unstable();
+        let canonical_root = identities
+            .iter()
+            .position(|identity| *identity == graph.units[root].identity)
+            .ok_or("fixture root lost its canonical position")?;
         assert_eq!(
             refusal_field(graph, "provider target")?,
-            "units[0].linked_libraries[0].target"
+            format!("units[{canonical_root}].linked_libraries[0].target")
         );
         Ok(())
     }

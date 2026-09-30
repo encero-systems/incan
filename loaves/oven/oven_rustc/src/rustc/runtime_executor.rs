@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::{
-    OvenCompiledRustUnitIdentity, OvenMaterializedRuntimeFoundation, OvenMaterializedRustFacetEnvironmentValue,
+    OvenCompiledRustUnitIdentity, OvenMaterializedRuntimeFoundation,
+    OvenMaterializedRuntimeFoundationPrebuiltDependency, OvenMaterializedRustFacetEnvironmentValue,
     OvenMaterializedRustFacetLinkedLibrary, OvenRuntimeFoundationUnitExecution, OvenRustcError,
     OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
-    ValidatedOvenRuntimeFoundation, apply_oven_profile, digest_regular_file, parse_rustc_diagnostics,
-    verified_regular_file,
+    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile,
+    digest_regular_file, parse_rustc_diagnostics, verified_regular_file,
 };
 
 /// The explicit retained compiler that owns every output this executor produces.
@@ -211,10 +211,27 @@ pub fn execute_runtime_foundation_rebuild(
 
         // ---- Resolve every direct compiler input from admitted edges only ----
         let prebuilt = materialized.prebuilt_dependencies(selected_identity).unwrap_or(&[]);
-        let mut externs: Vec<(String, PathBuf)> = Vec::new();
+        let mut externs: Vec<(String, PathBuf, String)> = Vec::new();
         let mut dependencies: Vec<OvenRuntimeRebuildDependency> = Vec::new();
         for dependency in prebuilt {
-            externs.push((dependency.alias.clone(), dependency.artifact.clone()));
+            let child = graph
+                .units
+                .iter()
+                .find(|unit| unit.identity == dependency.selected_identity)
+                .ok_or_else(|| {
+                    runtime_executor_invalid(
+                        "runtime executor prebuilt dependency",
+                        format!(
+                            "selected child {} is absent from the graph",
+                            dependency.selected_identity
+                        ),
+                    )
+                })?;
+            externs.push((
+                dependency.alias.clone(),
+                runtime_prebuilt_extern_artifact(unit, dependency)?,
+                child.compiler_paths.output_directory.clone(),
+            ));
             dependencies.push(OvenRuntimeRebuildDependency {
                 alias: dependency.alias.clone(),
                 identity: dependency.digest.clone(),
@@ -240,13 +257,28 @@ pub fn execute_runtime_foundation_rebuild(
                     ),
                 )
             })?;
-            externs.push((edge.alias.clone(), artifact.clone()));
+            let child_unit = graph
+                .units
+                .iter()
+                .find(|candidate| candidate.identity == edge.unit)
+                .ok_or_else(|| {
+                    runtime_executor_invalid(
+                        "runtime executor rebuild dependency",
+                        format!("selected child {} is absent from the graph", edge.unit),
+                    )
+                })?;
+            externs.push((
+                edge.alias.clone(),
+                runtime_rebuilt_extern_artifact(unit, &edge.alias, artifact)?,
+                child_unit.compiler_paths.output_directory.clone(),
+            ));
             dependencies.push(OvenRuntimeRebuildDependency {
                 alias: edge.alias.clone(),
                 identity: identity.clone(),
                 kind: OvenRuntimeRebuildDependencyKind::Rebuilt,
             });
         }
+        let externs = order_runtime_externs(unit, externs)?;
         dependencies.sort_by(|left, right| left.alias.cmp(&right.alias));
 
         // ---- Compile into a directory this run owns ----
@@ -260,7 +292,7 @@ pub fn execute_runtime_foundation_rebuild(
         // compiler always runs, and `compiler_launches` counts real launches rather than scratch misses.
         let compiled_identity = source.compiled_identity.clone();
         let unit_root = output_root.join(compiled_identity.as_str().replace(':', "-"));
-        let artifact = unit_root.join(runtime_rebuild_artifact_name(unit, &selection.host));
+        let artifact = unit_root.join(runtime_rebuild_artifact_name(unit, &selection.host)?);
         if unit_root.exists() {
             fs::remove_dir_all(&unit_root).map_err(|source_error| OvenRustcError::Io {
                 path: unit_root.clone(),
@@ -271,7 +303,16 @@ pub fn execute_runtime_foundation_rebuild(
             path: unit_root.clone(),
             source: source_error,
         })?;
-        let search_paths = transitive_rebuild_search_paths(graph, foundation, &rebuilt, unit)?;
+        let dependency_artifacts = transitive_rebuild_artifacts(graph, foundation, &rebuilt, unit)?;
+        let search_paths = if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
+            stage_proc_macro_dependency_artifacts(&unit_root, &dependency_artifacts)?;
+            BTreeSet::from([unit_root.clone()])
+        } else {
+            dependency_artifacts
+                .iter()
+                .filter_map(|artifact| artifact.parent().map(Path::to_path_buf))
+                .collect()
+        };
         let compiler_target = match unit.domain {
             OvenSelectedRustFacetDomain::Host => std::ffi::OsStr::new(&selection.host),
             OvenSelectedRustFacetDomain::Target => materialized.sources().compiler_target(),
@@ -285,7 +326,6 @@ pub fn execute_runtime_foundation_rebuild(
             materialized.artifact_plan(),
             &search_paths,
             &externs,
-            output_root,
             &artifact,
         )?;
         compiler_launches += 1;
@@ -342,28 +382,51 @@ fn refuse_unsupported_rebuild_shape(unit: &OvenSelectedRustFacetUnit) -> Result<
 }
 
 /// Name one direct-rustc publisher output using the platform form rustc emits for its crate kind.
-fn runtime_rebuild_artifact_name(unit: &OvenSelectedRustFacetUnit, host: &str) -> String {
-    match unit.crate_kind {
-        OvenSelectedRustFacetCrateKind::Rlib => format!("lib{}.rlib", unit.crate_name),
-        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("windows") => format!("{}.dll", unit.crate_name),
-        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("apple") => format!("lib{}.dylib", unit.crate_name),
-        OvenSelectedRustFacetCrateKind::ProcMacro => format!("lib{}.so", unit.crate_name),
-        _ => format!("lib{}.artifact", unit.crate_name),
-    }
+fn runtime_rebuild_artifact_name(unit: &OvenSelectedRustFacetUnit, host: &str) -> Result<String, OvenRustcError> {
+    let extra_filename = unit
+        .compiler_arguments
+        .iter()
+        .find_map(|argument| match argument {
+            OvenSelectedRustFacetCompilerArgument::Codegen { name, value } if name == "extra-filename" => {
+                Some(value.as_str())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| runtime_executor_invalid("runtime executor output", "unit has no captured extra filename"))?;
+    let name = match unit.crate_kind {
+        OvenSelectedRustFacetCrateKind::Rlib => format!("lib{}{extra_filename}.rlib", unit.crate_name),
+        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("windows") => {
+            format!("{}{extra_filename}.dll", unit.crate_name)
+        }
+        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("apple") => {
+            format!("lib{}{extra_filename}.dylib", unit.crate_name)
+        }
+        OvenSelectedRustFacetCrateKind::ProcMacro => format!("lib{}{extra_filename}.so", unit.crate_name),
+        _ => {
+            return Err(runtime_executor_invalid(
+                "runtime executor output",
+                format!(
+                    "unit {} has unsupported artifact kind {:?}",
+                    unit.crate_name, unit.crate_kind
+                ),
+            ));
+        }
+    };
+    Ok(name)
 }
 
-/// Collect every directory a rebuilt unit needs on its `-L dependency` path, beyond the sealed foundation's own.
+/// Collect every rebuilt artifact a unit needs through its transitive `-L dependency` closure.
 ///
 /// Rustc resolves a dependency's *own* dependencies while loading its metadata, so a direct `--extern` is not enough:
 /// the whole reachable closure must be findable. The walk follows selected graph edges only. Prebuilt transitives are
 /// deliberately absent because the sealed artifact plan already names the one directory that holds them.
-fn transitive_rebuild_search_paths(
+fn transitive_rebuild_artifacts(
     graph: &super::OvenSelectedRustFacetGraph,
     foundation: &ValidatedOvenRuntimeFoundation,
     rebuilt: &BTreeMap<String, (PathBuf, String)>,
     root: &OvenSelectedRustFacetUnit,
 ) -> Result<BTreeSet<PathBuf>, OvenRustcError> {
-    let mut search_paths = BTreeSet::new();
+    let mut artifacts = BTreeSet::new();
     let mut visited = BTreeSet::new();
     let mut pending = root
         .dependencies
@@ -390,9 +453,7 @@ fn transitive_rebuild_search_paths(
                     ),
                 )
             })?;
-            if let Some(parent) = artifact.parent() {
-                search_paths.insert(parent.to_path_buf());
-            }
+            artifacts.insert(artifact.clone());
         }
         let child = graph
             .units
@@ -406,7 +467,39 @@ fn transitive_rebuild_search_paths(
             })?;
         pending.extend(child.dependencies.iter().map(|edge| edge.unit.clone()));
     }
-    Ok(search_paths)
+    Ok(artifacts)
+}
+
+/// Co-locate one proc macro's verified dependency closure with its output, matching Cargo's host layout.
+///
+/// Cargo places every host dependency in one profile `deps` directory and supplies that directory once. Oven keeps
+/// normal rebuild outputs in identity-specific directories, so replaying those directories separately changes
+/// rustc's metadata session hash. Hard links preserve the verified bytes while presenting the same one-directory
+/// compiler fact; duplicate filenames are refused instead of selecting one artifact by discovery.
+fn stage_proc_macro_dependency_artifacts(
+    output_directory: &Path,
+    artifacts: &BTreeSet<PathBuf>,
+) -> Result<(), OvenRustcError> {
+    for artifact in artifacts {
+        let filename = artifact.file_name().ok_or_else(|| {
+            runtime_executor_invalid(
+                "runtime executor proc-macro dependency",
+                format!("artifact {} has no filename", artifact.display()),
+            )
+        })?;
+        let destination = output_directory.join(filename);
+        if destination.exists() {
+            return Err(runtime_executor_invalid(
+                "runtime executor proc-macro dependency",
+                format!("artifact filename {} occurs more than once", filename.to_string_lossy()),
+            ));
+        }
+        fs::hard_link(artifact, &destination).map_err(|source_error| OvenRustcError::Io {
+            path: destination,
+            source: source_error,
+        })?;
+    }
+    Ok(())
 }
 
 /// Launch the retained compiler once for one admitted rebuild unit.
@@ -426,8 +519,7 @@ fn compile_rebuild_unit(
     compiler_target: &std::ffi::OsStr,
     plan: &super::OvenRustcArtifactPlan,
     search_paths: &BTreeSet<PathBuf>,
-    externs: &[(String, PathBuf)],
-    output_root: &Path,
+    externs: &[(String, PathBuf, String)],
     artifact: &Path,
 ) -> Result<(), OvenRustcError> {
     let private_out_dir = stage_private_out_dir(source, artifact)?;
@@ -440,7 +532,6 @@ fn compile_rebuild_unit(
         plan,
         search_paths,
         externs,
-        output_root,
         artifact,
         private_out_dir.as_deref(),
     )?;
@@ -562,64 +653,36 @@ fn rebuild_unit_command(
     compiler_target: &std::ffi::OsStr,
     plan: &super::OvenRustcArtifactPlan,
     search_paths: &BTreeSet<PathBuf>,
-    externs: &[(String, PathBuf)],
-    output_root: &Path,
+    externs: &[(String, PathBuf, String)],
     artifact: &Path,
     private_out_dir: Option<&Path>,
 ) -> Result<Command, OvenRustcError> {
     let mut command = super::rustc_probe_command(closure.rustc());
-    let crate_type = match unit.crate_kind {
-        OvenSelectedRustFacetCrateKind::Rlib => "rlib",
-        OvenSelectedRustFacetCrateKind::ProcMacro => "proc-macro",
-        _ => {
-            return Err(runtime_executor_invalid(
-                "runtime executor crate kind",
-                format!(
-                    "unit {} has unsupported crate kind {:?}",
-                    unit.crate_name, unit.crate_kind
-                ),
-            ));
-        }
-    };
-    command.args(["--crate-type", crate_type]);
-    append_compiler_target(&mut command, compiler_target);
+    command.args(["--crate-type", unit.compiler_crate_type.as_str()]);
+    if unit.domain == OvenSelectedRustFacetDomain::Target {
+        append_compiler_target(&mut command, compiler_target);
+    }
     command
         .arg(format!("--edition={}", unit.edition))
         .arg("--crate-name")
         .arg(&unit.crate_name)
         .arg("--error-format=json")
-        .arg(&source.root_module)
-        .arg("-o")
-        .arg(artifact);
+        .arg("--json=diagnostic-rendered-ansi,artifacts,future-incompat")
+        // Rustc folds Cargo's relative-versus-absolute crate-root spelling into metadata even when both spellings
+        // remap to the same virtual source path, so replay that captured distinction exactly.
+        .arg(if unit.compiler_paths.root_module_is_relative {
+            Path::new(&unit.root_module)
+        } else {
+            &source.root_module
+        })
+        .arg("--out-dir")
+        .arg(
+            artifact.parent().ok_or_else(|| {
+                runtime_executor_invalid("runtime executor output", "artifact has no output directory")
+            })?,
+        );
     if unit.compiler_arguments.is_empty() {
         apply_oven_profile(&mut command, &selection.intent.profile);
-    } else {
-        append_captured_compiler_arguments(&mut command, &unit.compiler_arguments);
-    }
-    // ---- Deterministic path remapping for reproducible unit bytes ----
-    //
-    // `rustc` folds absolute paths into what it emits, so the same unit compiled from two scratch locations
-    // produces different bytes and therefore a different closure identity. That is not hypothetical here: with the
-    // executor no longer reusing whatever sat in its output directory, the coordinate-only reuse proof only holds
-    // because these remaps make a cold root reproduce the original bytes. The legacy-Cargo publisher already
-    // applies the same discipline for the same reason; this is the direct route's half of it, and the two must not
-    // drift, which is why the rustc source remap calls the one helper rather than restating the form.
-    command.arg(format!(
-        "--remap-path-prefix={}=/incan/source",
-        source.source_root.display()
-    ));
-    command.arg(format!("--remap-path-prefix={}=/incan/target", output_root.display()));
-    // Standard-library spans leak through inlined core and alloc generics. A toolchain carrying `rust-src`
-    // resolves them to its real checkout while one without emits the virtual `/rustc/<commit>` form, so the same
-    // unit compiles differently depending on which components are installed. On a toolchain without the component
-    // the prefix never matches and the flag is inert.
-    if let Some(toolchain_root) = closure.rustc().parent().and_then(Path::parent)
-        && let Some(commit) = crate::rustc::rustc_commit_hash(closure.rustc())
-    {
-        command.arg(format!(
-            "--remap-path-prefix={}=/rustc/{commit}",
-            toolchain_root.join("lib/rustlib/src/rust").display()
-        ));
     }
     for (name, value) in &plan.compile_environment {
         command.env(name, value);
@@ -646,14 +709,236 @@ fn rebuild_unit_command(
             }
         };
     }
-    for feature in &unit.features {
-        command.arg("--cfg").arg(format!("feature={feature:?}"));
+    if !unit
+        .compiler_arguments
+        .iter()
+        .any(|argument| matches!(argument, OvenSelectedRustFacetCompilerArgument::Cfg { .. }))
+    {
+        for feature in &unit.features {
+            command.arg("--cfg").arg(format!("feature={feature:?}"));
+        }
+        for cfg in &unit.cfg {
+            command.arg("--cfg").arg(cfg);
+        }
     }
-    for cfg in &unit.cfg {
-        command.arg("--cfg").arg(cfg);
+    let proc_macro_search_paths;
+    let proc_macro_externs;
+    let replay_search_paths = if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
+        proc_macro_search_paths = BTreeSet::from([artifact
+            .parent()
+            .ok_or_else(|| runtime_executor_invalid("runtime executor output", "artifact has no output directory"))?
+            .to_path_buf()]);
+        &proc_macro_search_paths
+    } else {
+        search_paths
+    };
+    let replay_externs = if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
+        let output_directory = artifact
+            .parent()
+            .ok_or_else(|| runtime_executor_invalid("runtime executor output", "artifact has no output directory"))?;
+        proc_macro_externs = externs
+            .iter()
+            .map(|(alias, path, virtual_directory)| {
+                let filename = path.file_name().ok_or_else(|| {
+                    runtime_executor_invalid(
+                        "runtime executor proc-macro dependency",
+                        format!("extern artifact {} has no filename", path.display()),
+                    )
+                })?;
+                Ok((
+                    alias.clone(),
+                    output_directory.join(filename),
+                    virtual_directory.clone(),
+                ))
+            })
+            .collect::<Result<Vec<_>, OvenRustcError>>()?;
+        proc_macro_externs.as_slice()
+    } else {
+        externs
+    };
+    if unit.compiler_arguments.is_empty() {
+        append_runtime_search_paths(
+            &mut command,
+            plan,
+            replay_search_paths,
+            unit.crate_kind != OvenSelectedRustFacetCrateKind::ProcMacro,
+        );
+        for (alias, path, _) in replay_externs {
+            command.arg("--extern").arg(format!("{alias}={}", path.display()));
+        }
+    } else {
+        append_captured_compiler_arguments(
+            &mut command,
+            &unit.compiler_arguments,
+            plan,
+            replay_search_paths,
+            replay_externs,
+            unit.crate_kind != OvenSelectedRustFacetCrateKind::ProcMacro,
+        )?;
     }
-    for path in &plan.dependency_search_paths {
-        command.arg("-L").arg(format!("dependency={}", path.display()));
+    append_runtime_path_remaps(
+        &mut command,
+        closure,
+        unit,
+        source,
+        replay_externs,
+        artifact,
+        private_out_dir,
+    )?;
+    append_captured_linker_arguments(&mut command, &unit.compiler_arguments);
+    append_materialized_sysroot_extern_arguments(&mut command, &source.sysroot_externs);
+    append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
+    if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
+        // The Cargo capture boundary clears this undeclared host input before linking the corresponding dylib.
+        // Replaying an inherited SDK path would perturb Apple ld's UUID and the derived ad-hoc signature.
+        command.env_remove("SDKROOT");
+    }
+    let working_relative = Path::new(&unit.compiler_paths.working_directory)
+        .strip_prefix(&unit.compiler_paths.source_root)
+        .map_err(|_| {
+            runtime_executor_invalid(
+                "runtime executor working directory",
+                "captured working directory is outside the selected source root",
+            )
+        })?;
+    command.current_dir(source.source_root.join(working_relative));
+    Ok(command)
+}
+
+/// Append the publisher's injected path remaps after Cargo's own compiler arguments.
+fn append_runtime_path_remaps(
+    command: &mut Command,
+    closure: &OvenRuntimeCompilerClosure,
+    unit: &OvenSelectedRustFacetUnit,
+    source: &super::OvenMaterializedRustFacetUnit,
+    externs: &[(String, PathBuf, String)],
+    artifact: &Path,
+    private_out_dir: Option<&Path>,
+) -> Result<(), OvenRustcError> {
+    command.arg(format!(
+        "--remap-path-prefix={}={}",
+        source.source_root.display(),
+        unit.compiler_paths.source_root
+    ));
+    let artifact_directory = artifact
+        .parent()
+        .ok_or_else(|| runtime_executor_invalid("runtime executor output", "artifact has no output directory"))?;
+    command.arg(format!(
+        "--remap-path-prefix={}={}",
+        artifact_directory.display(),
+        unit.compiler_paths.output_directory
+    ));
+    // The private OUT_DIR is nested below the artifact directory. rustc applies the last matching remap, so the
+    // narrower captured OUT_DIR coordinate must follow the enclosing output-directory coordinate.
+    if let (Some(private_out_dir), Some(compiler_out_dir)) = (private_out_dir, &unit.compiler_paths.out_dir) {
+        command.arg(format!(
+            "--remap-path-prefix={}={compiler_out_dir}",
+            private_out_dir.display()
+        ));
+    }
+    for (_, dependency, compiler_output_directory) in externs {
+        if let Some(parent) = dependency.parent() {
+            command.arg(format!(
+                "--remap-path-prefix={}={compiler_output_directory}",
+                parent.display()
+            ));
+        }
+    }
+    if let Some(toolchain_root) = closure.rustc().parent().and_then(Path::parent)
+        && let Some(commit) = crate::rustc::rustc_commit_hash(closure.rustc())
+    {
+        command.arg(format!(
+            "--remap-path-prefix={}=/rustc/{commit}",
+            toolchain_root.join("lib/rustlib/src/rust").display()
+        ));
+    }
+    Ok(())
+}
+
+/// Append Cargo's ordered compiler facts, substituting admitted search paths and extern artifacts at their markers.
+fn append_captured_compiler_arguments(
+    command: &mut Command,
+    arguments: &[OvenSelectedRustFacetCompilerArgument],
+    plan: &super::OvenRustcArtifactPlan,
+    search_paths: &BTreeSet<PathBuf>,
+    externs: &[(String, PathBuf, String)],
+    include_plan_dependency_paths: bool,
+) -> Result<(), OvenRustcError> {
+    let mut paths_appended = false;
+    let mut extern_index = 0usize;
+    for argument in arguments {
+        let search_boundary = match argument {
+            OvenSelectedRustFacetCompilerArgument::Extern { .. }
+            | OvenSelectedRustFacetCompilerArgument::CapLints { .. } => true,
+            OvenSelectedRustFacetCompilerArgument::Codegen { name, .. } => name == "link-arg",
+            _ => false,
+        };
+        if !paths_appended && search_boundary {
+            append_runtime_search_paths(command, plan, search_paths, include_plan_dependency_paths);
+            paths_appended = true;
+        }
+        match argument {
+            OvenSelectedRustFacetCompilerArgument::Emit { value } => {
+                command.arg("--emit").arg(value);
+            }
+            OvenSelectedRustFacetCompilerArgument::Codegen { name, value } => {
+                if name != "link-arg" {
+                    command.arg("-C").arg(format!("{name}={value}"));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::CheckCfg { value } => {
+                command.arg("--check-cfg").arg(value);
+            }
+            OvenSelectedRustFacetCompilerArgument::Cfg { value } => {
+                command.arg("--cfg").arg(value);
+            }
+            OvenSelectedRustFacetCompilerArgument::CapLints { value } => {
+                command.arg("--cap-lints").arg(value);
+            }
+            OvenSelectedRustFacetCompilerArgument::Lint { level, name } => {
+                command.arg(format!("--{level}={name}"));
+            }
+            OvenSelectedRustFacetCompilerArgument::Extern { alias, .. } => {
+                let (resolved_alias, path, _) = externs.get(extern_index).ok_or_else(|| {
+                    runtime_executor_invalid(
+                        "runtime executor extern order",
+                        format!("captured extern alias `{alias}` has no admitted dependency edge"),
+                    )
+                })?;
+                if resolved_alias != alias {
+                    return Err(runtime_executor_invalid(
+                        "runtime executor extern order",
+                        format!("captured extern alias `{alias}` resolved as `{resolved_alias}`"),
+                    ));
+                }
+                command.arg("--extern").arg(format!("{alias}={}", path.display()));
+                extern_index += 1;
+            }
+        }
+    }
+    if !paths_appended {
+        append_runtime_search_paths(command, plan, search_paths, include_plan_dependency_paths);
+    }
+    if extern_index != externs.len() {
+        return Err(runtime_executor_invalid(
+            "runtime executor extern order",
+            "admitted dependency edges remain after captured compiler arguments",
+        ));
+    }
+    Ok(())
+}
+
+/// Append all admitted dependency and native search paths at Cargo's captured search-path boundary.
+fn append_runtime_search_paths(
+    command: &mut Command,
+    plan: &super::OvenRustcArtifactPlan,
+    search_paths: &BTreeSet<PathBuf>,
+    include_plan_dependency_paths: bool,
+) {
+    if include_plan_dependency_paths {
+        for path in &plan.dependency_search_paths {
+            command.arg("-L").arg(format!("dependency={}", path.display()));
+        }
     }
     for path in search_paths {
         command.arg("-L").arg(format!("dependency={}", path.display()));
@@ -661,29 +946,97 @@ fn rebuild_unit_command(
     for path in &plan.native_search_paths {
         command.arg("-L").arg(format!("native={}", path.display()));
     }
-    for (alias, path) in externs {
-        command.arg("--extern").arg(format!("{alias}={}", path.display()));
-    }
-    append_materialized_sysroot_extern_arguments(&mut command, &source.sysroot_externs);
-    append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
-    if unit.source.kind == OvenSelectedRustFacetSourceKind::Registry {
-        command.args(["--cap-lints", "allow"]);
-    }
-    Ok(command)
 }
 
-/// Append the portable compiler arguments retained from Cargo's exact selected-unit invocation.
-fn append_captured_compiler_arguments(command: &mut Command, arguments: &[OvenSelectedRustFacetCompilerArgument]) {
+/// Append capture-bound linker arguments at Cargo's terminal injection point after all path remaps.
+fn append_captured_linker_arguments(command: &mut Command, arguments: &[OvenSelectedRustFacetCompilerArgument]) {
     for argument in arguments {
-        match argument {
-            OvenSelectedRustFacetCompilerArgument::Codegen { name, value } => {
-                command.arg("-C").arg(format!("{name}={value}"));
-            }
-            OvenSelectedRustFacetCompilerArgument::CheckCfg { value } => {
-                command.arg("--check-cfg").arg(value);
-            }
+        if let OvenSelectedRustFacetCompilerArgument::Codegen { name, value } = argument
+            && name == "link-arg"
+        {
+            command.arg("-C").arg(format!("link-arg={value}"));
         }
     }
+}
+
+/// Restore Cargo's exact path-backed extern order after resolving every alias through admitted graph edges.
+fn order_runtime_externs(
+    unit: &OvenSelectedRustFacetUnit,
+    externs: Vec<(String, PathBuf, String)>,
+) -> Result<Vec<(String, PathBuf, String)>, OvenRustcError> {
+    let mut by_alias = externs
+        .into_iter()
+        .map(|external| (external.0.clone(), external))
+        .collect::<BTreeMap<_, _>>();
+    let mut ordered = Vec::with_capacity(by_alias.len());
+    for argument in &unit.compiler_arguments {
+        let OvenSelectedRustFacetCompilerArgument::Extern { alias, .. } = argument else {
+            continue;
+        };
+        let external = by_alias.remove(alias).ok_or_else(|| {
+            runtime_executor_invalid(
+                "runtime executor extern order",
+                format!("captured extern alias `{alias}` has no admitted dependency edge"),
+            )
+        })?;
+        ordered.push(external);
+    }
+    if !by_alias.is_empty() {
+        return Err(runtime_executor_invalid(
+            "runtime executor extern order",
+            format!(
+                "admitted dependency aliases are absent from captured extern order: {}",
+                by_alias.keys().cloned().collect::<Vec<_>>().join(", ")
+            ),
+        ));
+    }
+    Ok(ordered)
+}
+
+/// Select the exact admitted prebuilt artifact form Cargo supplied for one extern edge.
+fn runtime_prebuilt_extern_artifact(
+    unit: &OvenSelectedRustFacetUnit,
+    dependency: &OvenMaterializedRuntimeFoundationPrebuiltDependency,
+) -> Result<PathBuf, OvenRustcError> {
+    if runtime_extern_uses_metadata(unit, &dependency.alias) {
+        return dependency.metadata_artifact.clone().ok_or_else(|| {
+            runtime_executor_invalid(
+                "runtime executor metadata extern",
+                format!(
+                    "captured extern alias `{}` has no admitted metadata artifact",
+                    dependency.alias
+                ),
+            )
+        });
+    }
+    Ok(dependency.artifact.clone())
+}
+
+/// Select the metadata or link output just produced for one rebuilt extern edge.
+fn runtime_rebuilt_extern_artifact(
+    unit: &OvenSelectedRustFacetUnit,
+    alias: &str,
+    artifact: &Path,
+) -> Result<PathBuf, OvenRustcError> {
+    if !runtime_extern_uses_metadata(unit, alias) {
+        return Ok(artifact.to_path_buf());
+    }
+    let mut metadata = artifact.to_path_buf();
+    metadata.set_extension("rmeta");
+    verified_regular_file(&metadata, "runtime rebuild metadata output")
+}
+
+/// Report whether Cargo's captured compiler arguments used a pipelined metadata artifact for one alias.
+fn runtime_extern_uses_metadata(unit: &OvenSelectedRustFacetUnit, alias: &str) -> bool {
+    unit.compiler_arguments.iter().any(|argument| {
+        matches!(
+            argument,
+            OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: candidate,
+                metadata: true,
+            } if candidate == alias
+        )
+    })
 }
 
 /// Append compiler-owned bare externs already admitted by the selected graph's verified toolchain contract.
@@ -775,13 +1128,14 @@ pub(crate) mod tests {
     use super::*;
     use crate::rustc::{
         OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION, OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
-        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenRuntimeFoundation, OvenRuntimeFoundationUnit,
-        OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource,
-        OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedRustFacetCfgSnapshot,
-        OvenSelectedRustFacetDependency, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
-        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot,
-        OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
-        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
+        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenMaterializedRustFacetUnit, OvenRuntimeFoundation,
+        OvenRuntimeFoundationUnit, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcRegistryLeaf,
+        OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
+        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerPaths, OvenSelectedRustFacetDependency,
+        OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner,
+        OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot, OvenSelectedRustFacetPath,
+        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
+        OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
         resolve_active_rustc, rustc_host_target, rustc_identity, selected_graph_sha256, selected_graph_source_digest,
         selected_graph_unit_identity,
     };
@@ -903,9 +1257,9 @@ pub(crate) mod tests {
         );
     }
 
-    /// Registry rebuilds carry Cargo's lint cap while path rebuilds retain captured byte-affecting arguments only.
+    /// Rebuilds replay Cargo's host/target shape, output shape, lint cap, and ordered byte-affecting arguments exactly.
     #[test]
-    fn rebuild_arguments_follow_selected_unit_source_kind() -> Result<(), Box<dyn std::error::Error>> {
+    fn rebuild_arguments_follow_selected_unit_domain_and_source_kind() -> Result<(), Box<dyn std::error::Error>> {
         let fixture = fixture()?;
         let output_root = tempfile::tempdir()?;
         let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
@@ -926,17 +1280,40 @@ pub(crate) mod tests {
             .find(|unit| unit.identity == selected_identity)
             .ok_or("the first rebuild unit is absent from the selected graph")?;
         let captured = vec![
+            OvenSelectedRustFacetCompilerArgument::Emit {
+                value: "dep-info,metadata,link".to_string(),
+            },
             OvenSelectedRustFacetCompilerArgument::Codegen {
                 name: "embed-bitcode".to_string(),
                 value: "no".to_string(),
             },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "prefer-dynamic".to_string(),
+                value: "yes".to_string(),
+            },
             OvenSelectedRustFacetCompilerArgument::CheckCfg {
                 value: "cfg(docsrs,test)".to_string(),
             },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "link-arg".to_string(),
+                value: "-Wl,-reproducible".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "link-arg".to_string(),
+                value: "-install_name".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "link-arg".to_string(),
+                value: "@rpath/libfixture.dylib".to_string(),
+            },
         ];
-        let arguments_for = |kind| -> Result<Vec<String>, OvenRustcError> {
+        let arguments_for = |kind, domain| -> Result<Vec<String>, OvenRustcError> {
             let mut unit = base_unit.clone();
             unit.source.kind = kind;
+            unit.domain = domain;
             unit.compiler_arguments = captured.clone();
             let command = rebuild_unit_command(
                 &closure,
@@ -947,7 +1324,6 @@ pub(crate) mod tests {
                 fixture.materialized.artifact_plan(),
                 &BTreeSet::new(),
                 &[],
-                output_root.path(),
                 &output_root.path().join(format!("lib{}.rlib", unit.crate_name)),
                 None,
             )?;
@@ -957,19 +1333,488 @@ pub(crate) mod tests {
                 .collect())
         };
 
-        let registry = arguments_for(OvenSelectedRustFacetSourceKind::Registry)?;
-        assert!(registry.windows(2).any(|pair| pair == ["--cap-lints", "allow"]));
+        let registry = arguments_for(
+            OvenSelectedRustFacetSourceKind::Registry,
+            OvenSelectedRustFacetDomain::Target,
+        )?;
+        assert!(registry.iter().any(|argument| argument == "--target"));
+        assert!(registry.windows(2).any(|pair| pair == ["--cap-lints", "warn"]));
+        assert!(registry.windows(2).any(|pair| pair == ["--crate-type", "lib"]));
+        assert!(
+            registry
+                .windows(2)
+                .any(|pair| pair == ["--emit", "dep-info,metadata,link"])
+        );
+        assert!(registry.iter().any(|argument| argument == "--out-dir"));
+        assert!(!registry.iter().any(|argument| argument == "-o"));
         assert!(registry.windows(2).any(|pair| pair == ["-C", "embed-bitcode=no"]));
+        assert!(registry.windows(2).any(|pair| pair == ["-C", "prefer-dynamic=yes"]));
         assert!(
             registry
                 .windows(2)
                 .any(|pair| pair == ["--check-cfg", "cfg(docsrs,test)"])
         );
+        let final_remap = registry
+            .iter()
+            .rposition(|argument| argument.starts_with("--remap-path-prefix="))
+            .ok_or("rebuild command has no path remap")?;
+        let install_name = registry
+            .iter()
+            .position(|argument| argument == "link-arg=-install_name")
+            .ok_or("rebuild command has no captured install-name argument")?;
+        assert!(registry.iter().any(|argument| argument == "link-arg=-Wl,-reproducible"));
+        assert!(install_name > final_remap);
 
-        let path = arguments_for(OvenSelectedRustFacetSourceKind::Path)?;
-        assert!(!path.iter().any(|argument| argument == "--cap-lints"));
+        let path = arguments_for(OvenSelectedRustFacetSourceKind::Path, OvenSelectedRustFacetDomain::Host)?;
+        assert!(!path.iter().any(|argument| argument == "--target"));
+
+        let mut proc_macro = base_unit.clone();
+        proc_macro.crate_kind = OvenSelectedRustFacetCrateKind::ProcMacro;
+        proc_macro.compiler_crate_type = "proc-macro".to_string();
+        proc_macro.compiler_arguments = captured;
+        let proc_macro_command = rebuild_unit_command(
+            &closure,
+            &proc_macro,
+            source,
+            &graph.selection,
+            fixture.materialized.sources().compiler_target(),
+            fixture.materialized.artifact_plan(),
+            &BTreeSet::new(),
+            &[],
+            &output_root.path().join("libfixture.dylib"),
+            None,
+        )?;
+        assert!(
+            proc_macro_command
+                .get_envs()
+                .any(|(name, value)| name == "SDKROOT" && value.is_none())
+        );
+        let proc_macro_arguments = proc_macro_command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            proc_macro_arguments
+                .windows(2)
+                .filter(|pair| pair[0] == "-L" && pair[1].starts_with("dependency="))
+                .count(),
+            1
+        );
+        assert!(path.windows(2).any(|pair| pair == ["--cap-lints", "warn"]));
         assert!(path.windows(2).any(|pair| pair == ["-C", "embed-bitcode=no"]));
         Ok(())
+    }
+
+    /// Return the ordered compiler facts shared by the Cargo and direct-rustc byte-equivalence fixture.
+    fn equivalence_compiler_arguments(
+        metadata: &str,
+        extra_filename: &str,
+    ) -> Vec<OvenSelectedRustFacetCompilerArgument> {
+        vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "opt-level".to_string(),
+                value: "3".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "embed-bitcode".to_string(),
+                value: "no".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Lint {
+                level: "warn".to_string(),
+                name: "missing_docs".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CheckCfg {
+                value: "cfg(docsrs,test)".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CheckCfg {
+                value: "cfg(feature, values())".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "metadata".to_string(),
+                value: metadata.to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "extra-filename".to_string(),
+                value: extra_filename.to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "strip".to_string(),
+                value: "debuginfo".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Emit {
+                value: "dep-info,metadata,link".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+        ]
+    }
+
+    /// Collect Cargo's matching fixture rlibs without assuming whether repository Cargo config redirects build-dir.
+    fn collect_equivalence_rlibs(directory: &Path, artifacts: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                collect_equivalence_rlibs(&path, artifacts)?;
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("libequivalence_fixture-") && name.ends_with(".rlib"))
+            {
+                artifacts.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    /// Real Cargo output and the captured facts needed to replay its synthetic library invocation.
+    struct CargoEquivalenceArtifact {
+        artifact: PathBuf,
+        generated_out_dir: PathBuf,
+        metadata: String,
+        extra_filename: String,
+        dependency_search_path: PathBuf,
+        trace: String,
+    }
+
+    /// Compile the synthetic library with Cargo while forcing the captured metadata and portable path coordinates.
+    fn compile_cargo_equivalence_fixture(
+        cargo: &str,
+        rustc: &Path,
+        package: &Path,
+        target: &Path,
+        host: &str,
+    ) -> Result<CargoEquivalenceArtifact, Box<dyn std::error::Error>> {
+        fs::create_dir_all(package.join("src"))?;
+        let cargo_home = package
+            .parent()
+            .ok_or("Cargo package has no parent")?
+            .join("cargo-home");
+        fs::create_dir(&cargo_home)?;
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"equivalence-fixture\"\nversion = \"1.0.0\"\nedition = \"2024\"\nbuild = \"build.rs\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[lints.rust]\nmissing_docs = \"warn\"\n\n[profile.release]\nstrip = \"debuginfo\"\n",
+        )?;
+        fs::write(
+            package.join("build.rs"),
+            "fn main() -> Result<(), Box<dyn std::error::Error>> {\n    let out = std::env::var_os(\"OUT_DIR\").ok_or(\"OUT_DIR missing\")?;\n    std::fs::write(std::path::Path::new(&out).join(\"generated.rs\"), \"const GENERATED: u32 = 1561;\\n\")?;\n    Ok(())\n}\n",
+        )?;
+        fs::write(
+            package.join("src/lib.rs"),
+            "//! Byte-equivalence fixture.\n\ninclude!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\nmod value;\n\n/// Return the issue number pinned by this fixture.\npub use value::answer;\n",
+        )?;
+        fs::write(
+            package.join("src/value.rs"),
+            "/// Return the issue number pinned by this fixture.\npub fn answer() -> u32 { crate::GENERATED }\n",
+        )?;
+        let output = Command::new(cargo)
+            .args([
+                "rustc",
+                "-vv",
+                "--offline",
+                "--release",
+                "--target",
+                host,
+                "--lib",
+                "--",
+            ])
+            .args(["--cap-lints", "warn"])
+            .current_dir(package)
+            .env("RUSTC", rustc)
+            .env("CARGO_HOME", cargo_home)
+            .env("CARGO_TARGET_DIR", target)
+            .env(
+                "RUSTFLAGS",
+                format!(
+                    "--remap-path-prefix={}=/incan/source --remap-path-prefix={}=/incan/target",
+                    package.display(),
+                    target.display()
+                ),
+            )
+            .output()?;
+        if !output.status.success() {
+            return Err(format!("Cargo fixture failed: {}", String::from_utf8_lossy(&output.stderr)).into());
+        }
+        let mut artifacts = Vec::new();
+        collect_equivalence_rlibs(target, &mut artifacts)?;
+        let [artifact] = artifacts.as_slice() else {
+            return Err(format!("Cargo fixture produced {} rlibs", artifacts.len()).into());
+        };
+        let filename = artifact
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Cargo rlib name is not UTF-8")?;
+        let extra_filename = filename
+            .strip_prefix("libequivalence_fixture")
+            .and_then(|name| name.strip_suffix(".rlib"))
+            .ok_or("Cargo rlib name has an unexpected shape")?;
+        let trace = String::from_utf8_lossy(&output.stderr).into_owned();
+        let metadata = trace
+            .split_whitespace()
+            .filter_map(|word| word.strip_prefix("metadata="))
+            .next_back()
+            .ok_or("Cargo trace has no metadata argument")?;
+        let dependency_search_path = trace
+            .split_whitespace()
+            .filter_map(|word| word.strip_prefix("dependency="))
+            .next_back()
+            .map(PathBuf::from)
+            .ok_or("Cargo trace has no dependency search path")?;
+        fs::remove_dir_all(target)?;
+        let replay = Command::new(cargo)
+            .args(["rustc", "--offline", "--release", "--target", host, "--lib", "--"])
+            .args(["--cap-lints", "warn"])
+            .current_dir(package)
+            .env("RUSTC", rustc)
+            .env(
+                "CARGO_HOME",
+                package
+                    .parent()
+                    .ok_or("Cargo package has no parent")?
+                    .join("cargo-home"),
+            )
+            .env("CARGO_TARGET_DIR", target)
+            .env(
+                "RUSTFLAGS",
+                format!(
+                    "--remap-path-prefix={}=/incan/source --remap-path-prefix={}=/incan/target",
+                    package.display(),
+                    target.display()
+                ),
+            )
+            .output()?;
+        if !replay.status.success() {
+            return Err(format!(
+                "Cargo fixture replay failed: {}",
+                String::from_utf8_lossy(&replay.stderr)
+            )
+            .into());
+        }
+        let mut replay_artifacts = Vec::new();
+        collect_equivalence_rlibs(target, &mut replay_artifacts)?;
+        let [replay_artifact] = replay_artifacts.as_slice() else {
+            return Err(format!("Cargo fixture replay produced {} rlibs", replay_artifacts.len()).into());
+        };
+        let mut generated_outputs = Vec::new();
+        collect_equivalence_generated_outputs(target, &mut generated_outputs)?;
+        let [generated_out_dir] = generated_outputs.as_slice() else {
+            return Err(format!(
+                "Cargo fixture produced {} generated OUT_DIR trees",
+                generated_outputs.len()
+            )
+            .into());
+        };
+        Ok(CargoEquivalenceArtifact {
+            artifact: replay_artifact.clone(),
+            generated_out_dir: generated_out_dir.clone(),
+            metadata: metadata.to_string(),
+            extra_filename: extra_filename.to_string(),
+            dependency_search_path,
+            trace,
+        })
+    }
+
+    /// Collect the synthetic build script's generated OUT_DIR without assuming Cargo's target layout.
+    fn collect_equivalence_generated_outputs(directory: &Path, outputs: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                collect_equivalence_generated_outputs(&path, outputs)?;
+            } else if entry.file_name() == "generated.rs" {
+                let parent = path.parent().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "generated output has no parent")
+                })?;
+                outputs.push(parent.to_path_buf());
+            }
+        }
+        Ok(())
+    }
+
+    /// Give the direct compiler the same Cargo package environment present during the reference build.
+    fn set_cargo_equivalence_environment(source: &mut OvenMaterializedRustFacetUnit, package: &Path) {
+        source.environment.clear();
+        source.environment.insert(
+            "CARGO_MANIFEST_DIR".to_string(),
+            OvenMaterializedRustFacetEnvironmentValue::Path(package.to_path_buf()),
+        );
+        source.environment.insert(
+            "CARGO_MANIFEST_PATH".to_string(),
+            OvenMaterializedRustFacetEnvironmentValue::Path(package.join("Cargo.toml")),
+        );
+        for (name, value) in [
+            ("CARGO_CRATE_NAME", "equivalence_fixture"),
+            ("CARGO_PKG_AUTHORS", ""),
+            ("CARGO_PKG_DESCRIPTION", ""),
+            ("CARGO_PKG_HOMEPAGE", ""),
+            ("CARGO_PKG_LICENSE", ""),
+            ("CARGO_PKG_LICENSE_FILE", ""),
+            ("CARGO_PKG_NAME", "equivalence-fixture"),
+            ("CARGO_PKG_README", ""),
+            ("CARGO_PKG_REPOSITORY", ""),
+            ("CARGO_PKG_RUST_VERSION", ""),
+            ("CARGO_PKG_VERSION", "1.0.0"),
+            ("CARGO_PKG_VERSION_MAJOR", "1"),
+            ("CARGO_PKG_VERSION_MINOR", "0"),
+            ("CARGO_PKG_VERSION_PATCH", "0"),
+            ("CARGO_PKG_VERSION_PRE", ""),
+            ("CARGO_PRIMARY_PACKAGE", "1"),
+        ] {
+            source.environment.insert(
+                name.to_string(),
+                OvenMaterializedRustFacetEnvironmentValue::Text(value.to_string()),
+            );
+        }
+    }
+
+    /// Report member-level evidence when a real Cargo rlib and its direct rebuild differ.
+    fn require_equal_equivalence_rlibs(
+        cargo_witness: &Path,
+        oven_artifact: &Path,
+        cargo_bytes: &[u8],
+        cargo_trace: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let oven_bytes = fs::read(oven_artifact)
+            .map_err(|error| format!("cannot read Oven artifact {}: {error}", oven_artifact.display()))?;
+        if cargo_bytes == oven_bytes {
+            return Ok(());
+        }
+        let cargo_members = Command::new("ar").arg("t").arg(cargo_witness).output()?;
+        let oven_members = Command::new("ar").arg("t").arg(oven_artifact).output()?;
+        let cargo_rmeta = Command::new("ar")
+            .args(["p", cargo_witness.to_string_lossy().as_ref(), "lib.rmeta"])
+            .output()?;
+        let oven_rmeta = Command::new("ar")
+            .args(["p", oven_artifact.to_string_lossy().as_ref(), "lib.rmeta"])
+            .output()?;
+        let object = String::from_utf8_lossy(&cargo_members.stdout)
+            .lines()
+            .find(|member| member.ends_with(".o"))
+            .ok_or("Cargo rlib has no object member")?
+            .to_string();
+        let cargo_object = Command::new("ar")
+            .args(["p", cargo_witness.to_string_lossy().as_ref(), &object])
+            .output()?;
+        let oven_object = Command::new("ar")
+            .args(["p", oven_artifact.to_string_lossy().as_ref(), &object])
+            .output()?;
+        Err(format!(
+            "Cargo and Oven rlibs differ; Cargo rmeta {}; Oven rmeta {}; Cargo object {}; Oven object {}; Cargo members: {}; Oven members: {}; Cargo trace: {cargo_trace}",
+            selected_graph_sha256(&cargo_rmeta.stdout),
+            selected_graph_sha256(&oven_rmeta.stdout),
+            selected_graph_sha256(&cargo_object.stdout),
+            selected_graph_sha256(&oven_object.stdout),
+            String::from_utf8_lossy(&cargo_members.stdout),
+            String::from_utf8_lossy(&oven_members.stdout)
+        )
+        .into())
+    }
+
+    /// A Cargo-selected synthetic library and the direct executor produce the same raw rlib bytes.
+    ///
+    /// The compiler suite runs without Cargo, so this comparison runs only when a publisher names a Cargo executable
+    /// in `INCAN_TEST_EQUIVALENCE_CARGO`; the release-family artifact-equivalence gate covers the same contract over
+    /// every governed unit.
+    #[test]
+    fn publisher_rebuild_matches_real_cargo_rlib_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let Some(cargo) = std::env::var_os("INCAN_TEST_EQUIVALENCE_CARGO") else {
+            return Ok(());
+        };
+        let cargo = cargo.to_string_lossy().into_owned();
+        let cargo = cargo.as_str();
+        let fixture = fixture()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+        let graph = fixture.foundation.selected_graph().graph();
+        let selected_identity = fixture
+            .materialized
+            .rebuild_order()
+            .next()
+            .ok_or("the fixture declares no rebuild unit")?;
+        let scratch = tempfile::tempdir()?;
+        let package = scratch.path().join("package");
+        let target = scratch.path().join("target");
+        let host = rustc_host_target(&fixture.rustc)?;
+        let cargo_output = compile_cargo_equivalence_fixture(cargo, &fixture.rustc, &package, &target, &host)?;
+        let cargo_artifact = cargo_output.artifact.clone();
+
+        let mut unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == selected_identity)
+            .ok_or("the first rebuild unit is absent from the selected graph")?
+            .clone();
+        unit.package = "equivalence-fixture".to_string();
+        unit.package_version = "1.0.0".to_string();
+        unit.crate_name = "equivalence_fixture".to_string();
+        unit.edition = "2024".to_string();
+        unit.compiler_crate_type = "lib".to_string();
+        unit.compiler_arguments = equivalence_compiler_arguments(&cargo_output.metadata, &cargo_output.extra_filename);
+        let cargo_output_directory = cargo_artifact
+            .parent()
+            .ok_or("Cargo artifact has no output directory")?
+            .strip_prefix(&target)?;
+        unit.compiler_paths = OvenSelectedRustFacetCompilerPaths {
+            root_module_is_relative: true,
+            source_root: "/incan/source".to_string(),
+            working_directory: "/incan/source".to_string(),
+            output_directory: Path::new("/incan/target")
+                .join(cargo_output_directory)
+                .to_string_lossy()
+                .into_owned(),
+            out_dir: Some(
+                Path::new("/incan/target")
+                    .join(cargo_output.generated_out_dir.strip_prefix(&target)?)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        };
+        let mut source = fixture
+            .materialized
+            .sources()
+            .unit(selected_identity)
+            .ok_or("the first rebuild unit was not materialized")?
+            .clone();
+        source.source_root = package.clone();
+        source.root_module = package.join("src/lib.rs");
+        set_cargo_equivalence_environment(&mut source, &package);
+        source.environment.insert(
+            "OUT_DIR".to_string(),
+            OvenMaterializedRustFacetEnvironmentValue::OutDir(".".to_string()),
+        );
+        source.generated_inputs = vec![(
+            "out_dir".to_string(),
+            cargo_output.generated_out_dir.clone(),
+            selected_graph_sha256(b"synthetic generated output"),
+        )];
+        source.linked_libraries.clear();
+        source.sysroot_externs.clear();
+        let cargo_bytes = fs::read(&cargo_artifact)
+            .map_err(|error| format!("cannot read Cargo artifact {}: {error}", cargo_artifact.display()))?;
+        let cargo_witness = scratch.path().join("cargo-witness.rlib");
+        fs::write(&cargo_witness, &cargo_bytes)?;
+        let oven_artifact = cargo_artifact.clone();
+        assert_eq!(
+            oven_artifact.file_name().and_then(|name| name.to_str()),
+            Some(runtime_rebuild_artifact_name(&unit, &host)?.as_str())
+        );
+        fs::remove_file(&oven_artifact)?;
+        let mut plan = fixture.materialized.artifact_plan().clone();
+        plan.dependency_search_paths = vec![cargo_output.dependency_search_path];
+        plan.native_search_paths.clear();
+        plan.compile_environment.clear();
+        compile_rebuild_unit(
+            &closure,
+            &unit,
+            &source,
+            &graph.selection,
+            std::ffi::OsStr::new(&host),
+            &plan,
+            &BTreeSet::new(),
+            &[],
+            &oven_artifact,
+        )?;
+        require_equal_equivalence_rlibs(&cargo_witness, &oven_artifact, &cargo_bytes, &cargo_output.trace)
     }
 
     /// A rebuilt registry unit can include source from its captured generated output through a private OUT_DIR.
@@ -1040,6 +1885,8 @@ pub(crate) mod tests {
         unit.crate_name = "velvet_fixture".to_string();
         unit.source.kind = OvenSelectedRustFacetSourceKind::Registry;
         unit.cfg = cfg.iter().map(|value| (*value).to_string()).collect();
+        unit.compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
 
         let scratch = tempfile::tempdir()?;
         let source_root = scratch.path().join("source");
@@ -1047,7 +1894,12 @@ pub(crate) mod tests {
         let output_root = scratch.path().join("build");
         fs::create_dir_all(&source_root)?;
         fs::create_dir_all(&output_root)?;
-        let root_module = source_root.join("lib.rs");
+        let root_module = if unit.compiler_paths.root_module_is_relative {
+            source_root.join(&unit.root_module)
+        } else {
+            source_root.join("lib.rs")
+        };
+        fs::create_dir_all(root_module.parent().ok_or("synthetic root module has no parent")?)?;
         fs::write(&root_module, source_text)?;
         let mut generated_inputs = Vec::new();
         if !generated.is_empty() {
@@ -1073,7 +1925,7 @@ pub(crate) mod tests {
         source.generated_inputs = generated_inputs;
         source.linked_libraries.clear();
         source.sysroot_externs.clear();
-        let artifact = output_root.join("libvelvet_fixture.rlib");
+        let artifact = output_root.join(runtime_rebuild_artifact_name(&unit, &graph.selection.host)?);
         compile_rebuild_unit(
             &closure,
             &unit,
@@ -1083,7 +1935,6 @@ pub(crate) mod tests {
             fixture.materialized.artifact_plan(),
             &BTreeSet::new(),
             &[],
-            &output_root,
             &artifact,
         )?;
         assert!(artifact.is_file());
@@ -1165,6 +2016,29 @@ pub(crate) mod tests {
             OvenSelectedRustFacetSourceKind::Registry => format!("registry:{crate_name}@{package_version}"),
             _ => selected_graph_sha256(crate_name.as_bytes()),
         };
+        let compiler_arguments = dependencies
+            .iter()
+            .map(|dependency| OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: dependency.alias.clone(),
+                metadata: false,
+            })
+            .chain([
+                OvenSelectedRustFacetCompilerArgument::Emit {
+                    value: "dep-info,metadata,link".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "metadata".to_string(),
+                    value: "runtime-fixture".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "extra-filename".to_string(),
+                    value: "-runtime-fixture".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::CapLints {
+                    value: "warn".to_string(),
+                },
+            ])
+            .collect();
         let mut unit = OvenSelectedRustFacetUnit {
             sysroot_externs: Vec::new(),
             identity: String::new(),
@@ -1186,7 +2060,9 @@ pub(crate) mod tests {
             source_members: members,
             features: Vec::new(),
             cfg: Vec::new(),
-            compiler_arguments: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments,
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.to_string(),
@@ -1703,11 +2579,14 @@ pub(crate) mod tests {
             .rebuild_order()
             .next()
             .ok_or("the fixture declares no rebuild unit")?;
-        let unit = graph
+        let mut unit = graph
             .units
             .iter()
             .find(|unit| unit.identity == selected_identity)
-            .ok_or("the first rebuild unit is absent from the selected graph")?;
+            .ok_or("the first rebuild unit is absent from the selected graph")?
+            .clone();
+        unit.compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
         let source = fixture
             .materialized
             .sources()
@@ -1716,14 +2595,13 @@ pub(crate) mod tests {
 
         let command = rebuild_unit_command(
             &closure,
-            unit,
+            &unit,
             source,
             &graph.selection,
             fixture.materialized.sources().compiler_target(),
             fixture.materialized.artifact_plan(),
             &BTreeSet::new(),
             &[],
-            output_root.path(),
             &output_root.path().join(format!("lib{}.rlib", unit.crate_name)),
             None,
         )?;

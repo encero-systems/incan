@@ -242,6 +242,18 @@ pub(crate) fn validate_selected_graph_compiler_arguments(
     for (index, argument) in arguments.iter().enumerate() {
         let argument_field = format!("{field}[{index}]");
         match argument {
+            OvenSelectedRustFacetCompilerArgument::Emit { value } => {
+                validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                if value
+                    .split(',')
+                    .any(|kind| !matches!(kind, "dep-info" | "metadata" | "link"))
+                {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains an unadmitted rustc emit kind",
+                    ));
+                }
+            }
             OvenSelectedRustFacetCompilerArgument::Codegen { name, value } => {
                 if !OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS.contains(&name.as_str()) {
                     return Err(selected_graph_invalid(
@@ -258,6 +270,12 @@ pub(crate) fn validate_selected_graph_compiler_arguments(
                         "contains a control character",
                     ));
                 }
+                if name == "link-arg" && !portable_proc_macro_install_name_argument(value) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "is not the admitted Apple proc-macro install-name argument",
+                    ));
+                }
             }
             OvenSelectedRustFacetCompilerArgument::CheckCfg { value } => {
                 validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
@@ -268,9 +286,54 @@ pub(crate) fn validate_selected_graph_compiler_arguments(
                     ));
                 }
             }
+            OvenSelectedRustFacetCompilerArgument::Cfg { value } => {
+                validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                if value.chars().any(char::is_control) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains a control character",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::CapLints { value } => {
+                if !matches!(value.as_str(), "allow" | "warn" | "deny" | "forbid") {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "is not a rustc lint level",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::Lint { level, name } => {
+                if !matches!(level.as_str(), "allow" | "warn" | "deny" | "forbid" | "force-warn") {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.level"),
+                        "lint level is not supported for deterministic replay",
+                    ));
+                }
+                validate_selected_graph_text(name, &format!("{argument_field}.name"))?;
+            }
+            OvenSelectedRustFacetCompilerArgument::Extern { alias, .. } => {
+                validate_selected_graph_alias(alias, &format!("{argument_field}.alias"))?;
+            }
         }
     }
     Ok(())
+}
+
+/// Admit only the Apple reproducibility and install-name arguments injected for proc-macro identity.
+fn portable_proc_macro_install_name_argument(value: &str) -> bool {
+    if matches!(value, "-install_name" | "-Wl,-reproducible") {
+        return true;
+    }
+    value
+        .strip_prefix("@rpath/lib")
+        .and_then(|name| name.strip_suffix(".dylib"))
+        .is_some_and(|name| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        })
 }
 
 /// Require one complete compiler cfg snapshot to use the sole graph wire spelling.

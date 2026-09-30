@@ -1787,6 +1787,13 @@ pub fn project_legacy_cargo_selected_graph_with_identities(
             let role = captured_role(capture_unit, crate_kind, domain)?;
             validate_registry_binding(capture_unit, binding, &sealed.owners)?;
             validate_source_owner(binding, &sealed.owners)?;
+            let compiler_crate_type = capture_unit.compiler_crate_type.clone().ok_or_else(|| {
+                projection_error("selected compiler crate type", "is absent from the traced invocation")
+            })?;
+            let compiler_paths = capture_unit
+                .compiler_paths
+                .clone()
+                .ok_or_else(|| projection_error("selected compiler paths", "are absent from the traced invocation"))?;
 
             let mut unit = OvenSelectedRustFacetUnit {
                 identity: String::new(),
@@ -1802,6 +1809,8 @@ pub fn project_legacy_cargo_selected_graph_with_identities(
                 source_members: source_members(capture_unit, binding)?,
                 features: capture_unit.effective_features.clone(),
                 cfg: build_script_facts.cfg,
+                compiler_crate_type,
+                compiler_paths,
                 compiler_arguments: capture_unit.compiler_arguments.clone(),
                 sysroot_externs: capture_unit.sysroot_externs.clone(),
                 environment,
@@ -2960,6 +2969,8 @@ mod tests {
                 platform: Some("x86_64-unknown-linux-gnu".to_string()),
                 target_is_explicit: Some(true),
                 cfg: vec!["target_has_atomic=\"8\"".to_string()],
+                compiler_crate_type: Some("lib".to_string()),
+                compiler_paths: Some(crate::fixture_captured_compiler_paths()),
                 compiler_arguments: vec![OvenSelectedRustFacetCompilerArgument::Codegen {
                     name: "embed-bitcode".to_string(),
                     value: "no".to_string(),
@@ -3300,15 +3311,25 @@ mod tests {
         unit.target_name = "aurora_macro".to_string();
         unit.target_kinds = vec!["proc-macro".to_string()];
         unit.crate_types = vec!["proc-macro".to_string()];
+        unit.compiler_crate_type = Some("proc-macro".to_string());
         unit.source_path = source.proc_macro_root.join("src/lib.rs");
         unit.platform = Some(host.to_string());
         unit.target_is_explicit = Some(false);
         unit.effective_features.clear();
         unit.cfg.clear();
-        unit.compiler_arguments = vec![OvenSelectedRustFacetCompilerArgument::Codegen {
-            name: "strip".to_string(),
-            value: "debuginfo".to_string(),
-        }];
+        unit.compiler_arguments = vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "strip".to_string(),
+                value: "debuginfo".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "extra-filename".to_string(),
+                value: "-fixture".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+        ];
         unit.compile_environment.clear();
         unit.sysroot_externs = vec!["proc_macro".to_string()];
         unit.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
@@ -3414,7 +3435,15 @@ mod tests {
         library.target_is_explicit = Some(true);
         library.effective_features.clear();
         library.cfg.clear();
-        library.compiler_arguments.clear();
+        library.compiler_arguments = vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "extra-filename".to_string(),
+                value: "-fixture".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+        ];
         library.compile_environment = BTreeMap::from([
             (
                 "CARGO_MANIFEST_DIR".to_string(),
@@ -3433,6 +3462,7 @@ mod tests {
         build_script.target_name = "build-script-build".to_string();
         build_script.target_kinds = vec!["custom-build".to_string()];
         build_script.crate_types = vec!["bin".to_string()];
+        build_script.compiler_crate_type = Some("bin".to_string());
         build_script.source_path = source.package_root.join("build.rs");
         build_script.root_module = "build.rs".to_string();
         build_script.mode = "run-custom-build".to_string();
@@ -3464,6 +3494,12 @@ mod tests {
                 build_script: None,
             },
         ];
+        library
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "aurora_macro".to_string(),
+                metadata: false,
+            });
         Ok((library, build_script))
     }
 
@@ -3492,6 +3528,13 @@ mod tests {
             extern_crate_name: Some("aurora_codec".to_string()),
             build_script: None,
         }];
+        root.compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
+        root.compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "aurora_codec".to_string(),
+                metadata: false,
+            });
         let capture = OvenLegacyCargoSelectedUnitCapture {
             roots: vec![0],
             units: vec![root, library, build_script, proc_macro],
@@ -4457,6 +4500,8 @@ mod tests {
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
             compiler_arguments: Vec::new(),
             compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
@@ -4725,6 +4770,12 @@ mod tests {
                 extern_crate_name: Some("renamed_serde".to_string()),
                 build_script: None,
             });
+        direct
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "renamed_serde".to_string(),
+                metadata: false,
+            });
         capture.units.push(direct.clone());
         let mut binding = sealed.units.get(&0).cloned().ok_or("missing fixture source binding")?;
         binding
@@ -4740,6 +4791,15 @@ mod tests {
             extern_crate_name: Some("renamed_serde".to_string()),
             build_script: None,
         }];
+        transport
+            .compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
+        transport
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "renamed_serde".to_string(),
+                metadata: false,
+            });
         capture.units.push(transport);
         capture.roots = vec![2];
         let manifest = ProjectManifest::from_str(
@@ -5003,6 +5063,8 @@ mod tests {
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
             compiler_arguments: Vec::new(),
             compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
@@ -5107,6 +5169,8 @@ mod tests {
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
             compiler_arguments: Vec::new(),
             compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),

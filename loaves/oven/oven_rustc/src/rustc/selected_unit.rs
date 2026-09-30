@@ -1620,6 +1620,8 @@ mod tests {
             source_members: members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
             compiler_arguments: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
