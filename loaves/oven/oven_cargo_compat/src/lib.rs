@@ -94,7 +94,7 @@ use oven_rustc::rustc::{
     OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
     OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind,
     OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-    clear_inherited_cargo_environment, rerooted_artifact_staging_source, rustc_host_and_target_cfg_snapshots,
+    clear_inherited_cargo_environment_for_cargo, rerooted_artifact_staging_source, rustc_host_and_target_cfg_snapshots,
     rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
     validate_project_extension_payload_against_base,
 };
@@ -3127,7 +3127,7 @@ pub fn stage_locked_loaf_fixture(
         .arg("--manifest-path")
         .arg(&manifest_path)
         .args(["--offline", "--format-version", "1"]);
-    clear_inherited_cargo_environment(&mut command);
+    clear_inherited_cargo_environment_for_cargo(&mut command);
     let output = command
         .output()
         .map_err(|source| OvenLegacyCargoError::Io { path: cargo, source })?;
@@ -3310,7 +3310,7 @@ fn run_legacy_cargo_invocation_with_native(
         path: stderr_path.clone(),
         source,
     })?;
-    clear_inherited_cargo_environment(&mut command);
+    clear_inherited_cargo_environment_for_cargo(&mut command);
     // ---- Deterministic path remapping for reproducible unit bytes ----
     // Cargo's `-<hash>` extra-filename and rustc's StableCrateId summarize declared unit inputs, so the same locked
     // unit compiles to the same identity on every machine — but the strict version hash also reflects absolute
