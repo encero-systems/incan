@@ -1,6 +1,6 @@
 //! Receipt-bound, hermetic publisher execution for native-link and generator work.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -14,10 +14,14 @@ use crate::process::{BoundedProcessTermination, run_bounded_process};
 ///
 /// Callers must verify the executable and complete input closure before this boundary and verify the complete output
 /// closure afterwards. The shared launcher admits reads only from those verified paths and writes only below the
-/// private product root. Hosts without an equivalent process-tree filesystem sandbox fail closed.
+/// private product root. Native compilers may additionally receive their caller-held immutable owner root so resource
+/// headers and a colocated SDK remain readable; generator tools retain executable-file-only access. Hosts without an
+/// equivalent process-tree filesystem sandbox fail closed.
 #[cfg(target_os = "macos")]
 fn run_hermetic_process(
     executable: &Path,
+    executable_read_path: &Path,
+    admit_executable_owner_root: bool,
     arguments: &[OsString],
     environment: &BTreeMap<String, OsString>,
     inputs: &[PathBuf],
@@ -28,7 +32,18 @@ fn run_hermetic_process(
     // spelled canonically or every write below it is refused.
     let product_root = std::fs::canonicalize(product_root)
         .map_err(|error| format!("could not resolve product root {}: {error}", product_root.display()))?;
-    let profile = macos_sandbox_profile(executable, &product_root, inputs);
+    let executable_read_path = std::fs::canonicalize(executable_read_path).map_err(|error| {
+        format!(
+            "could not resolve executable read path {}: {error}",
+            executable_read_path.display()
+        )
+    })?;
+    let profile = macos_sandbox_profile(
+        &executable_read_path,
+        admit_executable_owner_root,
+        &product_root,
+        inputs,
+    );
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command
         .arg("-p")
@@ -55,6 +70,8 @@ fn run_hermetic_process(
 #[cfg(not(target_os = "macos"))]
 fn run_hermetic_process(
     _executable: &Path,
+    _executable_read_path: &Path,
+    _admit_executable_owner_root: bool,
     _arguments: &[OsString],
     _environment: &BTreeMap<String, OsString>,
     _inputs: &[PathBuf],
@@ -70,28 +87,54 @@ fn run_hermetic_process(
 /// the root directory entry (the dynamic loader aborts the process without it), the system library trees, and `/bin/sh`
 /// together with `/private/var/select/sh`, the host's selection of the shell `/bin/sh` delegates to.
 #[cfg(target_os = "macos")]
-fn macos_sandbox_profile(executable: &Path, product_root: &Path, inputs: &[PathBuf]) -> String {
-    let mut reads = vec![
-        format!("(literal \"{}\")", sandbox_path(executable)),
+fn macos_sandbox_profile(
+    executable_read_path: &Path,
+    admit_executable_owner_root: bool,
+    product_root: &Path,
+    inputs: &[PathBuf],
+) -> String {
+    let mut reads = BTreeSet::from([
         "(literal \"/\")".to_string(),
         "(literal \"/bin/sh\")".to_string(),
         "(literal \"/private/var/select/sh\")".to_string(),
         "(subpath \"/usr/lib\")".to_string(),
         "(subpath \"/System/Library\")".to_string(),
-        format!("(subpath \"{}\")", sandbox_path(product_root)),
-    ];
-    reads.extend(inputs.iter().map(|path| {
-        if path.is_dir() {
+    ]);
+    reads.extend(sandbox_ancestor_literals(
+        executable_read_path,
+        admit_executable_owner_root,
+    ));
+    reads.insert(if admit_executable_owner_root {
+        format!("(subpath \"{}\")", sandbox_path(executable_read_path))
+    } else {
+        format!("(literal \"{}\")", sandbox_path(executable_read_path))
+    });
+    reads.extend(sandbox_ancestor_literals(product_root, true));
+    reads.insert(format!("(subpath \"{}\")", sandbox_path(product_root)));
+    for path in inputs {
+        let is_directory = path.is_dir();
+        reads.extend(sandbox_ancestor_literals(path, is_directory));
+        reads.insert(if is_directory {
             format!("(subpath \"{}\")", sandbox_path(path))
         } else {
             format!("(literal \"{}\")", sandbox_path(path))
-        }
-    }));
+        });
+    }
     format!(
         "(version 1)\n(deny default)\n(allow process*)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read* {})\n(allow file-write* (subpath \"{}\"))\n",
-        reads.join(" "),
+        reads.into_iter().collect::<Vec<_>>().join(" "),
         sandbox_path(product_root),
     )
+}
+
+/// Admit metadata reads for a path's exact ancestor entries without admitting their sibling contents.
+#[cfg(target_os = "macos")]
+fn sandbox_ancestor_literals(path: &Path, include_path: bool) -> Vec<String> {
+    path.ancestors()
+        .skip(usize::from(!include_path))
+        .filter(|ancestor| *ancestor != Path::new("/"))
+        .map(|ancestor| format!("(literal \"{}\")", sandbox_path(ancestor)))
+        .collect()
 }
 
 /// Escape one canonical path for a Seatbelt string literal.
@@ -660,6 +703,8 @@ mod tool_execution {
         let inputs = inputs.values().cloned().collect::<Vec<_>>();
         super::run_hermetic_process(
             executable,
+            executable,
+            false,
             &arguments,
             &environment,
             &inputs,
@@ -1105,16 +1150,19 @@ mod link_execution {
 
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
-    use std::io::Write;
+    use std::io::{Cursor, Write};
     use std::path::{Component, Path, PathBuf};
 
     use serde::{Deserialize, Serialize};
+
+    use ar_archive_writer::{ArchiveKind, NewArchiveMember, write_archive_to_stream};
+    use oven_model::manifest::{RustFactArtifactKind, RustFactArtifactMember};
 
     use crate::digest_bytes;
     use crate::process::BoundedProcessLimits;
 
     /// Current wire format for a publisher execution receipt.
-    pub const PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION: u32 = 1;
+    pub const PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION: u32 = 2;
     /// Asset-relative file carrying the producer receipt beside publisher products.
     pub const PUBLISHER_EXECUTION_RECEIPT_FILE: &str = "publisher-receipt.json";
 
@@ -1129,7 +1177,7 @@ mod link_execution {
         Output(&'a str),
     }
 
-    /// One exact regular-file input admitted for publisher execution.
+    /// One exact file or complete tree input admitted for publisher execution.
     #[derive(Debug, Clone)]
     pub struct PublisherExecutionInput<'a> {
         /// Invocation-local logical name.
@@ -1138,15 +1186,19 @@ mod link_execution {
         pub path: PathBuf,
         /// Expected `sha256:` byte identity.
         pub digest: String,
+        /// Whether this input is one file or a complete tree.
+        pub kind: RustFactArtifactKind,
+        /// Complete sorted member catalog for a tree; empty for a file.
+        pub members: Vec<RustFactArtifactMember>,
     }
 
-    /// One exact regular-file output contract below the private product root.
-    #[derive(Debug, Clone, Copy)]
-    pub struct PublisherExecutionOutput<'a> {
-        /// Invocation-local logical name.
+    /// One explicit object compilation and its literal output contract.
+    #[derive(Debug, Clone)]
+    pub struct PublisherExecutionObject<'a> {
+        /// Portable relative object-file name.
         pub name: &'a str,
-        /// Portable path below [`PublisherExecutionRequest::output_root`].
-        pub relative_path: &'a str,
+        /// Ordered compiler arguments for this object only.
+        pub arguments: Vec<PublisherExecutionArgument<'a>>,
     }
 
     /// One declared environment value for publisher execution.
@@ -1168,22 +1220,26 @@ mod link_execution {
         pub consuming_unit_identity: &'a str,
         /// Exact target association.
         pub target: &'a str,
+        /// Resolved rustc target archive format (`darwin`, `bsd`, `gnu`, or `coff`).
+        pub archive_format: &'a str,
         /// Exact selected toolchain identity.
         pub toolchain: &'a str,
         /// Already selected physical executable.
         pub executable: &'a Path,
+        /// Caller-held immutable root that owns the executable and its installation resources.
+        pub executable_owner_root: &'a Path,
         /// Immutable owner identity of the executable.
         pub executable_owner: &'a str,
         /// Expected executable byte identity.
         pub executable_digest: &'a str,
-        /// Ordered declared arguments.
-        pub arguments: Vec<PublisherExecutionArgument<'a>>,
+        /// Sorted explicit object compilations.
+        pub objects: Vec<PublisherExecutionObject<'a>>,
         /// Complete declared environment. The child inherits no ambient values.
         pub environment: BTreeMap<&'a str, PublisherExecutionEnvironmentValue<'a>>,
         /// Complete declared regular-file inputs.
         pub inputs: Vec<PublisherExecutionInput<'a>>,
-        /// Complete declared regular-file outputs.
-        pub outputs: Vec<PublisherExecutionOutput<'a>>,
+        /// Portable archive path written by the Oven after object compilation.
+        pub archive_relative_path: &'a str,
         /// Fresh private directory in which outputs must appear.
         pub output_root: &'a Path,
         /// Physical execution bounds.
@@ -1192,6 +1248,18 @@ mod link_execution {
 
     /// Shared verified publisher product shape; link products are file-valued instances with an empty member list.
     pub type PublisherExecutionProduct = super::OvenPublisherToolProduct;
+
+    /// Receipt evidence for one compiler invocation and the exact object bytes it produced.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct PublisherExecutionObjectReceipt {
+        /// Portable object and archive-member name.
+        pub name: String,
+        /// Relocation-independent ordered compiler argument projection.
+        pub logical_argv: Vec<String>,
+        /// Exact object byte identity before archive construction.
+        pub digest: String,
+    }
 
     /// Receipt sealing one publisher-only execution and its complete product set.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1209,14 +1277,16 @@ mod link_execution {
         pub consuming_unit_identity: String,
         /// Exact target association.
         pub target: String,
+        /// Resolved rustc target archive format used by the in-process writer.
+        pub archive_format: String,
         /// Exact toolchain identity.
         pub toolchain: String,
         /// Immutable executable owner identity.
         pub executable_owner: String,
         /// Executable byte identity.
         pub executable_digest: String,
-        /// Relocation-independent ordered argument projection.
-        pub logical_argv: Vec<String>,
+        /// Sorted per-object compiler argument and byte identities.
+        pub objects: Vec<PublisherExecutionObjectReceipt>,
         /// Relocation-independent declared environment projection.
         pub logical_environment: BTreeMap<String, String>,
         /// Logical input names and exact byte identities.
@@ -1233,6 +1303,51 @@ mod link_execution {
                     "unsupported schema version".to_string(),
                 ));
             }
+            if self.role != "link"
+                || !matches!(self.archive_format.as_str(), "darwin" | "bsd" | "gnu" | "coff")
+                || self.objects.is_empty()
+                || self.objects.windows(2).any(|pair| pair[0].name >= pair[1].name)
+                || self.objects.iter().any(|object| {
+                    let expected_output = format!("output:{}", object.name);
+                    let output_count = object
+                        .logical_argv
+                        .iter()
+                        .filter(|argument| argument.starts_with("output:"))
+                        .count();
+                    Path::new(&object.name).components().count() != 1
+                        || !object.name.ends_with(".o")
+                        || !is_sha256_digest(&object.digest)
+                        || output_count != 1
+                        || !object.logical_argv.iter().any(|argument| argument == &expected_output)
+                        || !object
+                            .logical_argv
+                            .iter()
+                            .any(|argument| argument.starts_with("input:"))
+                })
+                || self.inputs.keys().any(|input| {
+                    self.objects.iter().any(|object| object.name == *input)
+                        || !self.objects.iter().any(|object| {
+                            object
+                                .logical_argv
+                                .iter()
+                                .any(|argument| argument == &format!("input:{input}"))
+                        })
+                })
+                || self.objects.iter().any(|object| {
+                    object
+                        .logical_argv
+                        .iter()
+                        .filter_map(|argument| argument.strip_prefix("input:"))
+                        .any(|input| !self.inputs.contains_key(input))
+                })
+                || self.inputs.values().any(|digest| !is_sha256_digest(digest))
+                || self.outputs.len() != 1
+                || self.outputs.iter().any(|output| !is_sha256_digest(&output.digest))
+            {
+                return Err(PublisherExecutionError::InvalidReceipt(
+                    "link receipt has malformed archive, object, input, or output evidence".to_string(),
+                ));
+            }
             let actual = publisher_execution_receipt_identity(self)?;
             if actual != self.identity {
                 return Err(PublisherExecutionError::InvalidReceipt(format!(
@@ -1242,6 +1357,15 @@ mod link_execution {
             }
             Ok(())
         }
+    }
+
+    /// Whether one value is a canonical lowercase SHA-256 identity.
+    fn is_sha256_digest(value: &str) -> bool {
+        value.len() == 71
+            && value.starts_with("sha256:")
+            && value[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     }
 
     /// Successful publisher execution paired with the receipt that admits its products.
@@ -1295,22 +1419,40 @@ mod link_execution {
             path: request.output_root.to_path_buf(),
             source,
         })?;
-        let outputs = declared_outputs(&output_root, &request.outputs)?;
-
-        let (arguments, logical_argv) = materialize_arguments(&request.arguments, &inputs, &outputs)?;
+        let object_paths = declared_objects(&output_root, &request.objects)?;
+        validate_object_arguments(&request.objects, &inputs, &object_paths)?;
         let (environment, logical_environment) = materialize_environment(&request.environment, &inputs)?;
         let input_paths = inputs.values().cloned().collect::<Vec<_>>();
-        super::run_hermetic_process(
-            &executable,
-            &arguments,
-            &environment,
-            &input_paths,
-            &output_root,
-            request.limits,
-        )
-        .map_err(PublisherExecutionError::Execution)?;
+        let mut logical_arguments = BTreeMap::new();
+        for object in &request.objects {
+            let object_path = object_paths.get(object.name).ok_or_else(|| {
+                PublisherExecutionError::Invalid(format!("object `{}` lost its declared output path", object.name))
+            })?;
+            let outputs = BTreeMap::from([(object.name.to_string(), object_path.clone())]);
+            let (arguments, logical_argv) = materialize_arguments(&object.arguments, &inputs, &outputs)?;
+            super::run_hermetic_process(
+                &executable,
+                request.executable_owner_root,
+                true,
+                &arguments,
+                &environment,
+                &input_paths,
+                &output_root,
+                request.limits,
+            )
+            .map_err(PublisherExecutionError::Execution)?;
+            logical_arguments.insert(object.name, logical_argv);
+        }
 
-        let products = verify_complete_outputs(&output_root, &request.outputs)?;
+        let objects = verify_complete_objects(&output_root, &request.objects, &logical_arguments)?;
+        let archive = write_archive(request, &output_root, &object_paths)?;
+        for path in object_paths.values() {
+            fs::remove_file(path).map_err(|source| PublisherExecutionError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        }
+        let products = vec![archive];
         let mut receipt = PublisherExecutionReceipt {
             schema_version: PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION,
             identity: String::new(),
@@ -1318,10 +1460,11 @@ mod link_execution {
             name: request.name.to_string(),
             consuming_unit_identity: request.consuming_unit_identity.to_string(),
             target: request.target.to_string(),
+            archive_format: request.archive_format.to_string(),
             toolchain: request.toolchain.to_string(),
             executable_owner: request.executable_owner.to_string(),
             executable_digest: request.executable_digest.to_string(),
-            logical_argv,
+            objects,
             logical_environment,
             inputs: request
                 .inputs
@@ -1348,10 +1491,11 @@ mod link_execution {
             name: &'a str,
             consuming_unit_identity: &'a str,
             target: &'a str,
+            archive_format: &'a str,
             toolchain: &'a str,
             executable_owner: &'a str,
             executable_digest: &'a str,
-            logical_argv: &'a [String],
+            objects: &'a [PublisherExecutionObjectReceipt],
             logical_environment: &'a BTreeMap<String, String>,
             inputs: &'a BTreeMap<String, String>,
             outputs: &'a [PublisherExecutionProduct],
@@ -1362,10 +1506,11 @@ mod link_execution {
             name: &receipt.name,
             consuming_unit_identity: &receipt.consuming_unit_identity,
             target: &receipt.target,
+            archive_format: &receipt.archive_format,
             toolchain: &receipt.toolchain,
             executable_owner: &receipt.executable_owner,
             executable_digest: &receipt.executable_digest,
-            logical_argv: &receipt.logical_argv,
+            objects: &receipt.objects,
             logical_environment: &receipt.logical_environment,
             inputs: &receipt.inputs,
             outputs: &receipt.outputs,
@@ -1467,14 +1612,25 @@ mod link_execution {
         })
     }
 
-    /// Verify the complete uniquely named regular-file input map.
+    /// Verify the complete uniquely named file-or-tree input map.
     fn verified_inputs(
         declared: &[PublisherExecutionInput<'_>],
     ) -> Result<BTreeMap<String, PathBuf>, PublisherExecutionError> {
         let mut inputs = BTreeMap::new();
         for input in declared {
             validate_name(input.name, "input name")?;
-            let path = verified_file(&input.path, &input.digest, "input")?;
+            let path = match input.kind {
+                RustFactArtifactKind::File => {
+                    if !input.members.is_empty() {
+                        return Err(PublisherExecutionError::Invalid(format!(
+                            "file input `{}` cannot declare tree members",
+                            input.name
+                        )));
+                    }
+                    verified_file(&input.path, &input.digest, "input")?
+                }
+                RustFactArtifactKind::Tree => verified_tree(input)?,
+            };
             if inputs.insert(input.name.to_string(), path).is_some() {
                 return Err(PublisherExecutionError::Invalid(format!(
                     "input `{}` is declared twice",
@@ -1485,16 +1641,107 @@ mod link_execution {
         Ok(inputs)
     }
 
-    /// Resolve and validate uniquely named output paths without creating them.
-    fn declared_outputs(
+    /// Verify one complete tree input without following symlinks or accepting undeclared members.
+    fn verified_tree(input: &PublisherExecutionInput<'_>) -> Result<PathBuf, PublisherExecutionError> {
+        let metadata = fs::symlink_metadata(&input.path).map_err(|source| PublisherExecutionError::Io {
+            path: input.path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(PublisherExecutionError::Invalid(format!(
+                "tree input {} must be a real directory",
+                input.path.display()
+            )));
+        }
+        let canonical = fs::canonicalize(&input.path).map_err(|source| PublisherExecutionError::Io {
+            path: input.path.clone(),
+            source,
+        })?;
+        let mut members = Vec::new();
+        collect_input_tree_members(&canonical, &canonical, &mut members)?;
+        members.sort_by(|left, right| left.path.cmp(&right.path));
+        if members != input.members {
+            return Err(PublisherExecutionError::Invalid(format!(
+                "tree input `{}` does not match its complete member catalog",
+                input.name
+            )));
+        }
+        let bytes = serde_json::to_vec(&("incan.oven.publisher-artifact-tree/1", &members)).map_err(|error| {
+            PublisherExecutionError::Invalid(format!("tree input `{}` cannot be digested: {error}", input.name))
+        })?;
+        let actual = digest_bytes(&bytes);
+        if actual != input.digest {
+            return Err(PublisherExecutionError::Invalid(format!(
+                "tree input `{}` digest mismatch: expected {}, got {actual}",
+                input.name, input.digest
+            )));
+        }
+        Ok(canonical)
+    }
+
+    /// Recursively collect one tree input's portable regular-file member catalog.
+    fn collect_input_tree_members(
         root: &Path,
-        declared: &[PublisherExecutionOutput<'_>],
+        directory: &Path,
+        members: &mut Vec<RustFactArtifactMember>,
+    ) -> Result<(), PublisherExecutionError> {
+        let entries = fs::read_dir(directory).map_err(|source| PublisherExecutionError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| PublisherExecutionError::Io {
+                path: directory.to_path_buf(),
+                source,
+            })?;
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|source| PublisherExecutionError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            if file_type.is_symlink() {
+                return Err(PublisherExecutionError::Invalid(format!(
+                    "tree input {} contains a symlink",
+                    root.display()
+                )));
+            }
+            if file_type.is_dir() {
+                collect_input_tree_members(root, &path, members)?;
+            } else if file_type.is_file() {
+                let relative = path.strip_prefix(root).map_err(|_| {
+                    PublisherExecutionError::Invalid("tree input member escaped its declared root".to_string())
+                })?;
+                members.push(RustFactArtifactMember {
+                    path: relative.to_string_lossy().replace('\\', "/"),
+                    digest: digest_bytes(&fs::read(&path).map_err(|source| PublisherExecutionError::Io {
+                        path: path.clone(),
+                        source,
+                    })?),
+                });
+            } else {
+                return Err(PublisherExecutionError::Invalid(format!(
+                    "tree input {} contains a special file",
+                    root.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve and validate the sorted unique object paths without creating them.
+    fn declared_objects(
+        root: &Path,
+        declared: &[PublisherExecutionObject<'_>],
     ) -> Result<BTreeMap<String, PathBuf>, PublisherExecutionError> {
+        if declared.is_empty() || declared.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+            return Err(PublisherExecutionError::Invalid(
+                "objects must be non-empty and sorted by unique name".to_string(),
+            ));
+        }
         let mut outputs = BTreeMap::new();
         let mut paths = BTreeSet::new();
-        for output in declared {
-            validate_name(output.name, "output name")?;
-            let relative = Path::new(output.relative_path);
+        for object in declared {
+            let relative = Path::new(object.name);
             if relative.as_os_str().is_empty()
                 || relative.is_absolute()
                 || relative
@@ -1502,24 +1749,90 @@ mod link_execution {
                     .any(|component| !matches!(component, Component::Normal(_)))
             {
                 return Err(PublisherExecutionError::Invalid(format!(
-                    "output `{}` has non-portable path `{}`",
-                    output.name, output.relative_path
+                    "object `{}` has a non-portable path",
+                    object.name
                 )));
             }
-            if !paths.insert(output.relative_path) {
+            if relative.components().count() != 1 || !object.name.ends_with(".o") {
                 return Err(PublisherExecutionError::Invalid(format!(
-                    "output path `{}` is declared twice",
-                    output.relative_path
+                    "object `{}` must be one portable `.o` file name",
+                    object.name
                 )));
             }
-            if outputs.insert(output.name.to_string(), root.join(relative)).is_some() {
+            if !paths.insert(object.name) {
                 return Err(PublisherExecutionError::Invalid(format!(
-                    "output `{}` is declared twice",
-                    output.name
+                    "object path `{}` is declared twice",
+                    object.name
+                )));
+            }
+            outputs.insert(object.name.to_string(), root.join(relative));
+        }
+        Ok(outputs)
+    }
+
+    /// Validate the closed per-object input/output reference contract before any compiler invocation runs.
+    fn validate_object_arguments(
+        objects: &[PublisherExecutionObject<'_>],
+        inputs: &BTreeMap<String, PathBuf>,
+        outputs: &BTreeMap<String, PathBuf>,
+    ) -> Result<(), PublisherExecutionError> {
+        let mut referenced_inputs = BTreeSet::new();
+        for object in objects {
+            if inputs.contains_key(object.name) {
+                return Err(PublisherExecutionError::Invalid(format!(
+                    "logical name `{}` is claimed as both an input and object",
+                    object.name
+                )));
+            }
+            let mut object_inputs = BTreeSet::new();
+            let mut object_outputs = Vec::new();
+            for argument in &object.arguments {
+                match argument {
+                    PublisherExecutionArgument::Literal(literal) if *literal == object.name => {
+                        return Err(PublisherExecutionError::Invalid(format!(
+                            "object `{}` output must use an output reference, not a literal",
+                            object.name
+                        )));
+                    }
+                    PublisherExecutionArgument::Input(input) => {
+                        if !inputs.contains_key(*input) {
+                            return Err(PublisherExecutionError::Invalid(format!(
+                                "object `{}` references undeclared input `{input}`",
+                                object.name
+                            )));
+                        }
+                        object_inputs.insert(*input);
+                        referenced_inputs.insert(*input);
+                    }
+                    PublisherExecutionArgument::Output(output) => object_outputs.push(*output),
+                    PublisherExecutionArgument::Literal(_) => {}
+                }
+            }
+            if object_outputs.len() != 1 || object_outputs[0] != object.name {
+                return Err(PublisherExecutionError::Invalid(format!(
+                    "object `{}` must reference exactly its own output",
+                    object.name
+                )));
+            }
+            if !outputs.contains_key(object_outputs[0]) {
+                return Err(PublisherExecutionError::Invalid(format!(
+                    "object `{}` references undeclared output `{}`",
+                    object.name, object_outputs[0]
+                )));
+            }
+            if object_inputs.is_empty() {
+                return Err(PublisherExecutionError::Invalid(format!(
+                    "object `{}` must reference at least one input",
+                    object.name
                 )));
             }
         }
-        Ok(outputs)
+        if let Some(input) = inputs.keys().find(|input| !referenced_inputs.contains(input.as_str())) {
+            return Err(PublisherExecutionError::Invalid(format!(
+                "declared input `{input}` is not referenced by any object"
+            )));
+        }
+        Ok(())
     }
 
     /// Create a fresh private output root and refuse any collision.
@@ -1627,44 +1940,133 @@ mod link_execution {
         Ok((physical, logical))
     }
 
-    /// Verify that the product root contains exactly the declared regular files.
-    fn verify_complete_outputs(
+    /// Verify that the product root contains exactly the declared objects and bind their logical arguments and bytes.
+    fn verify_complete_objects(
         root: &Path,
-        declared: &[PublisherExecutionOutput<'_>],
-    ) -> Result<Vec<PublisherExecutionProduct>, PublisherExecutionError> {
+        declared: &[PublisherExecutionObject<'_>],
+        logical_arguments: &BTreeMap<&str, Vec<String>>,
+    ) -> Result<Vec<PublisherExecutionObjectReceipt>, PublisherExecutionError> {
         let expected = declared
             .iter()
-            .map(|output| output.relative_path.to_string())
+            .map(|object| object.name.to_string())
             .collect::<BTreeSet<_>>();
         let mut actual = BTreeSet::new();
         collect_output_files(root, root, &mut actual)?;
         if let Some(missing) = expected.difference(&actual).next() {
             return Err(PublisherExecutionError::Invalid(format!(
-                "declared output `{missing}` is missing"
+                "declared object `{missing}` is missing"
             )));
         }
         if let Some(extra) = actual.difference(&expected).next() {
             return Err(PublisherExecutionError::Invalid(format!(
-                "undeclared output `{extra}` was produced"
+                "undeclared object `{extra}` was produced"
             )));
         }
         declared
             .iter()
-            .map(|output| {
-                let path = root.join(output.relative_path);
+            .map(|object| {
+                let path = root.join(object.name);
                 let bytes = fs::read(&path).map_err(|source| PublisherExecutionError::Io {
                     path: path.clone(),
                     source,
                 })?;
-                Ok(PublisherExecutionProduct {
-                    name: output.name.to_string(),
-                    kind: oven_model::manifest::RustFactArtifactKind::File,
-                    path: output.relative_path.to_string(),
+                Ok(PublisherExecutionObjectReceipt {
+                    name: object.name.to_string(),
+                    logical_argv: logical_arguments.get(object.name).cloned().ok_or_else(|| {
+                        PublisherExecutionError::Invalid(format!(
+                            "object `{}` has no compiler invocation evidence",
+                            object.name
+                        ))
+                    })?,
                     digest: digest_bytes(&bytes),
-                    members: Vec::new(),
                 })
             })
             .collect()
+    }
+
+    /// Write one deterministic indexed static archive from the verified object set.
+    fn write_archive(
+        request: &PublisherExecutionRequest<'_>,
+        root: &Path,
+        object_paths: &BTreeMap<String, PathBuf>,
+    ) -> Result<PublisherExecutionProduct, PublisherExecutionError> {
+        let relative = Path::new(request.archive_relative_path);
+        if relative.as_os_str().is_empty()
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+            || object_paths.contains_key(request.archive_relative_path)
+        {
+            return Err(PublisherExecutionError::Invalid(format!(
+                "archive path `{}` is not portable or collides with an object",
+                request.archive_relative_path
+            )));
+        }
+        let object_bytes = object_paths
+            .iter()
+            .map(|(name, path)| {
+                fs::read(path)
+                    .map(|bytes| (name.as_str(), bytes))
+                    .map_err(|source| PublisherExecutionError::Io {
+                        path: path.clone(),
+                        source,
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let members = object_bytes
+            .iter()
+            .map(|(name, bytes)| {
+                NewArchiveMember::new(
+                    bytes.as_slice(),
+                    &ar_archive_writer::DEFAULT_OBJECT_READER,
+                    (*name).to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut archive = Cursor::new(Vec::new());
+        write_archive_to_stream(
+            &mut archive,
+            &members,
+            archive_kind(request.archive_format)?,
+            false,
+            Some(request.target.starts_with("arm64ec-")),
+        )
+        .map_err(|error| PublisherExecutionError::Invalid(format!("could not write static archive: {error}")))?;
+        let bytes = archive.into_inner();
+        let path = root.join(relative);
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|source| PublisherExecutionError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        file.write_all(&bytes).map_err(|source| PublisherExecutionError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        Ok(PublisherExecutionProduct {
+            name: "archive".to_string(),
+            kind: oven_model::manifest::RustFactArtifactKind::File,
+            path: request.archive_relative_path.to_string(),
+            digest: digest_bytes(&bytes),
+            members: Vec::new(),
+        })
+    }
+
+    /// Select exactly the indexed archive format resolved by rustc's target specification.
+    fn archive_kind(format: &str) -> Result<ArchiveKind, PublisherExecutionError> {
+        match format {
+            "darwin" => Ok(ArchiveKind::Darwin),
+            "bsd" => Ok(ArchiveKind::Bsd),
+            "gnu" => Ok(ArchiveKind::Gnu),
+            "coff" => Ok(ArchiveKind::Coff),
+            unsupported => Err(PublisherExecutionError::Invalid(format!(
+                "rustc target archive format `{unsupported}` is not supported for publisher link records"
+            ))),
+        }
     }
 
     /// Walk publisher products without following symlinks or accepting empty undeclared directories.
@@ -1720,8 +2122,8 @@ mod link_execution {
         use tempfile::tempdir;
 
         use super::{
-            PublisherExecutionArgument, PublisherExecutionError, PublisherExecutionInput, PublisherExecutionOutput,
-            PublisherExecutionRequest, execute_publisher_work,
+            PublisherExecutionArgument, PublisherExecutionError, PublisherExecutionInput, PublisherExecutionObject,
+            PublisherExecutionRequest, RustFactArtifactKind, execute_publisher_work,
         };
         use crate::digest_bytes;
         use crate::process::BoundedProcessLimits;
@@ -1744,7 +2146,7 @@ mod link_execution {
             matches!(error, PublisherExecutionError::Execution(message) if message.contains("sandbox_apply: Operation not permitted"))
         }
 
-        /// Build the common one-input, one-output fake compiler request.
+        /// Build the common one-input, one-object fake compiler request.
         fn request<'a>(
             executable: &'a std::path::Path,
             executable_digest: &'a str,
@@ -1756,24 +2158,31 @@ mod link_execution {
                 name: "fixture-native",
                 consuming_unit_identity: "sha256:consumer",
                 target: "aarch64-apple-darwin",
+                archive_format: "darwin",
                 toolchain: "rustc fixture",
                 executable,
+                executable_owner_root: executable
+                    .parent()
+                    .ok_or("executable has no owner root")
+                    .unwrap_or(executable),
                 executable_owner: "sha256:compiler",
                 executable_digest,
-                arguments: vec![
-                    PublisherExecutionArgument::Input("source"),
-                    PublisherExecutionArgument::Literal("libfixture.a"),
-                ],
+                objects: vec![PublisherExecutionObject {
+                    name: "fixture.o",
+                    arguments: vec![
+                        PublisherExecutionArgument::Input("source"),
+                        PublisherExecutionArgument::Output("fixture.o"),
+                    ],
+                }],
                 environment: BTreeMap::new(),
                 inputs: vec![PublisherExecutionInput {
                     name: "source",
                     path: source.to_path_buf(),
                     digest: digest_bytes(b"source"),
+                    kind: RustFactArtifactKind::File,
+                    members: Vec::new(),
                 }],
-                outputs: vec![PublisherExecutionOutput {
-                    name: "archive",
-                    relative_path: "libfixture.a",
-                }],
+                archive_relative_path: "libfixture.a",
                 output_root,
                 limits: BoundedProcessLimits {
                     stdout_bytes: 1024,
@@ -1785,7 +2194,7 @@ mod link_execution {
 
         #[test]
         /// A successful publisher run retains exact argv and complete product evidence.
-        fn publisher_execution_receipts_exact_argv_and_output() -> Result<(), Box<dyn Error>> {
+        fn publisher_execution_receipts_exact_object_argv_and_digest() -> Result<(), Box<dyn Error>> {
             let root = tempdir()?;
             let compiler = root.path().join("fake-compiler");
             let source = root.path().join("source.c");
@@ -1799,15 +2208,18 @@ mod link_execution {
                 Err(error) => return Err(error.into()),
             };
 
-            assert_eq!(product.outputs[0].digest, digest_bytes(b"source"));
-            assert_eq!(product.receipt.logical_argv, ["input:source", "literal:libfixture.a"]);
+            assert_eq!(product.receipt.objects[0].digest, digest_bytes(b"source"));
+            assert_eq!(
+                product.receipt.objects[0].logical_argv,
+                ["input:source", "output:fixture.o"]
+            );
             product.receipt.verify_identity()?;
             Ok(())
         }
 
         #[test]
         /// Missing and undeclared products both fail the closed output contract.
-        fn publisher_execution_refuses_missing_and_extra_outputs() -> Result<(), Box<dyn Error>> {
+        fn publisher_execution_refuses_missing_and_extra_objects() -> Result<(), Box<dyn Error>> {
             let root = tempdir()?;
             let source = root.path().join("source.c");
             fs::write(&source, b"source")?;
@@ -1830,7 +2242,7 @@ mod link_execution {
             let extra = root.path().join("extra-compiler");
             let extra_digest = executable(
                 &extra,
-                &format!("{COPY_INPUT_TO_OUTPUT}\nprintf '%s' \"$content\" > extra.a"),
+                &format!("{COPY_INPUT_TO_OUTPUT}\nprintf '%s' \"$content\" > extra.o"),
             )?;
             let error = execute_publisher_work(&request(
                 &extra,

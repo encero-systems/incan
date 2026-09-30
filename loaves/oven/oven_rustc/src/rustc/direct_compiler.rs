@@ -23,12 +23,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use oven_model::manifest::{
-    RustFactArgument, RustFactArtifactKind, RustFactEnvironment, RustFactLibraryKind, RustFactLink,
-};
+use oven_model::manifest::{RustFactArgument, RustFactEnvironment, RustFactLibraryKind, RustFactLink};
 use oven_store::process::BoundedProcessLimits;
 use oven_store::publisher_execution::{
-    PublisherExecutionArgument, PublisherExecutionEnvironmentValue, PublisherExecutionInput, PublisherExecutionOutput,
+    PublisherExecutionArgument, PublisherExecutionEnvironmentValue, PublisherExecutionInput, PublisherExecutionObject,
     PublisherExecutionReceipt, PublisherExecutionRequest, execute_publisher_work,
 };
 
@@ -50,6 +48,8 @@ pub struct OvenPublisherLinkBakeRequest<'a> {
     pub link: &'a RustFactLink,
     /// Exact target selected for the consuming Rust unit.
     pub selected_target: &'a str,
+    /// Archive format resolved from the selected rustc target specification.
+    pub archive_format: &'a str,
     /// Exact toolchain identity selected for the consuming closure.
     pub toolchain: &'a str,
     /// Source-selected unit identity before this product owner is attached.
@@ -93,6 +93,14 @@ pub struct OvenPublisherLinkProduct {
 pub fn bake_publisher_link(
     request: &OvenPublisherLinkBakeRequest<'_>,
 ) -> Result<OvenPublisherLinkProduct, OvenRustcError> {
+    if request.link.library.kind == RustFactLibraryKind::Dynamic {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link library",
+            message:
+                "dynamic libraries are not supported; publisher link records currently produce static archives only"
+                    .to_string(),
+        });
+    }
     if !link_target_matches(&request.link.target, request.selected_target)? {
         return Err(OvenRustcError::InvalidInput {
             field: "publisher link target",
@@ -109,54 +117,51 @@ pub fn bake_publisher_link(
     )?;
     let mut inputs = Vec::with_capacity(request.link.sources.len());
     for source in &request.link.sources {
-        if source.kind != RustFactArtifactKind::File || !source.members.is_empty() {
-            return Err(OvenRustcError::InvalidInput {
-                field: "publisher link source",
-                message: format!("source `{}` must be one regular file", source.name),
-            });
-        }
         inputs.push(PublisherExecutionInput {
             name: &source.name,
             path: owner_relative_path(request.source_owner_root, &source.path, "publisher link source")?,
             digest: source.digest.clone(),
+            kind: source.kind,
+            members: source.members.clone(),
         });
     }
-    let arguments = request
+    let objects = request
         .link
-        .arguments
+        .objects
         .iter()
-        .map(|argument| match argument {
-            RustFactArgument::Literal { literal } => Ok(PublisherExecutionArgument::Literal(literal)),
-            RustFactArgument::Input { input } => Ok(PublisherExecutionArgument::Input(input)),
-            RustFactArgument::Output { output } => Err(OvenRustcError::InvalidInput {
-                field: "publisher link arguments",
-                message: format!("link argument references unavailable tool output `{output}`"),
-            }),
+        .map(|object| -> Result<PublisherExecutionObject<'_>, OvenRustcError> {
+            let arguments = object
+                .arguments
+                .iter()
+                .map(|argument| match argument {
+                    RustFactArgument::Literal { literal } => PublisherExecutionArgument::Literal(literal),
+                    RustFactArgument::Input { input } => PublisherExecutionArgument::Input(input),
+                    RustFactArgument::Output { output } => PublisherExecutionArgument::Output(output),
+                })
+                .collect();
+            Ok(PublisherExecutionObject {
+                name: &object.name,
+                arguments,
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let environment = publisher_link_environment(&request.link.environment)?;
-    let archive_relative_path = publisher_link_archive_name(
-        &request.link.library.name,
-        request.link.library.kind,
-        request.selected_target,
-    );
-    let output = PublisherExecutionOutput {
-        name: "archive",
-        relative_path: &archive_relative_path,
-    };
+    let archive_relative_path = publisher_link_archive_name(&request.link.library.name);
     let execution = execute_publisher_work(&PublisherExecutionRequest {
         role: "link",
         name: &request.link.name,
         consuming_unit_identity: request.consuming_unit_identity,
         target: request.selected_target,
+        archive_format: request.archive_format,
         toolchain: request.toolchain,
         executable: &executable,
+        executable_owner_root: request.executable_owner_root,
         executable_owner: &request.link.executable.owner,
         executable_digest: &request.link.executable.digest,
-        arguments,
+        objects,
         environment,
         inputs,
-        outputs: vec![output],
+        archive_relative_path: &archive_relative_path,
         output_root: request.output_root,
         limits: request.limits,
     })
@@ -219,14 +224,9 @@ fn publisher_link_environment<'a>(
         .collect()
 }
 
-/// Derive the one portable archive name from the logical library and target contract.
-fn publisher_link_archive_name(name: &str, kind: RustFactLibraryKind, target: &str) -> String {
-    match kind {
-        RustFactLibraryKind::Static => format!("lib{name}.a"),
-        RustFactLibraryKind::Dynamic if target.contains("windows") => format!("{name}.dll"),
-        RustFactLibraryKind::Dynamic if target.contains("apple") => format!("lib{name}.dylib"),
-        RustFactLibraryKind::Dynamic => format!("lib{name}.so"),
-    }
+/// Derive the one portable static-archive name from the logical library contract.
+fn publisher_link_archive_name(name: &str) -> String {
+    format!("lib{name}.a")
 }
 
 /// Match an exact triple or the settled one-equality `cfg(...)` spelling against target evidence.
@@ -1116,13 +1116,21 @@ mod publisher_link_tests {
 
     use oven_model::manifest::{
         RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactExecutable, RustFactLibrary,
-        RustFactLibraryKind, RustFactLink, RustFactLinkLanguage,
+        RustFactLibraryKind, RustFactLink, RustFactLinkLanguage, RustFactLinkObject,
     };
     use oven_store::digest_bytes;
     use oven_store::process::BoundedProcessLimits;
     use tempfile::tempdir;
 
     use super::{OvenPublisherLinkBakeRequest, bake_publisher_link};
+
+    /// Return only object members from `ar -t`; a symbol index is archive metadata rather than an object.
+    fn archive_object_members(listing: &[u8]) -> Result<Vec<&str>, std::str::Utf8Error> {
+        Ok(std::str::from_utf8(listing)?
+            .lines()
+            .filter(|name| !name.starts_with("__.SYMDEF") && *name != "/" && *name != "//")
+            .collect())
+    }
 
     /// Write a fake archive-producing compiler and its declared source record.
     ///
@@ -1143,21 +1151,24 @@ mod publisher_link_tests {
         Ok(RustFactLink {
             name: "fixture-native".to_string(),
             target: "aarch64-apple-darwin".to_string(),
-            language: RustFactLinkLanguage::C,
             executable: RustFactExecutable {
                 name: "fake-cc".to_string(),
                 owner: digest_bytes(b"tool-owner"),
                 path: "bin/fake-cc".to_string(),
                 digest: digest_bytes(&fs::read(compiler)?),
             },
-            arguments: vec![
-                RustFactArgument::Input {
-                    input: "fixture-source".to_string(),
-                },
-                RustFactArgument::Literal {
-                    literal: "libfixture.a".to_string(),
-                },
-            ],
+            objects: vec![RustFactLinkObject {
+                name: "fixture.o".to_string(),
+                language: RustFactLinkLanguage::C,
+                arguments: vec![
+                    RustFactArgument::Input {
+                        input: "fixture-source".to_string(),
+                    },
+                    RustFactArgument::Output {
+                        output: "fixture.o".to_string(),
+                    },
+                ],
+            }],
             environment: Vec::new(),
             sources: vec![RustFactArtifact {
                 name: "fixture-source".to_string(),
@@ -1182,6 +1193,7 @@ mod publisher_link_tests {
         let product = match bake_publisher_link(&OvenPublisherLinkBakeRequest {
             link: &link,
             selected_target: "aarch64-apple-darwin",
+            archive_format: "darwin",
             toolchain: "rustc fixture",
             consuming_unit_identity: &digest_bytes(b"consumer"),
             executable_owner_root: &root.path().join("tool"),
@@ -1199,8 +1211,7 @@ mod publisher_link_tests {
         };
 
         assert_eq!(product.archive_relative_path, "libfixture.a");
-        assert_eq!(fs::read(product.archive_path)?, b"native-source");
-        let selected_argv = link
+        let selected_argv = link.objects[0]
             .arguments
             .iter()
             .map(|argument| match argument {
@@ -1209,7 +1220,79 @@ mod publisher_link_tests {
                 RustFactArgument::Output { output } => format!("output:{output}"),
             })
             .collect::<Vec<_>>();
-        assert_eq!(product.receipt.logical_argv, selected_argv);
+        assert_eq!(product.receipt.objects[0].logical_argv, selected_argv);
+        Ok(())
+    }
+
+    #[test]
+    /// Two explicit object compilations produce one byte-reproducible ordered archive and receipt.
+    fn publisher_link_bake_archives_objects_in_name_order_reproducibly() -> Result<(), Box<dyn Error>> {
+        let root = tempdir()?;
+        let mut link = fixture_link(root.path())?;
+        fs::write(root.path().join("source/native/another.c"), b"another-source")?;
+        link.sources.push(RustFactArtifact {
+            name: "another-source".to_string(),
+            kind: RustFactArtifactKind::File,
+            path: "native/another.c".to_string(),
+            digest: digest_bytes(b"another-source"),
+            members: Vec::new(),
+        });
+        link.sources.sort_by(|left, right| left.name.cmp(&right.name));
+        link.objects = vec![
+            RustFactLinkObject {
+                name: "another.o".to_string(),
+                language: RustFactLinkLanguage::C,
+                arguments: vec![
+                    RustFactArgument::Input {
+                        input: "another-source".to_string(),
+                    },
+                    RustFactArgument::Output {
+                        output: "another.o".to_string(),
+                    },
+                ],
+            },
+            link.objects[0].clone(),
+        ];
+        let bake = |output_root: &std::path::Path| {
+            bake_publisher_link(&OvenPublisherLinkBakeRequest {
+                link: &link,
+                selected_target: "aarch64-apple-darwin",
+                archive_format: "darwin",
+                toolchain: "rustc fixture",
+                consuming_unit_identity: &digest_bytes(b"consumer"),
+                executable_owner_root: &root.path().join("tool"),
+                source_owner_root: &root.path().join("source"),
+                output_root,
+                limits: BoundedProcessLimits {
+                    stdout_bytes: 1024,
+                    stderr_bytes: 1024,
+                    timeout: Some(Duration::from_secs(2)),
+                },
+            })
+        };
+        let first = match bake(&root.path().join("first")) {
+            Ok(product) => product,
+            Err(error) if error.to_string().contains("sandbox_apply: Operation not permitted") => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let second = bake(&root.path().join("second"))?;
+        assert_eq!(fs::read(&first.archive_path)?, fs::read(&second.archive_path)?);
+        assert_eq!(first.receipt, second.receipt);
+        assert_eq!(
+            first
+                .receipt
+                .objects
+                .iter()
+                .map(|object| object.name.as_str())
+                .collect::<Vec<_>>(),
+            ["another.o", "fixture.o"]
+        );
+        let listing = std::process::Command::new("/usr/bin/ar")
+            .arg("-t")
+            .arg(&first.archive_path)
+            .output()?;
+        assert!(listing.status.success());
+        assert_eq!(archive_object_members(&listing.stdout)?, ["another.o", "fixture.o"]);
         Ok(())
     }
 
@@ -1224,6 +1307,7 @@ mod publisher_link_tests {
         let request = OvenPublisherLinkBakeRequest {
             link: &link,
             selected_target: "x86_64-unknown-linux-gnu",
+            archive_format: "gnu",
             toolchain: "rustc fixture",
             consuming_unit_identity: &digest_bytes(b"consumer"),
             executable_owner_root: &root.path().join("tool"),
@@ -1245,6 +1329,161 @@ mod publisher_link_tests {
             .err()
             .ok_or("archive collision was accepted")?;
         assert!(error.to_string().contains("collides"));
+        Ok(())
+    }
+
+    #[test]
+    /// A missing declared object and an undeclared extra object both refuse publication.
+    fn publisher_link_bake_refuses_missing_and_extra_objects() -> Result<(), Box<dyn Error>> {
+        let root = tempdir()?;
+        let mut link = fixture_link(root.path())?;
+        let compiler = root.path().join("tool/bin/fake-cc");
+        fs::write(&compiler, "#!/bin/sh\nset -eu\n:\n")?;
+        link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        let bake = |link: &RustFactLink, output_root: &std::path::Path| {
+            bake_publisher_link(&OvenPublisherLinkBakeRequest {
+                link,
+                selected_target: "aarch64-apple-darwin",
+                archive_format: "darwin",
+                toolchain: "rustc fixture",
+                consuming_unit_identity: &digest_bytes(b"consumer"),
+                executable_owner_root: &root.path().join("tool"),
+                source_owner_root: &root.path().join("source"),
+                output_root,
+                limits: BoundedProcessLimits {
+                    stdout_bytes: 1024,
+                    stderr_bytes: 1024,
+                    timeout: Some(Duration::from_secs(2)),
+                },
+            })
+        };
+        let error = bake(&link, &root.path().join("missing"))
+            .err()
+            .ok_or("missing object was accepted")?;
+        if error.to_string().contains("sandbox_apply: Operation not permitted") {
+            return Ok(());
+        }
+        assert!(error.to_string().contains("missing"));
+
+        fs::write(
+            &compiler,
+            "#!/bin/sh\nset -eu\nIFS= read -r content < \"$1\" || true\nprintf '%s' \"$content\" > \"$2\"\nprintf '%s' extra > extra.o\n",
+        )?;
+        link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        let error = bake(&link, &root.path().join("extra"))
+            .err()
+            .ok_or("extra object was accepted")?;
+        assert!(error.to_string().contains("undeclared"));
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    /// Command Line Tools clang produces the same two-member archive bytes across independent bakes.
+    fn publisher_link_bake_with_real_clang_is_reproducible() -> Result<(), Box<dyn Error>> {
+        let owner = std::path::Path::new("/Library/Developer/CommandLineTools");
+        let clang = owner.join("usr/bin/clang");
+        let sdk = owner.join("SDKs/MacOSX.sdk");
+        if !clang.is_file() || !sdk.exists() {
+            return Ok(());
+        }
+        let root = tempdir()?;
+        let sources = root.path().join("source");
+        fs::create_dir_all(&sources)?;
+        fs::write(sources.join("first.c"), b"int first(void) { return 1; }\n")?;
+        fs::write(sources.join("second.c"), b"int second(void) { return 2; }\n")?;
+        let target = match std::env::consts::ARCH {
+            "aarch64" => "aarch64-apple-darwin",
+            "x86_64" => "x86_64-apple-darwin",
+            architecture => return Err(format!("unsupported macOS test architecture `{architecture}`").into()),
+        };
+        let sdk_literal = sdk.to_string_lossy().into_owned();
+        let object = |name: &str, input: &str| RustFactLinkObject {
+            name: name.to_string(),
+            language: RustFactLinkLanguage::C,
+            arguments: vec![
+                RustFactArgument::Literal {
+                    literal: "-isysroot".to_string(),
+                },
+                RustFactArgument::Literal {
+                    literal: sdk_literal.clone(),
+                },
+                RustFactArgument::Literal {
+                    literal: "-c".to_string(),
+                },
+                RustFactArgument::Input {
+                    input: input.to_string(),
+                },
+                RustFactArgument::Literal {
+                    literal: "-o".to_string(),
+                },
+                RustFactArgument::Output {
+                    output: name.to_string(),
+                },
+            ],
+        };
+        let link = RustFactLink {
+            name: "pair".to_string(),
+            target: target.to_string(),
+            executable: RustFactExecutable {
+                name: "clang".to_string(),
+                owner: digest_bytes(b"Command Line Tools owner"),
+                path: "usr/bin/clang".to_string(),
+                digest: digest_bytes(&fs::read(&clang)?),
+            },
+            objects: vec![object("first.o", "first"), object("second.o", "second")],
+            environment: Vec::new(),
+            sources: vec![
+                RustFactArtifact {
+                    name: "first".to_string(),
+                    kind: RustFactArtifactKind::File,
+                    path: "first.c".to_string(),
+                    digest: digest_bytes(b"int first(void) { return 1; }\n"),
+                    members: Vec::new(),
+                },
+                RustFactArtifact {
+                    name: "second".to_string(),
+                    kind: RustFactArtifactKind::File,
+                    path: "second.c".to_string(),
+                    digest: digest_bytes(b"int second(void) { return 2; }\n"),
+                    members: Vec::new(),
+                },
+            ],
+            library: RustFactLibrary {
+                name: "pair".to_string(),
+                kind: RustFactLibraryKind::Static,
+            },
+        };
+        let bake = |output_root: &std::path::Path| {
+            bake_publisher_link(&OvenPublisherLinkBakeRequest {
+                link: &link,
+                selected_target: target,
+                archive_format: "darwin",
+                toolchain: "Command Line Tools clang",
+                consuming_unit_identity: &digest_bytes(b"consumer"),
+                executable_owner_root: owner,
+                source_owner_root: &sources,
+                output_root,
+                limits: BoundedProcessLimits {
+                    stdout_bytes: 1024 * 1024,
+                    stderr_bytes: 1024 * 1024,
+                    timeout: Some(Duration::from_secs(30)),
+                },
+            })
+        };
+        let first = match bake(&root.path().join("first-bake")) {
+            Ok(product) => product,
+            Err(error) if error.to_string().contains("sandbox_apply: Operation not permitted") => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let second = bake(&root.path().join("second-bake"))?;
+        assert_eq!(fs::read(&first.archive_path)?, fs::read(&second.archive_path)?);
+        let listing = std::process::Command::new("/usr/bin/ar")
+            .arg("-t")
+            .arg(&first.archive_path)
+            .output()?;
+        assert!(listing.status.success());
+        assert_eq!(archive_object_members(&listing.stdout)?, ["first.o", "second.o"]);
         Ok(())
     }
 }

@@ -19,7 +19,7 @@ use std::path::{Component, Path, PathBuf};
 use oven_model::loaf_registry::canonical_checksum;
 use oven_model::manifest::{
     RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactEnvironment, RustFactExecutable, RustFactLibrary,
-    RustFactLibraryKind, RustFactLinkLanguage, RustFactOut, RustFactOutput, RustFactRecord, RustFactWorkObservation,
+    RustFactLibraryKind, RustFactLinkObject, RustFactOut, RustFactOutput, RustFactRecord, RustFactWorkObservation,
     RustFactWorkRecord, is_sha256_identity,
 };
 use serde::{Deserialize, Serialize};
@@ -160,15 +160,12 @@ pub struct HarvestLinkObservation {
     /// Stable producer name, when capture proved one complete native invocation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Source language, when capture proved one complete native invocation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<RustFactLinkLanguage>,
     /// Exact native compiler identity, when capture proved it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<RustFactExecutable>,
-    /// Ordered portable invocation arguments.
+    /// Sorted explicit object compilations, when capture proved the complete native work.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub arguments: Vec<RustFactArgument>,
+    pub objects: Vec<RustFactLinkObject>,
     /// Explicit invocation environment.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<RustFactEnvironment>,
@@ -447,9 +444,9 @@ fn link_record_from_observation(
         role: oven_model::manifest::RustFactProducerRole::Link,
         name: observation.name.clone().unwrap_or_default(),
         target: target.to_string(),
-        language: observation.language,
         executable: observation.executable.clone(),
-        arguments: observation.arguments.clone(),
+        objects: observation.objects.clone(),
+        arguments: Vec::new(),
         environment: observation.environment.clone(),
         inputs: observation.sources.clone(),
         outputs: Vec::new(),
@@ -495,8 +492,8 @@ fn tool_record_from_observation(
         role: oven_model::manifest::RustFactProducerRole::Tool,
         name: observation.name.clone().unwrap_or_default(),
         target: target.to_string(),
-        language: None,
         executable: observation.executable.clone(),
+        objects: Vec::new(),
         arguments: observation.arguments.clone(),
         environment: observation.environment.clone(),
         inputs: observation.inputs.clone(),
@@ -1206,9 +1203,8 @@ fn observe_unit(
             output_tree_digest,
             products: products.clone(),
             name: None,
-            language: None,
             executable: None,
-            arguments: Vec::new(),
+            objects: Vec::new(),
             environment: Vec::new(),
             sources: Vec::new(),
             library: None,
@@ -1221,9 +1217,8 @@ fn observe_unit(
         .collect::<Vec<_>>();
     if let ([observation], [work]) = (link_observations.as_mut_slice(), publisher_links.as_slice()) {
         observation.name = Some(work.name.clone());
-        observation.language = work.language;
         observation.executable = work.executable.clone();
-        observation.arguments = work.arguments.clone();
+        observation.objects = work.objects.clone();
         observation.environment = work.environment.clone();
         observation.sources = work.inputs.clone();
         observation.library = work.library.clone();
@@ -2147,15 +2142,23 @@ mod tests {
                 digest: selected_graph_sha256(format!("lib{name}.a").as_bytes()),
             }],
             name: Some(name.to_string()),
-            language: Some(RustFactLinkLanguage::C),
             executable: Some(RustFactExecutable {
                 name: "clang".to_string(),
                 owner: selected_graph_sha256(b"publisher-toolchain"),
                 path: "bin/clang".to_string(),
                 digest: selected_graph_sha256(b"clang"),
             }),
-            arguments: vec![RustFactArgument::Input {
-                input: "sources".to_string(),
+            objects: vec![RustFactLinkObject {
+                name: format!("{name}.o"),
+                language: oven_model::manifest::RustFactLinkLanguage::C,
+                arguments: vec![
+                    RustFactArgument::Input {
+                        input: "sources".to_string(),
+                    },
+                    RustFactArgument::Output {
+                        output: format!("{name}.o"),
+                    },
+                ],
             }],
             environment: Vec::new(),
             sources: vec![RustFactArtifact {

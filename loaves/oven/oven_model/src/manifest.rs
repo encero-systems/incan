@@ -669,6 +669,19 @@ pub enum RustFactLinkLanguage {
     Assembly,
 }
 
+/// One explicit native object compilation performed before the Oven writes the archive.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactLinkObject {
+    /// Portable relative object-file name and archive member name.
+    pub name: String,
+    /// Source language accepted by the declared compiler for this invocation.
+    pub language: RustFactLinkLanguage,
+    /// Ordered compiler arguments, including exactly one typed reference to this object's output name.
+    #[serde(default)]
+    pub arguments: Vec<RustFactArgument>,
+}
+
 /// Linker-visible archive kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -697,13 +710,11 @@ pub struct RustFactLink {
     pub name: String,
     /// Exact target triple or `cfg(...)` predicate evaluated from selected target evidence.
     pub target: String,
-    /// Source language accepted by the executable.
-    pub language: RustFactLinkLanguage,
     /// Exact portable executable identity.
     pub executable: RustFactExecutable,
-    /// Ordered invocation arguments.
+    /// Sorted explicit object compilations performed with the declared executable.
     #[serde(default)]
-    pub arguments: Vec<RustFactArgument>,
+    pub objects: Vec<RustFactLinkObject>,
     /// Sorted explicit environment; ambient values are unavailable.
     #[serde(default)]
     pub environment: Vec<RustFactEnvironment>,
@@ -761,11 +772,12 @@ pub struct RustFactWorkObservation {
     pub name: String,
     /// Exact target triple or `cfg(...)` predicate.
     pub target: String,
-    /// Required for link work and forbidden for tool work.
-    pub language: Option<RustFactLinkLanguage>,
     /// Complete relocation-independent executable identity.
     pub executable: Option<RustFactExecutable>,
-    /// Ordered portable arguments.
+    /// Link object compilations; tool work must leave this empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<RustFactLinkObject>,
+    /// Ordered portable arguments; link work must leave this empty.
     pub arguments: Vec<RustFactArgument>,
     /// Set-like environment declarations; conversion canonicalizes them by name.
     pub environment: Vec<RustFactEnvironment>,
@@ -825,6 +837,7 @@ impl RustFactWorkRecord {
         observation
             .environment
             .sort_by(|left, right| left.name.cmp(&right.name));
+        observation.objects.sort_by(|left, right| left.name.cmp(&right.name));
         observation.inputs.sort_by(|left, right| left.name.cmp(&right.name));
         observation.outputs.sort_by(|left, right| left.name.cmp(&right.name));
         for artifact in &mut observation.inputs {
@@ -835,19 +848,16 @@ impl RustFactWorkRecord {
             .ok_or_else(|| conversion_error("missing executable identity"))?;
         match observation.role {
             RustFactProducerRole::Link => {
-                if !observation.outputs.is_empty() {
+                if !observation.arguments.is_empty() || !observation.outputs.is_empty() {
                     return Err(conversion_error(
-                        "link work declares sources and a library, not product outputs",
+                        "link work declares object compilations, sources and a library, not shared arguments or product outputs",
                     ));
                 }
                 let link = RustFactLink {
                     name: observation.name,
                     target: observation.target,
-                    language: observation
-                        .language
-                        .ok_or_else(|| conversion_error("link work has no language"))?,
                     executable,
-                    arguments: observation.arguments,
+                    objects: observation.objects,
                     environment: observation.environment,
                     sources: observation.inputs,
                     library: observation
@@ -858,9 +868,9 @@ impl RustFactWorkRecord {
                 Ok(Self::Link(link))
             }
             RustFactProducerRole::Tool => {
-                if observation.language.is_some() || observation.library.is_some() {
+                if !observation.objects.is_empty() || observation.library.is_some() {
                     return Err(conversion_error(
-                        "tool work cannot declare link language or library metadata",
+                        "tool work cannot declare link objects or library metadata",
                     ));
                 }
                 let tool = RustFactTool {
@@ -886,9 +896,9 @@ impl From<RustFactLink> for RustFactWorkObservation {
             role: RustFactProducerRole::Link,
             name: link.name,
             target: link.target,
-            language: Some(link.language),
             executable: Some(link.executable),
-            arguments: link.arguments,
+            objects: link.objects,
+            arguments: Vec::new(),
             environment: link.environment,
             inputs: link.sources,
             outputs: Vec::new(),
@@ -904,8 +914,8 @@ impl From<RustFactTool> for RustFactWorkObservation {
             role: RustFactProducerRole::Tool,
             name: tool.name,
             target: tool.target,
-            language: None,
             executable: Some(tool.executable),
+            objects: Vec::new(),
             arguments: tool.arguments,
             environment: tool.environment,
             inputs: tool.inputs,
@@ -1801,6 +1811,9 @@ fn rust_fact_paths_overlap(left: &str, right: &str) -> bool {
 }
 
 /// Validate one sorted complete artifact closure and return its names and paths.
+///
+/// Inputs may overlap because a declared include tree can contain separately declared compiled files. Callers use
+/// the returned paths to refuse overlap with outputs, while output-to-output overlap remains independently invalid.
 fn validate_rust_fact_artifacts<'a>(
     artifacts: &'a [RustFactArtifact],
     field: &str,
@@ -1841,15 +1854,6 @@ fn validate_rust_fact_artifacts<'a>(
                 }
             }
             RustFactArtifactKind::File => {}
-        }
-        if paths
-            .iter()
-            .any(|existing| rust_fact_paths_overlap(existing, &artifact.path))
-        {
-            return Err(format!(
-                "{field} path `{}` overlaps another declared path",
-                artifact.path
-            ));
         }
         names.insert(artifact.name.as_str());
         paths.push(artifact.path.as_str());
@@ -1955,18 +1959,109 @@ fn validate_rust_fact_work(
 
 /// Validate one native-link declaration without admitting archive bytes into the fact record.
 fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
-    let no_outputs = Vec::new();
+    if link.sources.is_empty() {
+        return Err("sources must declare the complete non-empty source closure".to_string());
+    }
+    if link.objects.is_empty() {
+        return Err("objects must declare at least one object compilation".to_string());
+    }
+    if link.objects.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("objects must be sorted by unique name".to_string());
+    }
+    if link.library.kind == RustFactLibraryKind::Dynamic {
+        return Err("dynamic libraries are not supported by publisher link records".to_string());
+    }
+    for object in &link.objects {
+        validate_rust_fact_path(&object.name, "object name")?;
+        if Path::new(&object.name).components().count() != 1 || !object.name.ends_with(".o") {
+            return Err(format!(
+                "object name `{}` must be one portable `.o` file name",
+                object.name
+            ));
+        }
+        if link.sources.iter().any(|source| source.name == object.name) {
+            return Err(format!(
+                "logical name `{}` is claimed as both a source and object",
+                object.name
+            ));
+        }
+    }
+    let object_outputs = link
+        .objects
+        .iter()
+        .map(|object| RustFactOutput {
+            name: object.name.clone(),
+            kind: RustFactArtifactKind::File,
+            path: object.name.clone(),
+        })
+        .collect::<Vec<_>>();
     validate_rust_fact_work(
         &link.name,
         &link.target,
         &link.executable,
-        &link.arguments,
+        &[],
         &link.environment,
         &link.sources,
-        &no_outputs,
+        &object_outputs,
     )?;
-    if link.sources.is_empty() {
-        return Err("sources must declare the complete non-empty source closure".to_string());
+    let input_names = link
+        .sources
+        .iter()
+        .map(|source| source.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut referenced_inputs = HashSet::new();
+    for object in &link.objects {
+        let mut object_inputs = HashSet::new();
+        let mut object_outputs = Vec::new();
+        for argument in &object.arguments {
+            match argument {
+                RustFactArgument::Literal { literal } if literal.contains('\0') => {
+                    return Err("literal arguments cannot contain NUL".to_string());
+                }
+                RustFactArgument::Literal { literal } if literal == &object.name => {
+                    return Err(format!(
+                        "object `{}` output must use an output reference, not a literal",
+                        object.name
+                    ));
+                }
+                RustFactArgument::Input { input } if !input_names.contains(input.as_str()) => {
+                    return Err(format!("argument references undeclared input `{input}`"));
+                }
+                RustFactArgument::Output { output } => {
+                    object_outputs.push(output.as_str());
+                }
+                RustFactArgument::Input { input } => {
+                    object_inputs.insert(input.as_str());
+                    referenced_inputs.insert(input.as_str());
+                }
+                RustFactArgument::Literal { .. } => {}
+            }
+        }
+        if object_outputs.len() != 1 {
+            return Err(format!(
+                "object `{}` arguments must contain exactly one output reference",
+                object.name
+            ));
+        }
+        if object_outputs[0] != object.name {
+            return Err(format!(
+                "object `{}` output reference `{}` must equal its name",
+                object.name, object_outputs[0]
+            ));
+        }
+        if object_inputs.is_empty() {
+            return Err(format!("object `{}` must reference at least one source", object.name));
+        }
+    }
+    if let Some(source) = link
+        .sources
+        .iter()
+        .find(|source| !referenced_inputs.contains(source.name.as_str()))
+    {
+        return Err(format!(
+            "declared source `{}` is not referenced by any object",
+            source.name
+        ));
     }
     validate_rust_fact_name(&link.library.name, "library link name")?;
     Ok(())
@@ -4380,9 +4475,8 @@ cfg = []
 [[rust.facts.link]]
 name = "sys-helper"
 target = 'cfg(target_arch = "aarch64")'
-language = "c"
 executable = {{ name = "clang", owner = "{digest}", path = "bin/clang", digest = "{digest}" }}
-arguments = [{{ literal = "-O2" }}, {{ input = "helper-source" }}]
+objects = [{{ name = "helper.o", language = "c", arguments = [{{ literal = "-O2" }}, {{ input = "helper-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
 sources = [{{ name = "helper-source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
 library = {{ name = "sys_helper", kind = "static" }}
 
@@ -4404,6 +4498,195 @@ outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }
         assert_eq!(record.tool.len(), 1);
         assert_eq!(record.link[0].library.name, "sys_helper");
         assert_eq!(record.tool[0].environment.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_parses_and_round_trips_multiple_objects() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = ProjectManifest::from_str(
+            &format!(
+                r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+environment = []
+sources = [{{ name = "asm-source", kind = "file", path = "c/helper.S", digest = "{digest}" }}, {{ name = "c-source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+objects = [{{ name = "helper-assembly.o", language = "assembly", arguments = [{{ literal = "-c" }}, {{ input = "asm-source" }}, {{ literal = "-o" }}, {{ output = "helper-assembly.o" }}] }}, {{ name = "helper.o", language = "c", arguments = [{{ literal = "-c" }}, {{ input = "c-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
+library = {{ name = "sys_helper", kind = "static" }}
+"#,
+            ),
+            Path::new("loaf.toml"),
+        )?;
+        let link = &manifest.rust_facts.first().ok_or("missing fact record")?.link[0];
+        assert_eq!(link.objects.len(), 2);
+        assert_eq!(link.objects[0].name, "helper-assembly.o");
+        let encoded = serde_json::to_vec(link)?;
+        let decoded: RustFactLink = serde_json::from_slice(&encoded)?;
+        assert_eq!(&decoded, link);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_refuses_invalid_object_contracts() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [{{ name = "source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+{{objects}}
+library = {{ name = "sys_helper", kind = "{{kind}}" }}
+"#,
+        );
+        for (objects, kind, expected) in [
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"unknown\" }] }]",
+                "static",
+                "undeclared input `unknown`",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [] }, { name = \"helper.o\", language = \"cpp\", arguments = [] }]",
+                "static",
+                "objects must be sorted by unique name",
+            ),
+            ("objects = []", "static", "objects must declare"),
+            (
+                "objects = [{ name = \"../helper.o\", language = \"assembly\", arguments = [] }]",
+                "static",
+                "object name",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [] }]",
+                "dynamic",
+                "dynamic libraries are not supported",
+            ),
+        ] {
+            let content = base.replace("{objects}", objects).replace("{kind}", kind);
+            let error = ProjectManifest::from_str(&content, Path::new("loaf.toml"))
+                .err()
+                .ok_or("invalid link object contract was accepted")?;
+            assert!(error.to_string().contains(expected), "{expected}: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_refuses_invalid_object_argument_closure() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [{{sources}}]
+{{objects}}
+library = {{ name = "sys_helper", kind = "static" }}
+"#,
+        );
+        let ordinary_sources = format!(
+            "{{ name = \"source\", kind = \"file\", path = \"c/helper.c\", digest = \"{digest}\" }}, {{ name = \"unused\", kind = \"file\", path = \"c/unused.c\", digest = \"{digest}\" }}"
+        );
+        let colliding_sources =
+            format!("{{ name = \"helper.o\", kind = \"file\", path = \"c/helper.c\", digest = \"{digest}\" }}");
+        for (objects, sources, expected) in [
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { literal = \"helper.o\" }] }]",
+                ordinary_sources.as_str(),
+                "output must use an output reference",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { output = \"helper.o\" }, { output = \"other.o\" }] }]",
+                ordinary_sources.as_str(),
+                "exactly one output",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { output = \"other.o\" }] }]",
+                ordinary_sources.as_str(),
+                "must equal its name",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"helper.o\" }, { output = \"helper.o\" }] }]",
+                colliding_sources.as_str(),
+                "both a source and object",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ literal = \"-c\" }, { output = \"helper.o\" }] }]",
+                ordinary_sources.as_str(),
+                "must reference at least one source",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { output = \"helper.o\" }] }]",
+                ordinary_sources.as_str(),
+                "declared source `unused` is not referenced",
+            ),
+        ] {
+            let content = base.replace("{sources}", sources).replace("{objects}", objects);
+            let error = ProjectManifest::from_str(&content, Path::new("loaf.toml"))
+                .err()
+                .ok_or("invalid link object argument closure was accepted")?;
+            assert!(error.to_string().contains(expected), "{expected}: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_accepts_overlapping_blake3_source_closure() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = ProjectManifest::from_str(
+            &format!(
+                r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "x86_64-unknown-linux-gnu"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "blake3"
+target = "x86_64-unknown-linux-gnu"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [
+  {{ name = "avx2-source", kind = "file", path = "c/blake3_avx2.c", digest = "{digest}" }},
+  {{ name = "headers", kind = "tree", path = "c", digest = "{digest}", members = [{{ path = "blake3.h", digest = "{digest}" }}, {{ path = "blake3_avx2.c", digest = "{digest}" }}, {{ path = "blake3_sse2.c", digest = "{digest}" }}] }},
+  {{ name = "sse2-source", kind = "file", path = "c/blake3_sse2.c", digest = "{digest}" }},
+]
+objects = [
+  {{ name = "blake3_avx2.o", language = "c", arguments = [{{ literal = "-mavx2" }}, {{ literal = "-I" }}, {{ input = "headers" }}, {{ literal = "-c" }}, {{ input = "avx2-source" }}, {{ literal = "-o" }}, {{ output = "blake3_avx2.o" }}] }},
+  {{ name = "blake3_sse2.o", language = "c", arguments = [{{ literal = "-msse2" }}, {{ literal = "-I" }}, {{ input = "headers" }}, {{ literal = "-c" }}, {{ input = "sse2-source" }}, {{ literal = "-o" }}, {{ output = "blake3_sse2.o" }}] }},
+]
+library = {{ name = "blake3", kind = "static" }}
+"#,
+            ),
+            Path::new("loaf.toml"),
+        )?;
+        assert_eq!(manifest.rust_facts[0].link[0].objects.len(), 2);
         Ok(())
     }
 
@@ -4442,13 +4725,13 @@ outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }
             role: RustFactProducerRole::Tool,
             name: "bindgen".to_string(),
             target: "aarch64-apple-darwin".to_string(),
-            language: None,
             executable: Some(RustFactExecutable {
                 name: "bindgen".to_string(),
                 owner: digest.to_string(),
                 path: "bin/bindgen".to_string(),
                 digest: digest.to_string(),
             }),
+            objects: Vec::new(),
             arguments: vec![RustFactArgument::Input {
                 input: "header".to_string(),
             }],

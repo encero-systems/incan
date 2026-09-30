@@ -764,7 +764,7 @@ mod tests {
         let digest = digest_bytes(b"int native(void) { return 1; }\n");
         let executable_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         manifest.push_str(&format!(
-            "\n[[rust.facts.link]]\nname = \"native\"\ntarget = \"aarch64-apple-darwin\"\nlanguage = \"c\"\nexecutable = {{ name = \"clang\", owner = \"{executable_digest}\", path = \"bin/clang\", digest = \"{executable_digest}\" }}\narguments = [{{ input = \"source\" }}]\nsources = [{{ name = \"source\", kind = \"file\", path = \"c/source.c\", digest = \"{digest}\" }}]\nlibrary = {{ name = \"native\", kind = \"static\" }}\n"
+            "\n[[rust.facts.link]]\nname = \"native\"\ntarget = \"aarch64-apple-darwin\"\nexecutable = {{ name = \"clang\", owner = \"{executable_digest}\", path = \"bin/clang\", digest = \"{executable_digest}\" }}\nobjects = [{{ name = \"native.o\", language = \"c\", arguments = [{{ input = \"source\" }}, {{ output = \"native.o\" }}] }}]\nsources = [{{ name = \"source\", kind = \"file\", path = \"c/source.c\", digest = \"{digest}\" }}]\nlibrary = {{ name = \"native\", kind = \"static\" }}\n"
         ));
         fs::write(manifest_path, manifest)?;
 

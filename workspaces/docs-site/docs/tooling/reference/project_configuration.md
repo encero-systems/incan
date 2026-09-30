@@ -445,11 +445,10 @@ cfg = []
 [[rust.facts.link]]
 name = "sys-helper"
 target = 'cfg(target_arch = "aarch64")'
-language = "c"
 executable = { name = "clang", owner = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", path = "bin/clang", digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
-arguments = [{ literal = "-O2" }, { input = "helper-source" }]
 environment = []
 sources = [{ name = "helper-source", kind = "file", path = "c/helper.c", digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }]
+objects = [{ name = "helper.o", language = "c", arguments = [{ literal = "-O2" }, { literal = "-c" }, { input = "helper-source" }, { literal = "-o" }, { output = "helper.o" }] }]
 library = { name = "sys_helper", kind = "static" }
 
 [[rust.facts.tool]]
@@ -462,7 +461,9 @@ inputs = [{ name = "header", kind = "file", path = "include/helper.h", digest = 
 outputs = [{ name = "bindings", kind = "file", path = "generated/bindings.rs" }]
 ```
 
-`link` fields are `name`, `target`, `language`, `executable`, `arguments`, `environment`, `sources`, and `library`. `language` accepts `c`, `cpp`, or `assembly`; `library.kind` accepts `static` or `dynamic`. A link declaration names its complete digested source closure and the logical library it produces. It does not name an archive path, archive digest, product digest, or producer receipt; those belong to the admitted asset and receipt.
+`link` fields are `name`, `target`, `executable`, `environment`, `sources`, `objects`, and `library`. `objects` is non-empty, sorted by unique `name`, and each entry has exactly `name`, `language`, and `arguments`. An object name is one portable relative `.o` file name. `language` accepts `c`, `cpp`, or `assembly`. Arguments remain ordered. Each object must contain at least one `{ input = "..." }` naming a declared source and exactly one `{ output = "..." }` equal to its own `name`; a literal object file name, another output name, a missing output, or an extra output is refused. Every declared source must be referenced by at least one object. Source and object names share one logical namespace. Source paths may overlap, including file sources contained within an include-tree source; source-to-output and output-to-output overlaps are refused. `library` has exactly `name` and `kind`; only `static` is supported, and `dynamic` is refused. A link declaration does not name an archive path, archive digest, product digest, archiver, or producer receipt; those belong to the admitted asset and receipt.
+
+A publisher link bake resolves `executable.path` below the caller-held immutable executable-owner root, verifies the executable digest, clears the ambient environment, and invokes the compiler once per object. Read confinement admits that owner root so the compiler can load its own resource headers and adjacent SDK; no other authority widens. After every invocation succeeds, the product root must contain exactly the declared objects. The Oven writes `lib<library.name>.a` in object-name order with the indexed Darwin, BSD, GNU, or COFF archive format rustc selects for the target. The receipt binds each object's logical arguments and digest plus the archive digest, and consumers import only the verified archive.
 
 `tool` fields are `name`, `target`, `executable`, `arguments`, `environment`, `inputs`, and `outputs`. Inputs are digested bytes. Outputs are a logical product contract with `name`, `kind`, and owner-relative `path`; their bytes and digests belong to the admitted asset.
 
@@ -470,13 +471,13 @@ outputs = [{ name = "bindings", kind = "file", path = "generated/bindings.rs" }]
 
 A publisher tool invocation resolves `executable.path` only below `executable.owner`, verifies the executable digest immediately before execution, clears the ambient environment, supplies the declared arguments and environment in order, and exposes only the complete declared input closure and product root. The supported publisher-tool execution host is macOS, where a deny-by-default Seatbelt profile confines reads and writes; a host without equivalent filesystem and process-tree confinement refuses the publisher operation. Missing or substituted executables, input digest drift, path escape, symlinks, missing products, extra products, unsuccessful exit, timeout, or bounded-output overflow refuse publication.
 
-The producer receipt binds the executable bytes, portable argument and environment declarations, input catalog, generated product catalog, build host, compilation target, and sorted consuming-unit identities. Each product becomes a `GeneratedOutput`-owned generated input of the selected consuming unit. Consumer builds accept only those receipt-bound asset bytes and never resolve or execute the producer tool.
+The producer receipt binds the executable bytes, portable argument and environment declarations, input catalog, generated product catalog, build host, compilation target, and sorted consuming-unit identities. A link receipt binds each object's logical arguments and digest plus the archive digest. Each product becomes a `GeneratedOutput`-owned generated input of the selected consuming unit. Consumer builds accept only those receipt-bound asset bytes and never resolve or execute the producer tool.
 
 `executable` has the exact fields `name`, `owner`, `path`, and `digest`. `owner` and `digest` are lowercase `sha256:` identities, and `path` is relative to that immutable owner. Oven never serializes an absolute executable location or resolves ambient `PATH` during consumption.
 
 Each `arguments` entry has exactly one of `literal`, `input`, or `output`. Each `environment` entry has `name` and exactly one of `literal` or `input`. `sources`, `inputs`, and `outputs` have `name`, `kind`, and `path`; `kind` is `file` or `tree`. A source or input also has `digest`; a tree additionally has a sorted `members` list of `{ path, digest }` entries whose canonical catalog digest must equal the tree digest.
 
-`link`, `tool`, `environment`, `sources`, `inputs`, `outputs`, and tree `members` are sorted by their documented logical key and duplicate-free. One logical work name may occur only once across `link` and `tool` in a fact record, and an input and output cannot claim the same logical name. Omitting any list is identical to writing an empty list. Paths are portable owner-relative spellings: absolute, drive-qualified, UNC, URI, home-relative, traversal, empty-component, and symlink-substituted paths are refused. `target` is either an exact target triple or one `cfg(...)` predicate evaluated from supplied target evidence.
+`link`, `tool`, `objects`, `environment`, `sources`, `inputs`, `outputs`, and tree `members` are sorted by their documented logical key and duplicate-free. One logical work name may occur only once across `link` and `tool` in a fact record, and an input and output cannot claim the same logical name. Omitting a list is identical to writing an empty list, but a link record with omitted or empty `objects` is refused. Paths are portable owner-relative spellings: absolute, drive-qualified, UNC, URI, home-relative, traversal, empty-component, and symlink-substituted paths are refused. `target` is either an exact target triple or one `cfg(...)` predicate evaluated from supplied target evidence.
 
 ## Legacy alias tables
 

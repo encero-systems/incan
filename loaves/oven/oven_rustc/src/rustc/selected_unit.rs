@@ -10,7 +10,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use oven_model::manifest::RustFactLibraryKind;
+use oven_model::manifest::{RustFactArtifactKind, RustFactLibraryKind};
 use oven_model::oven_interop::{
     OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
     OvenInteropExecutionProvenance, verify_interop_execution_receipt_identity,
@@ -232,15 +232,22 @@ pub fn finalize_publisher_link_product(
             message: "receipt does not bind the selected consumer, target and toolchain".to_string(),
         });
     }
-    let receipt_output = product
-        .receipt
-        .outputs
-        .iter()
-        .find(|output| output.path == product.archive_relative_path)
-        .ok_or_else(|| OvenRustcError::InvalidInput {
-            field: "publisher link product",
-            message: "receipt does not declare the archive product".to_string(),
-        })?;
+    let receipt_output = match product.receipt.outputs.as_slice() {
+        [output]
+            if output.name == "archive"
+                && output.kind == RustFactArtifactKind::File
+                && output.path == product.archive_relative_path
+                && output.members.is_empty() =>
+        {
+            output
+        }
+        _ => {
+            return Err(OvenRustcError::InvalidInput {
+                field: "publisher link product",
+                message: "receipt must declare only the verified archive product".to_string(),
+            });
+        }
+    };
     if receipt_output.digest != product.archive_digest {
         return Err(OvenRustcError::InvalidInput {
             field: "publisher link product",
@@ -1330,8 +1337,8 @@ mod tests {
     };
     use oven_model::manifest::RustFactLibraryKind;
     use oven_store::publisher_execution::{
-        PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION, PublisherExecutionProduct, PublisherExecutionReceipt,
-        publisher_execution_receipt_identity,
+        PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION, PublisherExecutionObjectReceipt, PublisherExecutionProduct,
+        PublisherExecutionReceipt, publisher_execution_receipt_identity,
     };
 
     const COMPILER_CLOSURE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1417,10 +1424,15 @@ mod tests {
             name: "fixture-native".to_string(),
             consuming_unit_identity: original_identity.clone(),
             target: graph.graph().selection.intent.target.clone(),
+            archive_format: "darwin".to_string(),
             toolchain: graph.graph().selection.intent.toolchain.clone(),
             executable_owner: selected_graph_sha256(b"compiler owner"),
             executable_digest: selected_graph_sha256(b"compiler"),
-            logical_argv: vec!["literal:libfixture.a".to_string()],
+            objects: vec![PublisherExecutionObjectReceipt {
+                name: "fixture.o".to_string(),
+                logical_argv: vec!["input:source".to_string(), "output:fixture.o".to_string()],
+                digest: selected_graph_sha256(b"fixture object"),
+            }],
             logical_environment: BTreeMap::new(),
             inputs: BTreeMap::from([("source".to_string(), selected_graph_sha256(b"source"))]),
             outputs: vec![PublisherExecutionProduct {

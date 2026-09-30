@@ -58,6 +58,7 @@ categories = ["compilers", "development-tools"]
 # One version per shared dependency, declared once; members write `workspace = true` and add only the features they
 # need on top. Every manifest the layout rewrite (#1478) writes starts from this table.
 [workspace.dependencies]
+ar_archive_writer = "=0.5.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = "1"
