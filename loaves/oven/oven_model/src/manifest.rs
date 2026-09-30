@@ -641,6 +641,8 @@ pub enum RustFactArgument {
     Input { input: String },
     /// Reference to one named declared output.
     Output { output: String },
+    /// Portable path below the executable's immutable owner root.
+    Owner { owner: String },
 }
 
 /// One named producer environment entry.
@@ -1918,6 +1920,9 @@ fn validate_rust_fact_work(
             RustFactArgument::Output { output } if !output_names.contains(output.as_str()) => {
                 return Err(format!("argument references undeclared output `{output}`"));
             }
+            RustFactArgument::Owner { owner } => {
+                validate_rust_fact_path(owner, "owner argument")?;
+            }
             _ => {}
         }
     }
@@ -2029,6 +2034,9 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
                 }
                 RustFactArgument::Output { output } => {
                     object_outputs.push(output.as_str());
+                }
+                RustFactArgument::Owner { owner } => {
+                    validate_rust_fact_path(owner, "owner argument")?;
                 }
                 RustFactArgument::Input { input } => {
                     object_inputs.insert(input.as_str());
@@ -4520,7 +4528,7 @@ target = "aarch64-apple-darwin"
 executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
 environment = []
 sources = [{{ name = "asm-source", kind = "file", path = "c/helper.S", digest = "{digest}" }}, {{ name = "c-source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
-objects = [{{ name = "helper-assembly.o", language = "assembly", arguments = [{{ literal = "-c" }}, {{ input = "asm-source" }}, {{ literal = "-o" }}, {{ output = "helper-assembly.o" }}] }}, {{ name = "helper.o", language = "c", arguments = [{{ literal = "-c" }}, {{ input = "c-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
+objects = [{{ name = "helper-assembly.o", language = "assembly", arguments = [{{ literal = "-isysroot" }}, {{ owner = "SDKs/MacOSX.sdk" }}, {{ literal = "-c" }}, {{ input = "asm-source" }}, {{ literal = "-o" }}, {{ output = "helper-assembly.o" }}] }}, {{ name = "helper.o", language = "c", arguments = [{{ literal = "-c" }}, {{ input = "c-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
 library = {{ name = "sys_helper", kind = "static" }}
 "#,
             ),
@@ -4529,9 +4537,45 @@ library = {{ name = "sys_helper", kind = "static" }}
         let link = &manifest.rust_facts.first().ok_or("missing fact record")?.link[0];
         assert_eq!(link.objects.len(), 2);
         assert_eq!(link.objects[0].name, "helper-assembly.o");
+        assert_eq!(
+            link.objects[0].arguments[1],
+            RustFactArgument::Owner {
+                owner: "SDKs/MacOSX.sdk".to_string()
+            }
+        );
         let encoded = serde_json::to_vec(link)?;
         let decoded: RustFactLink = serde_json::from_slice(&encoded)?;
         assert_eq!(&decoded, link);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_owner_arguments_refuse_nonportable_paths() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [{{ name = "source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+objects = [{{ name = "helper.o", language = "c", arguments = [{{ owner = "OWNER_PATH" }}, {{ input = "source" }}, {{ output = "helper.o" }}] }}]
+library = {{ name = "sys_helper", kind = "static" }}
+"#,
+        );
+        for path in ["/Library/SDK", "../SDK", "SDK/../SDK"] {
+            let error = ProjectManifest::from_str(&base.replace("OWNER_PATH", path), Path::new("loaf.toml"))
+                .err()
+                .ok_or("nonportable owner argument was accepted")?;
+            assert!(error.to_string().contains("owner argument"), "{path}: {error}");
+        }
         Ok(())
     }
 

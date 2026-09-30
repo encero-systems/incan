@@ -11,6 +11,7 @@ use std::process::Command;
 use crate::process::BoundedProcessLimits;
 #[cfg(target_os = "macos")]
 use crate::process::{BoundedProcessTermination, run_bounded_process};
+use crate::publisher_owner::PublisherOwnerClosurePath;
 
 /// Launch one exact executable with a cleared environment under the host confinement primitive.
 ///
@@ -20,11 +21,9 @@ use crate::process::{BoundedProcessTermination, run_bounded_process};
 /// headers and a colocated SDK remain readable; generator tools retain executable-file-only access. Hosts without an
 /// equivalent process-tree filesystem sandbox fail closed.
 #[cfg(target_os = "macos")]
-#[allow(clippy::too_many_arguments)]
 fn run_hermetic_process(
     executable: &Path,
-    executable_read_path: &Path,
-    admit_executable_owner_root: bool,
+    owner_closure: &[PublisherOwnerClosurePath],
     arguments: &[OsString],
     environment: &BTreeMap<String, OsString>,
     inputs: &[PathBuf],
@@ -35,18 +34,7 @@ fn run_hermetic_process(
     // spelled canonically or every write below it is refused.
     let product_root = std::fs::canonicalize(product_root)
         .map_err(|error| format!("could not resolve product root {}: {error}", product_root.display()))?;
-    let executable_read_path = std::fs::canonicalize(executable_read_path).map_err(|error| {
-        format!(
-            "could not resolve executable read path {}: {error}",
-            executable_read_path.display()
-        )
-    })?;
-    let profile = macos_sandbox_profile(
-        &executable_read_path,
-        admit_executable_owner_root,
-        &product_root,
-        inputs,
-    );
+    let profile = macos_sandbox_profile(owner_closure, &product_root, inputs);
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command
         .arg("-p")
@@ -71,11 +59,9 @@ fn run_hermetic_process(
 
 /// Refuse publisher execution when no process-tree filesystem confinement primitive is implemented.
 #[cfg(not(target_os = "macos"))]
-#[allow(clippy::too_many_arguments)]
 fn run_hermetic_process(
     _executable: &Path,
-    _executable_read_path: &Path,
-    _admit_executable_owner_root: bool,
+    _owner_closure: &[PublisherOwnerClosurePath],
     _arguments: &[OsString],
     _environment: &BTreeMap<String, OsString>,
     _inputs: &[PathBuf],
@@ -92,8 +78,7 @@ fn run_hermetic_process(
 /// together with `/private/var/select/sh`, the host's selection of the shell `/bin/sh` delegates to.
 #[cfg(target_os = "macos")]
 fn macos_sandbox_profile(
-    executable_read_path: &Path,
-    admit_executable_owner_root: bool,
+    owner_closure: &[PublisherOwnerClosurePath],
     product_root: &Path,
     inputs: &[PathBuf],
 ) -> String {
@@ -104,20 +89,20 @@ fn macos_sandbox_profile(
         "(subpath \"/usr/lib\")".to_string(),
         "(subpath \"/System/Library\")".to_string(),
     ]);
-    reads.extend(sandbox_ancestor_literals(
-        executable_read_path,
-        admit_executable_owner_root,
-    ));
-    reads.insert(if admit_executable_owner_root {
-        format!("(subpath \"{}\")", sandbox_path(executable_read_path))
-    } else {
-        format!("(literal \"{}\")", sandbox_path(executable_read_path))
-    });
+    let mut metadata = BTreeSet::new();
+    for path in owner_closure {
+        metadata.extend(sandbox_ancestor_literals(&path.physical, false));
+        reads.insert(if path.directory {
+            format!("(subpath \"{}\")", sandbox_path(&path.physical))
+        } else {
+            format!("(literal \"{}\")", sandbox_path(&path.physical))
+        });
+    }
     reads.extend(sandbox_ancestor_literals(product_root, true));
     reads.insert(format!("(subpath \"{}\")", sandbox_path(product_root)));
     for path in inputs {
         let is_directory = path.is_dir();
-        reads.extend(sandbox_ancestor_literals(path, is_directory));
+        metadata.extend(sandbox_ancestor_literals(path, is_directory));
         reads.insert(if is_directory {
             format!("(subpath \"{}\")", sandbox_path(path))
         } else {
@@ -125,8 +110,9 @@ fn macos_sandbox_profile(
         });
     }
     format!(
-        "(version 1)\n(deny default)\n(allow process*)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read* {})\n(allow file-write* (subpath \"{}\"))\n",
+        "(version 1)\n(deny default)\n(allow process*)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read* {})\n(allow file-read-metadata {})\n(allow file-write* (subpath \"{}\"))\n",
         reads.into_iter().collect::<Vec<_>>().join(" "),
+        metadata.into_iter().collect::<Vec<_>>().join(" "),
         sandbox_path(product_root),
     )
 }
@@ -410,11 +396,16 @@ mod tool_execution {
         verify_file_digest(&executable, &request.tool.executable.digest, &producer, "executable")?;
         let inputs = materialize_inputs(request)?;
         prepare_product_root(request)?;
-        // Products are named to the child by the root's resolved spelling, which is the only one confinement admits.
+        // Products and owner arguments are named to the child by their roots' resolved spellings, which are the only
+        // ones confinement admits.
         let product_root = canonical_directory(request.product_root, &producer, "product")?;
+        let executable_owner_root = canonical_directory(request.executable_owner.root, &producer, "executable owner")?;
         let request = &OvenPublisherToolRequest {
             fact_owner: request.fact_owner.clone(),
-            executable_owner: request.executable_owner.clone(),
+            executable_owner: OvenPublisherToolOwner {
+                identity: request.executable_owner.identity.clone(),
+                root: &executable_owner_root,
+            },
             product_root: &product_root,
             ..*request
         };
@@ -660,6 +651,9 @@ mod tool_execution {
                             &format!("argument names undeclared output `{output}`"),
                         )
                     }),
+                RustFactArgument::Owner { owner } => {
+                    Ok(request.executable_owner.root.join(owner).to_string_lossy().into_owned())
+                }
             })
             .collect()
     }
@@ -705,10 +699,35 @@ mod tool_execution {
             .map(|(name, value)| (name.clone(), OsString::from(value)))
             .collect::<BTreeMap<_, _>>();
         let inputs = inputs.values().cloned().collect::<Vec<_>>();
+        let owner_paths = std::iter::once(request.tool.executable.path.as_str())
+            .chain(request.tool.arguments.iter().filter_map(|argument| match argument {
+                RustFactArgument::Owner { owner } => Some(owner.as_str()),
+                _ => None,
+            }))
+            .collect::<Vec<_>>();
+        let actual_owner = crate::publisher_owner::publisher_owner_identity(
+            request.executable_owner.root,
+            owner_paths.iter().copied(),
+        )
+        .map_err(|error| OvenPublisherToolError::Execution {
+            producer: request.tool.name.clone(),
+            message: error.to_string(),
+        })?;
+        if actual_owner != request.tool.executable.owner {
+            return invalid(
+                &request.tool.name,
+                "executable owner identity does not match its declared closure",
+            );
+        }
+        let owner_closure =
+            crate::publisher_owner::publisher_owner_closure(request.executable_owner.root, owner_paths.iter().copied())
+                .map_err(|error| OvenPublisherToolError::Execution {
+                    producer: request.tool.name.clone(),
+                    message: error.to_string(),
+                })?;
         super::run_hermetic_process(
             executable,
-            executable,
-            false,
+            &owner_closure,
             &arguments,
             &environment,
             &inputs,
@@ -1097,7 +1116,8 @@ mod tool_execution {
 
             let fact_owner = tempdir()?;
             let product_root = tempdir()?;
-            let executable_owner_identity = digest_bytes(b"fixture executable owner");
+            let executable_owner_identity =
+                crate::publisher_owner::publisher_owner_identity(executable_owner.path(), ["tree-writer"])?;
             let tool = RustFactTool {
                 name: "tree-writer".to_string(),
                 target: "aarch64-apple-darwin".to_string(),
@@ -1178,6 +1198,8 @@ mod link_execution {
         Input(&'a str),
         /// Physical path of one declared output, selected by logical name.
         Output(&'a str),
+        /// Physical path below the executable owner's verified closure.
+        Owner(&'a str),
     }
 
     /// One exact file or complete tree input admitted for publisher execution.
@@ -1232,7 +1254,9 @@ mod link_execution {
         /// Caller-held immutable root that owns the executable and its installation resources.
         pub executable_owner_root: &'a Path,
         /// Immutable owner identity of the executable.
-        pub executable_owner: &'a str,
+        pub executable_owner: String,
+        /// Executable path followed by every owner-relative path referenced by an object argument.
+        pub executable_owner_paths: Vec<&'a str>,
         /// Expected executable byte identity.
         pub executable_digest: &'a str,
         /// Sorted explicit object compilations.
@@ -1415,6 +1439,22 @@ mod link_execution {
             ));
         }
         let executable = verified_file(request.executable, request.executable_digest, "executable")?;
+        let actual_owner = crate::publisher_owner::publisher_owner_identity(
+            request.executable_owner_root,
+            request.executable_owner_paths.iter().copied(),
+        )
+        .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?;
+        if actual_owner != request.executable_owner {
+            return Err(PublisherExecutionError::Invalid(format!(
+                "executable owner identity mismatch: expected {}, got {actual_owner}",
+                request.executable_owner
+            )));
+        }
+        let owner_closure = crate::publisher_owner::publisher_owner_closure(
+            request.executable_owner_root,
+            request.executable_owner_paths.iter().copied(),
+        )
+        .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?;
         let inputs = verified_inputs(&request.inputs)?;
         prepare_output_root(request.output_root)?;
         // Outputs are named to the child by the root's resolved spelling, which is the only one confinement admits.
@@ -1422,6 +1462,14 @@ mod link_execution {
             path: request.output_root.to_path_buf(),
             source,
         })?;
+        // Owner arguments are named by the owner root's resolved spelling too: the owner closure the confinement admits
+        // is canonical, and a spelling through a symlink (`/var` is `/private/var`) would need the link itself
+        // admitted.
+        let owner_root =
+            fs::canonicalize(request.executable_owner_root).map_err(|source| PublisherExecutionError::Io {
+                path: request.executable_owner_root.to_path_buf(),
+                source,
+            })?;
         let object_paths = declared_objects(&output_root, &request.objects)?;
         validate_object_arguments(&request.objects, &inputs, &object_paths)?;
         let (environment, logical_environment) = materialize_environment(&request.environment, &inputs)?;
@@ -1432,11 +1480,10 @@ mod link_execution {
                 PublisherExecutionError::Invalid(format!("object `{}` lost its declared output path", object.name))
             })?;
             let outputs = BTreeMap::from([(object.name.to_string(), object_path.clone())]);
-            let (arguments, logical_argv) = materialize_arguments(&object.arguments, &inputs, &outputs)?;
+            let (arguments, logical_argv) = materialize_arguments(&object.arguments, &inputs, &outputs, &owner_root)?;
             super::run_hermetic_process(
                 &executable,
-                request.executable_owner_root,
-                true,
+                &owner_closure,
                 &arguments,
                 &environment,
                 &input_paths,
@@ -1808,7 +1855,7 @@ mod link_execution {
                         referenced_inputs.insert(*input);
                     }
                     PublisherExecutionArgument::Output(output) => object_outputs.push(*output),
-                    PublisherExecutionArgument::Literal(_) => {}
+                    PublisherExecutionArgument::Literal(_) | PublisherExecutionArgument::Owner(_) => {}
                 }
             }
             if object_outputs.len() != 1 || object_outputs[0] != object.name {
@@ -1883,6 +1930,7 @@ mod link_execution {
         arguments: &[PublisherExecutionArgument<'_>],
         inputs: &BTreeMap<String, PathBuf>,
         outputs: &BTreeMap<String, PathBuf>,
+        owner_root: &Path,
     ) -> Result<(Vec<std::ffi::OsString>, Vec<String>), PublisherExecutionError> {
         let mut physical = Vec::with_capacity(arguments.len());
         let mut logical = Vec::with_capacity(arguments.len());
@@ -1906,6 +1954,11 @@ mod link_execution {
                     physical.push(path.as_os_str().to_owned());
                     logical.push(format!("output:{name}"));
                 }
+                PublisherExecutionArgument::Owner(relative) => {
+                    let path = request_owner_path(owner_root, relative)?;
+                    physical.push(path.as_os_str().to_owned());
+                    logical.push(format!("owner:{relative}"));
+                }
             }
         }
         Ok((physical, logical))
@@ -1913,6 +1966,22 @@ mod link_execution {
 
     /// The physical environment a tool runs with, and its logical, path-free form for the receipt.
     type MaterializedEnvironment = (BTreeMap<String, std::ffi::OsString>, BTreeMap<String, String>);
+
+    /// Resolve an owner argument from the request-local owner closure without accepting an absolute spelling.
+    fn request_owner_path(owner_root: &Path, relative: &str) -> Result<PathBuf, PublisherExecutionError> {
+        let path = Path::new(relative);
+        if relative.is_empty()
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(PublisherExecutionError::Invalid(format!(
+                "owner argument `{relative}` is not a portable relative path"
+            )));
+        }
+        Ok(owner_root.join(path))
+    }
 
     /// Materialize the complete environment from literals and admitted input paths.
     fn materialize_environment(
@@ -2171,7 +2240,20 @@ mod link_execution {
                     .parent()
                     .ok_or("executable has no owner root")
                     .unwrap_or(executable),
-                executable_owner: "sha256:compiler",
+                executable_owner: crate::publisher_owner::publisher_owner_identity(
+                    executable.parent().unwrap_or(executable),
+                    [executable
+                        .file_name()
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or("fake-compiler")],
+                )
+                .unwrap_or_else(|_| "sha256:compiler".to_string()),
+                executable_owner_paths: vec![
+                    executable
+                        .file_name()
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or("fake-compiler"),
+                ],
                 executable_digest,
                 objects: vec![PublisherExecutionObject {
                     name: "fixture.o",
@@ -2196,6 +2278,27 @@ mod link_execution {
                     timeout: Some(Duration::from_secs(2)),
                 },
             }
+        }
+
+        /// Extend the fixture request with one owner argument and its exact owner identity.
+        fn request_with_owner_path<'a>(
+            executable: &'a std::path::Path,
+            executable_digest: &'a str,
+            source: &'a std::path::Path,
+            output_root: &'a std::path::Path,
+            owner_path: &'a str,
+        ) -> PublisherExecutionRequest<'a> {
+            let mut request = request(executable, executable_digest, source, output_root);
+            request.objects[0]
+                .arguments
+                .insert(0, PublisherExecutionArgument::Owner(owner_path));
+            request.executable_owner_paths.push(owner_path);
+            request.executable_owner = crate::publisher_owner::publisher_owner_identity(
+                request.executable_owner_root,
+                request.executable_owner_paths.iter().copied(),
+            )
+            .unwrap_or_else(|_| "sha256:invalid-owner-fixture".to_string());
+            request
         }
 
         #[test]
@@ -2260,6 +2363,47 @@ mod link_execution {
             .ok_or("extra output was accepted")?;
             assert!(error.to_string().contains("undeclared"));
             Ok(())
+        }
+
+        #[test]
+        /// Execution refuses before spawn when the supplied owner root no longer reproduces the recorded identity.
+        fn publisher_execution_refuses_owner_identity_drift() -> Result<(), Box<dyn Error>> {
+            let root = tempdir()?;
+            let compiler = root.path().join("fake-compiler");
+            let source = root.path().join("source.c");
+            fs::write(&source, b"source")?;
+            let compiler_digest = executable(&compiler, COPY_INPUT_TO_OUTPUT)?;
+            let products = root.path().join("products");
+            let mut request = request(&compiler, &compiler_digest, &source, &products);
+            request.executable_owner = digest_bytes(b"different owner closure");
+            let error = execute_publisher_work(&request)
+                .err()
+                .ok_or("different owner closure was accepted")?;
+            assert!(error.to_string().contains("owner identity mismatch"));
+            Ok(())
+        }
+
+        #[test]
+        /// An owner file admits metadata on its ancestors but not data from an undeclared sibling.
+        fn publisher_execution_confines_reads_to_owner_closure() -> Result<(), Box<dyn Error>> {
+            let root = tempdir()?;
+            let owner = root.path().join("owner");
+            fs::create_dir_all(owner.join("resources"))?;
+            fs::write(owner.join("resources/admitted.h"), b"admitted")?;
+            fs::write(owner.join("resources/secret.h"), b"secret")?;
+            let compiler = owner.join("fake-compiler");
+            let source = root.path().join("source.c");
+            fs::write(&source, b"source")?;
+            let body = "owner_file=\"$1\"\nparent=${owner_file%/*}\ntest -d \"$parent\"\nif IFS= read -r secret < \"$parent/secret.h\"; then exit 41; fi\nIFS= read -r content < \"$2\" || true\nprintf '%s' \"$content\" > \"$3\"";
+            let compiler_digest = executable(&compiler, body)?;
+            let products = root.path().join("products");
+            let request =
+                request_with_owner_path(&compiler, &compiler_digest, &source, &products, "resources/admitted.h");
+            match execute_publisher_work(&request) {
+                Ok(_) => Ok(()),
+                Err(error) if confinement_was_denied(&error) => Ok(()),
+                Err(error) => Err(error.into()),
+            }
         }
 
         #[test]
