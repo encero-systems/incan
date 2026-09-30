@@ -17,14 +17,14 @@ use oven_rustc::rustc::{
     OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION, OvenCompilerSupportRootIntentAuthority, OvenRuntimeFoundation,
     OvenRuntimeFoundationPackageSource, OvenRuntimeFoundationSourceInventory, OvenRuntimeFoundationUnit,
     OvenRuntimeFoundationUnitExecution, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
-    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
-    OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
-    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
-    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_sha256,
-    selected_graph_unit_identity,
+    OvenRustcSupportingArtifact, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency,
+    OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput,
+    OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner,
+    OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose,
+    OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit,
+    OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents,
+    selected_graph_sha256, selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
@@ -264,10 +264,11 @@ pub fn runtime_foundation_from_compiled_loaf(
 
 /// Construct the Cargo-free publisher foundation that rebuilds every selected registry unit with direct rustc.
 ///
-/// The compatibility Loaf contributes only its sealed registry-source catalog and deterministic compile environment;
-/// none of its Cargo-produced Rust artifacts or search paths survive into this foundation. The selected graph is the
-/// sole dependency and compiler-input authority, including generated products and native archives attached by the
-/// publisher before this call.
+/// The compatibility Loaf contributes only its sealed registry-source declarations and deterministic compile
+/// environment; none of its Cargo-produced Rust artifacts or search paths survive into this foundation. The selected
+/// graph is the sole dependency and compiler-input authority, including generated products and native archives
+/// attached by the publisher before this call. Those exact graph inputs are projected into the artifact manifest so
+/// the immutable plan remains the complete byte-level authority.
 pub fn runtime_foundation_for_publisher_rebuild(
     finalized: &OvenFinalizedCompilerSupportSelectedGraph,
     loaf: &OvenLoaf,
@@ -302,7 +303,10 @@ pub fn runtime_foundation_for_publisher_rebuild(
     artifacts.entrypoint_dependency_search_paths.clear();
     artifacts.registry_leaves.clear();
     artifacts.vocab_auxiliary_targets.clear();
-    artifacts.supporting_artifacts.clear();
+    artifacts.supporting_artifacts = publisher_rebuild_supporting_artifacts(graph, &loaf.plan)?;
+    artifacts
+        .validate_shape(&artifacts.intent)
+        .map_err(|error| projection_error("runtime foundation publisher artifacts", &error.to_string()))?;
     let units = graph
         .units
         .iter()
@@ -320,6 +324,81 @@ pub fn runtime_foundation_for_publisher_rebuild(
         selected_graph: graph.clone(),
         units,
     })
+}
+
+/// Project every retained registry manifest and publisher-produced compiler input into the rebuild plan.
+///
+/// Registry source declarations remain valid only with their exact plan-declared `Cargo.toml`. Generated trees and
+/// native archives come from the already-validated selected graph and become supporting artifacts here, so the asset
+/// publisher cannot carry bytes that the immutable artifact manifest omits. Repeated identical paths collapse to one
+/// declaration; conflicting claims refuse the projection.
+fn publisher_rebuild_supporting_artifacts(
+    graph: &OvenSelectedRustFacetGraph,
+    source_plan: &oven_rustc::rustc::OvenRustcArtifactManifest,
+) -> Result<Vec<OvenRustcSupportingArtifact>, OvenLegacyCargoError> {
+    let mut declared = BTreeMap::new();
+    for source in &source_plan.registry_sources {
+        let manifest_path = if source.source.relative_root == "." {
+            "Cargo.toml".to_string()
+        } else {
+            format!("{}/Cargo.toml", source.source.relative_root)
+        };
+        let matches = source_plan
+            .supporting_artifacts
+            .iter()
+            .filter(|artifact| artifact.relative_path == manifest_path)
+            .collect::<Vec<_>>();
+        let [manifest] = matches.as_slice() else {
+            return Err(projection_error(
+                "runtime foundation registry source",
+                &format!(
+                    "`{}` {} has {} immutable-plan manifest declarations",
+                    source.package,
+                    source.version,
+                    matches.len()
+                ),
+            ));
+        };
+        insert_publisher_rebuild_artifact(&mut declared, &manifest.relative_path, &manifest.digest)?;
+    }
+    for unit in &graph.units {
+        for generated in &unit.generated_inputs {
+            for member in &generated.members {
+                let path = if generated.source.path == "." {
+                    member.path.clone()
+                } else {
+                    format!("{}/{}", generated.source.path, member.path)
+                };
+                insert_publisher_rebuild_artifact(&mut declared, &path, &member.digest)?;
+            }
+        }
+        for library in &unit.linked_libraries {
+            if let OvenSelectedRustFacetLinkedLibrary::Archive { artifact, digest, .. } = library {
+                insert_publisher_rebuild_artifact(&mut declared, &artifact.path, digest)?;
+            }
+        }
+    }
+    Ok(declared
+        .into_iter()
+        .map(|(relative_path, digest)| OvenRustcSupportingArtifact { relative_path, digest })
+        .collect())
+}
+
+/// Insert one publisher-rebuild artifact while refusing two byte identities for the same portable path.
+fn insert_publisher_rebuild_artifact(
+    declared: &mut BTreeMap<String, String>,
+    relative_path: &str,
+    digest: &str,
+) -> Result<(), OvenLegacyCargoError> {
+    if let Some(existing) = declared.insert(relative_path.to_string(), digest.to_string())
+        && existing != digest
+    {
+        return Err(projection_error(
+            "runtime foundation publisher artifact",
+            &format!("`{relative_path}` has conflicting immutable-plan digests"),
+        ));
+    }
+    Ok(())
 }
 
 /// The one portable identity a registry-backed selected unit's source carries: the `registry:` coordinate.
@@ -2959,7 +3038,7 @@ mod tests {
     /// The foundation must take its artifact owner from the graph's Constituent owner rather than from the capture
     /// receipt, even when portable closure identity makes those digests equal for this projection.
     #[test]
-    fn runtime_foundation_artifact_owner_is_the_graph_constituent() -> Result<(), Box<dyn std::error::Error>> {
+    fn runtime_foundation_publisher_rebuild_keeps_only_declared_inputs() -> Result<(), Box<dyn std::error::Error>> {
         use oven_rustc::loaf::{
             OVEN_LOAF_SCHEMA_VERSION, OvenLoafAccounting, OvenLoafCompatibility, OvenLoafProvenance,
         };
@@ -3012,10 +3091,29 @@ mod tests {
                     digest: "sha256:serde-artifact".to_string(),
                 },
             }],
-            registry_sources: Vec::new(),
+            registry_sources: vec![OvenRustcRegistrySourcePackage {
+                package: unit.package.clone(),
+                version: unit.package_version.clone(),
+                features: unit.features.clone(),
+                source: OvenRustcRegistrySource {
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "serde-checksum".to_string(),
+                    relative_root: unit.source.root.clone(),
+                    digest: unit.source.digest.clone(),
+                },
+            }],
             compile_environment: BTreeMap::new(),
             vocab_auxiliary_targets: Vec::new(),
-            supporting_artifacts: Vec::new(),
+            supporting_artifacts: vec![
+                oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: format!("{}/Cargo.toml", unit.source.root),
+                    digest: "sha256:serde-manifest".to_string(),
+                },
+                oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: "deps/unselected.rmeta".to_string(),
+                    digest: "sha256:unselected-artifact".to_string(),
+                },
+            ],
         };
         let loaf = OvenLoaf {
             schema_version: OVEN_LOAF_SCHEMA_VERSION,
@@ -3037,6 +3135,49 @@ mod tests {
             registry_leaves: plan.registry_leaves.clone(),
             plan,
         };
+        let mut publisher_product_graph = graph.clone();
+        publisher_product_graph.units[0]
+            .generated_inputs
+            .push(OvenSelectedRustFacetGeneratedInput {
+                name: "generated-bindings".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: digest(b"publisher tool owner"),
+                    path: "generated/bindings".to_string(),
+                },
+                digest: digest(b"publisher tool tree"),
+                members: vec![OvenSelectedRustFacetSourceMember {
+                    path: "bindings.rs".to_string(),
+                    digest: digest(b"publisher bindings"),
+                }],
+            });
+        publisher_product_graph.units[0]
+            .linked_libraries
+            .push(OvenSelectedRustFacetLinkedLibrary::Archive {
+                name: "native".to_string(),
+                kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                artifact: OvenSelectedRustFacetPath {
+                    owner: digest(b"publisher link owner"),
+                    path: "native/libnative.a".to_string(),
+                },
+                digest: digest(b"publisher native archive"),
+            });
+        let declared = publisher_rebuild_supporting_artifacts(&publisher_product_graph, &loaf.plan)?;
+        assert_eq!(declared.len(), 3);
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "generated/bindings/bindings.rs")
+        );
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "native/libnative.a")
+        );
+        assert!(
+            declared
+                .iter()
+                .all(|artifact| artifact.relative_path != "deps/unselected.rmeta")
+        );
         let foundation = runtime_foundation_from_compiled_loaf(&finalized, &loaf, "sha256:compiled-plan")?;
         assert_eq!(foundation.artifact_owner, constituent.identity);
         assert_eq!(foundation.units.len(), 1);
@@ -3054,7 +3195,12 @@ mod tests {
         assert!(publisher.artifacts.externs.is_empty());
         assert!(publisher.artifacts.registry_leaves.is_empty());
         assert!(publisher.artifacts.dependency_search_paths.is_empty());
-        assert!(publisher.artifacts.supporting_artifacts.is_empty());
+        publisher.artifacts.validate_shape(&intent)?;
+        assert_eq!(publisher.artifacts.supporting_artifacts.len(), 1);
+        assert_eq!(
+            publisher.artifacts.supporting_artifacts[0].relative_path,
+            format!("{}/Cargo.toml", unit.source.root)
+        );
         Ok(())
     }
 
