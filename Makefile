@@ -444,7 +444,7 @@ test-oven-partition:
 test-oven-replay:
 	@echo "\033[1mRunning prepared compiler-suite replay through Oven...\033[0m"
 	@set -e; \
-		suite_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		suite_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		command_started=0; \
 		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
 		suite_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-compiler-suite-output.XXXXXX")"; \
@@ -452,7 +452,7 @@ test-oven-replay:
 		suite_succeeded=false; \
 		cleanup_suite_output() { \
 			suite_status=$$?; \
-			bash "$(CURDIR)/scripts/retain_oven_suite_output.sh" "$$suite_output" "$$suite_tmp" \
+			"$(TARGET_DIR)/debug/incan" oven retain-suite-output "$$suite_output" "$$suite_tmp" \
 				"$$suite_succeeded" "$(abspath $(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT))" "$$suite_status" \
 				"$$suite_started" "$$command_started"; \
 			exit $$?; \
@@ -463,7 +463,7 @@ test-oven-replay:
 		mkdir -p "$$suite_output/cargo-guard"; \
 		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$suite_output/cargo-guard/cargo"; \
 		: > "$$suite_output/cargo-guard/invocations.log"; \
-		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		command_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		PATH="$$suite_output/cargo-guard:$$PATH" \
 			INCAN_OVEN_CARGO_GUARD_LOG="$$suite_output/cargo-guard/invocations.log" TMPDIR="$$suite_tmp" \
 			$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
@@ -642,7 +642,7 @@ test-oven-focused:
 .PHONY: test-oven-report-retention
 test-oven-report-retention:
 	@python3 scripts/test_oven_transcript_retention.py
-	@cd scripts && python3 -m unittest test_reconcile_oven_partitions
+	@$(TOOLS)/cargo_narrow.sh $(CURDIR) test -p oven-cli --lib partition_reconciliation
 
 .PHONY: test-oven-pr-regressions
 test-oven-pr-regressions: test-oven-report-retention
@@ -858,7 +858,7 @@ test-one: test-prewarm-oven-loafs
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
 	@set -e; \
-		root_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		root_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		command_started=0; \
 		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
 		root_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-test-one.XXXXXX")"; \
@@ -866,7 +866,7 @@ test-one: test-prewarm-oven-loafs
 		root_succeeded=false; \
 		cleanup_root_output() { \
 			root_status=$$?; \
-			bash "$(CURDIR)/scripts/retain_oven_suite_output.sh" "$$root_output" "$$root_tmp" \
+			"$(TARGET_DIR)/debug/incan" oven retain-suite-output "$$root_output" "$$root_tmp" \
 				"$$root_succeeded" "$(abspath $(INCAN_TEST_OVEN_TEST_ONE_REPORT))" "$$root_status" \
 				"$$root_started" "$$command_started"; \
 			exit $$?; \
@@ -877,7 +877,7 @@ test-one: test-prewarm-oven-loafs
 		mkdir -p "$$root_output/cargo-guard"; \
 		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$root_output/cargo-guard/cargo"; \
 		: > "$$root_output/cargo-guard/invocations.log"; \
-		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		command_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \
 			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
 			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \

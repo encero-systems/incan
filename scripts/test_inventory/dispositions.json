@@ -9697,6 +9697,22 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/incan-ci-tools/src/manifest_inventory.rs": {
+      "disposition": "unaffected",
+      "notes": "Cargo manifest retirement inventory and reproducibility checks; no compiler semantics.",
+      "owner": 1965,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-ci-tools/src/tool_outputs.rs": {
+      "disposition": "unaffected",
+      "notes": "CI bootstrap input evidence and output transport; no compiler semantics.",
+      "owner": 1965,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/incan-cli/src/bin/generate_feature_inventory.rs": {
       "disposition": "unaffected",
       "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics.",
@@ -11306,10 +11322,34 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/partition_reconciliation.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven CI evidence reconciliation; no compiler semantics.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/sdk_handoff.rs": {
+      "disposition": "unaffected",
+      "notes": "CI transport of one compiler-selected SDK provider; no compiler semantics.",
+      "owner": 1965,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/suite_retention.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven replay evidence retention and cleanup measurements; no compiler semantics.",
+      "owner": 1965,
       "split_required": false,
       "split_target": "",
       "twin": ""

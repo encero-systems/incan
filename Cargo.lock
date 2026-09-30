@@ -1429,6 +1429,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "incan-ci-tools"
+version = "0.6.0-dev.6"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+]
+
+[[package]]
 name = "incan-cli"
 version = "0.6.0-dev.6"
 dependencies = [
@@ -2324,6 +2337,7 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "toml",
  "tracing-subscriber",
@@ -3698,6 +3712,7 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",

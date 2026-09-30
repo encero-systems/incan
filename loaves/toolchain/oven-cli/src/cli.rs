@@ -170,6 +170,31 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
+    #[command(hide = true)]
+    SdkHandoff {
+        /// SDK handoff lifecycle operation
+        #[command(subcommand)]
+        command: SdkHandoffCommand,
+    },
+    /// Retain compiler-suite reports and transcripts, then reclaim disposable output
+    RetainSuiteOutput {
+        /// Print the host clock in nanoseconds
+        #[arg(long)]
+        clock: bool,
+        /// Positional retention arguments: output, scratch, success, report, status, and optional wrapper clocks
+        #[arg(value_name = "ARG")]
+        arguments: Vec<String>,
+    },
+    /// Reconcile compiler-suite partition reports into complete-suite evidence
+    ReconcilePartitions {
+        /// JSON report file or directory containing partition reports; may be repeated
+        #[arg(value_name = "REPORT_OR_DIRECTORY", required = true)]
+        reports: Vec<PathBuf>,
+        /// Optional path receiving the reconciliation summary
+        #[arg(long, value_name = "PATH")]
+        summary: Option<PathBuf>,
+    },
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
         /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
@@ -432,6 +457,50 @@ pub enum OvenCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
+    },
+}
+
+/// CI-only SDK provider-store transport operations.
+#[derive(Subcommand, Debug)]
+pub enum SdkHandoffCommand {
+    /// Stage the exact selected provider for artifact upload
+    Stage {
+        /// Compiler source checkout
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        workspace: PathBuf,
+        /// Matching compiler executable
+        #[arg(long, value_name = "PATH", default_value = "target/debug/incan")]
+        compiler: PathBuf,
+        /// Rust compiler used to establish the toolchain identity
+        #[arg(long, value_name = "COMMAND", default_value = "rustc")]
+        rustc: PathBuf,
+        /// Destination handoff directory
+        #[arg(long, value_name = "PATH")]
+        artifact: PathBuf,
+        /// Prepared SDK provider store
+        #[arg(long, value_name = "PATH")]
+        store: PathBuf,
+    },
+    /// Validate a downloaded provider before exposing consumer paths
+    Consume {
+        /// Compiler source checkout
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        workspace: PathBuf,
+        /// Matching compiler executable
+        #[arg(long, value_name = "PATH", default_value = "target/debug/incan")]
+        compiler: PathBuf,
+        /// Rust compiler used to establish the toolchain identity
+        #[arg(long, value_name = "COMMAND", default_value = "rustc")]
+        rustc: PathBuf,
+        /// Downloaded handoff directory
+        #[arg(long, value_name = "PATH")]
+        artifact: PathBuf,
+        /// Consumer SDK provider path file
+        #[arg(long, value_name = "PATH")]
+        path_file: PathBuf,
+        /// Environment file appended for later CI steps
+        #[arg(long, value_name = "PATH")]
+        env_file: PathBuf,
     },
 }
 

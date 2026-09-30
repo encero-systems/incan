@@ -1,18 +1,19 @@
 {
  "schema_version": 1,
- "generated_by": "scripts/self_build/cargo_manifest_inventory.py",
+ "generated_by": "incan-cargo-manifest-inventory",
  "summary": {
-  "manifest_count": 54,
+  "manifest_count": 55,
   "by_category": {
    "example-companion": 6,
    "fixture": 14,
    "standalone": 1,
    "third-party-patch": 1,
-   "workspace-member": 31,
+   "workspace-member": 32,
    "workspace-root": 1
   },
-  "workspace_member_count": 31,
+  "workspace_member_count": 32,
   "workspace_packages": [
+   "incan-ci-tools",
    "incan-cli",
    "incan-lsp",
    "incan_codegraph",
@@ -50,6 +51,10 @@
    "incan_web_macros"
   ],
   "members_with_bins": {
+   "incan-ci-tools": [
+    "incan-ci-tool-outputs",
+    "incan-cargo-manifest-inventory"
+   ],
    "incan-cli": [
     "incan"
    ],
@@ -106,6 +111,9 @@
    "2024"
   ],
   "third_party_packages_used_by_members": {
+   "ar_archive_writer": [
+    "normal"
+   ],
    "axum": [
     "dev",
     "normal"
@@ -298,7 +306,7 @@
     "dev"
    ]
   },
-  "third_party_package_count_members": 60,
+  "third_party_package_count_members": 61,
   "crate_level_lint_attributes": {
    "loaves/compiler/incan_driver/Cargo.toml": {
     "lib": [
@@ -407,6 +415,7 @@
      "loaves/toolchain/incan-cli",
      "loaves/toolchain/incan-lsp",
      "loaves/toolchain/oven-cli",
+     "loaves/toolchain/incan-ci-tools",
      "loaves/compiler/rust_inspect",
      "loaves/kernel/incan_codegraph",
      "loaves/kernel/incan_lang",
@@ -450,6 +459,12 @@
      ]
     },
     "dependencies": {
+     "ar_archive_writer": {
+      "version": "=0.5.3"
+     },
+     "incan-ci-tools": {
+      "path": "loaves/toolchain/incan-ci-tools"
+     },
      "incan-cli": {
       "path": "loaves/toolchain/incan-cli"
      },
@@ -1607,7 +1622,16 @@
     "path": null
    },
    "lints": null,
-   "package_metadata": null,
+   "package_metadata": {
+    "cargo-udeps": {
+     "ignore": {
+      "development": [
+       "byteorder",
+       "incan_std_core"
+      ]
+     }
+    }
+   },
    "target_roots": {
     "lib": "loaves/compiler/incan_driver/src/lib.rs"
    },
@@ -5816,6 +5840,16 @@
    "default_features": [],
    "dependencies": {
     "normal": {
+     "ar_archive_writer": {
+      "package": "ar_archive_writer",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "=0.5.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "hex": {
       "package": "hex",
       "kind": "third-party",
@@ -6959,6 +6993,148 @@
    }
   },
   {
+   "path": "loaves/toolchain/incan-ci-tools/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan-ci-tools",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": false,
+    "description": "Bootstrap-safe CI evidence and self-build inventory utilities",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": null,
+   "bins": [
+    {
+     "name": "incan-ci-tool-outputs",
+     "path": "src/bin/tool_outputs_cli.rs"
+    },
+    {
+     "name": "incan-cargo-manifest-inventory",
+     "path": "src/bin/cargo_manifest_inventory.rs"
+    }
+   ],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "clap": {
+      "package": "clap",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "4.4",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "preserve_order"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [
+       "preserve_order"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/toolchain/incan-ci-tools/src/lib.rs",
+    "bin:incan-ci-tool-outputs": "loaves/toolchain/incan-ci-tools/src/bin/tool_outputs_cli.rs",
+    "bin:incan-cargo-manifest-inventory": "loaves/toolchain/incan-ci-tools/src/bin/cargo_manifest_inventory.rs"
+   },
+   "crate_level_attributes": {
+    "bin:incan-cargo-manifest-inventory": [],
+    "bin:incan-ci-tool-outputs": [],
+    "lib": []
+   }
+  },
+  {
    "path": "loaves/toolchain/incan-cli/Cargo.toml",
    "category": "workspace-member",
    "cargo_lock_beside": false,
@@ -8094,7 +8270,8 @@
       "workspace_inherited": false,
       "version_req": "1.1.4",
       "features": [
-       "fs"
+       "fs",
+       "time"
       ],
       "default_features": true,
       "optional": false
@@ -8117,6 +8294,16 @@
       "origin": "registry",
       "workspace_inherited": true,
       "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
       "features": [],
       "default_features": true,
       "optional": false

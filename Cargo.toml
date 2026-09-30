@@ -17,6 +17,7 @@ members = [
     "loaves/toolchain/incan-cli",
     "loaves/toolchain/incan-lsp",
     "loaves/toolchain/oven-cli",
+    "loaves/toolchain/incan-ci-tools",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
     "loaves/kernel/incan_lang",
@@ -85,6 +86,7 @@ incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
 incan_format = { path = "loaves/compiler/incan_format" }
 incan_test_support = { path = "loaves/compiler/incan_test_support" }
 incan-cli = { path = "loaves/toolchain/incan-cli" }
+incan-ci-tools = { path = "loaves/toolchain/incan-ci-tools" }
 incan-lsp = { path = "loaves/toolchain/incan-lsp" }
 oven-cli = { path = "loaves/toolchain/oven-cli" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }

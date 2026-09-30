@@ -13,8 +13,11 @@ mod inventory;
 mod loaf_bake;
 mod loaf_bake_evidence;
 mod options;
+mod partition_reconciliation;
+mod sdk_handoff;
 mod suite_environment;
 mod suite_execution;
+mod suite_retention;
 mod support;
 
 pub use equivalence::oven_equivalence;
@@ -25,8 +28,11 @@ pub use loaf_bake::oven_legacy_cargo_bake_loafs;
 #[cfg(test)]
 use loaf_bake::{finish_loaf_bake_after_publication, loaf_envelope_default_limits};
 pub(crate) use loaf_bake_evidence::*;
+pub use partition_reconciliation::oven_reconcile_partitions;
+pub use sdk_handoff::oven_sdk_handoff;
 pub(crate) use suite_environment::*;
 pub(crate) use suite_execution::*;
+pub use suite_retention::oven_retain_suite_output;
 
 // The command option shapes and the store/limit/reporting helpers move beside this file rather than into it.
 // Every path stays where callers expect it through these re-exports, so this is a move, not an interface change.
