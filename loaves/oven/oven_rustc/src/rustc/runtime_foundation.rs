@@ -681,11 +681,12 @@ mod tests {
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
         OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetDependency, OvenSelectedRustFacetGeneratedInput,
-        OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-        OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
-        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
-        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
+        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetDependency, OvenSelectedRustFacetEnvironmentValue,
+        OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner,
+        OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose,
+        OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember,
+        OvenSelectedRustFacetTargetSpec, selected_graph_sha256, selected_graph_source_digest,
+        selected_graph_unit_identity,
     };
     use crate::rustc::{
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
@@ -1172,6 +1173,64 @@ mod tests {
         OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?).map_err(Into::into)
     }
 
+    /// Build a registry fixture whose manifest is both a source member, a supporting artifact and an environment file.
+    fn publisher_manifest_overlap_asset(
+        package: &str,
+        source_root: &str,
+        supporting_digest: Option<String>,
+    ) -> Result<OvenRuntimeFoundationAsset, Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let package_manifest = source_member("Cargo.toml", fixture_cargo_toml(package).as_bytes());
+        let source_members = vec![
+            package_manifest.clone(),
+            source_member("src/lib.rs", fixture_source_bytes("serde").as_bytes()),
+        ];
+        let source_digest = selected_graph_source_digest(&source_members)?;
+        edit_serde_unit(&mut foundation, |unit| {
+            unit.package = package.to_string();
+            unit.source.identity = format!("registry:{package}@1.0.0");
+            unit.source.root = source_root.to_string();
+            unit.source.digest = source_digest.clone();
+            unit.source_members = source_members;
+            unit.include_dirs = vec![OvenSelectedRustFacetPath {
+                owner: unit.source.owner.clone(),
+                path: source_root.to_string(),
+            }];
+            unit.environment.insert(
+                "CARGO_MANIFEST_PATH".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: unit.source.owner.clone(),
+                        path: format!("{source_root}/Cargo.toml"),
+                    },
+                },
+            );
+        })?;
+        for source in &mut foundation.artifacts.registry_sources {
+            if source.package == "serde" {
+                source.package = package.to_string();
+                source.source.relative_root = source_root.to_string();
+                source.source.digest = source_digest.clone();
+            }
+        }
+        for leaf in &mut foundation.artifacts.registry_leaves {
+            if leaf.package == "serde" {
+                leaf.package = package.to_string();
+                leaf.source.relative_root = source_root.to_string();
+                leaf.source.digest = source_digest.clone();
+            }
+        }
+        let manifest = foundation
+            .artifacts
+            .supporting_artifacts
+            .iter_mut()
+            .find(|artifact| artifact.relative_path == "registry-sources/serde-1.0.0/Cargo.toml")
+            .ok_or("fixture lost serde manifest artifact")?;
+        manifest.relative_path = format!("{source_root}/Cargo.toml");
+        manifest.digest = supporting_digest.unwrap_or(package_manifest.digest);
+        OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?).map_err(Into::into)
+    }
+
     /// Write one exact foundation fixture member below a temporary retained owner root.
     fn write_fixture_file(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         let path = root.join(relative);
@@ -1650,6 +1709,52 @@ mod tests {
             1,
             "a completed asset leaves no visible staging sibling"
         );
+        Ok(())
+    }
+
+    /// A registry manifest claimed through source inventory, supporting artifacts and `CARGO_MANIFEST_PATH` stages
+    /// once as a regular file; the environment reference must not manufacture a directory at that file path.
+    #[test]
+    fn runtime_foundation_publisher_stages_an_overlapping_registry_manifest_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = "quasar-packet";
+        let source_root = "registry-sources/quasar-packet-1.0.0";
+        let asset = publisher_manifest_overlap_asset(package, source_root, None)?;
+        let source = tempfile::tempdir()?;
+        let toolchain = tempfile::tempdir()?;
+        let install = tempfile::tempdir()?;
+        write_materialization_fixture(source.path(), toolchain.path())?;
+        fs::rename(
+            source.path().join("registry-sources/serde-1.0.0"),
+            source.path().join(source_root),
+        )?;
+        fs::write(
+            source.path().join(source_root).join("Cargo.toml"),
+            fixture_cargo_toml(package),
+        )?;
+        let destination = install.path().join("runtime-foundation");
+
+        let _ = publish_runtime_foundation_asset(asset, source.path(), toolchain.path(), &destination)?;
+
+        assert!(destination.join(source_root).join("Cargo.toml").is_file());
+        Ok(())
+    }
+
+    /// Two byte identities for the same registry manifest refuse in layout preflight before staging begins.
+    #[test]
+    fn runtime_foundation_publisher_refuses_conflicting_registry_manifest_claims()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_root = "registry-sources/nebula-codec-1.0.0";
+        let asset = publisher_manifest_overlap_asset(
+            "nebula-codec",
+            source_root,
+            Some(selected_graph_sha256(b"a different synthetic manifest")),
+        )?;
+        let validated = asset.validated()?;
+        let refusal = super::asset::validate_runtime_foundation_asset_member_paths(&validated)
+            .err()
+            .ok_or("conflicting registry manifest claims were accepted")?;
+        assert!(refusal.to_string().contains("conflicting regular-file byte identities"));
         Ok(())
     }
 

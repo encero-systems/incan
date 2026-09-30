@@ -9457,6 +9457,14 @@
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
+      "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/runtime_foundation/asset.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; runtime-foundation staging layout validation has no compiler-crate dependency. Reviewed at crate level.",
+      "owner": 1561,
       "split_required": false,
       "split_target": "",
       "twin": ""

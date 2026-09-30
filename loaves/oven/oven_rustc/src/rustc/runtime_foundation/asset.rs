@@ -2,7 +2,7 @@
 //! its selected-package source inventories and the members they name, sealed under one identity and audited member by
 //! member.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -169,7 +169,7 @@ fn copy_runtime_foundation_asset_members(
             source,
         })?;
     }
-    for relative_path in &members.files {
+    for relative_path in members.files.keys() {
         if relative_path == OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME {
             continue;
         }
@@ -386,6 +386,13 @@ fn insert_generated_member_source(
 /// One exact descriptor-derived regular-file and directory catalog for a release foundation root.
 #[derive(Debug, Default)]
 struct RuntimeFoundationAssetMemberCatalog {
+    files: BTreeMap<String, Option<String>>,
+    directories: BTreeSet<String>,
+}
+
+/// Filesystem members observed while auditing an already staged runtime foundation.
+#[derive(Debug, Default)]
+struct ObservedRuntimeFoundationAssetMembers {
     files: BTreeSet<String>,
     directories: BTreeSet<String>,
 }
@@ -400,11 +407,12 @@ fn audit_runtime_foundation_asset_members(
     asset: &ValidatedOvenRuntimeFoundationAsset,
 ) -> Result<(), OvenRustcError> {
     let expected = runtime_foundation_asset_member_paths(asset)?;
-    let mut actual = RuntimeFoundationAssetMemberCatalog::default();
+    let mut actual = ObservedRuntimeFoundationAssetMembers::default();
     collect_runtime_foundation_asset_members(foundation_root, foundation_root, &mut actual)?;
-    if actual.files != expected.files || actual.directories != expected.directories {
-        let missing_files = expected.files.difference(&actual.files).cloned().collect::<Vec<_>>();
-        let extra_files = actual.files.difference(&expected.files).cloned().collect::<Vec<_>>();
+    let expected_files = expected.files.keys().cloned().collect::<BTreeSet<_>>();
+    if actual.files != expected_files || actual.directories != expected.directories {
+        let missing_files = expected_files.difference(&actual.files).cloned().collect::<Vec<_>>();
+        let extra_files = actual.files.difference(&expected_files).cloned().collect::<Vec<_>>();
         let missing_directories = expected
             .directories
             .difference(&actual.directories)
@@ -462,75 +470,14 @@ fn runtime_foundation_asset_member_paths(
     record_runtime_foundation_asset_file(
         &mut members,
         OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME,
+        None,
         "runtime foundation descriptor",
     )?;
-    for artifact in foundation.artifacts().declared_artifact_paths()? {
-        record_runtime_foundation_asset_file(&mut members, &artifact, "runtime foundation artifact")?;
+    for (artifact, digest) in foundation.artifacts().declared_artifact_digests()? {
+        record_runtime_foundation_asset_file(&mut members, &artifact, Some(&digest), "runtime foundation artifact")?;
     }
     for unit in &graph.units {
-        if unit.source.owner == foundation_owner {
-            record_runtime_foundation_asset_directory(
-                &mut members,
-                &unit.source.root,
-                "runtime foundation source root",
-            )?;
-            for source_member in &unit.source_members {
-                record_runtime_foundation_asset_file(
-                    &mut members,
-                    &runtime_foundation_asset_member_path(
-                        &unit.source.root,
-                        &source_member.path,
-                        "runtime foundation source member",
-                    )?,
-                    "runtime foundation source member",
-                )?;
-            }
-        }
-        for directory in unit
-            .include_dirs
-            .iter()
-            .chain(unit.exclude_dirs.iter())
-            .filter(|directory| directory.owner == foundation_owner)
-        {
-            record_runtime_foundation_asset_directory(
-                &mut members,
-                &directory.path,
-                "runtime foundation source directory",
-            )?;
-        }
-        for environment in unit.environment.values() {
-            if let OvenSelectedRustFacetEnvironmentValue::Path { value } = environment
-                && sealed_below_root(&value.owner)
-            {
-                // Foundation-owned path environment values are directories in v1 (such as OUT_DIR). A file-valued
-                // environment input needs its own digest-bearing schema rather than becoming an untracked exception.
-                record_runtime_foundation_asset_directory(
-                    &mut members,
-                    &value.path,
-                    "runtime foundation environment directory",
-                )?;
-            }
-        }
-        for generated in &unit.generated_inputs {
-            if sealed_below_root(&generated.source.owner) {
-                record_runtime_foundation_asset_directory(
-                    &mut members,
-                    &generated.source.path,
-                    "runtime foundation generated root",
-                )?;
-                for member in &generated.members {
-                    record_runtime_foundation_asset_file(
-                        &mut members,
-                        &runtime_foundation_asset_member_path(
-                            &generated.source.path,
-                            &member.path,
-                            "runtime foundation generated member",
-                        )?,
-                        "runtime foundation generated member",
-                    )?;
-                }
-            }
-        }
+        record_runtime_foundation_unit_members(&mut members, unit, foundation_owner, &sealed_below_root)?;
     }
     for record in asset.source_inventories.values() {
         let package = &record.package;
@@ -549,6 +496,7 @@ fn runtime_foundation_asset_member_paths(
                 &package.manifest.path,
                 "runtime foundation package manifest",
             )?,
+            Some(&package.manifest.digest),
             "runtime foundation package manifest",
         )?;
         for source_member in &package.members {
@@ -559,11 +507,124 @@ fn runtime_foundation_asset_member_paths(
                     &source_member.path,
                     "runtime foundation package source member",
                 )?,
+                Some(&source_member.digest),
                 "runtime foundation package source member",
             )?;
         }
     }
+    validate_runtime_foundation_environment_paths(&members, graph, &sealed_below_root)?;
     Ok(members)
+}
+
+/// Validate the complete pre-write file, directory and byte-identity layout of one runtime foundation asset.
+#[cfg(test)]
+pub(super) fn validate_runtime_foundation_asset_member_paths(
+    asset: &ValidatedOvenRuntimeFoundationAsset,
+) -> Result<(), OvenRustcError> {
+    let _ = runtime_foundation_asset_member_paths(asset)?;
+    Ok(())
+}
+
+/// Add one selected unit's source, generated-output and native-archive claims to the staging catalog.
+fn record_runtime_foundation_unit_members(
+    members: &mut RuntimeFoundationAssetMemberCatalog,
+    unit: &super::super::OvenSelectedRustFacetUnit,
+    foundation_owner: &str,
+    sealed_below_root: &impl Fn(&str) -> bool,
+) -> Result<(), OvenRustcError> {
+    if unit.source.owner == foundation_owner {
+        record_runtime_foundation_asset_directory(members, &unit.source.root, "runtime foundation source root")?;
+        for source_member in &unit.source_members {
+            let path = runtime_foundation_asset_member_path(
+                &unit.source.root,
+                &source_member.path,
+                "runtime foundation source member",
+            )?;
+            record_runtime_foundation_asset_file(
+                members,
+                &path,
+                Some(&source_member.digest),
+                "runtime foundation source member",
+            )?;
+        }
+    }
+    for directory in unit
+        .include_dirs
+        .iter()
+        .chain(unit.exclude_dirs.iter())
+        .filter(|directory| directory.owner == foundation_owner)
+    {
+        record_runtime_foundation_asset_directory(members, &directory.path, "runtime foundation source directory")?;
+    }
+    for generated in &unit.generated_inputs {
+        if !sealed_below_root(&generated.source.owner) {
+            continue;
+        }
+        if generated.members.is_empty() {
+            record_runtime_foundation_asset_file(
+                members,
+                &generated.source.path,
+                Some(&generated.digest),
+                "runtime foundation generated file",
+            )?;
+            continue;
+        }
+        record_runtime_foundation_asset_directory(
+            members,
+            &generated.source.path,
+            "runtime foundation generated root",
+        )?;
+        for member in &generated.members {
+            let path = runtime_foundation_asset_member_path(
+                &generated.source.path,
+                &member.path,
+                "runtime foundation generated member",
+            )?;
+            record_runtime_foundation_asset_file(
+                members,
+                &path,
+                Some(&member.digest),
+                "runtime foundation generated member",
+            )?;
+        }
+    }
+    for library in &unit.linked_libraries {
+        if let super::super::OvenSelectedRustFacetLinkedLibrary::Archive { artifact, digest, .. } = library
+            && sealed_below_root(&artifact.owner)
+        {
+            record_runtime_foundation_asset_file(
+                members,
+                &artifact.path,
+                Some(digest),
+                "runtime foundation native archive",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Require each sealed environment path to name an already declared file or directory without creating either kind.
+fn validate_runtime_foundation_environment_paths(
+    members: &RuntimeFoundationAssetMemberCatalog,
+    graph: &super::super::OvenSelectedRustFacetGraph,
+    sealed_below_root: &impl Fn(&str) -> bool,
+) -> Result<(), OvenRustcError> {
+    for unit in &graph.units {
+        for environment in unit.environment.values() {
+            if let OvenSelectedRustFacetEnvironmentValue::Path { value } = environment
+                && sealed_below_root(&value.owner)
+            {
+                let path = normalized_relative_path(&value.path, "runtime foundation environment path")?;
+                if !members.files.contains_key(&path) && !members.directories.contains(&path) {
+                    return Err(runtime_foundation_invalid(
+                        "runtime foundation environment path",
+                        format!("`{path}` is not a declared staged file or directory"),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Join a source-tree root and one source member while preserving the portable foundation-root path vocabulary.
@@ -584,11 +645,28 @@ fn runtime_foundation_asset_member_path(
 fn record_runtime_foundation_asset_file(
     members: &mut RuntimeFoundationAssetMemberCatalog,
     path: &str,
+    digest: Option<&str>,
     kind: &'static str,
 ) -> Result<(), OvenRustcError> {
     let path = normalized_relative_path(path, kind)?;
+    if members.directories.contains(&path) {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation asset layout",
+            format!("`{path}` is declared as both a regular file and a directory"),
+        ));
+    }
     record_runtime_foundation_asset_parent_directories(members, &path)?;
-    members.files.insert(path);
+    let digest = digest.map(str::to_string);
+    if let Some(previous) = members.files.get(&path) {
+        if previous != &digest || digest.is_none() {
+            return Err(runtime_foundation_invalid(
+                "runtime foundation asset layout",
+                format!("`{path}` has conflicting regular-file byte identities"),
+            ));
+        }
+        return Ok(());
+    }
+    members.files.insert(path, digest);
     Ok(())
 }
 
@@ -602,6 +680,12 @@ fn record_runtime_foundation_asset_directory(
         return Ok(());
     }
     let path = normalized_relative_path(path, kind)?;
+    if members.files.contains_key(&path) {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation asset layout",
+            format!("`{path}` is declared as both a regular file and a directory"),
+        ));
+    }
     record_runtime_foundation_asset_parent_directories(members, &path)?;
     members.directories.insert(path);
     Ok(())
@@ -618,6 +702,12 @@ fn record_runtime_foundation_asset_parent_directories(
             break;
         }
         let directory = normalized_relative_path(&directory.to_string_lossy(), "runtime foundation asset directory")?;
+        if members.files.contains_key(&directory) {
+            return Err(runtime_foundation_invalid(
+                "runtime foundation asset layout",
+                format!("`{directory}` is a regular file but is also required as a parent directory"),
+            ));
+        }
         members.directories.insert(directory.clone());
         current = PathBuf::from(directory);
     }
@@ -628,7 +718,7 @@ fn record_runtime_foundation_asset_parent_directories(
 fn collect_runtime_foundation_asset_members(
     root: &Path,
     directory: &Path,
-    members: &mut RuntimeFoundationAssetMemberCatalog,
+    members: &mut ObservedRuntimeFoundationAssetMembers,
 ) -> Result<(), OvenRustcError> {
     let mut entries = fs::read_dir(directory)
         .map_err(|source| OvenRustcError::Io {
@@ -741,4 +831,38 @@ pub(crate) fn canonicalize_runtime_foundation_asset_facts(
         inventory.package.members.sort();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// A staged registry manifest cannot also become a directory, including as the parent of another artifact.
+    #[test]
+    fn runtime_foundation_layout_refuses_file_directory_overlap() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = "registry-sources/orbit-parser-3.2.1/Cargo.toml";
+        let mut exact = RuntimeFoundationAssetMemberCatalog::default();
+        record_runtime_foundation_asset_file(&mut exact, manifest, Some("sha256:manifest"), "fixture manifest")?;
+        let exact_refusal = record_runtime_foundation_asset_directory(&mut exact, manifest, "fixture directory")
+            .err()
+            .ok_or("file/directory overlap was accepted")?;
+        assert!(
+            exact_refusal
+                .to_string()
+                .contains("both a regular file and a directory")
+        );
+
+        let mut parent = RuntimeFoundationAssetMemberCatalog::default();
+        record_runtime_foundation_asset_file(&mut parent, manifest, Some("sha256:manifest"), "fixture manifest")?;
+        let parent_refusal = record_runtime_foundation_asset_file(
+            &mut parent,
+            &format!("{manifest}/nested.rs"),
+            Some("sha256:nested"),
+            "fixture nested artifact",
+        )
+        .err()
+        .ok_or("regular-file parent overlap was accepted")?;
+        assert!(parent_refusal.to_string().contains("required as a parent directory"));
+        Ok(())
+    }
 }
