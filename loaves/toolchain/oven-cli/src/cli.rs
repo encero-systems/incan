@@ -170,6 +170,15 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Retain compiler-suite reports and transcripts, then reclaim disposable output
+    RetainSuiteOutput {
+        /// Print the host clock in nanoseconds
+        #[arg(long)]
+        clock: bool,
+        /// Positional retention arguments: output, scratch, success, report, status, and optional wrapper clocks
+        #[arg(value_name = "ARG")]
+        arguments: Vec<String>,
+    },
     /// Reconcile compiler-suite partition reports into complete-suite evidence
     ReconcilePartitions {
         /// JSON report file or directory containing partition reports; may be repeated

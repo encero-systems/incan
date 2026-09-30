@@ -11322,6 +11322,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/suite_retention.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven replay evidence retention and cleanup measurements; no compiler semantics.",
+      "owner": 1965,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/tools.rs": {
       "disposition": "unaffected",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build.",
