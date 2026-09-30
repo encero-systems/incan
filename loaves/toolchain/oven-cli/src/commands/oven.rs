@@ -4415,6 +4415,7 @@ mod tests {
                 loaf_registry: None,
                 loaf_registry_commit: None,
                 harvest_dir: None,
+                link_owners: Vec::new(),
             },
             OvenLoafEnvelope::CompilerSuite,
             report,

@@ -7,12 +7,15 @@
 //! refusal rather than a quiet substitution.
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use oven_model::loaf_registry::LoafRegistry;
 use oven_model::lock::RegistryRecord;
 use oven_model::manifest::{RustFactRecord, RustFactSelection};
 
 use super::{OvenLegacyCargoBuildScriptFacts, OvenLegacyCargoError, OvenLegacyCargoSelectedUnitCapture};
+use crate::harvest::{HARVEST_PROPOSAL_FILE, HarvestProposal};
 
 /// One adopted captured unit and the record that governs it.
 #[derive(Debug, Clone)]
@@ -27,6 +30,8 @@ pub struct LoafRegistryAdoption {
     pub index_line_digest: String,
     /// Content identity of the exact governing manifest bytes.
     pub manifest_digest: String,
+    /// Immutable registry directory that owns the record's declared source and tool-input closure.
+    pub manifest_root: PathBuf,
     /// `harvested` or `attested`, as the index line states it for this binding.
     pub status: String,
     /// The bound record.
@@ -91,12 +96,111 @@ impl LoafRegistryAuthority {
                     checksum: package.checksum.clone(),
                     index_line_digest: package.index_line_digest(),
                     manifest_digest: package.manifest_digest.clone(),
+                    manifest_root: package.manifest_root.clone(),
                     status: package.binding_status(&selection),
                     record: record.clone(),
                 },
             );
         }
         Ok(Self { adoptions })
+    }
+
+    /// Fill unadopted units from complete proposals written by this capture's own harvest.
+    ///
+    /// Same-run proposals are transition authority only: every package, source checksum and selection field must
+    /// equal the captured unit, and the proposal must convert through the same typed admission boundary as a
+    /// registry fact. Existing pinned-registry adoptions always win. The captured source path supplies the immutable
+    /// crate owner; proposal directories contain generated outputs, not copies of registry source archives.
+    pub fn with_same_run_harvest(
+        mut self,
+        capture: &OvenLegacyCargoSelectedUnitCapture,
+        harvest_root: &Path,
+        profile: &str,
+    ) -> Result<Self, OvenLegacyCargoError> {
+        let compiler = capture.compiler.as_ref().ok_or_else(|| {
+            OvenLegacyCargoError::Plan("same-run harvest adoption requires a captured compiler selection".to_string())
+        })?;
+        let mut proposals = Vec::new();
+        for entry in fs::read_dir(harvest_root).map_err(|source| OvenLegacyCargoError::Io {
+            path: harvest_root.to_path_buf(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| OvenLegacyCargoError::Io {
+                path: harvest_root.to_path_buf(),
+                source,
+            })?;
+            let path = entry.path().join(HARVEST_PROPOSAL_FILE);
+            if !path.is_file() {
+                continue;
+            }
+            let bytes = fs::read(&path).map_err(|source| OvenLegacyCargoError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            let proposal = serde_json::from_slice::<HarvestProposal>(&bytes).map_err(|error| {
+                OvenLegacyCargoError::Plan(format!(
+                    "same-run harvest proposal {} is invalid: {error}",
+                    path.display()
+                ))
+            })?;
+            proposals.push((path, bytes, proposal));
+        }
+        for (index, unit) in capture.units.iter().enumerate() {
+            if self.adoptions.contains_key(&index) || unit.mode == "run-custom-build" {
+                continue;
+            }
+            let Some(source) = unit.registry_source.as_ref() else {
+                continue;
+            };
+            let matches = proposals
+                .iter()
+                .filter(|(_, _, proposal)| {
+                    let [fact] = proposal.rust.facts.as_slice() else {
+                        return false;
+                    };
+                    proposal.project.name == unit.package
+                        && proposal.project.version == unit.package_version
+                        && proposal.source.checksum == source.checksum
+                        && fact.toolchain == compiler.toolchain
+                        && unit.platform.as_deref() == Some(fact.target.as_str())
+                        && fact.profile == profile
+                        && fact.features == unit.effective_features
+                })
+                .collect::<Vec<_>>();
+            let [(path, bytes, proposal)] = matches.as_slice() else {
+                if matches.is_empty() {
+                    continue;
+                }
+                return Err(OvenLegacyCargoError::Plan(format!(
+                    "same-run harvest contains {} matching proposals for `{}` {}",
+                    matches.len(),
+                    unit.package,
+                    unit.package_version
+                )));
+            };
+            let record = proposal.admitted_record().map_err(|error| {
+                OvenLegacyCargoError::Plan(format!(
+                    "same-run harvest proposal {} is not admissible: {error}",
+                    path.display()
+                ))
+            })?;
+            let source_root = captured_registry_source_root(unit, &source.root_module)?;
+            let manifest_digest = oven_model::digest::digest_bytes(bytes);
+            self.adoptions.insert(
+                index,
+                LoafRegistryAdoption {
+                    package: unit.package.clone(),
+                    version: unit.package_version.clone(),
+                    checksum: source.checksum.clone(),
+                    index_line_digest: manifest_digest.clone(),
+                    manifest_digest,
+                    manifest_root: source_root,
+                    status: "harvested".to_string(),
+                    record,
+                },
+            );
+        }
+        Ok(self)
     }
 
     /// The adoption governing one captured unit, if any.
@@ -226,4 +330,29 @@ impl LoafRegistryAuthority {
         }
         Ok(())
     }
+}
+
+/// Recover the captured package root by stripping the registry record's checked root-module path.
+fn captured_registry_source_root(
+    unit: &super::OvenLegacyCargoSelectedUnit,
+    root_module: &str,
+) -> Result<PathBuf, OvenLegacyCargoError> {
+    let module = Path::new(root_module);
+    let component_count = module.components().count();
+    let mut root = unit.source_path.as_path();
+    for _ in 0..component_count {
+        root = root.parent().ok_or_else(|| {
+            OvenLegacyCargoError::Plan(format!(
+                "captured source {} does not end in registry root module `{root_module}`",
+                unit.source_path.display()
+            ))
+        })?;
+    }
+    if root.join(module) != unit.source_path {
+        return Err(OvenLegacyCargoError::Plan(format!(
+            "captured source {} does not match registry root module `{root_module}`",
+            unit.source_path.display()
+        )));
+    }
+    Ok(root.to_path_buf())
 }

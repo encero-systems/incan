@@ -195,6 +195,22 @@ pub fn bake_publisher_link(
     })
 }
 
+/// Select the deterministic archive container required by one Rust target triple.
+///
+/// This mirrors rustc's object-format families without probing the host: Apple targets use indexed Darwin archives,
+/// MSVC targets use COFF, BSD targets use the BSD variant, and the remaining supported Rust targets use GNU format.
+pub fn publisher_archive_format(target: &str) -> &'static str {
+    if target.contains("-apple-") {
+        "darwin"
+    } else if target.contains("-windows-msvc") {
+        "coff"
+    } else if target.contains("freebsd") || target.contains("netbsd") || target.contains("openbsd") {
+        "bsd"
+    } else {
+        "gnu"
+    }
+}
+
 /// Resolve a declared link source, allowing `.` only for a complete tree rooted at the source owner.
 fn source_owner_path(root: &Path, source: &oven_model::manifest::RustFactArtifact) -> Result<PathBuf, OvenRustcError> {
     if source.kind == oven_model::manifest::RustFactArtifactKind::Tree && source.path == "." {

@@ -34,6 +34,28 @@ pub fn publish_runtime_foundation_asset(
     toolchain_root: &Path,
     destination: &Path,
 ) -> Result<OvenAdmittedRuntimeFoundationAsset, OvenRustcError> {
+    publish_runtime_foundation_asset_with_generated_owners(
+        asset,
+        source_foundation_root,
+        toolchain_root,
+        &[],
+        destination,
+    )
+}
+
+/// Publish a runtime foundation while importing receipt-bound generated owners from explicit immutable roots.
+///
+/// Each supplied identity must already be a `GeneratedOutput` owner in the selected graph. Only graph-declared
+/// product members are copied; receipts remain provenance used to derive the owner identity and do not become
+/// compiler-visible asset bytes. Re-admission maps those copied products to the sealed foundation root, so ordinary
+/// consumers never need the publisher-local roots.
+pub fn publish_runtime_foundation_asset_with_generated_owners(
+    asset: OvenRuntimeFoundationAsset,
+    source_foundation_root: &Path,
+    toolchain_root: &Path,
+    generated_owner_roots: &[OvenSelectedRustFacetOwnerRoot],
+    destination: &Path,
+) -> Result<OvenAdmittedRuntimeFoundationAsset, OvenRustcError> {
     let destination_parent = destination
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -54,15 +76,20 @@ pub fn publish_runtime_foundation_asset(
     let validated = asset.clone().validated()?;
     let source_foundation_root = canonical_directory(source_foundation_root, "runtime foundation source root")?;
     let toolchain_root = canonical_directory(toolchain_root, "runtime foundation toolchain root")?;
-    let owner_roots =
-        runtime_foundation_asset_owner_roots(&validated, source_foundation_root.clone(), toolchain_root.clone())?;
+    let owner_roots = runtime_foundation_asset_owner_roots(
+        &validated,
+        source_foundation_root.clone(),
+        toolchain_root.clone(),
+        generated_owner_roots,
+    )?;
     // Verify source, generated, native and artifact facts before creating any output.
     let _ = validated.materialize_for_publication(&owner_roots)?;
 
     let members = runtime_foundation_asset_member_paths(&validated)?;
+    let generated_sources = runtime_foundation_generated_member_sources(&validated, generated_owner_roots)?;
     let staging = create_runtime_foundation_asset_staging_directory(&destination)?;
     let result = (|| {
-        copy_runtime_foundation_asset_members(&source_foundation_root, &staging, &members)?;
+        copy_runtime_foundation_asset_members(&source_foundation_root, &staging, &members, &generated_sources)?;
         write_runtime_foundation_asset_descriptor(&staging, &asset)?;
 
         // Re-admission after copying closes the source-to-stage race and proves the staged root is complete before
@@ -133,6 +160,7 @@ fn copy_runtime_foundation_asset_members(
     source_root: &Path,
     staging_root: &Path,
     members: &RuntimeFoundationAssetMemberCatalog,
+    source_overrides: &std::collections::BTreeMap<String, PathBuf>,
 ) -> Result<(), OvenRustcError> {
     for directory in &members.directories {
         let destination = staging_root.join(directory);
@@ -145,7 +173,10 @@ fn copy_runtime_foundation_asset_members(
         if relative_path == OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME {
             continue;
         }
-        let source = safe_path(source_root, relative_path, "runtime foundation source member")?;
+        let source = match source_overrides.get(relative_path) {
+            Some(source) => source.clone(),
+            None => safe_path(source_root, relative_path, "runtime foundation source member")?,
+        };
         let source = verified_regular_file(&source, "runtime foundation source member")?;
         let destination = staging_root.join(relative_path);
         let parent = destination.parent().ok_or_else(|| {
@@ -229,7 +260,7 @@ pub fn admit_runtime_foundation_asset_for_publication(
         )
     })?;
     let asset = asset.validated()?;
-    let owner_roots = runtime_foundation_asset_owner_roots(&asset, foundation_root.clone(), toolchain_root)?;
+    let owner_roots = runtime_foundation_asset_owner_roots(&asset, foundation_root.clone(), toolchain_root, &[])?;
     audit_runtime_foundation_asset_members(&foundation_root, &asset)?;
     Ok(OvenAdmittedRuntimeFoundationAsset { asset, owner_roots })
 }
@@ -239,6 +270,7 @@ fn runtime_foundation_asset_owner_roots(
     asset: &ValidatedOvenRuntimeFoundationAsset,
     foundation_root: PathBuf,
     toolchain_root: PathBuf,
+    generated_owner_roots: &[OvenSelectedRustFacetOwnerRoot],
 ) -> Result<Vec<OvenSelectedRustFacetOwnerRoot>, OvenRustcError> {
     let foundation = asset.foundation();
     let graph = foundation.selected_graph().graph();
@@ -249,6 +281,10 @@ fn runtime_foundation_asset_owner_roots(
         .find(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Toolchain)
         .map(|owner| owner.identity.clone())
         .ok_or_else(|| runtime_foundation_invalid("runtime foundation owners", "has no Toolchain owner"))?;
+    let supplied_generated = generated_owner_roots
+        .iter()
+        .map(|owner| (owner.identity.as_str(), owner.root.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
     let mut owner_roots = Vec::with_capacity(graph.owners.len());
     let mut identities = BTreeSet::new();
     for owner in &graph.owners {
@@ -265,7 +301,10 @@ fn runtime_foundation_asset_owner_roots(
             }
             // Generated outputs are copied into descriptor-named directories below the sealed asset. Their separate
             // identities preserve producer provenance while the asset root remains the sole physical publication.
-            OvenSelectedRustFacetOwnerKind::GeneratedOutput => foundation_root.clone(),
+            OvenSelectedRustFacetOwnerKind::GeneratedOutput => supplied_generated
+                .get(owner.identity.as_str())
+                .cloned()
+                .unwrap_or_else(|| foundation_root.clone()),
             _ => {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation owners",
@@ -285,6 +324,63 @@ fn runtime_foundation_asset_owner_roots(
         ));
     }
     Ok(owner_roots)
+}
+
+/// Resolve graph-declared generated product paths to their publisher-local source files.
+fn runtime_foundation_generated_member_sources(
+    asset: &ValidatedOvenRuntimeFoundationAsset,
+    generated_owner_roots: &[OvenSelectedRustFacetOwnerRoot],
+) -> Result<std::collections::BTreeMap<String, PathBuf>, OvenRustcError> {
+    let roots = generated_owner_roots
+        .iter()
+        .map(|owner| (owner.identity.as_str(), owner.root.as_path()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut sources = std::collections::BTreeMap::new();
+    for unit in &asset.foundation().selected_graph().graph().units {
+        for input in &unit.generated_inputs {
+            let Some(root) = roots.get(input.source.owner.as_str()) else {
+                continue;
+            };
+            if input.members.is_empty() {
+                let source = safe_path(root, &input.source.path, "publisher generated input")?;
+                insert_generated_member_source(&mut sources, input.source.path.clone(), source)?;
+            } else {
+                for member in &input.members {
+                    let relative = runtime_foundation_asset_member_path(
+                        &input.source.path,
+                        &member.path,
+                        "publisher generated member",
+                    )?;
+                    let source = safe_path(root, &relative, "publisher generated member")?;
+                    insert_generated_member_source(&mut sources, relative, source)?;
+                }
+            }
+        }
+        for library in &unit.linked_libraries {
+            if let super::super::OvenSelectedRustFacetLinkedLibrary::Archive { artifact, .. } = library
+                && let Some(root) = roots.get(artifact.owner.as_str())
+            {
+                let source = safe_path(root, &artifact.path, "publisher native archive")?;
+                insert_generated_member_source(&mut sources, artifact.path.clone(), source)?;
+            }
+        }
+    }
+    Ok(sources)
+}
+
+/// Insert one generated member source while refusing two owners that claim the same sealed path.
+fn insert_generated_member_source(
+    sources: &mut std::collections::BTreeMap<String, PathBuf>,
+    relative: String,
+    source: PathBuf,
+) -> Result<(), OvenRustcError> {
+    if sources.insert(relative.clone(), source).is_some() {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation generated members",
+            format!("more than one publisher owner claims `{relative}`"),
+        ));
+    }
+    Ok(())
 }
 
 /// One exact descriptor-derived regular-file and directory catalog for a release foundation root.

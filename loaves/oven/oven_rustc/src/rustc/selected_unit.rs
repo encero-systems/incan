@@ -24,7 +24,7 @@ use super::{
     OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
     OvenSelectedRustFacetPath, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit,
     ValidatedOvenSelectedRustFacetGraph, compiled_rust_unit_identities, digest_regular_file,
-    selected_graph_unit_identity,
+    selected_graph_generated_input_digest, selected_graph_unit_identity,
 };
 
 /// One physical root for an owner named by a validated selected facet graph.
@@ -97,29 +97,140 @@ pub fn publisher_tool_generated_inputs(
     let generated_inputs = receipt
         .outputs
         .iter()
-        .map(|output| OvenSelectedRustFacetGeneratedInput {
-            name: output.name.clone(),
-            source: OvenSelectedRustFacetPath {
-                owner: receipt.identity.clone(),
-                path: output.path.clone(),
-            },
-            digest: output.digest.clone(),
-            members: output
-                .members
-                .iter()
-                .map(|member| OvenSelectedRustFacetSourceMember {
-                    path: member.path.clone(),
-                    digest: member.digest.clone(),
-                })
-                .collect(),
+        .map(|output| {
+            let (root, members) = match output.kind {
+                RustFactArtifactKind::File => {
+                    let path = Path::new(&output.path);
+                    let name =
+                        path.file_name()
+                            .and_then(OsStr::to_str)
+                            .ok_or_else(|| OvenRustcError::InvalidInput {
+                                field: "publisher tool receipt",
+                                message: format!("file output `{}` has no portable file name", output.path),
+                            })?;
+                    let parent = path
+                        .parent()
+                        .and_then(Path::to_str)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or(".");
+                    (
+                        parent.to_string(),
+                        vec![OvenSelectedRustFacetSourceMember {
+                            path: name.to_string(),
+                            digest: output.digest.clone(),
+                        }],
+                    )
+                }
+                RustFactArtifactKind::Tree => (
+                    output.path.clone(),
+                    output
+                        .members
+                        .iter()
+                        .map(|member| OvenSelectedRustFacetSourceMember {
+                            path: member.path.clone(),
+                            digest: member.digest.clone(),
+                        })
+                        .collect(),
+                ),
+            };
+            let digest =
+                selected_graph_generated_input_digest(&members).map_err(|error| OvenRustcError::InvalidInput {
+                    field: "publisher tool product",
+                    message: error.to_string(),
+                })?;
+            Ok(OvenSelectedRustFacetGeneratedInput {
+                name: output.name.clone(),
+                source: OvenSelectedRustFacetPath {
+                    owner: receipt.identity.clone(),
+                    path: root,
+                },
+                digest,
+                members,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, OvenRustcError>>()?;
     Ok(OvenPublisherToolGeneratedInputs {
         owner: OvenSelectedRustFacetOwner {
             identity: receipt.identity.clone(),
             kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
         },
         generated_inputs,
+    })
+}
+
+/// Attach one finished publisher-tool receipt to every selected consumer it names and rekey the graph closure.
+///
+/// The receipt is projected through [`publisher_tool_generated_inputs`] before any graph mutation, so executable
+/// authority never crosses into the consumer graph. Every named consumer must exist in the pre-product graph. The
+/// receipt identity becomes the generated-output owner and the exact products become compiler inputs of each
+/// consumer; dependent identities are then recomputed over that new input closure.
+pub fn finalize_publisher_tool_product(
+    selected: ValidatedOvenSelectedRustFacetGraph,
+    receipt: &OvenPublisherToolReceipt,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    verify_publisher_tool_receipt(receipt).map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher tool receipt",
+        message: error.to_string(),
+    })?;
+    let mut graph = selected.into_graph();
+    if receipt.host != graph.selection.host || receipt.target != graph.selection.intent.target {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: "host/target association does not match the selected graph".to_string(),
+        });
+    }
+    if graph.owners.iter().any(|owner| owner.identity == receipt.identity) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: "receipt owner collides with an existing selected owner".to_string(),
+        });
+    }
+    let consumers = receipt.consuming_units.iter().cloned().collect::<BTreeSet<_>>();
+    let present = graph
+        .units
+        .iter()
+        .filter(|unit| consumers.contains(&unit.identity))
+        .map(|unit| unit.identity.clone())
+        .collect::<BTreeSet<_>>();
+    if present != consumers {
+        let missing = consumers.difference(&present).cloned().collect::<Vec<_>>();
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool consumer",
+            message: format!("selected graph has no unit(s) {}", missing.join(", ")),
+        });
+    }
+    graph.owners.push(OvenSelectedRustFacetOwner {
+        identity: receipt.identity.clone(),
+        kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+    });
+    for unit in &mut graph.units {
+        if !consumers.contains(&unit.identity) {
+            continue;
+        }
+        let projected = publisher_tool_generated_inputs(
+            receipt,
+            &graph.selection.host,
+            &graph.selection.intent.target,
+            &unit.identity,
+        )?;
+        for input in projected.generated_inputs {
+            if unit.generated_inputs.iter().any(|existing| existing.name == input.name) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "publisher tool product",
+                    message: format!(
+                        "generated-input name `{}` collides in unit `{}`",
+                        input.name, unit.crate_name
+                    ),
+                });
+            }
+            unit.generated_inputs.push(input);
+        }
+        unit.generated_inputs.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    rekey_selected_graph(&mut graph)?;
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher tool selected graph",
+        message: error.to_string(),
     })
 }
 
@@ -2190,8 +2301,40 @@ mod tests {
         assert_eq!(projected.owner.kind, OvenSelectedRustFacetOwnerKind::GeneratedOutput);
         assert_eq!(projected.generated_inputs.len(), 1);
         assert_eq!(projected.generated_inputs[0].source.owner, receipt.identity);
-        assert_eq!(projected.generated_inputs[0].source.path, "generated/isle.rs");
-        assert_eq!(projected.generated_inputs[0].digest, receipt.outputs[0].digest);
+        assert_eq!(projected.generated_inputs[0].source.path, "generated");
+        assert_eq!(projected.generated_inputs[0].members[0].path, "isle.rs");
+        assert_eq!(
+            projected.generated_inputs[0].members[0].digest,
+            receipt.outputs[0].digest
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn publisher_tool_product_is_bound_into_consumer_and_rekeys_dependents() -> Result<(), Box<dyn std::error::Error>> {
+        use oven_store::publisher_execution::publisher_tool_receipt_identity;
+
+        let selected = selected_graph()?;
+        let original = selected
+            .graph()
+            .units
+            .first()
+            .map(|unit| unit.identity.clone())
+            .ok_or("fixture graph has no unit")?;
+        let mut receipt = publisher_tool_receipt()?;
+        receipt.consuming_units = vec![original.clone()];
+        receipt.host = selected.graph().selection.host.clone();
+        receipt.target = selected.graph().selection.intent.target.clone();
+        receipt.identity = publisher_tool_receipt_identity(&receipt)?;
+
+        let finalized = finalize_publisher_tool_product(selected, &receipt)?;
+        let unit = finalized.graph().units.first().ok_or("finalized graph has no unit")?;
+        assert_ne!(unit.identity, original);
+        assert_eq!(unit.generated_inputs.len(), 1);
+        assert_eq!(unit.generated_inputs[0].source.owner, receipt.identity);
+        assert!(finalized.graph().owners.iter().any(|owner| {
+            owner.identity == receipt.identity && owner.kind == OvenSelectedRustFacetOwnerKind::GeneratedOutput
+        }));
         Ok(())
     }
 
