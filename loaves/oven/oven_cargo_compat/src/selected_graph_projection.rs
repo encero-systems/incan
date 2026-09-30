@@ -1702,6 +1702,7 @@ pub fn project_legacy_cargo_selected_graph_with_identities(
                 source_members: source_members(capture_unit, binding)?,
                 features: capture_unit.effective_features.clone(),
                 cfg: build_script_facts.cfg,
+                compiler_arguments: capture_unit.compiler_arguments.clone(),
                 sysroot_externs: capture_unit.sysroot_externs.clone(),
                 environment: build_script_facts.environment,
                 include_dirs: binding.include_dirs.clone(),
@@ -2624,8 +2625,9 @@ mod tests {
     use oven_rustc::rustc::OvenRustcRegistrySource;
     use oven_rustc::rustc::{
         OvenCompilerSupportRootIntent, OvenCompilerSupportRootIntentAuthority, OvenSelectedRustFacetCfgSnapshot,
-        OvenSelectedRustFacetIntent, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetTargetSpec,
-        compiler_support_root_intent_digest, selected_graph_sha256, selected_graph_source_digest,
+        OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetIntent, OvenSelectedRustFacetPurpose,
+        OvenSelectedRustFacetTargetSpec, compiler_support_root_intent_digest, selected_graph_sha256,
+        selected_graph_source_digest,
     };
     use oven_store::{
         OvenGeneratedProjectRequest, receipt_generated_project, receipt_with_compiler_support_root_intent,
@@ -2734,6 +2736,10 @@ mod tests {
                 platform: Some("x86_64-unknown-linux-gnu".to_string()),
                 target_is_explicit: Some(true),
                 cfg: vec!["target_has_atomic=\"8\"".to_string()],
+                compiler_arguments: vec![OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "embed-bitcode".to_string(),
+                    value: "no".to_string(),
+                }],
                 effective_features: vec!["derive".to_string()],
                 dependencies: Vec::new(),
                 sysroot_externs: Vec::new(),
@@ -3510,6 +3516,7 @@ mod tests {
         assert!(graph.exposed_roots.is_empty());
         assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Library);
         assert_eq!(graph.units[0].features, ["derive"]);
+        assert_eq!(graph.units[0].compiler_arguments, capture.units[0].compiler_arguments);
         Ok(())
     }
 
@@ -3533,6 +3540,7 @@ mod tests {
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
@@ -4076,6 +4084,7 @@ mod tests {
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
@@ -4177,6 +4186,7 @@ mod tests {
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),

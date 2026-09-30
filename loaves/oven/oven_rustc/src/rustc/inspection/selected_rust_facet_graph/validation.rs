@@ -7,7 +7,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-    OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCrateKind,
+    OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS, OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN,
+    OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetCrateKind,
     OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue,
     OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetGraphError,
     OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
@@ -229,6 +230,45 @@ pub(crate) fn validate_selected_graph_sorted_strings(
     }
     if values.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(selected_graph_invalid(field, "must be sorted and unique"));
+    }
+    Ok(())
+}
+
+/// Admit the closed portable subset of captured Cargo compiler arguments.
+pub(crate) fn validate_selected_graph_compiler_arguments(
+    arguments: &[OvenSelectedRustFacetCompilerArgument],
+    field: &str,
+) -> Result<(), OvenSelectedRustFacetGraphError> {
+    for (index, argument) in arguments.iter().enumerate() {
+        let argument_field = format!("{field}[{index}]");
+        match argument {
+            OvenSelectedRustFacetCompilerArgument::Codegen { name, value } => {
+                if !OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS.contains(&name.as_str()) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.name"),
+                        "is not an admitted portable code-generation option",
+                    ));
+                }
+                if name != "extra-filename" || !value.is_empty() {
+                    validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                }
+                if value.chars().any(char::is_control) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains a control character",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::CheckCfg { value } => {
+                validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                if value.chars().any(char::is_control) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains a control character",
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -597,6 +637,7 @@ struct OvenSelectedRustFacetUnitIdentityInput<'a> {
     source_members: &'a [OvenSelectedRustFacetSourceMember],
     features: &'a [String],
     cfg: &'a [String],
+    compiler_arguments: &'a [OvenSelectedRustFacetCompilerArgument],
     environment: &'a BTreeMap<String, OvenSelectedRustFacetEnvironmentValue>,
     include_dirs: &'a [OvenSelectedRustFacetPath],
     exclude_dirs: &'a [OvenSelectedRustFacetPath],
@@ -635,6 +676,7 @@ pub fn selected_graph_unit_identity(
         source_members: &unit.source_members,
         features: &unit.features,
         cfg: &unit.cfg,
+        compiler_arguments: &unit.compiler_arguments,
         environment: &unit.environment,
         include_dirs: &unit.include_dirs,
         exclude_dirs: &unit.exclude_dirs,

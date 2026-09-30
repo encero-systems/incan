@@ -11,9 +11,9 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 8;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 9;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
-pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/3";
+pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/4";
 
 /// Command purpose whose dependency roles and feature activation produced a selected Rust graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,6 +269,42 @@ pub enum OvenSelectedRustFacetDomain {
     Target,
 }
 
+/// One portable compiler argument observed for a selected physical unit.
+///
+/// The selected graph retains only arguments that can affect compilation success or emitted bytes and whose values
+/// contain no machine-local paths. Source, output, dependency, target, cfg, and environment arguments have their own
+/// typed fields; the runtime executor reconstructs those from their owning authorities instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OvenSelectedRustFacetCompilerArgument {
+    /// One `-C name=value` code-generation setting exactly as Cargo passed it.
+    Codegen {
+        /// Admitted rustc code-generation option name.
+        name: String,
+        /// Exact portable option value.
+        value: String,
+    },
+    /// One exact `--check-cfg` specification used by rustc's unexpected-cfg lint.
+    CheckCfg {
+        /// Rustc check-cfg grammar retained verbatim from the captured invocation.
+        value: String,
+    },
+}
+
+/// Portable rustc code-generation options admitted from a Cargo selected-unit capture.
+pub const OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS: &[&str] = &[
+    "codegen-units",
+    "debug-assertions",
+    "debuginfo",
+    "embed-bitcode",
+    "extra-filename",
+    "metadata",
+    "opt-level",
+    "overflow-checks",
+    "panic",
+    "strip",
+];
+
 /// One stable crate unit selected by the Oven-native Rust facet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -303,6 +339,9 @@ pub struct OvenSelectedRustFacetUnit {
     pub features: Vec<String>,
     /// Sorted complete cfg facts supplied to inspection; an explicitly checked empty set remains empty.
     pub cfg: Vec<String>,
+    /// Ordered byte- or success-affecting compiler arguments observed for this exact physical unit.
+    #[serde(default)]
+    pub compiler_arguments: Vec<OvenSelectedRustFacetCompilerArgument>,
     /// Sorted compiler-sysroot externs observed in the exact Rustc invocation.
     ///
     /// These names have no filesystem path because the selected compiler owns them. Schema six admits only
@@ -861,6 +900,10 @@ impl OvenSelectedRustFacetGraph {
 
             validate_selected_graph_sorted_strings(&unit.features, &format!("{field}.features"))?;
             validate_selected_graph_sorted_strings(&unit.cfg, &format!("{field}.cfg"))?;
+            validate_selected_graph_compiler_arguments(
+                &unit.compiler_arguments,
+                &format!("{field}.compiler_arguments"),
+            )?;
             validate_selected_graph_sorted_strings(&unit.sysroot_externs, &format!("{field}.sysroot_externs"))?;
             for sysroot_extern in &unit.sysroot_externs {
                 if sysroot_extern != "proc_macro" {

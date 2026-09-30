@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use oven_model::digest::canonical_json_bytes;
 use oven_rustc::rustc::substitution::RustcUnitRequest;
 use oven_rustc::rustc::{
-    OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetSourceMember, selected_graph_generated_input_digest,
+    OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerArgument,
+    OvenSelectedRustFacetSourceMember, selected_graph_generated_input_digest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -430,6 +431,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         unit.artifact_paths.sort();
         unit.artifact_paths.dedup();
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
+        unit.compiler_arguments = rustc_rebuild_arguments(&item.invocation.arguments)?;
         unit.sysroot_externs = extern_arguments(&item.invocation.arguments)?.sysroot;
         unit.target_is_explicit = Some(argument_value(&item.invocation.arguments, "--target").is_some());
     }
@@ -1019,6 +1021,45 @@ fn rustc_non_feature_cfgs(arguments: &[String]) -> Vec<String> {
     cfg
 }
 
+/// Retain the portable byte- and success-affecting arguments needed to reproduce one Cargo-selected unit.
+fn rustc_rebuild_arguments(
+    arguments: &[String],
+) -> Result<Vec<OvenSelectedRustFacetCompilerArgument>, OvenLegacyCargoError> {
+    let mut retained = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        if matches!(argument.as_str(), "-C" | "--codegen") {
+            let value = arguments.get(index + 1).ok_or_else(|| {
+                OvenLegacyCargoError::Plan(format!("rustc option `{argument}` has no value in captured invocation"))
+            })?;
+            let (name, setting) = value.split_once('=').ok_or_else(|| {
+                OvenLegacyCargoError::Plan(format!("rustc code-generation option `{value}` has no exact value"))
+            })?;
+            if OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS.contains(&name) {
+                retained.push(OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: name.to_string(),
+                    value: setting.to_string(),
+                });
+            }
+            index += 2;
+            continue;
+        }
+        if argument == "--check-cfg" {
+            let value = arguments.get(index + 1).ok_or_else(|| {
+                OvenLegacyCargoError::Plan("rustc option `--check-cfg` has no value in captured invocation".to_string())
+            })?;
+            retained.push(OvenSelectedRustFacetCompilerArgument::CheckCfg {
+                value: value.to_string(),
+            });
+            index += 2;
+            continue;
+        }
+        index += 1;
+    }
+    Ok(retained)
+}
+
 /// Publisher-only physical facts for one Cargo selected-unit graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1095,6 +1136,9 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub target_is_explicit: Option<bool>,
     /// Exact non-feature rustc cfg arguments; Cargo features remain separately named by `effective_features`.
     pub cfg: Vec<String>,
+    /// Ordered portable compiler arguments retained from Cargo's exact successful rustc invocation.
+    #[serde(default)]
+    pub compiler_arguments: Vec<OvenSelectedRustFacetCompilerArgument>,
     pub effective_features: Vec<String>,
     pub dependencies: Vec<OvenLegacyCargoSelectedDependency>,
     /// Bare compiler/sysroot externs admitted from the verified rustc invocation.
@@ -1511,6 +1555,7 @@ fn capture_legacy_cargo_selected_units_inner(
             platform: unit.platform.clone(),
             target_is_explicit: None,
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             effective_features: features,
             dependencies,
             sysroot_externs: Vec::new(),
@@ -1966,6 +2011,7 @@ mod tests {
                 platform: None,
                 target_is_explicit: None,
                 cfg: Vec::new(),
+                compiler_arguments: Vec::new(),
                 effective_features: Vec::new(),
                 dependencies: Vec::new(),
                 sysroot_externs: Vec::new(),
@@ -2058,7 +2104,7 @@ mod tests {
             }),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc.clone(),
-                "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "--cfg", "target_has_atomic=\"ptr\"", "-C", "extra-filename=-sealed", "--emit", "link", "--out-dir", target.to_string_lossy(), "/fixture/dep/src/lib.rs"],
+                "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "--cfg", "target_has_atomic=\"ptr\"", "-C", "opt-level=3", "-C", "embed-bitcode=no", "--check-cfg", "cfg(docsrs,test)", "-C", "metadata=0123456789abcdef", "-C", "extra-filename=-sealed", "-C", "strip=debuginfo", "--emit", "link", "--out-dir", target.to_string_lossy(), "/fixture/dep/src/lib.rs"],
                 "environment": {"CARGO_MANIFEST_DIR": "/fixture/dep", "CARGO_PKG_NAME": "dep", "CARGO_PKG_VERSION": "2.0.0"}
             }),
             serde_json::json!({
@@ -2086,6 +2132,34 @@ mod tests {
         assert_eq!(capture.roots, [1]);
         assert!(capture.rustc_invocations_observed);
         assert_eq!(capture.units[0].cfg, ["target_has_atomic=\"ptr\""]);
+        assert_eq!(
+            capture.units[0].compiler_arguments,
+            [
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "opt-level".to_string(),
+                    value: "3".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "embed-bitcode".to_string(),
+                    value: "no".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::CheckCfg {
+                    value: "cfg(docsrs,test)".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "metadata".to_string(),
+                    value: "0123456789abcdef".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "extra-filename".to_string(),
+                    value: "-sealed".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "strip".to_string(),
+                    value: "debuginfo".to_string(),
+                },
+            ]
+        );
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
         assert_eq!(
             capture.units[1].dependencies[0].extern_crate_name.as_deref(),

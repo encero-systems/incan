@@ -852,6 +852,7 @@ mod tests {
             source_members: members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.to_string(),

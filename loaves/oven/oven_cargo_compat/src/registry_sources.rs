@@ -621,6 +621,7 @@ mod tests {
             platform: Some(platform.to_string()),
             target_is_explicit: Some(true),
             cfg: vec![cfg.to_string()],
+            compiler_arguments: Vec::new(),
             effective_features: vec!["std".to_string()],
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),

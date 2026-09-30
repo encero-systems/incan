@@ -18,9 +18,10 @@ use std::process::Command;
 use super::{
     OvenCompiledRustUnitIdentity, OvenMaterializedRuntimeFoundation, OvenMaterializedRustFacetEnvironmentValue,
     OvenMaterializedRustFacetLinkedLibrary, OvenRuntimeFoundationUnitExecution, OvenRustcError,
-    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain, OvenSelectedRustFacetUnit,
-    OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile, digest_regular_file,
-    parse_rustc_diagnostics, verified_regular_file,
+    OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain,
+    OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    ValidatedOvenRuntimeFoundation, apply_oven_profile, digest_regular_file, parse_rustc_diagnostics,
+    verified_regular_file,
 };
 
 /// The explicit retained compiler that owns every output this executor produces.
@@ -503,7 +504,11 @@ fn rebuild_unit_command(
         .arg(&source.root_module)
         .arg("-o")
         .arg(artifact);
-    apply_oven_profile(&mut command, &selection.intent.profile);
+    if unit.compiler_arguments.is_empty() {
+        apply_oven_profile(&mut command, &selection.intent.profile);
+    } else {
+        append_captured_compiler_arguments(&mut command, &unit.compiler_arguments);
+    }
     // ---- Deterministic path remapping for reproducible unit bytes ----
     //
     // `rustc` folds absolute paths into what it emits, so the same unit compiled from two scratch locations
@@ -558,7 +563,24 @@ fn rebuild_unit_command(
     }
     append_materialized_sysroot_extern_arguments(&mut command, &source.sysroot_externs);
     append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
+    if unit.source.kind == OvenSelectedRustFacetSourceKind::Registry {
+        command.args(["--cap-lints", "allow"]);
+    }
     Ok(command)
+}
+
+/// Append the portable compiler arguments retained from Cargo's exact selected-unit invocation.
+fn append_captured_compiler_arguments(command: &mut Command, arguments: &[OvenSelectedRustFacetCompilerArgument]) {
+    for argument in arguments {
+        match argument {
+            OvenSelectedRustFacetCompilerArgument::Codegen { name, value } => {
+                command.arg("-C").arg(format!("{name}={value}"));
+            }
+            OvenSelectedRustFacetCompilerArgument::CheckCfg { value } => {
+                command.arg("--check-cfg").arg(value);
+            }
+        }
+    }
 }
 
 /// Append compiler-owned bare externs already admitted by the selected graph's verified toolchain contract.
@@ -636,9 +658,9 @@ pub(crate) mod tests {
         OvenSelectedRustFacetDependency, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
         OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot,
         OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
-        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
-        OvenSelectedRustFacetTargetSpec, resolve_active_rustc, rustc_host_target, rustc_identity,
-        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
+        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
+        resolve_active_rustc, rustc_host_target, rustc_identity, selected_graph_sha256, selected_graph_source_digest,
+        selected_graph_unit_identity,
     };
 
     /// Exact archive paths, including repeats, reach the linker in declared order.
@@ -750,6 +772,74 @@ pub(crate) mod tests {
         );
     }
 
+    /// Registry rebuilds carry Cargo's lint cap while path rebuilds retain captured byte-affecting arguments only.
+    #[test]
+    fn rebuild_arguments_follow_selected_unit_source_kind() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        let output_root = tempfile::tempdir()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+        let graph = fixture.foundation.selected_graph().graph();
+        let selected_identity = fixture
+            .materialized
+            .rebuild_order()
+            .next()
+            .ok_or("the fixture declares no rebuild unit")?;
+        let source = fixture
+            .materialized
+            .sources()
+            .unit(selected_identity)
+            .ok_or("the first rebuild unit was not materialized")?;
+        let base_unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == selected_identity)
+            .ok_or("the first rebuild unit is absent from the selected graph")?;
+        let captured = vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "embed-bitcode".to_string(),
+                value: "no".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CheckCfg {
+                value: "cfg(docsrs,test)".to_string(),
+            },
+        ];
+        let arguments_for = |kind| -> Result<Vec<String>, OvenRustcError> {
+            let mut unit = base_unit.clone();
+            unit.source.kind = kind;
+            unit.compiler_arguments = captured.clone();
+            let command = rebuild_unit_command(
+                &closure,
+                &unit,
+                source,
+                &graph.selection,
+                fixture.materialized.sources().compiler_target(),
+                fixture.materialized.artifact_plan(),
+                &BTreeSet::new(),
+                &[],
+                output_root.path(),
+                &output_root.path().join(format!("lib{}.rlib", unit.crate_name)),
+            )?;
+            Ok(command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect())
+        };
+
+        let registry = arguments_for(OvenSelectedRustFacetSourceKind::Registry)?;
+        assert!(registry.windows(2).any(|pair| pair == ["--cap-lints", "allow"]));
+        assert!(registry.windows(2).any(|pair| pair == ["-C", "embed-bitcode=no"]));
+        assert!(
+            registry
+                .windows(2)
+                .any(|pair| pair == ["--check-cfg", "cfg(docsrs,test)"])
+        );
+
+        let path = arguments_for(OvenSelectedRustFacetSourceKind::Path)?;
+        assert!(!path.iter().any(|argument| argument == "--cap-lints"));
+        assert!(path.windows(2).any(|pair| pair == ["-C", "embed-bitcode=no"]));
+        Ok(())
+    }
+
     use oven_store::OvenBuildIntent;
 
     /// Compiler closure identity the fixture binds to the retained host compiler.
@@ -846,6 +936,7 @@ pub(crate) mod tests {
             source_members: members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.to_string(),

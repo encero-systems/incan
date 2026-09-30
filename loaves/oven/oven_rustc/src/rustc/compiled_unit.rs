@@ -470,6 +470,7 @@ mod tests {
             source_members: members,
             features: vec!["feature_a".to_string()],
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment,
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -569,6 +570,7 @@ mod tests {
             source_members: members,
             features: vec!["feature_a".to_string()],
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -712,6 +714,7 @@ mod tests {
             source_members: dependency_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -750,6 +753,7 @@ mod tests {
             source_members: root_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {

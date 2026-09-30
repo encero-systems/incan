@@ -783,6 +783,7 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -830,6 +831,7 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: vec!["root-feature".to_string()],
             cfg: vec!["feature=\"root-feature\"".to_string()],
+            compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -902,6 +904,7 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_arguments: Vec::new(),
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {

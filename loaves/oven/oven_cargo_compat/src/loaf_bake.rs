@@ -890,6 +890,7 @@ mod tests {
             platform: Some("aarch64-apple-darwin".to_string()),
             target_is_explicit: Some(true),
             cfg: cfg.iter().map(|value| (*value).to_string()).collect(),
+            compiler_arguments: Vec::new(),
             effective_features: vec!["std".to_string()],
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),

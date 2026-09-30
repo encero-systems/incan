@@ -63,6 +63,7 @@ fn library(package: &str, version: &str, features: &[&str]) -> OvenLegacyCargoSe
         platform: Some("x86_64-unknown-linux-gnu".to_string()),
         target_is_explicit: Some(true),
         cfg: Vec::new(),
+        compiler_arguments: Vec::new(),
         effective_features: features.iter().map(|feature| feature.to_string()).collect(),
         dependencies: Vec::new(),
         sysroot_externs: Vec::new(),
