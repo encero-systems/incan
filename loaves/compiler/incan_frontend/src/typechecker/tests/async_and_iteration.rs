@@ -1,5 +1,6 @@
 //! `async` / `await` (unawaited-call warnings, awaitable bounds, `race_for`, join handles, semaphores), RFC 088
-//! iterator adapters and terminals, builtin `zip` (#950), RFC 006 generators, and the fallible iteration protocol.
+//! iterator adapters and terminals, builtin `zip` (#950), RFC 006 generators, the fallible iteration protocol, and the
+//! facts of a call a `for` loop iterates.
 
 use super::*;
 
@@ -1185,4 +1186,87 @@ async def main() -> None:
         Err(_) => println("failed")
 "#,
     );
+}
+
+/// #1561: the call a `for` loop iterates keeps its own facts at its span. The loop's `__iter__` and `__next__` hooks
+/// were resolved at that span too and replaced them, so `source.counted(3)` was recorded as a call of `__next__`: its
+/// dispatch through `Iterator[int]`, its declaration and its parameters. Lowering built the call from those facts and
+/// named `Iterator::<i64>::counted` (E0782). The hooks reach the loop through its protocol record, which still carries
+/// the `__next__` the adopter declares for `Iterator[int]`.
+#[test]
+fn a_loop_keeps_the_facts_of_the_call_it_iterates_issue1561() -> Result<(), String> {
+    let source = r#"
+from std.derives.collection import Iterator
+
+model Numbers with Iterator[int]:
+  pub items: list[int]
+  pub index: int
+
+  def __iter__(self) -> Numbers:
+    return self
+
+  def __next__(mut self) -> Option[int]:
+    if self.index >= len(self.items):
+      return None
+    value = self.items[self.index]
+    self.index += 1
+    return Some(value)
+
+class Source:
+  pub base: int
+
+  def counted(self, count: int) -> Numbers:
+    return Numbers(items=[self.base, count], index=0)
+
+def main() -> None:
+  source = Source(base=1)
+  for value in source.counted(3):
+    println(value)
+"#;
+    let program = parse_program(source, "a loop over a call");
+    let mut checker = TypeChecker::new();
+    checker.check_with_imports(&program, &[]).map_err(|errors| {
+        format!(
+            "{:?}",
+            errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>()
+        )
+    })?;
+    let call = "source.counted(3)";
+    let start = source.find(call).ok_or("the program writes the iterated call")?;
+    let span = Span {
+        start,
+        end: start + call.len(),
+    };
+    let info = checker.type_info();
+
+    // ---- The call's own facts ----
+    if let Some(resolved) = info.resolved_method_call(span)
+        && resolved.method != "counted"
+    {
+        return Err(format!("`{call}` must not carry the dispatch of `{}`", resolved.method));
+    }
+    let identity = info
+        .resolved_identity(span)
+        .ok_or_else(|| format!("`{call}` must reach its declaration"))?;
+    if identity.declaration_name != "counted" {
+        return Err(format!("`{call}` reaches `{}`", identity.declaration_name));
+    }
+    let params = info
+        .call_site_callable_params(span)
+        .ok_or_else(|| format!("`{call}` must record its parameters"))?;
+    if params.len() != 1 || params[0].name.as_deref() != Some("count") {
+        return Err(format!("`{call}` records the parameters {params:?}"));
+    }
+
+    // ---- The loop's hooks ----
+    let protocol = info
+        .protocol_iteration(span)
+        .ok_or_else(|| format!("the loop over `{call}` must record its iteration protocol"))?;
+    if protocol.iter_method != "__iter__" || protocol.next_method != "__next__" {
+        return Err(format!("the loop's hooks are {protocol:?}"));
+    }
+    match &protocol.next_dispatch {
+        Some(ResolvedMethodDispatch::Trait { trait_name, .. }) if trait_name == "Iterator" => Ok(()),
+        other => Err(format!("the loop's `__next__` is dispatched through {other:?}")),
+    }
 }

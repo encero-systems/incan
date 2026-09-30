@@ -3549,7 +3549,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/iterator_adopters.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of types adopting Iterator[T], under the trait's own name, an import alias or its module, calling the iterator adapters and terminals and their own __next__ (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of types adopting Iterator[T], under the trait's own name, an import alias or its module, calling the iterator adapters and terminals and their own __next__, and of for loops over calls returning an adopter (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3561,6 +3561,10 @@
         "iterator_adopters_spelled_through_their_module_build_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/iterator_adopters_spelled_through_their_module.incn",
           "notes": "Runs adapters, terminals and __next__ on a model, a class and a generic model adopting Iterator[T] through its module or a module alias; the fixture prints each result."
+        },
+        "loops_over_calls_returning_an_iterator_adopter_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/loops_over_calls_returning_iterator_adopters",
+          "notes": "Runs for loops over a method with an argument, a default and a variadic parameter, a generic method, a static method, a function, an adapter and a field read returning an Iterator adopter, declared locally and in an imported module; the fixture prints the items each loop collects."
         }
       },
       "twin": ""

@@ -1,9 +1,10 @@
 //! A type that adopts the standard library's `Iterator[T]` reaches the RFC 088 adapters and terminals as an
 //! `Iterator[T]` value does, under the trait's own name, an import alias or its module (#1561): the generated
 //! `Iterator` trait declares only `__next__` and `sum`, so each adapter and terminal called on an adopter is the
-//! iterator protocol's own, and the adopter's `__next__` is reached through the trait's path.
+//! iterator protocol's own, and the adopter's `__next__` is reached through the trait's path. A `for` loop over a call
+//! that returns an adopter builds that call as the call it is.
 
-use super::generated_programs::run_with_stdlib;
+use super::generated_programs::{run_modules_with_stdlib, run_with_stdlib};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -147,5 +148,122 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(stdout, "[1, 2, 3]\ntrue\n[10, 20, 30]\nSome(1)\n[\"w\", \"w\"]\n14\n");
+    Ok(())
+}
+
+/// The adopter of [`loops_over_calls_returning_an_iterator_adopter_build_issue1561`] and a class whose methods return
+/// it.
+const NUMBERS_ADOPTER: &str = r#"
+pub model Numbers with Iterator[int]:
+    pub items: list[int]
+    pub index: int
+
+    def __iter__(self) -> Numbers:
+        return self
+
+    def __next__(mut self) -> Option[int]:
+        if self.index >= len(self.items):
+            return None
+        value = self.items[self.index]
+        self.index += 1
+        return Some(value)
+
+    @staticmethod
+    def of(first: int, second: int) -> Numbers:
+        return Numbers(items=[first, second], index=0)
+
+
+pub class Source:
+    pub base: int
+    pub numbers: Numbers
+
+    def counted(self, count: int = 2) -> Numbers:
+        mut items: list[int] = []
+        for i in range(count):
+            items.append(self.base + i)
+        return Numbers(items=items, index=0)
+
+    def spread(self, *offsets: int) -> Numbers:
+        mut items: list[int] = []
+        for offset in offsets:
+            items.append(self.base + offset)
+        return Numbers(items=items, index=0)
+
+    def tagged[T](self, tag: T) -> Numbers:
+        return Numbers(items=[self.base], index=0)
+
+
+pub def source_at(base: int) -> Source:
+    return Source(base=base, numbers=Numbers.of(base, base))
+"#;
+
+/// A `for` loop over a call that returns an `Iterator` adopter whose `__next__` implements the trait builds and runs,
+/// whatever the call: a method with an argument, a default or a variadic parameter, a generic method, a static method,
+/// a function and an adapter, and with the adopter declared in another module that the loop's module imports nothing
+/// of but the class.
+///
+/// The loop's `__iter__` and `__next__` hooks were resolved at the iterable's span and replaced the facts the call
+/// recorded there, so `source.counted(3)` was built as `__next__`'s call through `Iterator[int]`:
+/// `Iterator::<i64>::counted(&mut source, 3)`, and rustc refused the trait in a type's place (E0782). The hook's
+/// `__iter__` call then took no arguments, where the call's own signature there would have given it the variadic
+/// parameter's empty list (E0061).
+#[test]
+fn loops_over_calls_returning_an_iterator_adopter_build_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(&format!(
+        r#"
+from std.derives.collection import Iterator
+
+{NUMBERS_ADOPTER}
+
+def make(first: int) -> Numbers:
+    return Numbers.of(first, first + 1)
+
+
+def main() -> None:
+    source = Source(base=10, numbers=Numbers.of(1, 2))
+    mut seen: list[int] = []
+    for value in source.counted(3):
+        seen.append(value)
+    for value in source.counted():
+        seen.append(value)
+    for value in source.spread(5, 6):
+        seen.append(value)
+    for value in source.tagged("x"):
+        seen.append(value)
+    for value in Numbers.of(7, 8):
+        seen.append(value)
+    for value in make(20):
+        seen.append(value)
+    for value in source.numbers:
+        seen.append(value)
+    for value in make(30).take(1):
+        seen.append(value)
+    println(seen)
+"#
+    ))?;
+    assert_eq!(stdout, "[10, 11, 12, 10, 11, 15, 16, 10, 7, 8, 20, 21, 1, 2, 30]\n");
+
+    let adopters = format!("from std.derives.collection import Iterator\n\n{NUMBERS_ADOPTER}");
+    let stdout = run_modules_with_stdlib(
+        &[("iters", adopters.as_str())],
+        r#"
+from iters import source_at
+
+
+def main() -> None:
+    source = source_at(10)
+    mut seen: list[int] = []
+    for value in source.counted(3):
+        seen.append(value)
+    for value in source.tagged(1):
+        seen.append(value)
+    for value in source.spread(4):
+        seen.append(value)
+    for value in source.numbers:
+        seen.append(value)
+    println(seen)
+"#,
+    )?;
+    assert_eq!(stdout, "[10, 11, 12, 10, 14, 10, 10]\n");
     Ok(())
 }

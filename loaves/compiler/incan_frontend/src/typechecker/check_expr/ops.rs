@@ -1206,20 +1206,40 @@ impl TypeChecker {
     }
 
     /// Resolve the shared `__iter__` and `__next__` hook pair for one custom iteration route.
+    ///
+    /// The hooks are resolved as calls at `protocol_span`, and their dispatches reach lowering through the protocol's
+    /// own record. For `for item in source.items():` that span is also the span of the call `source.items()`, whose
+    /// facts it holds: the hooks' facts replaced them, so lowering built `items` with the declaration, parameters and
+    /// dispatch of `__next__`, and a `__next__` dispatched through `Iterator[T]` named `Iterator::<T>::items` (E0782,
+    /// #1561). The facts written at `protocol_span` are set aside while the hooks resolve and put back after.
     fn resolve_iteration_protocol_hooks(
         &mut self,
         receiver_ty: &ResolvedType,
         receiver_span: Span,
         protocol_span: Span,
     ) -> Option<ResolvedIterationHooks> {
-        let args: Vec<CallArg> = Vec::new();
-        let arg_types: Vec<ResolvedType> = Vec::new();
-        let iter_method = magic_methods::as_str(MagicMethodId::Iter);
-        let next_method = magic_methods::as_str(MagicMethodId::Next);
         let receiver_dispatch = self
             .type_info
             .resolved_method_call(receiver_span)
             .map(|call| call.dispatch.clone());
+        let written_call = self.type_info.take_call_site_facts(protocol_span);
+        let hooks = self.resolve_iteration_protocol_hook_calls(receiver_ty, receiver_dispatch, protocol_span);
+        self.type_info.restore_call_site_facts(protocol_span, written_call);
+        hooks
+    }
+
+    /// Resolve the `__iter__` and `__next__` hooks of [`Self::resolve_iteration_protocol_hooks`] at `protocol_span`,
+    /// with `receiver_dispatch` the dispatch the iterable's own call selected.
+    fn resolve_iteration_protocol_hook_calls(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        receiver_dispatch: Option<ResolvedMethodDispatch>,
+        protocol_span: Span,
+    ) -> Option<ResolvedIterationHooks> {
+        let args: Vec<CallArg> = Vec::new();
+        let arg_types: Vec<ResolvedType> = Vec::new();
+        let iter_method = magic_methods::as_str(MagicMethodId::Iter);
+        let next_method = magic_methods::as_str(MagicMethodId::Next);
         let iterator_ty = match self.resolve_protocol_operator_dunder(
             receiver_ty,
             iter_method,

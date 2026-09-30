@@ -1371,8 +1371,9 @@ pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
     /// Build the generated binary crate rooted at `crate_root` with rustc, linking `runtime_crates`, run it in
     /// `run_directory` and return its standard output.
     ///
-    /// Under the compiler suite, the stored capability names rustc and every runtime crate. Otherwise rustc links the
-    /// runtime crates this test binary's own build produced, found beside it in the target profile.
+    /// Under the compiler suite, the stored capability names rustc, the standard library's facets and the directories
+    /// the suite built the workspace's crates into; see [`generated_program_rustc`]. Otherwise rustc links the runtime
+    /// crates this test binary's own build produced, found beside it in the target profile.
     #[cfg(feature = "rust_inspect")]
     fn build_and_run_generated_program(
         crate_root: &Path,
@@ -1410,6 +1411,12 @@ pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
     }
 
     /// Return a rustc invocation for one generated binary with `runtime_crates` as the crates it may name.
+    ///
+    /// Under the compiler suite, the stored capability's externs are the standard library's facets and the crates
+    /// they link, so a runtime crate a module mounted from source names beyond them (`byteorder`, `encoding_rs`,
+    /// `rustix`) is not among them: rustc refused `use ::rustix::fs::flock` with E0433. Each such crate is one of this
+    /// test binary's own dependencies, which the suite builds into the directories the capability searches, and it is
+    /// found there by name and version.
     #[cfg(feature = "rust_inspect")]
     fn generated_program_rustc(
         runtime_crates: &[(&str, Option<&str>)],
@@ -1432,11 +1439,21 @@ pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
             "--crate-type=bin",
         ]);
         if let Some(capability) = capability {
-            for path in capability.dependency_search_paths {
+            for path in &capability.dependency_search_paths {
                 command.arg("-L").arg(format!("dependency={}", path.display()));
             }
-            for (name, path) in capability.externs {
+            for (name, path) in &capability.externs {
                 command.arg("--extern").arg(format!("{name}={}", path.display()));
+            }
+            for (name, version) in runtime_crates {
+                if capability.externs.contains_key(*name) {
+                    continue;
+                }
+                let artifact = newest_build_artifact(&capability.dependency_search_paths, name, "rlib", *version)?
+                    .ok_or_else(|| {
+                        format!("building a generated program requires the compiler suite to hold a compiled `{name}`")
+                    })?;
+                command.arg("--extern").arg(format!("{name}={}", artifact.display()));
             }
             return Ok(command);
         }
@@ -1491,8 +1508,10 @@ pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
     /// Find the newest compiled `lib<name>-<hash>.<extension>` in `directories`, of the version `version` starts when
     /// one is given.
     ///
-    /// The version is read from the dependency file rustc writes beside the artifact, which names the crate's source
-    /// directory (`rustix-1.1.4/src/lib.rs`), so a build that holds two versions of one crate yields the one asked for.
+    /// The version is read from the crate's source directory (`rustix-1.1.4/src/lib.rs`), which the dependency file
+    /// rustc writes beside the artifact names, so a build that holds two versions of one crate yields the one asked
+    /// for. A build that keeps no dependency files, as the compiler suite's does, leaves the same source paths in the
+    /// artifact's own metadata, which is read instead.
     #[cfg(feature = "rust_inspect")]
     fn newest_build_artifact(
         directories: &[PathBuf],
@@ -1515,10 +1534,15 @@ pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
                 };
                 if let Some(version) = version {
                     let dependency_file = directory.join(format!("{name}-{hash}.d"));
-                    let sources = std::fs::read_to_string(dependency_file).unwrap_or_default();
-                    let source_directory = format!("{}-{version}", name.replace('_', "-"));
-                    let exact_directory = format!("{name}-{version}");
-                    if !sources.contains(&source_directory) && !sources.contains(&exact_directory) {
+                    let sources = std::fs::read(dependency_file).or_else(|_| std::fs::read(&path))?;
+                    let names_directory = |directory: String| {
+                        sources
+                            .windows(directory.len())
+                            .any(|window| window == directory.as_bytes())
+                    };
+                    if !names_directory(format!("{}-{version}", name.replace('_', "-")))
+                        && !names_directory(format!("{name}-{version}"))
+                    {
                         continue;
                     }
                 }

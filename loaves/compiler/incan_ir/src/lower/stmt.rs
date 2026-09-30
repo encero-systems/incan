@@ -1602,6 +1602,8 @@ impl AstLowering {
                     let iter_dispatch = protocol
                         .iter_dispatch
                         .map(|dispatch| self.lower_resolved_method_dispatch(dispatch, &iterable));
+                    // `__iter__` takes no arguments, so its call has no call-site signature. The one recorded at the
+                    // iterable's span is the iterable's own call's (`source.items(count)`), not the hook's (#1561).
                     let iter_value = TypedExpr::new(
                         IrExprKind::MethodCall {
                             receiver: Box::new(iterable),
@@ -1609,7 +1611,7 @@ impl AstLowering {
                             dispatch: iter_dispatch,
                             type_args: Vec::new(),
                             args: Vec::new(),
-                            callable_signature: self.callable_signature_for_call_span(f.iter.span),
+                            callable_signature: None,
                             arg_policy: MethodCallArgPolicy::Default,
                         },
                         iterator_ty.clone(),
