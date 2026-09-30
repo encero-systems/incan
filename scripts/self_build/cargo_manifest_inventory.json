@@ -140,8 +140,7 @@
     "dev"
    ],
    "flate2": [
-    "dev",
-    "normal"
+    "dev"
    ],
    "globset": [
     "normal"
@@ -7043,16 +7042,6 @@
       "features": [
        "derive"
       ],
-      "default_features": true,
-      "optional": false
-     },
-     "flate2": {
-      "package": "flate2",
-      "kind": "third-party",
-      "origin": "registry",
-      "workspace_inherited": false,
-      "version_req": "1",
-      "features": [],
       "default_features": true,
       "optional": false
      },
