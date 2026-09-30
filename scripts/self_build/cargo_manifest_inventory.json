@@ -463,6 +463,9 @@
      "ar_archive_writer": {
       "version": "=0.5.3"
      },
+     "incan-ci-tools": {
+      "path": "loaves/toolchain/incan-ci-tools"
+     },
      "incan-cli": {
       "path": "loaves/toolchain/incan-cli"
      },
