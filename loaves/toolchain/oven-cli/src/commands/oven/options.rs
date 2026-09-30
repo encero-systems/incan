@@ -265,6 +265,8 @@ pub struct OvenLoafBakeCommandOptions {
     ///
     /// TODO(#1561): temporary; retires with the Cargo-observed harvest once incan.pub records govern the corpus.
     pub harvest_dir: Option<PathBuf>,
+    /// Immutable executable-owner roots explicitly supplied to publisher link/tool records.
+    pub link_owners: Vec<PathBuf>,
 }
 
 /// Inputs for baking a toolchain Loaf's declared Rust binaries from the stored compiler-suite plans (#1698).

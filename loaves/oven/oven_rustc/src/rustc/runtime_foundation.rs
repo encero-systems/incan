@@ -1335,9 +1335,9 @@ mod tests {
         Ok(())
     }
 
-    /// Registry source cannot become a compiler-owned rebuild just because source bytes happen to be present.
+    /// A registry unit becomes rebuildable only through an explicit publisher policy.
     #[test]
-    fn runtime_foundation_refuses_registry_rebuild() -> Result<(), Box<dyn std::error::Error>> {
+    fn runtime_foundation_admits_registry_publisher_rebuild() -> Result<(), Box<dyn std::error::Error>> {
         let mut foundation = foundation()?;
         let policy = foundation
             .units
@@ -1345,13 +1345,8 @@ mod tests {
             .find(|policy| matches!(policy.execution, OvenRuntimeFoundationUnitExecution::Prebuilt { .. }))
             .ok_or("fixture lost prebuilt policy")?;
         policy.execution = OvenRuntimeFoundationUnitExecution::Rebuild;
-        assert!(matches!(
-            foundation.validated(),
-            Err(OvenRustcError::InvalidInput {
-                field: "runtime foundation rebuild unit",
-                ..
-            })
-        ));
+        let validated = foundation.validated()?;
+        assert_eq!(validated.rebuild_units().count(), 3);
         Ok(())
     }
 

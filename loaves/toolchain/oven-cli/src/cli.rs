@@ -621,6 +621,9 @@ pub enum OvenLegacyCargoCommand {
         /// Directory receiving incan.pub harvest proposals and refusals from the release runtime-foundation capture
         #[arg(long = "harvest-dir", value_name = "PATH")]
         harvest_dir: Option<PathBuf>,
+        /// Immutable executable-owner root available to publisher link/tool records; may be repeated
+        #[arg(long = "link-owner", value_name = "ROOT")]
+        link_owners: Vec<PathBuf>,
     },
 }
 

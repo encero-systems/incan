@@ -165,18 +165,6 @@ pub fn execute_runtime_foundation_rebuild(
 
     let graph = foundation.selected_graph().graph();
     let selection = &graph.selection;
-    // Cross-target rebuilds need an explicit target-spec hand-off and a distinct host/target artifact split. That is
-    // a separate proof; refusing here keeps the first connector honest instead of silently emitting host artifacts.
-    if selection.intent.target != selection.host {
-        return Err(runtime_executor_invalid(
-            "runtime executor compilation domain",
-            format!(
-                "cross-target rebuild from host {} to target {} is not supported by this connector",
-                selection.host, selection.intent.target
-            ),
-        ));
-    }
-
     let mut outputs: Vec<OvenRuntimeRebuildOutput> = Vec::new();
     let mut rebuilt: BTreeMap<String, (PathBuf, String)> = BTreeMap::new();
     let mut compiler_launches = 0usize;
@@ -271,7 +259,7 @@ pub fn execute_runtime_foundation_rebuild(
         // compiler always runs, and `compiler_launches` counts real launches rather than scratch misses.
         let compiled_identity = source.compiled_identity.clone();
         let unit_root = output_root.join(compiled_identity.as_str().replace(':', "-"));
-        let artifact = unit_root.join(format!("lib{}.rlib", unit.crate_name));
+        let artifact = unit_root.join(runtime_rebuild_artifact_name(unit, &selection.host));
         if unit_root.exists() {
             fs::remove_dir_all(&unit_root).map_err(|source_error| OvenRustcError::Io {
                 path: unit_root.clone(),
@@ -283,12 +271,16 @@ pub fn execute_runtime_foundation_rebuild(
             source: source_error,
         })?;
         let search_paths = transitive_rebuild_search_paths(graph, foundation, &rebuilt, unit)?;
+        let compiler_target = match unit.domain {
+            OvenSelectedRustFacetDomain::Host => std::ffi::OsStr::new(&selection.host),
+            OvenSelectedRustFacetDomain::Target => materialized.sources().compiler_target(),
+        };
         compile_rebuild_unit(
             closure,
             unit,
             source,
             selection,
-            materialized.sources().compiler_target(),
+            compiler_target,
             materialized.artifact_plan(),
             &search_paths,
             &externs,
@@ -324,34 +316,39 @@ pub fn execute_runtime_foundation_rebuild(
 /// produces an artifact that links but does not mean what its role claims. Proc-macro and binary roles are deferred
 /// to their own proofs rather than approximated.
 fn refuse_unsupported_rebuild_shape(unit: &OvenSelectedRustFacetUnit) -> Result<(), OvenRustcError> {
-    if unit.domain != OvenSelectedRustFacetDomain::Target {
+    let supported = matches!(
+        (unit.role, unit.crate_kind, unit.domain),
+        (
+            OvenSelectedRustFacetUnitRole::Library,
+            OvenSelectedRustFacetCrateKind::Rlib,
+            OvenSelectedRustFacetDomain::Host | OvenSelectedRustFacetDomain::Target
+        ) | (
+            OvenSelectedRustFacetUnitRole::ProcMacro,
+            OvenSelectedRustFacetCrateKind::ProcMacro,
+            OvenSelectedRustFacetDomain::Host
+        )
+    );
+    if !supported {
         return Err(runtime_executor_invalid(
-            "runtime executor rebuild domain",
+            "runtime executor rebuild shape",
             format!(
-                "unit {} is a host-domain rebuild; host units are a separate proc-macro proof",
-                unit.crate_name
-            ),
-        ));
-    }
-    if unit.crate_kind != OvenSelectedRustFacetCrateKind::Rlib {
-        return Err(runtime_executor_invalid(
-            "runtime executor rebuild crate kind",
-            format!(
-                "unit {} selects crate kind {:?}; this connector rebuilds only rlib libraries",
-                unit.crate_name, unit.crate_kind
-            ),
-        ));
-    }
-    if unit.role != OvenSelectedRustFacetUnitRole::Library {
-        return Err(runtime_executor_invalid(
-            "runtime executor rebuild role",
-            format!(
-                "unit {} selects role {:?}; this connector rebuilds only ordinary libraries",
-                unit.crate_name, unit.role
+                "unit {} selects unsupported domain {:?}, role {:?}, crate kind {:?}",
+                unit.crate_name, unit.domain, unit.role, unit.crate_kind
             ),
         ));
     }
     Ok(())
+}
+
+/// Name one direct-rustc publisher output using the platform form rustc emits for its crate kind.
+fn runtime_rebuild_artifact_name(unit: &OvenSelectedRustFacetUnit, host: &str) -> String {
+    match unit.crate_kind {
+        OvenSelectedRustFacetCrateKind::Rlib => format!("lib{}.rlib", unit.crate_name),
+        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("windows") => format!("{}.dll", unit.crate_name),
+        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("apple") => format!("lib{}.dylib", unit.crate_name),
+        OvenSelectedRustFacetCrateKind::ProcMacro => format!("lib{}.so", unit.crate_name),
+        _ => format!("lib{}.artifact", unit.crate_name),
+    }
 }
 
 /// Collect every directory a rebuilt unit needs on its `-L dependency` path, beyond the sealed foundation's own.
@@ -483,7 +480,20 @@ fn rebuild_unit_command(
     artifact: &Path,
 ) -> Result<Command, OvenRustcError> {
     let mut command = super::rustc_probe_command(closure.rustc());
-    command.args(["--crate-type", "lib"]);
+    let crate_type = match unit.crate_kind {
+        OvenSelectedRustFacetCrateKind::Rlib => "rlib",
+        OvenSelectedRustFacetCrateKind::ProcMacro => "proc-macro",
+        _ => {
+            return Err(runtime_executor_invalid(
+                "runtime executor crate kind",
+                format!(
+                    "unit {} has unsupported crate kind {:?}",
+                    unit.crate_name, unit.crate_kind
+                ),
+            ));
+        }
+    };
+    command.args(["--crate-type", crate_type]);
     append_compiler_target(&mut command, compiler_target);
     command
         .arg(format!("--edition={}", unit.edition))
@@ -1411,24 +1421,25 @@ pub(crate) mod tests {
 
         let mut host_unit = core.clone();
         host_unit.domain = OvenSelectedRustFacetDomain::Host;
-        let Err(OvenRustcError::InvalidInput { field, .. }) = refuse_unsupported_rebuild_shape(&host_unit) else {
-            return Err("a host-domain rebuild was accepted".into());
-        };
-        assert_eq!(field, "runtime executor rebuild domain");
+        refuse_unsupported_rebuild_shape(&host_unit)?;
 
         let mut macro_unit = core.clone();
         macro_unit.crate_kind = OvenSelectedRustFacetCrateKind::ProcMacro;
         let Err(OvenRustcError::InvalidInput { field, .. }) = refuse_unsupported_rebuild_shape(&macro_unit) else {
             return Err("a proc-macro crate kind was accepted".into());
         };
-        assert_eq!(field, "runtime executor rebuild crate kind");
+        assert_eq!(field, "runtime executor rebuild shape");
+
+        macro_unit.domain = OvenSelectedRustFacetDomain::Host;
+        macro_unit.role = OvenSelectedRustFacetUnitRole::ProcMacro;
+        refuse_unsupported_rebuild_shape(&macro_unit)?;
 
         let mut benchmark_unit = core.clone();
         benchmark_unit.role = OvenSelectedRustFacetUnitRole::Benchmark;
         let Err(OvenRustcError::InvalidInput { field, .. }) = refuse_unsupported_rebuild_shape(&benchmark_unit) else {
             return Err("a benchmark role was accepted".into());
         };
-        assert_eq!(field, "runtime executor rebuild role");
+        assert_eq!(field, "runtime executor rebuild shape");
         Ok(())
     }
 }

@@ -262,6 +262,66 @@ pub fn runtime_foundation_from_compiled_loaf(
     })
 }
 
+/// Construct the Cargo-free publisher foundation that rebuilds every selected registry unit with direct rustc.
+///
+/// The compatibility Loaf contributes only its sealed registry-source catalog and deterministic compile environment;
+/// none of its Cargo-produced Rust artifacts or search paths survive into this foundation. The selected graph is the
+/// sole dependency and compiler-input authority, including generated products and native archives attached by the
+/// publisher before this call.
+pub fn runtime_foundation_for_publisher_rebuild(
+    finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+    loaf: &OvenLoaf,
+    compiler_closure_identity: &str,
+) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
+    let graph = finalized.graph.graph();
+    let constituents = graph
+        .owners
+        .iter()
+        .filter(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
+        .collect::<Vec<_>>();
+    let [artifact_owner] = constituents.as_slice() else {
+        return Err(projection_error(
+            "runtime foundation artifact owner",
+            "the selected graph does not name exactly one Constituent owner",
+        ));
+    };
+    if loaf.plan.intent.target != graph.selection.intent.target
+        || loaf.plan.intent.toolchain != graph.selection.intent.toolchain
+        || loaf.plan.intent.profile != graph.selection.intent.profile
+    {
+        return Err(projection_error(
+            "runtime foundation publisher Loaf",
+            "target, toolchain or profile differs from the selected graph",
+        ));
+    }
+    let mut artifacts = loaf.plan.clone();
+    artifacts.dependency_search_paths.clear();
+    artifacts.native_search_paths.clear();
+    artifacts.externs.clear();
+    artifacts.entrypoint_externs.clear();
+    artifacts.entrypoint_dependency_search_paths.clear();
+    artifacts.registry_leaves.clear();
+    artifacts.vocab_auxiliary_targets.clear();
+    artifacts.supporting_artifacts.clear();
+    let units = graph
+        .units
+        .iter()
+        .map(|unit| OvenRuntimeFoundationUnit {
+            selected_identity: unit.identity.clone(),
+            domain: unit.domain,
+            execution: OvenRuntimeFoundationUnitExecution::Rebuild,
+        })
+        .collect();
+    Ok(OvenRuntimeFoundation {
+        schema_version: OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION,
+        compiler_closure_digest: compiler_closure_identity.to_string(),
+        artifact_owner: artifact_owner.identity.clone(),
+        artifacts,
+        selected_graph: graph.clone(),
+        units,
+    })
+}
+
 /// The one portable identity a registry-backed selected unit's source carries: the `registry:` coordinate.
 ///
 /// Every consumer of a selected graph — its validator, the policy exchange, the runtime foundation and executor —
@@ -2980,6 +3040,21 @@ mod tests {
         let foundation = runtime_foundation_from_compiled_loaf(&finalized, &loaf, "sha256:compiled-plan")?;
         assert_eq!(foundation.artifact_owner, constituent.identity);
         assert_eq!(foundation.units.len(), 1);
+        let publisher = runtime_foundation_for_publisher_rebuild(
+            &finalized,
+            &loaf,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )?;
+        assert!(
+            publisher
+                .units
+                .iter()
+                .all(|unit| { matches!(unit.execution, OvenRuntimeFoundationUnitExecution::Rebuild) })
+        );
+        assert!(publisher.artifacts.externs.is_empty());
+        assert!(publisher.artifacts.registry_leaves.is_empty());
+        assert!(publisher.artifacts.dependency_search_paths.is_empty());
+        assert!(publisher.artifacts.supporting_artifacts.is_empty());
         Ok(())
     }
 

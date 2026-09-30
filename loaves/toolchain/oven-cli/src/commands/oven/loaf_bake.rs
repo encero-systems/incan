@@ -23,10 +23,10 @@ use oven_cargo_compat::{
     encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, harvest_notes_for_checkout,
     harvest_registry_units_to_dir, legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
     legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings, proposal_directory_names,
-    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
+    runtime_foundation_for_publisher_rebuild, runtime_foundation_inventories_from_policy_response,
 };
 use oven_model::loaf_registry::{LoafRegistry, checkout_head_commit};
-use oven_model::manifest::ProjectManifest;
+use oven_model::manifest::{ProjectManifest, RustFactArgument};
 use oven_rustc::loaf::{
     OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
     OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf, OvenReleaseRuntimeClosureMember,
@@ -34,18 +34,24 @@ use oven_rustc::loaf::{
     committed_release_runtime_members, direct_rustc_compiler_closure_identity,
     stage_release_runtime_foundation_toolchain,
 };
+use oven_rustc::rustc::direct_compiler::{OvenPublisherLinkBakeRequest, bake_publisher_link, publisher_archive_format};
 use oven_rustc::rustc::{
-    OvenPublisherLinkProduct, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset,
+    OvenPublisherLinkProduct, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset, OvenSelectedRustFacetOwnerRoot,
     ValidatedOvenSelectedRustFacetGraph, execute_runtime_foundation_rebuild, finalize_publisher_link_product,
-    publish_runtime_closure, publish_runtime_foundation_asset,
+    finalize_publisher_tool_product, publish_runtime_closure, publish_runtime_foundation_asset_with_generated_owners,
 };
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
-use oven_store::publisher_execution::write_publisher_execution_receipt;
+use oven_store::publisher_execution::{
+    OvenPublisherExecutionMode, OvenPublisherToolOwner, OvenPublisherToolRequest, execute_publisher_tool,
+    write_publisher_execution_receipt,
+};
+use oven_store::publisher_owner::publisher_owner_identity;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
     OvenStore, PublishedOvenStore,
 };
 use oven_store::{OvenReceipt, receipt_with_build_unit_input};
+use serde::Deserialize;
 
 const POLICY_EXCHANGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -67,8 +73,8 @@ use super::{
     loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
     prepare_compiler_test_suite, print_json, read_receipt, release_store_member_byte_counts,
-    retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope, stage_locked_loaf_fixture, write_receipt,
-    write_sealed_oven_inspection_source_authority,
+    retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope, stage_locked_loaf_fixture, user_home,
+    write_receipt, write_sealed_oven_inspection_source_authority,
 };
 
 /// The release stdlib fixture's exact physical capture, and what the foundation steps after the fixture loop need
@@ -98,6 +104,41 @@ struct StagedReleaseToolchain {
     members: Vec<OvenReleaseToolchainMember>,
 }
 
+/// One publisher-generated owner root that must remain immutable through foundation publication.
+struct PublisherGeneratedOwnerRoot {
+    /// Receipt identity used by the selected graph.
+    identity: String,
+    /// Physical root containing exactly the receipt-bound products.
+    root: PathBuf,
+}
+
+/// Stable coordinates used to find one selected unit after another publisher product rekeys the graph.
+#[derive(Clone)]
+struct PublisherUnitCoordinates {
+    package: String,
+    version: String,
+    crate_name: String,
+    domain: oven_rustc::rustc::OvenSelectedRustFacetDomain,
+    source_identity: String,
+    source_root: String,
+}
+
+/// User-owned Oven configuration relevant to publisher execution.
+#[derive(Default, Deserialize)]
+struct PublisherConfigFile {
+    /// Explicit publisher capabilities; projects cannot supply or weaken these roots.
+    #[serde(default)]
+    publisher: PublisherConfig,
+}
+
+/// Publisher executable-owner roots admitted by the user or organization configuration.
+#[derive(Default, Deserialize)]
+struct PublisherConfig {
+    /// Immutable compiler/tool roots, using the same repeatable semantics as `--link-owner`.
+    #[serde(rename = "link-owner", default)]
+    link_owners: Vec<PathBuf>,
+}
+
 /// Finalize one publisher-only native product as an asset-side receipt and selected-unit link input.
 ///
 /// This is deliberately part of the explicit Loaf publisher rather than any normal build path. The returned graph
@@ -114,6 +155,295 @@ pub(crate) fn finalize_publisher_native_link(
         .map_err(|error| CliError::failure(format!("could not bind native publisher product: {error}")))
 }
 
+/// Execute every adopted publisher `link` and `tool` record and bind its products into the selected graph.
+///
+/// Records are taken only from the already-resolved registry authority. Executables are selected solely from
+/// explicit owner roots whose identity reproduces the record; a near match is a refusal. Products remain under
+/// caller-owned immutable roots until the runtime-foundation publisher seals them into the release asset.
+fn execute_adopted_publisher_work(
+    finalized: &mut oven_cargo_compat::OvenFinalizedCompilerSupportSelectedGraph,
+    authority: &LoafRegistryAuthority,
+    supplied_owner_roots: &[PathBuf],
+    product_parent: &Path,
+) -> CliResult<Vec<PublisherGeneratedOwnerRoot>> {
+    let coordinates = finalized
+        .unit_identities
+        .iter()
+        .map(|(capture_index, identity)| {
+            publisher_unit_coordinates(finalized.graph.graph(), identity)
+                .map(|coordinates| (*capture_index, coordinates))
+        })
+        .collect::<CliResult<BTreeMap<_, _>>>()?;
+    let mut graph = finalized.graph.clone();
+    let mut generated = Vec::new();
+    for (capture_index, adoption) in authority.adoptions() {
+        if adoption.record.link.is_empty() && adoption.record.tool.is_empty() {
+            continue;
+        }
+        let unit = coordinates.get(&capture_index).ok_or_else(|| {
+            CliError::failure(format!(
+                "publisher record for `{}` {} has no selected unit",
+                adoption.package, adoption.version
+            ))
+        })?;
+        for link in &adoption.record.link {
+            let consuming_identity = selected_identity_for_coordinates(graph.graph(), unit)?;
+            let owner_paths = std::iter::once(link.executable.path.as_str())
+                .chain(link.objects.iter().flat_map(|object| {
+                    object.arguments.iter().filter_map(|argument| match argument {
+                        RustFactArgument::Owner { owner } => Some(owner.as_str()),
+                        _ => None,
+                    })
+                }))
+                .collect::<Vec<_>>();
+            let executable_owner = resolve_publisher_owner_root(
+                &adoption.package,
+                &link.name,
+                &link.executable.owner,
+                &owner_paths,
+                supplied_owner_roots,
+            )?;
+            let product_root = publisher_product_root(product_parent, capture_index, "link", &link.name)?;
+            let product = bake_publisher_link(&OvenPublisherLinkBakeRequest {
+                link,
+                selected_target: &graph.graph().selection.intent.target,
+                archive_format: publisher_archive_format(&graph.graph().selection.intent.target),
+                toolchain: &graph.graph().selection.intent.toolchain,
+                consuming_unit_identity: &consuming_identity,
+                executable_owner_root: &executable_owner,
+                source_owner_root: &adoption.manifest_root,
+                output_root: &product_root,
+                limits: publisher_process_limits(),
+            })
+            .map_err(oven_error)?;
+            graph = finalize_publisher_native_link(graph, &consuming_identity, &product)?;
+            generated.push(PublisherGeneratedOwnerRoot {
+                identity: product.receipt.identity.clone(),
+                root: product.product_root,
+            });
+        }
+        for tool in &adoption.record.tool {
+            let consuming_identity = selected_identity_for_coordinates(graph.graph(), unit)?;
+            let owner_paths = std::iter::once(tool.executable.path.as_str())
+                .chain(tool.arguments.iter().filter_map(|argument| match argument {
+                    RustFactArgument::Owner { owner } => Some(owner.as_str()),
+                    _ => None,
+                }))
+                .collect::<Vec<_>>();
+            let executable_owner = resolve_publisher_owner_root(
+                &adoption.package,
+                &tool.name,
+                &tool.executable.owner,
+                &owner_paths,
+                supplied_owner_roots,
+            )?;
+            let product_root = publisher_product_root(product_parent, capture_index, "tool", &tool.name)?;
+            let consuming_units = [consuming_identity.as_str()];
+            let receipt = execute_publisher_tool(&OvenPublisherToolRequest {
+                mode: OvenPublisherExecutionMode::Publisher,
+                tool,
+                fact_owner: OvenPublisherToolOwner {
+                    identity: adoption.manifest_digest.clone(),
+                    root: &adoption.manifest_root,
+                },
+                executable_owner: OvenPublisherToolOwner {
+                    identity: tool.executable.owner.clone(),
+                    root: &executable_owner,
+                },
+                host: &graph.graph().selection.host,
+                target: &graph.graph().selection.intent.target,
+                consuming_units: &consuming_units,
+                product_root: &product_root,
+            })
+            .map_err(|error| CliError::failure(error.to_string()))?;
+            write_publisher_tool_receipt(&receipt, &product_root)?;
+            graph = finalize_publisher_tool_product(graph, &receipt).map_err(oven_error)?;
+            generated.push(PublisherGeneratedOwnerRoot {
+                identity: receipt.identity,
+                root: product_root,
+            });
+        }
+    }
+    finalized.unit_identities = coordinates
+        .iter()
+        .map(|(capture_index, coordinates)| {
+            selected_identity_for_coordinates(graph.graph(), coordinates).map(|identity| (*capture_index, identity))
+        })
+        .collect::<CliResult<_>>()?;
+    finalized.graph = graph;
+    Ok(generated)
+}
+
+/// Capture the stable source coordinates of one selected unit before publisher products rekey it.
+fn publisher_unit_coordinates(
+    graph: &oven_rustc::rustc::OvenSelectedRustFacetGraph,
+    identity: &str,
+) -> CliResult<PublisherUnitCoordinates> {
+    let unit = graph
+        .units
+        .iter()
+        .find(|unit| unit.identity == identity)
+        .ok_or_else(|| CliError::failure(format!("selected graph has no publisher unit `{identity}`")))?;
+    Ok(PublisherUnitCoordinates {
+        package: unit.package.clone(),
+        version: unit.package_version.clone(),
+        crate_name: unit.crate_name.clone(),
+        domain: unit.domain,
+        source_identity: unit.source.identity.clone(),
+        source_root: unit.source.root.clone(),
+    })
+}
+
+/// Find the unique current identity of a unit whose source coordinates survive graph rekeying.
+fn selected_identity_for_coordinates(
+    graph: &oven_rustc::rustc::OvenSelectedRustFacetGraph,
+    coordinates: &PublisherUnitCoordinates,
+) -> CliResult<String> {
+    let matches = graph
+        .units
+        .iter()
+        .filter(|unit| {
+            unit.package == coordinates.package
+                && unit.package_version == coordinates.version
+                && unit.crate_name == coordinates.crate_name
+                && unit.domain == coordinates.domain
+                && unit.source.identity == coordinates.source_identity
+                && unit.source.root == coordinates.source_root
+        })
+        .map(|unit| unit.identity.clone())
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [identity] => Ok(identity.clone()),
+        _ => Err(CliError::failure(format!(
+            "publisher binding for `{}` {} crate `{}` matched {} selected units",
+            coordinates.package,
+            coordinates.version,
+            coordinates.crate_name,
+            matches.len()
+        ))),
+    }
+}
+
+/// Merge repeatable command-line owner roots with the user-owned `[publisher]` Oven configuration.
+///
+/// The configuration lives at `$INCAN_HOME/config.toml`, or `~/.incan/config.toml` when `INCAN_HOME` is unset. A
+/// missing file means no configured publisher capability; malformed content refuses before any publisher process
+/// runs. Project manifests are intentionally never consulted for executable authority.
+fn configured_publisher_owner_roots(explicit: &[PathBuf]) -> CliResult<Vec<PathBuf>> {
+    let config_root = env::var_os("INCAN_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| user_home().map(|home| PathBuf::from(home).join(".incan")));
+    let mut roots = explicit.to_vec();
+    if let Some(path) = config_root.map(|root| root.join("config.toml")) {
+        match fs::read_to_string(&path) {
+            Ok(source) => {
+                let config = toml::from_str::<PublisherConfigFile>(&source).map_err(|error| {
+                    CliError::failure(format!("Oven publisher config {} is invalid: {error}", path.display()))
+                })?;
+                roots.extend(config.publisher.link_owners);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(CliError::failure(format!(
+                    "could not read Oven publisher config {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    Ok(roots)
+}
+
+/// Select exactly one supplied owner root whose declared closure reproduces the record identity.
+fn resolve_publisher_owner_root(
+    package: &str,
+    binding: &str,
+    expected_owner: &str,
+    owner_paths: &[&str],
+    supplied: &[PathBuf],
+) -> CliResult<PathBuf> {
+    let mut matches = Vec::new();
+    for root in supplied {
+        if !root.is_dir() {
+            continue;
+        }
+        let identity = publisher_owner_identity(root, owner_paths.iter().copied()).map_err(|error| {
+            CliError::failure(format!(
+                "could not inventory publisher owner {}: {error}",
+                root.display()
+            ))
+        })?;
+        if identity == expected_owner {
+            matches.push(root.clone());
+        }
+    }
+    match matches.as_slice() {
+        [root] => Ok(root.clone()),
+        [] => Err(CliError::failure(format!(
+            "package `{package}` binding `{binding}` requires publisher owner `{expected_owner}`; supply its root with --link-owner or [publisher].link-owner"
+        ))),
+        _ => Err(CliError::failure(format!(
+            "package `{package}` binding `{binding}` owner `{expected_owner}` matches more than one configured root"
+        ))),
+    }
+}
+
+/// Reserve a deterministic private product root below this bake's scratch tree.
+fn publisher_product_root(parent: &Path, unit: usize, role: &str, name: &str) -> CliResult<PathBuf> {
+    let safe_name = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let root = parent.join(format!("{unit}-{role}-{safe_name}"));
+    if root.exists() {
+        return Err(CliError::failure(format!(
+            "publisher product root already exists: {}",
+            root.display()
+        )));
+    }
+    Ok(root)
+}
+
+/// Apply one bounded process policy to publisher compilers and generators.
+fn publisher_process_limits() -> BoundedProcessLimits {
+    BoundedProcessLimits {
+        stdout_bytes: 1024 * 1024,
+        stderr_bytes: 1024 * 1024,
+        timeout: Some(Duration::from_secs(5 * 60)),
+    }
+}
+
+/// Persist one verified tool receipt beside its generated products without replacing existing bytes.
+fn write_publisher_tool_receipt(
+    receipt: &oven_store::publisher_execution::OvenPublisherToolReceipt,
+    product_root: &Path,
+) -> CliResult<()> {
+    oven_store::publisher_execution::verify_publisher_tool_receipt(receipt)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let path = product_root.join("publisher-tool-receipt.json");
+    let bytes = serde_json::to_vec_pretty(receipt)
+        .map_err(|error| CliError::failure(format!("could not encode publisher tool receipt: {error}")))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| CliError::failure(format!("could not create {}: {error}", path.display())))?;
+    use std::io::Write;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| CliError::failure(format!("could not persist {}: {error}", path.display())))?;
+    Ok(())
+}
+
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
 ///
 /// The command is hidden beneath `legacy_cargo`. Compiler-suite reuse is checked before Cargo; release reuse first
@@ -121,6 +451,7 @@ pub(crate) fn finalize_publisher_native_link(
 /// build/run/test commands never call this function and never fall back to it.
 pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliResult<ExitCode> {
     let started = Instant::now();
+    let link_owner_roots = configured_publisher_owner_roots(&options.link_owners)?;
     if !options.compiler_root.is_dir() {
         return Err(CliError::failure(format!(
             "Loaf compiler root is not a directory: {}",
@@ -646,7 +977,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         // A registered Loaf registry supplies RFC 119 declarations for captured registry units; where one binds
         // the exact captured source and selection it governs that unit, and the observation must agree with it.
         // A pinned registry opens only at the index commit the release is settled against.
-        let registry_authority = match (
+        let mut registry_authority = match (
             options.loaf_registry.as_deref(),
             options.loaf_registry_commit.as_deref(),
         ) {
@@ -661,6 +992,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             }
             (None, _) => LoafRegistryAuthority::none(),
         };
+        if let Some(harvest_dir) = options.harvest_dir.as_deref() {
+            registry_authority = registry_authority
+                .with_same_run_harvest(capture, harvest_dir, &receipt.intent.profile)
+                .map_err(oven_error)?;
+        }
         let registry_records = registry_authority.registry_records();
         let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
         let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
@@ -689,7 +1025,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &registry_authority,
         )
         .map_err(oven_error)?;
-        let finalized = finalize_compiler_support_selected_graph(
+        let mut finalized = finalize_compiler_support_selected_graph(
             capture,
             &projection,
             &manifest,
@@ -698,14 +1034,33 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             receipt,
         )
         .map_err(oven_error)?;
-        Some((finalized, registry_authority.evidence_digest(), registry_records))
+        let publisher_products = staged_root.join("publisher-products");
+        fs::create_dir_all(&publisher_products).map_err(|error| {
+            CliError::failure(format!(
+                "could not create publisher product root {}: {error}",
+                publisher_products.display()
+            ))
+        })?;
+        let generated_owners = execute_adopted_publisher_work(
+            &mut finalized,
+            &registry_authority,
+            &link_owner_roots,
+            &publisher_products,
+        )?;
+        Some((
+            finalized,
+            registry_authority.evidence_digest(),
+            registry_records,
+            generated_owners,
+        ))
     } else {
         None
     };
-    let (finalized_release_graph, loaf_registry_evidence, registry_records) = match finalized_release_graph {
-        Some((finalized, evidence, records)) => (Some(finalized), evidence, records),
-        None => (None, None, Vec::new()),
-    };
+    let (finalized_release_graph, loaf_registry_evidence, registry_records, publisher_generated_owners) =
+        match finalized_release_graph {
+            Some((finalized, evidence, records, generated)) => (Some(finalized), evidence, records, generated),
+            None => (None, None, Vec::new(), Vec::new()),
+        };
     if let (Some(finalized), Some(foundation)) = (finalized_release_graph.as_ref(), release_foundation_capture.as_ref())
     {
         let expected_capture = &foundation.capture;
@@ -846,9 +1201,12 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         .map_err(|error| CliError::failure(format!("final release Loaf is invalid: {error}")))?;
         let committed = committed_release_runtime_members(&options.output).map_err(oven_error)?;
         let reusable = if let Some((foundation_member, closure_member)) = committed {
-            let candidate_foundation =
-                runtime_foundation_from_compiled_loaf(finalized, &loaf, &foundation_member.compiler_closure_identity)
-                    .map_err(oven_error)?;
+            let candidate_foundation = runtime_foundation_for_publisher_rebuild(
+                finalized,
+                &loaf,
+                &foundation_member.compiler_closure_identity,
+            )
+            .map_err(oven_error)?;
             let candidate_asset = OvenRuntimeFoundationAsset::sealed(candidate_foundation, inventories.clone())
                 .map_err(oven_error)?
                 .validated()
@@ -899,14 +1257,22 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 compiler_closure_identity,
                 members: toolchain_members,
             } = toolchain;
-            let foundation = runtime_foundation_from_compiled_loaf(finalized, &loaf, &compiler_closure_identity)
+            let foundation = runtime_foundation_for_publisher_rebuild(finalized, &loaf, &compiler_closure_identity)
                 .map_err(oven_error)?;
             let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
             let foundation_relative = PathBuf::from("runtime-foundations/rust-policy-foundation");
-            let admitted = publish_runtime_foundation_asset(
+            let generated_owner_roots = publisher_generated_owners
+                .iter()
+                .map(|owner| OvenSelectedRustFacetOwnerRoot {
+                    identity: owner.identity.clone(),
+                    root: owner.root.clone(),
+                })
+                .collect::<Vec<_>>();
+            let admitted = publish_runtime_foundation_asset_with_generated_owners(
                 asset,
                 &loaf_root,
                 &toolchain_root,
+                &generated_owner_roots,
                 &staged_root.join(&foundation_relative),
             )
             .map_err(oven_error)?;
@@ -1765,4 +2131,51 @@ pub(crate) fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOu
         OvenOutputFormat::Json => print_json(report)?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod publisher_tests {
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn publisher_owner_selection_requires_the_record_identity() -> TestResult {
+        let matching = tempfile::tempdir()?;
+        let substitute = tempfile::tempdir()?;
+        fs::create_dir_all(matching.path().join("bin"))?;
+        fs::create_dir_all(substitute.path().join("bin"))?;
+        fs::write(matching.path().join("bin/clang"), b"matching compiler")?;
+        fs::write(substitute.path().join("bin/clang"), b"substitute compiler")?;
+        let expected = publisher_owner_identity(matching.path(), ["bin/clang"])?;
+        let roots = vec![substitute.path().to_path_buf(), matching.path().to_path_buf()];
+
+        let selected = resolve_publisher_owner_root("native-sys", "native", &expected, &["bin/clang"], &roots)?;
+        assert_eq!(selected, matching.path());
+        let missing = resolve_publisher_owner_root(
+            "native-sys",
+            "native",
+            &expected,
+            &["bin/clang"],
+            &[substitute.path().to_path_buf()],
+        )
+        .err()
+        .ok_or("a missing publisher owner was accepted")?;
+        assert!(missing.to_string().contains("native-sys"));
+        assert!(missing.to_string().contains("native"));
+        assert!(missing.to_string().contains(&expected));
+        Ok(())
+    }
+
+    #[test]
+    fn publisher_config_accepts_repeatable_owner_roots() -> TestResult {
+        let parsed = toml::from_str::<PublisherConfigFile>(
+            "[publisher]\nlink-owner = [\"/toolchain/clang\", \"/tools/protoc\"]\n",
+        )?;
+        assert_eq!(
+            parsed.publisher.link_owners,
+            vec![PathBuf::from("/toolchain/clang"), PathBuf::from("/tools/protoc")]
+        );
+        Ok(())
+    }
 }

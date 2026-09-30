@@ -355,10 +355,13 @@ pub(crate) fn validate_runtime_unit_policy(
             }
         }
         OvenRuntimeFoundationUnitExecution::Rebuild => {
-            if unit.source.kind != OvenSelectedRustFacetSourceKind::Compiler {
+            if !matches!(
+                unit.source.kind,
+                OvenSelectedRustFacetSourceKind::Compiler | OvenSelectedRustFacetSourceKind::Registry
+            ) {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation rebuild unit",
-                    format!("unit {} is not compiler-owned source", unit.crate_name),
+                    format!("unit {} is not compiler-owned or registry source", unit.crate_name),
                 ));
             }
             if !matches!(

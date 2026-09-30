@@ -11322,6 +11322,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/loaf_bake.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level.",
