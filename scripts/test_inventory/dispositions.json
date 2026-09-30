@@ -9697,6 +9697,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/incan-ci-tools/src/manifest_inventory.rs": {
+      "disposition": "unaffected",
+      "notes": "Cargo manifest retirement inventory and reproducibility checks; no compiler semantics.",
+      "owner": 1965,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/incan-ci-tools/src/tool_outputs.rs": {
       "disposition": "unaffected",
       "notes": "CI bootstrap input evidence and output transport; no compiler semantics.",

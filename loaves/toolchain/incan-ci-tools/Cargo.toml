@@ -11,11 +11,16 @@ publish = false
 clap = { version = "4.4", features = ["derive"] }
 flate2 = "1"
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
 sha2 = "0.10.9"
 tempfile = "3"
-toml = "0.9"
+thiserror = { workspace = true }
+toml = { version = "0.9", features = ["preserve_order"] }
 
 [[bin]]
 name = "incan-ci-tool-outputs"
 path = "src/bin/tool_outputs_cli.rs"
+
+[[bin]]
+name = "incan-cargo-manifest-inventory"
+path = "src/bin/cargo_manifest_inventory.rs"
