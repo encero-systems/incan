@@ -470,10 +470,17 @@
     },
     "loaves/compiler/incan_driver/src/session.rs": {
       "disposition": "keep",
-      "notes": "CompilationSession analysis (provider plan reuse, feature projection).",
+      "notes": "CompilationSession analysis (provider plan reuse, feature projection); one test builds a consumer's generated Rust with the standard library mounted from source.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "a_consumer_without_an_sdk_inventory_builds_std_io_and_std_fs_trait_calls_from_source_issue1561": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_io_and_fs_trait_method_calls",
+          "notes": "twinned by the module fixture that runs the same program and `codec` module: typed `BinaryWrite`/`BinaryRead` calls, `chunks` and `File`/`Path` reads and writes print the same three lines; the generated `std.io`/`std.fs` mount and the rustc build die with the Rust-source backend (#1561)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_driver/src/shadow_support.rs": {
@@ -3247,6 +3254,19 @@
         }
       }
     },
+    "loaves/compiler/incan_emit/src/tests/condition_position_struct_literals.rs": {
+      "disposition": "retire",
+      "notes": "compiles generated Rust for struct-producing constructors at every Rust condition-position boundary; generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "struct_literals_in_condition_positions_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/struct_literals_in_condition_positions.incn",
+          "notes": "Compiles statement and expression conditions, match scrutinees, assertions, comprehension and generator filters, and for iterables with rustc; the named fixture runs and prints from each route."
+        }
+      }
+    },
     "loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs": {
       "disposition": "retire",
       "notes": "publishes a library whose enums share variant names, or declare a variant's payload type after the enum, the way a library build publishes it, and builds and runs a consumer against its generated crate with rustc (#1561); retires with the Rust-source backend (#654).",
@@ -3542,7 +3562,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/iterator_adopters.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of types adopting Iterator[T], under the trait's own name, an import alias or its module, calling the iterator adapters and terminals and their own __next__ (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of types adopting Iterator[T], under the trait's own name, an import alias or its module, calling the iterator adapters and terminals and their own __next__, and of for loops over calls returning an adopter (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3554,6 +3574,10 @@
         "iterator_adopters_spelled_through_their_module_build_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/iterator_adopters_spelled_through_their_module.incn",
           "notes": "Runs adapters, terminals and __next__ on a model, a class and a generic model adopting Iterator[T] through its module or a module alias; the fixture prints each result."
+        },
+        "loops_over_calls_returning_an_iterator_adopter_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/loops_over_calls_returning_iterator_adopters",
+          "notes": "Runs for loops over a method with an argument, a default and a variadic parameter, a generic method, a static method, a function, an adapter and a field read returning an Iterator adopter, declared locally and in an imported module; the fixture prints the items each loop collects."
         }
       },
       "twin": ""
@@ -3790,7 +3814,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/result_method_receivers.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of Result and Option receivers read again after a method call, unwrap_or defaults, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open in bindings, closures, comprehensions, collection literals, match subjects, loop iterables and generic call arguments (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of Result and Option receivers read again after a method call, unwrap_or defaults, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open in bindings, closures, comprehensions, collection literals, match subjects, loop iterables, generic call arguments, match arms and loop break values (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3806,6 +3830,10 @@
         "constructor_arguments_build_with_the_type_arguments_the_call_infers_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/constructor_arguments_take_the_type_arguments_the_call_infers.incn",
           "notes": "Passes Ok and Err to generic functions and a generic method whose other arguments fix the open side, and to a concrete Result parameter, inside and outside a Result function; the fixture prints each result."
+        },
+        "match_arms_and_loop_values_share_one_type_before_a_side_settles_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/match_arms_and_loop_values_share_one_type.incn",
+          "notes": "Binds and returns matches whose arms leave an Option payload or a Result side open in either order, inside lists, tuples and guards, and loops whose break values do; the fixture prints each result."
         },
         "open_result_sides_build_with_the_type_the_checker_gives_them_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/open_result_sides_take_the_enclosing_function_side.incn",
@@ -4052,6 +4080,24 @@
         }
       },
       "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of a module that passes empty collections and None where types another module declares, and this module does not import, are expected (#1561); retires with the Rust-source backend (#654).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": "",
+      "tests": {
+        "a_type_the_module_imports_keeps_its_import_beside_an_unimported_one_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+          "notes": "The module fixture imports one declaration under another name and fills a list of it beside empty lists of types it does not import; the fixture prints each result."
+        },
+        "empty_collections_and_none_for_types_the_module_does_not_import_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+          "notes": "Constructs an imported model with empty list, dict, set, nested and tuple-typed fields and None, and passes an empty list and None to imported functions, none of whose types the module imports; the module fixture prints each result."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/tests/union_member_identity.rs": {
       "disposition": "retire",
@@ -7577,6 +7623,20 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/dependency_field_element_types.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": "",
+      "tests": {
+        "dependency_field_element_types_the_consumer_never_imports_are_spelled_from_the_dependency_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_model_built_with_empty_fields_of_unimported_types",
+          "notes": "The fixture bakes a provider whose model holds identifiers in a list, a dict and an option and runs a consumer that builds it with empty collections and `None` without importing them."
+        }
+      }
+    },
     "loaves/compiler/incan_ir/src/lower/tests/derive_contract_lowering.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, derive lists and trait impls). Retire with `incan_ir` (#654); the behavior each test pins is carried by the named fixture.",
@@ -8275,6 +8335,24 @@
         }
       },
       "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/unbound_nominals.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": "",
+      "tests": {
+        "a_type_parameter_named_like_an_unbound_type_keeps_its_spelling_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+          "notes": "The module fixture declares a generic model whose type parameter is named like a type another module declares and builds an empty list of that parameter in a method."
+        },
+        "types_a_module_names_without_binding_them_are_placed_at_their_declaring_module_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+          "notes": "The module fixture builds empty collections of types another module declares and it does not import, beside a type it imports under another name."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/tests/union_member_identity.rs": {
       "disposition": "retire",

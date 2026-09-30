@@ -729,7 +729,7 @@ pub fn rerooted_artifact_staging_source(relative_path: &str) -> Option<String> {
 /// A split-metadata rlib (Rust 1.98+) and its sidecar are one compilation: whenever cohort composition moves one of
 /// them, the partner must move with it, or the stranded half becomes a metadata-only or metadata-less candidate that
 /// rustc selects and then rejects.
-fn metadata_sidecar_pair_path(relative_path: &str) -> Option<String> {
+pub(crate) fn metadata_sidecar_pair_path(relative_path: &str) -> Option<String> {
     if let Some(stem) = relative_path.strip_suffix(".rlib") {
         return Some(format!("{stem}.rmeta"));
     }
@@ -1342,6 +1342,45 @@ pub fn validate_project_inspection_authority_payload(
                 message: "must name a debug-profile dependency constituent".to_string(),
             });
         }
+        let mut role_indices = vec![envelope.constituent_index];
+        let mut provider_keys = BTreeSet::new();
+        for provider in &envelope.provider_constituents {
+            if provider.dependency_key.trim().is_empty() || !provider_keys.insert(provider.dependency_key.as_str()) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider constituent keys must be non-empty and unique".to_string(),
+                });
+            }
+            if role_indices.contains(&provider.constituent_index) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "must not repeat a role-bearing constituent".to_string(),
+                });
+            }
+            let Some(OvenProjectInspectionConstituent::Stored {
+                artifact_kind,
+                receipt: provider_receipt,
+                base_loaf_identity,
+                ..
+            }) = payload.constituents.get(provider.constituent_index)
+            else {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider role must name one exact stored direct-Rustc constituent".to_string(),
+                });
+            };
+            let valid_shape = matches!(
+                (artifact_kind, base_loaf_identity),
+                (OvenArtifactKind::DirectRustcPlan, None) | (OvenArtifactKind::ProjectPayload, Some(_))
+            );
+            if !valid_shape || provider_receipt.intent != receipt.intent {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "project inspection test dependency envelope",
+                    message: "provider role has a different kind, base, or build intent".to_string(),
+                });
+            }
+            role_indices.push(provider.constituent_index);
+        }
         for (alias, root) in &envelope.dependency_roots {
             validate_rust_identifier(alias)?;
             let (dependency_digest, locked) = match root {
@@ -1646,7 +1685,7 @@ impl OvenRustcArtifactManifest {
             }
         }
         let mut registry_source_identities = BTreeMap::new();
-        let mut registry_package_sources = BTreeSet::new();
+        let mut registry_package_sources = BTreeMap::new();
         for package in &self.registry_sources {
             if package.package.trim().is_empty() || package.version.trim().is_empty() {
                 return Err(OvenRustcError::InvalidInput {
@@ -1708,30 +1747,40 @@ impl OvenRustcArtifactManifest {
                     ),
                 });
             }
-            let key = (
+            // A package version from one registry has one source record. Compare the complete source before naming
+            // the refusal: the same source declared again is a repeat, while a differing checksum, staged root or
+            // tree digest is a second source identity.
+            let package_key = (
                 package.package.as_str(),
                 package.version.as_str(),
                 package.source.registry.as_str(),
-                package.source.checksum.as_str(),
             );
-            if !registry_package_sources.insert((key.0, key.1, key.2)) {
-                return Err(OvenRustcError::InvalidInput {
-                    field: "artifact manifest registry sources",
-                    message: format!(
-                        "declares more than one source identity for registry package `{}` version `{}`",
-                        package.package, package.version
-                    ),
-                });
-            }
-            if registry_source_identities.insert(key, package).is_some() {
-                return Err(OvenRustcError::InvalidInput {
-                    field: "artifact manifest registry sources",
-                    message: format!(
+            if let Some(declared) = registry_package_sources.insert(package_key, &package.source) {
+                let message = if *declared == package.source {
+                    format!(
                         "declares registry source `{}` version `{}` more than once",
                         package.package, package.version
-                    ),
+                    )
+                } else {
+                    format!(
+                        "declares more than one source identity for registry package `{}` version `{}`",
+                        package.package, package.version
+                    )
+                };
+                return Err(OvenRustcError::InvalidInput {
+                    field: "artifact manifest registry sources",
+                    message,
                 });
             }
+            registry_source_identities.insert(
+                (
+                    package.package.as_str(),
+                    package.version.as_str(),
+                    package.source.registry.as_str(),
+                    package.source.checksum.as_str(),
+                ),
+                package,
+            );
         }
         let mut package_versions = BTreeSet::new();
         for leaf in &self.registry_leaves {
@@ -2522,18 +2571,33 @@ pub fn project_inspection_test_dependency_envelope_supports_dependencies(
     dependencies: &[DependencySpec],
     provider_hooks: &dyn oven_store::OvenProviderHooks,
 ) -> Result<bool, OvenRustcError> {
+    project_inspection_test_dependency_envelope_mismatch(payload, dependencies, provider_hooks)
+        .map(|mismatch| mismatch.is_none())
+}
+
+/// Name the first requested test dependency the sealed test envelope does not support, and why, or `None` when the
+/// envelope supports every one of them.
+///
+/// This is the refusal detail behind [`project_inspection_test_dependency_envelope_supports_dependencies`]: an alias
+/// requested twice, an alias the envelope has no root for, a root of another source kind, or a root whose sealed
+/// dependency digest differs from the requested dependency's current digest, with both digests.
+pub fn project_inspection_test_dependency_envelope_mismatch(
+    payload: &OvenProjectInspectionAuthorityPayload,
+    dependencies: &[DependencySpec],
+    provider_hooks: &dyn oven_store::OvenProviderHooks,
+) -> Result<Option<String>, OvenRustcError> {
     validate_project_inspection_authority_payload(payload)?;
     let Some(envelope) = payload.test_dependency_envelope.as_ref() else {
-        return Ok(false);
+        return Ok(Some("the authority has no test dependency envelope".to_string()));
     };
     let mut aliases = BTreeSet::new();
     for dependency in dependencies {
         let alias = dependency.crate_name.replace('-', "_");
         if !aliases.insert(alias.clone()) {
-            return Ok(false);
+            return Ok(Some(format!("`{alias}` is requested more than once")));
         }
         let Some(root) = envelope.dependency_roots.get(&alias) else {
-            return Ok(false);
+            return Ok(Some(format!("`{alias}` has no sealed root")));
         };
         let actual =
             oven_store::digest_dependency_specs(std::slice::from_ref(dependency), provider_hooks).map_err(|error| {
@@ -2556,11 +2620,28 @@ pub fn project_inspection_test_dependency_envelope_supports_dependencies(
                 matches!(dependency.source, DependencySource::Git { .. }),
             ),
         };
-        if !source_matches || actual != *expected {
-            return Ok(false);
+        if !source_matches {
+            return Ok(Some(format!(
+                "`{alias}` is sealed from another source kind than the requested {}",
+                dependency_source_kind(&dependency.source)
+            )));
+        }
+        if actual != *expected {
+            return Ok(Some(format!(
+                "`{alias}` was sealed with dependency digest {expected}, but the requested dependency now digests to {actual}"
+            )));
         }
     }
-    Ok(true)
+    Ok(None)
+}
+
+/// Name a dependency's source kind for a refusal detail.
+fn dependency_source_kind(source: &DependencySource) -> &'static str {
+    match source {
+        DependencySource::Registry => "registry dependency",
+        DependencySource::Path { .. } => "path dependency",
+        DependencySource::Git { .. } => "git dependency",
+    }
 }
 
 /// Check whether one sealed registry-source catalog covers every selected direct registry dependency.
@@ -4843,9 +4924,8 @@ impl OvenSelectedPathRustcAuthority {
     /// `--extern` would expose Rustc to two physical copies of one StableCrateId. The caller has already validated
     /// the package, version, features, and digest against the sealed catalog; this method merely reuses the same
     /// metadata-bearing artifact name in one of the selected plan's verified dependency directories. Cargo can emit
-    /// byte-distinct rlibs for the same compilation identity when separate publishers retain different non-semantic
-    /// payload details; the sealed leaf resolver uses the same filename criterion when choosing equivalent catalog
-    /// copies.
+    /// byte-distinct rlibs for one portable unit when separate publishers retain staging-sensitive payload details;
+    /// the sealed leaf resolver first proves equivalence from the RFC 124 selected-unit identity.
     fn matching_sealed_registry_artifact(&self, sealed_artifact: &Path) -> Option<PathBuf> {
         let filename = sealed_artifact.file_name()?;
         let mut matches = self
@@ -4903,8 +4983,9 @@ mod tests {
         OvenProjectInspectionAuthorityPayload, OvenProjectInspectionAuthorityRef, OvenProjectInspectionConstituent,
         OvenProjectInspectionRootDependency, OvenProjectInspectionSource, OvenProjectInspectionSourceOwner,
         OvenProjectInspectionTestDependencyEnvelope, OvenProjectInspectionTestDependencyRoot,
-        OvenRegistryLeafAuthority, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
-        OvenRustcAuxiliaryTarget, OvenRustcError, OvenRustcRegistryLeaf, OvenRustcRegistrySource,
+        OvenProjectInspectionTestProviderConstituent, OvenRegistryLeafAuthority, OvenRustcArtifactExtern,
+        OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTarget, OvenRustcError,
+        OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind, OvenRustcRegistrySource,
         OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedPathRustcAuthority,
         OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
         OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, apply_oven_profile,
@@ -4914,6 +4995,7 @@ mod tests {
         combined_process_output, is_host_native_unix_target, load_project_inspection_authority,
         materialize_declared_rust_libraries, materialize_declared_rust_libraries_with_selected_path_authority,
         project_inspection_authority_supports_dependencies, project_inspection_constituent_matches_receipt,
+        project_inspection_test_dependency_envelope_mismatch,
         project_inspection_test_dependency_envelope_supports_dependencies, resolve_sealed_registry_leaf,
         run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target,
         select_direct_rustc_plan_identity, validate_project_extension_payload_against_base,
@@ -5495,7 +5577,7 @@ fi
         artifacts.registry_leaves = vec![OvenRustcRegistryLeaf {
             domain: Default::default(),
             crate_kind: Default::default(),
-            selected_unit_identity: None,
+            selected_unit_identity: Some("sha256:fixture-portable-unit".to_string()),
             package: "serde_fixture".to_string(),
             version: "1.2.3".to_string(),
             crate_name: "serde_fixture".to_string(),
@@ -6435,6 +6517,88 @@ fi
     }
 
     #[test]
+    fn preferred_runtime_cohort_replaces_only_overlapping_target_registry_units()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let leaf = |package: &str, version: &str, domain, crate_kind, suffix: &str| OvenRustcRegistryLeaf {
+            domain,
+            crate_kind,
+            selected_unit_identity: Some(format!("sha256:{suffix}-unit")),
+            package: package.to_string(),
+            version: version.to_string(),
+            crate_name: package.replace('-', "_"),
+            features: vec!["default".to_string()],
+            source: fixture_registry_source(),
+            artifact: OvenRustcArtifactExtern {
+                crate_name: package.replace('-', "_"),
+                relative_path: format!("target/debug/deps/lib{package}-{suffix}.rlib"),
+                digest: format!("sha256:{suffix}"),
+            },
+        };
+        let project = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/project"),
+            vec![
+                leaf(
+                    "serde",
+                    "1.0.229",
+                    OvenRustcRegistryLeafDomain::Target,
+                    OvenRustcRegistryLeafKind::Rlib,
+                    "project-serde",
+                ),
+                leaf(
+                    "project-only",
+                    "2.0.0",
+                    OvenRustcRegistryLeafDomain::Target,
+                    OvenRustcRegistryLeafKind::Rlib,
+                    "project-only",
+                ),
+                leaf(
+                    "serde",
+                    "1.0.229",
+                    OvenRustcRegistryLeafDomain::Host,
+                    OvenRustcRegistryLeafKind::Rlib,
+                    "host-serde",
+                ),
+            ],
+        );
+        let release = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/release"),
+            vec![leaf(
+                "serde",
+                "1.0.228",
+                OvenRustcRegistryLeafDomain::Target,
+                OvenRustcRegistryLeafKind::Rlib,
+                "release-serde",
+            )],
+        );
+        let coherent = project.with_preferred_target_cohort(&release);
+        let dependency = |crate_name: &str| DependencySpec {
+            crate_name: crate_name.to_string(),
+            version: Some("*".to_string()),
+            features: vec!["default".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+
+        assert_eq!(
+            super::select_sealed_registry_leaf(&dependency("serde"), Some(&coherent), "debug")?
+                .leaf
+                .version,
+            "1.0.228",
+            "the linked release runtime and serde remain one compiled cohort"
+        );
+        assert_eq!(
+            super::select_sealed_registry_leaf(&dependency("project-only"), Some(&coherent), "debug")?
+                .leaf
+                .version,
+            "2.0.0",
+            "packages outside the release cohort remain supplied by the project"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn validates_the_exact_selected_registry_extern_instead_of_reselecting_highest_semver()
     -> Result<(), Box<dyn std::error::Error>> {
         let registry = tempfile::tempdir()?;
@@ -6781,6 +6945,29 @@ fi
             provider_authority.first_conflicting_package_with(&plan)?,
             Some("tokio".to_string())
         );
+        let host_provider_authority = OvenRegistryLeafAuthority::new(
+            provider_root.path().to_path_buf(),
+            vec![OvenRustcRegistryLeaf {
+                domain: OvenRustcRegistryLeafDomain::Host,
+                crate_kind: OvenRustcRegistryLeafKind::Rlib,
+                selected_unit_identity: None,
+                package: "tokio".to_string(),
+                version: "1.52.3".to_string(),
+                crate_name: "tokio".to_string(),
+                features: Vec::new(),
+                source: fixture_registry_source(),
+                artifact: OvenRustcArtifactExtern {
+                    crate_name: "tokio".to_string(),
+                    relative_path: "libtokio-provider5678.rlib".to_string(),
+                    digest: digest_bytes(provider_bytes),
+                },
+            }],
+        );
+        assert_eq!(
+            host_provider_authority.first_conflicting_package_with(&plan)?,
+            None,
+            "a host library is not linked into the target artifact even when its crate name matches a target extern"
+        );
         Ok(())
     }
 
@@ -7060,29 +7247,32 @@ fi
     }
 
     #[test]
-    fn first_diverging_shared_package_reports_a_same_version_byte_distinct_overlap() {
-        let leaf = |package: &str, version: &str, digest: &str| OvenRustcRegistryLeaf {
-            domain: Default::default(),
-            crate_kind: Default::default(),
-            selected_unit_identity: None,
-            package: package.to_string(),
-            version: version.to_string(),
-            crate_name: package.replace('-', "_"),
-            features: Vec::new(),
-            source: fixture_registry_source(),
-            artifact: OvenRustcArtifactExtern {
+    fn first_diverging_shared_package_reports_a_same_version_byte_distinct_overlap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let leaf = |package: &str, version: &str, digest: &str, identity: Option<&str>, features: &[&str]| {
+            OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: identity.map(str::to_string),
+                package: package.to_string(),
+                version: version.to_string(),
                 crate_name: package.replace('-', "_"),
-                relative_path: format!("lib{package}.rlib"),
-                digest: digest.to_string(),
-            },
+                features: features.iter().map(|feature| (*feature).to_string()).collect(),
+                source: fixture_registry_source(),
+                artifact: OvenRustcArtifactExtern {
+                    crate_name: package.replace('-', "_"),
+                    relative_path: format!("lib{package}.rlib"),
+                    digest: digest.to_string(),
+                },
+            }
         };
         let consumer = OvenRegistryLeafAuthority::new(
             PathBuf::from("/consumer"),
-            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio")],
+            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio", None, &[])],
         );
         let provider = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("tokio", "1.52.3", "sha256:provider-tokio")],
+            vec![leaf("tokio", "1.52.3", "sha256:provider-tokio", None, &[])],
         );
         assert_eq!(
             consumer.first_diverging_shared_package_pin(&provider),
@@ -7093,7 +7283,7 @@ fi
 
         let identical = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio")],
+            vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio", None, &[])],
         );
         assert_eq!(
             consumer.first_diverging_shared_package_pin(&identical),
@@ -7103,19 +7293,184 @@ fi
 
         let different_version = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("tokio", "1.51.0", "sha256:provider-tokio")],
+            vec![leaf("tokio", "1.51.0", "sha256:provider-tokio", None, &[])],
         );
         assert_eq!(
             consumer.first_diverging_shared_package_pin(&different_version),
             None,
-            "distinct versions are ordinary Cargo semver coexistence, not a divergence"
+            "distinct versions are ordinary Cargo semver coexistence, not one diverging shared unit"
         );
 
         let unrelated = OvenRegistryLeafAuthority::new(
             PathBuf::from("/provider"),
-            vec![leaf("datafusion", "53.1.0", "sha256:provider-datafusion")],
+            vec![leaf("datafusion", "53.1.0", "sha256:provider-datafusion", None, &[])],
         );
         assert_eq!(consumer.first_diverging_shared_package_pin(&unrelated), None);
+
+        let mut host_tokio = leaf(
+            "tokio",
+            "1.52.3",
+            "sha256:provider-host-tokio",
+            Some("sha256:provider-host-unit"),
+            &["macros"],
+        );
+        host_tokio.domain = crate::rustc::OvenRustcRegistryLeafDomain::Host;
+        let host_provider = OvenRegistryLeafAuthority::new(PathBuf::from("/provider"), vec![host_tokio.clone()]);
+        assert_eq!(
+            consumer.first_diverging_shared_package_pin(&host_provider),
+            None,
+            "a host unit is not linked into the target artifact and cannot collide with its target-domain namesake"
+        );
+        let host_consumer = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/consumer"),
+            vec![{
+                host_tokio.selected_unit_identity = Some("sha256:consumer-host-unit".to_string());
+                host_tokio.artifact.digest = "sha256:consumer-host-tokio".to_string();
+                host_tokio
+            }],
+        );
+        assert_eq!(
+            host_consumer.first_diverging_shared_package_pin(&host_provider),
+            None,
+            "independently compiled host units from separate closures are not target-link collisions"
+        );
+
+        let portable_consumer = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/consumer"),
+            vec![leaf(
+                "cpufeatures",
+                "0.2.17",
+                "sha256:consumer-cpufeatures",
+                Some("sha256:portable-unit"),
+                &["default"],
+            )],
+        );
+        let portable_provider = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/provider"),
+            vec![leaf(
+                "cpufeatures",
+                "0.2.17",
+                "sha256:provider-cpufeatures",
+                Some("sha256:portable-unit"),
+                &["default"],
+            )],
+        );
+        assert_eq!(
+            portable_consumer.first_diverging_shared_package_pin(&portable_provider),
+            None,
+            "one portable unit identity reconciles publisher-local payload differences"
+        );
+
+        let incompatible_features = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/provider"),
+            vec![leaf(
+                "cpufeatures",
+                "0.2.17",
+                "sha256:provider-cpufeatures",
+                Some("sha256:different-unit"),
+                &["default", "std"],
+            )],
+        );
+        assert_eq!(
+            portable_consumer.first_diverging_shared_package_pin(&incompatible_features),
+            Some(("cpufeatures".to_string(), PathBuf::from("/provider"))),
+            "a feature or unit-identity difference remains fail-closed"
+        );
+        let divergence = portable_consumer
+            .first_diverging_shared_package_pin_detail(&incompatible_features)
+            .map(|(_, _, divergence)| divergence)
+            .unwrap_or_default();
+        assert!(
+            divergence.contains("the provider's unit sha256:different-unit") && divergence.contains("features"),
+            "the refusal detail names both units and the facts that differ: {divergence}"
+        );
+
+        // Two units recording the same facts differ through a dependency; the detail names the dependency the two
+        // closures carry at different units.
+        let graph_consumer = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/consumer"),
+            vec![
+                leaf(
+                    "cpufeatures",
+                    "0.2.17",
+                    "sha256:consumer-cpufeatures",
+                    Some("sha256:consumer-unit"),
+                    &[],
+                ),
+                leaf(
+                    "libc",
+                    "0.2.189",
+                    "sha256:consumer-libc",
+                    Some("sha256:consumer-libc-unit"),
+                    &["extra_traits", "std"],
+                ),
+            ],
+        );
+        let graph_provider = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/provider"),
+            vec![
+                leaf(
+                    "cpufeatures",
+                    "0.2.17",
+                    "sha256:provider-cpufeatures",
+                    Some("sha256:provider-unit"),
+                    &[],
+                ),
+                leaf(
+                    "libc",
+                    "0.2.189",
+                    "sha256:provider-libc",
+                    Some("sha256:provider-libc-unit"),
+                    &["std"],
+                ),
+            ],
+        );
+        let (package, _, divergence) = graph_consumer
+            .first_diverging_shared_package_pin_detail(&graph_provider)
+            .ok_or("the graph split is refused")?;
+        assert_eq!(package, "cpufeatures");
+        assert!(
+            divergence.contains("no recorded fact besides the selected-unit identity")
+                && divergence.contains(r#"libc 0.2.189 features ["extra_traits", "std"] vs ["std"]"#),
+            "the detail names the dependency the closures split on: {divergence}"
+        );
+
+        let multi_version_consumer = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/consumer"),
+            vec![
+                leaf("syn", "2.0.119", "sha256:consumer-syn-2", Some("sha256:syn-2"), &[]),
+                leaf("syn", "3.0.6", "sha256:consumer-syn-3", Some("sha256:syn-3"), &[]),
+                leaf(
+                    "cpufeatures",
+                    "0.2.17",
+                    "sha256:consumer-cpufeatures",
+                    Some("sha256:consumer-root"),
+                    &[],
+                ),
+            ],
+        );
+        let multi_version_provider = OvenRegistryLeafAuthority::new(
+            PathBuf::from("/provider"),
+            vec![
+                leaf("syn", "2.0.119", "sha256:consumer-syn-2", Some("sha256:syn-2"), &[]),
+                leaf("syn", "3.0.6", "sha256:consumer-syn-3", Some("sha256:syn-3"), &[]),
+                leaf(
+                    "cpufeatures",
+                    "0.2.17",
+                    "sha256:provider-cpufeatures",
+                    Some("sha256:provider-root"),
+                    &[],
+                ),
+            ],
+        );
+        let (_, _, divergence) = multi_version_consumer
+            .first_diverging_shared_package_pin_detail(&multi_version_provider)
+            .ok_or("the root graph split is refused")?;
+        assert!(
+            !divergence.contains("syn 2.0.119 vs 3.0.6") && !divergence.contains("syn 3.0.6 vs 2.0.119"),
+            "versions present in both closures are not falsely cross-paired: {divergence}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -7135,7 +7490,7 @@ fi
         let leaf = |digest| OvenRustcRegistryLeaf {
             domain: Default::default(),
             crate_kind: Default::default(),
-            selected_unit_identity: None,
+            selected_unit_identity: Some("sha256:portable-fixture-unit".to_string()),
             package: "fixture-registry".to_string(),
             version: "1.0.0".to_string(),
             crate_name: "fixture_registry".to_string(),
@@ -7162,11 +7517,7 @@ fi
         };
 
         let selected = resolve_sealed_registry_leaf(&dependency, Some(&authority), "debug")?;
-        let expected = [fs::canonicalize(first_artifact)?, fs::canonicalize(second_artifact)?]
-            .into_iter()
-            .min()
-            .ok_or("expected registry artifact")?;
-        assert_eq!(selected, expected);
+        assert_eq!(selected, fs::canonicalize(first_artifact)?);
         Ok(())
     }
 
@@ -10288,6 +10639,84 @@ fi
         }
     }
 
+    /// A repeated registry source record is a duplicate declaration, and only a differing source is a second identity.
+    ///
+    /// The manifest names each registry package version from one registry once. Declaring the same record twice is
+    /// refused as a repeat, while the same package version whose checksum, source root, or tree digest differs is
+    /// refused as a second source identity.
+    #[test]
+    fn manifest_distinguishes_a_repeated_registry_source_from_a_second_source_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let receipt = intent(project.path())?;
+        let source = OvenRustcRegistrySourcePackage {
+            package: "segmentation".to_string(),
+            version: "1.12.0".to_string(),
+            features: Vec::new(),
+            source: OvenRustcRegistrySource {
+                registry: "registry+https://github.com/rust-lang/crates.io-index".to_string(),
+                checksum: "segmentation-checksum".to_string(),
+                relative_root: "registry-sources/segmentation".to_string(),
+                digest: digest_bytes(b"segmentation source"),
+            },
+        };
+        let manifest = |registry_sources: Vec<OvenRustcRegistrySourcePackage>| OvenRustcArtifactManifest {
+            registry_sources,
+            supporting_artifacts: vec![
+                OvenRustcSupportingArtifact {
+                    relative_path: "registry-sources/segmentation/Cargo.toml".to_string(),
+                    digest: digest_bytes(b"segmentation manifest"),
+                },
+                OvenRustcSupportingArtifact {
+                    relative_path: "registry-sources/segmentation-other/Cargo.toml".to_string(),
+                    digest: digest_bytes(b"other segmentation manifest"),
+                },
+            ],
+            ..empty_manifest(&receipt)
+        };
+        let refusal = |registry_sources| -> Result<String, Box<dyn std::error::Error>> {
+            let plan = manifest(registry_sources);
+            Ok(plan
+                .validate_shape(&plan.intent)
+                .err()
+                .ok_or("the manifest must refuse the registry source declarations")?
+                .to_string())
+        };
+
+        let single = manifest(vec![source.clone()]);
+        single.validate_shape(&single.intent)?;
+
+        let repeated = refusal(vec![source.clone(), source.clone()])?;
+        assert!(
+            repeated.contains("declares registry source `segmentation` version `1.12.0` more than once"),
+            "{repeated}"
+        );
+        let mut featured = source.clone();
+        featured.features = vec!["std".to_string()];
+        let repeated_with_features = refusal(vec![source.clone(), featured])?;
+        assert!(
+            repeated_with_features.contains("more than once"),
+            "{repeated_with_features}"
+        );
+
+        let mut other_checksum = source.clone();
+        other_checksum.source.checksum = "other-segmentation-checksum".to_string();
+        let mut other_root = source.clone();
+        other_root.source.relative_root = "registry-sources/segmentation-other".to_string();
+        let mut other_digest = source.clone();
+        other_digest.source.digest = digest_bytes(b"other segmentation source");
+        for conflicting in [other_checksum, other_root, other_digest] {
+            let conflict = refusal(vec![source.clone(), conflicting])?;
+            assert!(
+                conflict.contains(
+                    "declares more than one source identity for registry package `segmentation` version `1.12.0`"
+                ),
+                "{conflict}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn release_only_project_inspection_authority_binds_root_features_and_orders_constituents()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -10381,6 +10810,7 @@ fi
         });
         payload.test_dependency_envelope = Some(OvenProjectInspectionTestDependencyEnvelope {
             constituent_index: 1,
+            provider_constituents: Vec::new(),
             dependency_surface_digest: digest_bytes(b"normal+dev dependency surface"),
             dependency_roots: BTreeMap::from([(
                 "serde_json".to_string(),
@@ -10403,9 +10833,42 @@ fi
         missing.crate_name = "missing_alias".to_string();
         assert!(!project_inspection_test_dependency_envelope_supports_dependencies(
             &payload,
-            &[missing],
+            std::slice::from_ref(&missing),
             &oven_store::NoProviderHooks,
         )?);
+        assert_eq!(
+            project_inspection_test_dependency_envelope_mismatch(&payload, &[missing], &oven_store::NoProviderHooks)?
+                .as_deref(),
+            Some("`missing_alias` has no sealed root")
+        );
+
+        payload.constituents.push(OvenProjectInspectionConstituent::Stored {
+            identity: "sha256:test-provider-direct-plan".to_string(),
+            artifact_kind: OvenArtifactKind::DirectRustcPlan,
+            receipt: debug_receipt.clone(),
+            base_loaf_identity: None,
+        });
+        payload
+            .test_dependency_envelope
+            .as_mut()
+            .ok_or("test dependency role disappeared")?
+            .provider_constituents
+            .push(OvenProjectInspectionTestProviderConstituent {
+                dependency_key: "provider_fixture".to_string(),
+                constituent_index: 2,
+            });
+        validate_project_inspection_authority_payload(&payload)?;
+        let mut repeated_role = payload.clone();
+        repeated_role
+            .test_dependency_envelope
+            .as_mut()
+            .ok_or("test dependency role disappeared")?
+            .provider_constituents[0]
+            .constituent_index = 1;
+        let Err(error) = validate_project_inspection_authority_payload(&repeated_role) else {
+            return Err("authority accepted one constituent in two test dependency roles".into());
+        };
+        assert!(error.to_string().contains("must not repeat a role-bearing constituent"));
 
         let mut direct_plan_payload = payload.clone();
         direct_plan_payload.constituents[1] = OvenProjectInspectionConstituent::Stored {
@@ -10474,6 +10937,16 @@ fi
                 &oven_store::NoProviderHooks,
             )?,
             "an unmatched persisted Cargo path root must not be reported as supported"
+        );
+        let mismatch = project_inspection_test_dependency_envelope_mismatch(
+            &payload,
+            std::slice::from_ref(&path_dependency),
+            &oven_store::NoProviderHooks,
+        )?
+        .ok_or("an unmatched persisted Cargo path root reported no mismatch")?;
+        assert!(
+            mismatch.starts_with("`dev_fixture` was sealed with dependency digest sha256:legacy-path-envelope, but"),
+            "the refusal names the alias and both digests: {mismatch}"
         );
 
         payload

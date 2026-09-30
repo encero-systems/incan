@@ -1,0 +1,15 @@
+# behavior: a consumer builds a dependency's model with an empty list, an empty dict and `None` for fields whose element types it never imports, one the package root republishes and one only its declaring module publishes, and the program builds and runs (#1561)
+# retires: loaves/compiler/incan_ir/src/lower/tests/dependency_field_element_types.rs::dependency_field_element_types_the_consumer_never_imports_are_spelled_from_the_dependency_issue1561
+# expect-stdout:
+#   empty 0 0
+#   none
+
+from pub::cards import Card
+
+
+def main() -> None:
+    card = Card(title="empty", evidence_ids=[], tags={}, first=None)
+    println(card.summary())
+    match card.first:
+        Some(_) => println("some")
+        None => println("none")

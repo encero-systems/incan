@@ -1,0 +1,15 @@
+@derive(Eq, Hash)
+pub type EvidenceId = newtype str
+
+
+pub model Evidence:
+    pub id: str
+
+
+pub enum Kind:
+    Primary
+    Secondary
+
+
+pub model Tag:
+    pub text: str

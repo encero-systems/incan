@@ -903,15 +903,70 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the scrutinee expression for a match statement.
     pub fn emit_match_scrutinee(&self, scrutinee: &TypedExpr) -> Result<TokenStream, EmitError> {
-        if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
-            return self.emit_expr(scrutinee);
+        let emitted = if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
+            self.emit_expr(scrutinee)?
+        } else {
+            self.emit_expr_for_use(
+                scrutinee,
+                ValueUseSite::MatchScrutinee {
+                    target_ty: Some(&scrutinee.ty),
+                },
+            )?
+        };
+        Ok(self.parenthesize_condition_position(scrutinee, emitted))
+    }
+
+    /// Emit an expression for a Rust condition position, grouping a top-level path from a struct literal.
+    ///
+    /// Rust requires parentheses when a struct literal remains reachable from the expression root without crossing a
+    /// delimiter in an `if`, `while`, `match`, or `for` header. Calls, collections, tuples, blocks, and already-grouped
+    /// constructs form delimiters, so they stop the traversal and retain their normal emission.
+    pub(in crate::emit) fn emit_condition_position_expr(&self, expr: &TypedExpr) -> Result<TokenStream, EmitError> {
+        let emitted = self.emit_expr(expr)?;
+        Ok(self.parenthesize_condition_position(expr, emitted))
+    }
+
+    /// Parenthesize emitted condition-position tokens exactly when their IR exposes a struct literal at the root.
+    pub(in crate::emit) fn parenthesize_condition_position(
+        &self,
+        expr: &TypedExpr,
+        emitted: TokenStream,
+    ) -> TokenStream {
+        if self.condition_position_exposes_struct_literal(expr) {
+            quote! { (#emitted) }
+        } else {
+            emitted
         }
-        self.emit_expr_for_use(
-            scrutinee,
-            ValueUseSite::MatchScrutinee {
-                target_ty: Some(&scrutinee.ty),
-            },
-        )
+    }
+
+    /// Return whether an expression exposes a struct literal without crossing an emitted delimiter.
+    fn condition_position_exposes_struct_literal(&self, expr: &TypedExpr) -> bool {
+        match &expr.kind {
+            IrExprKind::Struct { name, fields, .. } => {
+                fields.iter().all(|(field, _)| !field.is_empty())
+                    && self
+                        .struct_constructor_metadata_for_fields(name, fields)
+                        .is_none_or(|metadata| !metadata.uses_constructor_function())
+            }
+            IrExprKind::BinOp { left, right, .. } => {
+                self.condition_position_exposes_struct_literal(left)
+                    || self.condition_position_exposes_struct_literal(right)
+            }
+            IrExprKind::UnaryOp { operand, .. } => self.condition_position_exposes_struct_literal(operand),
+            // The method-call emitter already groups a struct-literal receiver, `(Reader {}).identity(..)`, so only a
+            // receiver that reaches a struct literal through another step exposes one.
+            IrExprKind::MethodCall { receiver, .. } => {
+                !matches!(receiver.kind, IrExprKind::Struct { .. })
+                    && self.condition_position_exposes_struct_literal(receiver)
+            }
+            IrExprKind::KnownMethodCall { receiver, .. } => self.condition_position_exposes_struct_literal(receiver),
+            IrExprKind::Field { object, .. } | IrExprKind::Index { object, .. } => {
+                self.condition_position_exposes_struct_literal(object)
+            }
+            IrExprKind::Slice { target, .. } => self.condition_position_exposes_struct_literal(target),
+            IrExprKind::Cast { expr, .. } => self.condition_position_exposes_struct_literal(expr),
+            _ => false,
+        }
     }
 
     /// Check whether an expression is a type-like identifier that should use Rust path syntax.
@@ -1449,7 +1504,7 @@ impl<'a> IrEmitter<'a> {
                 then_branch,
                 else_branch,
             } => {
-                let c = self.emit_expr(condition)?;
+                let c = self.emit_condition_position_expr(condition)?;
                 let t = self.emit_expr(then_branch)?;
                 if let Some(e) = else_branch {
                     let ee = self.emit_expr(e)?;

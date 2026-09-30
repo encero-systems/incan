@@ -1659,6 +1659,20 @@ pub enum ResolvedMethodDispatch {
     },
 }
 
+/// The facts method resolution records for one call at the call's span: the method call it selected, the declaration it
+/// reaches, the parameters it binds its arguments to and the type arguments it instantiates.
+///
+/// Taken with [`TypeCheckInfo::take_call_site_facts`] and put back with [`TypeCheckInfo::restore_call_site_facts`], so
+/// a call the checker resolves on the program's behalf at a source expression's span, such as a `for` loop's
+/// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct CallSiteFacts {
+    method_call: Option<ResolvedMethodCall>,
+    identity: Option<CanonicalSymbolId>,
+    callable_params: Option<Vec<CallableParam>>,
+    monomorph_type_args: Option<Vec<ResolvedType>>,
+}
+
 /// Typechecker-resolved custom iteration protocol consumed by IR lowering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProtocolIterationInfo {
@@ -2847,6 +2861,42 @@ impl TypeCheckInfo {
                 method: method.into(),
                 dispatch,
             },
+        );
+    }
+
+    /// Remove and return the facts method resolution recorded for the call at `span` (see [`CallSiteFacts`]).
+    pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
+        let key = (span.start, span.end);
+        CallSiteFacts {
+            method_call: self.calls.resolved_method_calls.remove(&key),
+            identity: self.references.resolved_identities.remove(&key),
+            callable_params: self.calls.call_site_callable_params.remove(&key),
+            monomorph_type_args: self.calls.call_site_monomorph_type_args.remove(&key),
+        }
+    }
+
+    /// Make `facts`, as [`Self::take_call_site_facts`] returned them, the facts of the call at `span`, dropping any a
+    /// later resolution recorded there.
+    pub(crate) fn restore_call_site_facts(&mut self, span: Span, facts: CallSiteFacts) {
+        /// Record `value` under `key`, or remove the entry when there is none.
+        fn put<T>(map: &mut HashMap<(usize, usize), T>, key: (usize, usize), value: Option<T>) {
+            match value {
+                Some(value) => {
+                    map.insert(key, value);
+                }
+                None => {
+                    map.remove(&key);
+                }
+            }
+        }
+        let key = (span.start, span.end);
+        put(&mut self.calls.resolved_method_calls, key, facts.method_call);
+        put(&mut self.references.resolved_identities, key, facts.identity);
+        put(&mut self.calls.call_site_callable_params, key, facts.callable_params);
+        put(
+            &mut self.calls.call_site_monomorph_type_args,
+            key,
+            facts.monomorph_type_args,
         );
     }
 

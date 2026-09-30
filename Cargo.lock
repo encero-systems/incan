@@ -1513,7 +1513,9 @@ dependencies = [
 name = "incan_driver"
 version = "0.6.0-dev.6"
 dependencies = [
+ "byteorder",
  "clap",
+ "encoding_rs",
  "hex",
  "incan_codegraph",
  "incan_emit",
@@ -1523,6 +1525,7 @@ dependencies = [
  "incan_oven_facet",
  "incan_provider",
  "incan_semantics_core",
+ "incan_std_core",
  "incan_test_support",
  "incan_vocab",
  "oven_cargo_compat",

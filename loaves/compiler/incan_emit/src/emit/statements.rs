@@ -1319,7 +1319,7 @@ impl<'a> IrEmitter<'a> {
                         }
                     })
                 } else {
-                    let cond = self.emit_expr(condition)?;
+                    let cond = self.emit_condition_position_expr(condition)?;
                     Ok(quote! {
                         while #cond {
                             #(#body_stmts)*
@@ -1373,6 +1373,7 @@ impl<'a> IrEmitter<'a> {
                     })
                 {
                     let iter_expr = self.emit_mutating_derived_for_iterable(&plan)?;
+                    let iter_expr = self.parenthesize_condition_position(iterable, iter_expr);
                     return Ok(quote! {
                         for #pat in #iter_expr {
                             #(#body_stmts)*
@@ -1390,6 +1391,7 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     iter_expr
                 };
+                let iter_expr = self.parenthesize_condition_position(iterable, iter_expr);
                 Ok(quote! {
                     for #pat in #iter_expr {
                         #(#body_stmts)*
@@ -1409,7 +1411,7 @@ impl<'a> IrEmitter<'a> {
                 then_branch,
                 else_branch,
             } => {
-                let cond = self.emit_expr(condition)?;
+                let cond = self.emit_condition_position_expr(condition)?;
                 let then_stmts = self.emit_stmts(then_branch)?;
                 if let Some(else_stmts) = else_branch {
                     let else_tokens = self.emit_stmts(else_stmts)?;

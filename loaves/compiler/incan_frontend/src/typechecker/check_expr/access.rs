@@ -661,7 +661,9 @@ impl TypeChecker {
     /// one; the constructor is then built with `None` there, so the binding's type says so and a later use of that side
     /// is checked against `None`. The same holds for such a constructor inside a list, set, dict or tuple literal: a
     /// side no member of the literal fixes is built with that type for every member (`[Ok(1)]` is a
-    /// `List[Result[int, None]]`). Any other value, and a side something fixed, is left as it is.
+    /// `List[Result[int, None]]`), and for one that is the value of a `match` arm or of a `loop:` expression's `break`:
+    /// the arms and `break` values have already unified, so only a side none of them fixes is settled. Any other value,
+    /// and a side something fixed, is left as it is.
     pub(in crate::typechecker) fn settle_open_constructor_side(
         &self,
         value: &Spanned<Expr>,
@@ -717,7 +719,42 @@ impl TypeChecker {
                         .collect(),
                 )
             }
+            (Expr::Paren(inner), ty) => self.settle_open_constructor_side(inner, ty),
+            (Expr::Match(_, _) | Expr::Loop(_), ty) => branch_values(value)
+                .into_iter()
+                .fold(ty, |ty, branch| self.settle_open_constructor_side(branch, ty)),
             (_, ty) => ty,
+        }
+    }
+
+    /// Record `settled`, the type a `match` or `loop:` value's open `Result` sides were settled to, as the type of the
+    /// value and, with its open parts filled from it, of each of its arm and `break` values, at any depth (#1561).
+    ///
+    /// Lowering spells each value's recorded type on the `Ok(...)` or `Err(...)` it builds, so the arms of `r = match
+    /// c:` that all build `Ok(...)` build the same `Result[int, None]` the binding has. Any other value records
+    /// nothing.
+    pub(in crate::typechecker) fn record_settled_branch_values(
+        &mut self,
+        value: &Spanned<Expr>,
+        settled: &ResolvedType,
+    ) {
+        match &value.node {
+            Expr::Paren(inner) => self.record_settled_branch_values(inner, settled),
+            Expr::Match(_, _) | Expr::Loop(_) => {
+                self.record_expr_type(value.span, settled.clone());
+                for branch in branch_values(value) {
+                    let Some(mut filled) = self.type_info.expr_type(branch.span).cloned() else {
+                        continue;
+                    };
+                    let recorded = filled.clone();
+                    super::fill_open_result_parts(&mut filled, settled, false);
+                    if filled != recorded {
+                        self.record_expr_type(branch.span, filled.clone());
+                        self.record_settled_branch_values(branch, &filled);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -737,6 +774,7 @@ impl TypeChecker {
         let settled = self.settle_open_constructor_side(value, ty.clone());
         if settled != ty {
             self.record_expr_type(value.span, settled.clone());
+            self.record_settled_branch_values(value, &settled);
         }
         settled
     }
@@ -7399,6 +7437,59 @@ impl TypeChecker {
         match &base.node {
             Expr::MethodCall(_, method, _, _) => matches!(method.as_str(), "as_bytes" | "digest" | "finalize_reset"),
             _ => false,
+        }
+    }
+}
+
+/// Return the values a `match` or `loop:` expression can produce: the expression body of each arm, and each value a
+/// `break` of the loop itself gives, in source order (#1561).
+///
+/// A block arm produces no value, and a `break` inside a nested `loop:`, `while` or `for` leaves that inner loop, so
+/// neither is one of them. Any other expression has none.
+fn branch_values(value: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
+    match &value.node {
+        Expr::Match(_, arms) => arms
+            .iter()
+            .filter_map(|arm| match &arm.node.body {
+                MatchBody::Expr(body) => Some(body),
+                MatchBody::Block(_) => None,
+            })
+            .collect(),
+        Expr::Loop(loop_expr) => {
+            let mut values = Vec::new();
+            collect_break_values(&loop_expr.body, &mut values);
+            values
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Collect the values the `break` statements of one loop body give, entering `if` branches, `unsafe` blocks and the
+/// block arms of a `match` statement, but no nested loop, whose `break` statements leave that loop.
+fn collect_break_values<'a>(body: &'a [Spanned<Statement>], values: &mut Vec<&'a Spanned<Expr>>) {
+    for statement in body {
+        match &statement.node {
+            Statement::Break(Some(value)) => values.push(value),
+            Statement::If(if_stmt) => {
+                collect_break_values(&if_stmt.then_body, values);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_break_values(branch, values);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    collect_break_values(else_body, values);
+                }
+            }
+            Statement::Unsafe(unsafe_stmt) => collect_break_values(&unsafe_stmt.body, values),
+            Statement::Expr(expr) => {
+                if let Expr::Match(_, arms) = &expr.node {
+                    for arm in arms {
+                        if let MatchBody::Block(block) = &arm.node.body {
+                            collect_break_values(block, values);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

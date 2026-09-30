@@ -1,0 +1,40 @@
+from std.derives.collection import Iterator
+
+
+pub model Ticks with Iterator[int]:
+    pub items: list[int]
+    pub index: int
+
+    def __iter__(self) -> Ticks:
+        return self
+
+    def __next__(mut self) -> Option[int]:
+        if self.index >= len(self.items):
+            return None
+        value = self.items[self.index]
+        self.index += 1
+        return Some(value)
+
+
+pub class Clock:
+    pub base: int
+    pub ticks: Ticks
+
+    def counted(self, count: int = 2) -> Ticks:
+        mut items: list[int] = []
+        for i in range(count):
+            items.append(self.base + i)
+        return Ticks(items=items, index=0)
+
+    def spread(self, *offsets: int) -> Ticks:
+        mut items: list[int] = []
+        for offset in offsets:
+            items.append(self.base + offset)
+        return Ticks(items=items, index=0)
+
+    def tagged[T](self, tag: T) -> Ticks:
+        return Ticks(items=[self.base], index=0)
+
+
+pub def clock_at(base: int) -> Clock:
+    return Clock(base=base, ticks=Ticks(items=[base, base], index=0))

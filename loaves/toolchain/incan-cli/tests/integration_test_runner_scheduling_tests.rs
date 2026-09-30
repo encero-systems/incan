@@ -638,4 +638,391 @@ module tests:
         );
         Ok(())
     }
+
+    /// Run `incan` in `cwd` on the standard library compiled from source, as a project on a fresh home with no SDK
+    /// inventory builds it: every `std` module is mounted from source and compiled into the project's own crate.
+    fn run_on_source_standard_library(
+        cwd: &Path,
+        incan_home: &Path,
+        args: &[&str],
+    ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        let source_root = super::support::repo_root();
+        let stdlib = source_root.join("loaves/stdlib");
+        let mut command = incan_command();
+        command
+            .args(args)
+            .current_dir(cwd)
+            .env("INCAN_NO_BANNER", "1")
+            .env("INCAN_SOURCE_ROOT", &source_root)
+            .env("INCAN_STDLIB", &stdlib)
+            .env("INCAN_STDLIB_DIR", &stdlib);
+        command
+            .env("INCAN_HOME", incan_home)
+            .env_remove("INCAN_SDK_INVENTORY")
+            .env_remove("INCAN_INTERNAL_SDK_PROVIDER_STORE")
+            .env_remove("INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE");
+        if args.starts_with(&["oven", "bake"]) {
+            super::support::configure_explicit_oven_bake_command(&mut command)?;
+        }
+        Ok(command.output()?)
+    }
+
+    /// Fail with both streams when a command the journey needs did not succeed.
+    fn assert_command_succeeded(output: &std::process::Output, context: &str) {
+        assert!(
+            output.status.success(),
+            "{context} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// #1561: a project with no SDK inventory, as on a fresh home, compiles each standard-library module it imports
+    /// from source into its own crate, and that code calls the module's runtime crate (`incan_std_testing::fail_t`
+    /// for `std.testing`). A workspace member's test batches link those crates: `std.testing` assertions,
+    /// `std.collections` and `std.async` in its tests ran into rustc's E0433 for the missing crate, because the
+    /// dependency envelope the member's bake publishes declared none of them. A program that imports `std.testing`
+    /// builds and runs as well.
+    #[test]
+    fn e2e_member_tests_and_programs_link_the_runtime_of_standard_library_modules_compiled_from_source_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src"))?;
+        std::fs::write(
+            root.path().join("loaf.toml"),
+            r#"[project]
+name = "field_provider"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["consumer"]
+
+[workspace.dependencies]
+field_provider = { path = "." }
+"#,
+        )?;
+        std::fs::write(
+            root.path().join("src/lib.incn"),
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
+        std::fs::write(
+            root.path().join("src/main.incn"),
+            r#"from std.testing import assert_eq
+
+
+def main() -> None:
+    assert_eq(40 + 2, 42)
+    println("assertions hold")
+"#,
+        )?;
+        let consumer = root.path().join("consumer");
+        std::fs::create_dir_all(consumer.join("src"))?;
+        std::fs::create_dir_all(consumer.join("tests"))?;
+        std::fs::write(
+            consumer.join("loaf.toml"),
+            r#"[project]
+name = "field_consumer"
+version = "0.1.0"
+
+[dependencies]
+field_provider = { workspace = true }
+"#,
+        )?;
+        std::fs::write(
+            consumer.join("src/lib.incn"),
+            "pub def offset() -> int:\n    return 1\n",
+        )?;
+        std::fs::write(
+            consumer.join("tests/test_assertions.incn"),
+            r#"from std.testing import assert_eq
+
+
+def test_assert_eq_passes() -> None:
+    assert_eq(40 + 2, 42)
+"#,
+        )?;
+        std::fs::write(
+            consumer.join("tests/test_collections.incn"),
+            r#"from std.collections import Deque
+
+
+def test_deque_counts_its_items() -> None:
+    mut pending = Deque[str].from_iter(["a"])
+    pending.append("b")
+    assert len(pending) == 2
+"#,
+        )?;
+        std::fs::write(
+            consumer.join("tests/test_tasks.incn"),
+            r#"from std.async import sleep
+
+
+async def work() -> int:
+    await sleep(0.01)
+    return 1
+
+
+async def test_slept_task_returns_its_value() -> None:
+    assert await work() == 1
+"#,
+        )?;
+        let incan_home = root.path().join(".incan-home");
+
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["oven", "bake", "--project", "."])?,
+            "the workspace root's explicit bake",
+        );
+        let program = run_on_source_standard_library(root.path(), &incan_home, &["run", "src/main.incn"])?;
+        assert_command_succeeded(&program, "a program importing std.testing");
+        assert!(
+            String::from_utf8_lossy(&program.stdout).contains("assertions hold"),
+            "the program ran to its last line:\n{}",
+            String::from_utf8_lossy(&program.stdout)
+        );
+
+        assert_command_succeeded(
+            &run_on_source_standard_library(&consumer, &incan_home, &["oven", "bake", "--project", "."])?,
+            "the member's explicit bake",
+        );
+        let tests = run_on_source_standard_library(&consumer, &incan_home, &["test", "tests"])?;
+        assert_command_succeeded(&tests, "the member's test batches");
+        let stdout = String::from_utf8_lossy(&tests.stdout);
+        assert!(
+            stdout.contains("3 passed"),
+            "every member test ran and passed:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    /// #1561: a workspace member whose tests import the workspace-root library it depends on (`{ workspace = true }`
+    /// resolving to the root at `path = "."`) runs them locked after its own bake, with the root library built by
+    /// `incan build --lib` first, as a package's external-consumer check does. The source-mounted root library uses
+    /// the `std.collections` runtime and declares a registry dependency, while the member has no Rust dependencies.
+    /// The library also re-exports a model and the identifier its list field holds from submodules, and carries a
+    /// union in its surface; a test builds the model with an empty list and `None` without importing the identifier.
+    #[test]
+    fn e2e_member_tests_importing_the_workspace_root_library_run_locked_after_the_members_bake_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src"))?;
+        std::fs::write(
+            root.path().join("loaf.toml"),
+            r#"[project]
+name = "root_provider"
+version = "0.1.0"
+
+[workspace]
+members = ["consumer"]
+
+[workspace.dependencies]
+root_provider = { path = "." }
+
+[workspace.rust-dependencies]
+libc = { version = "0.2", features = ["extra_traits"] }
+
+[rust-dependencies]
+itoa = "=1.0.17"
+"#,
+        )?;
+        std::fs::write(
+            root.path().join("src/lib.incn"),
+            r#"from std.collections import Deque
+pub from cards import Card, weigh
+pub from ids import EvidenceId
+
+
+pub model Reading:
+    pub value: int
+
+
+pub def answer() -> int:
+    return 42
+
+
+pub def queued_count() -> int:
+    mut values = Deque[int].from_iter([1])
+    values.append(2)
+    return len(values)
+"#,
+        )?;
+        std::fs::write(root.path().join("src/ids.incn"), "pub newtype EvidenceId = str\n")?;
+        std::fs::write(
+            root.path().join("src/cards.incn"),
+            "from crate.ids import EvidenceId\n\n\npub model Card:\n    pub evidence_ids: list[EvidenceId]\n    pub first: Option[EvidenceId]\n\n\npub def weigh(value: Card | int) -> int:\n    match value:\n        Card(card) => return len(card.evidence_ids)\n        int(number) => return number\n",
+        )?;
+        let consumer = root.path().join("consumer");
+        std::fs::create_dir_all(consumer.join("src"))?;
+        std::fs::create_dir_all(consumer.join("tests"))?;
+        std::fs::write(
+            consumer.join("loaf.toml"),
+            r#"[project]
+name = "root_consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+root_provider = { workspace = true }
+"#,
+        )?;
+        std::fs::write(
+            consumer.join("src/main.incn"),
+            "from pub::root_provider import answer\n\n\ndef main() -> None:\n    println(answer())\n",
+        )?;
+        std::fs::write(
+            consumer.join("tests/test_provider.incn"),
+            r#"from std.testing import assert_eq
+from pub::root_provider import Card, Reading, answer, queued_count
+
+
+def test_the_root_library_answers() -> None:
+    assert_eq(answer(), 42)
+    reading = Reading(value=3)
+    assert_eq(reading.value, 3)
+    assert_eq(queued_count(), 2)
+
+
+def test_a_card_built_with_empty_fields() -> None:
+    card = Card(evidence_ids=[], first=None)
+    assert_eq(len(card.evidence_ids), 0)
+"#,
+        )?;
+        let incan_home = root.path().join(".incan-home");
+
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["oven", "bake", "--project", "."])?,
+            "the workspace root's explicit bake",
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["build", "--lib"])?,
+            "the workspace root's library build",
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(&consumer, &incan_home, &["oven", "bake", "--project", "."])?,
+            "the member's explicit bake",
+        );
+        let tests = run_on_source_standard_library(&consumer, &incan_home, &["test", "tests", "--locked"])?;
+        assert_command_succeeded(&tests, "the member's locked tests on the root library");
+        let stdout = String::from_utf8_lossy(&tests.stdout);
+        assert!(
+            stdout.contains("2 passed"),
+            "both member tests ran and passed:\n{stdout}"
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["oven", "bake", "--project", "."])?,
+            "the workspace root's bake after the member's",
+        );
+        assert_command_succeeded(
+            &run_on_source_standard_library(root.path(), &incan_home, &["build", "--lib"])?,
+            "the workspace root's library build after the member's bake",
+        );
+        Ok(())
+    }
+
+    /// #1561: a project's own tests on the standard library compiled from source link the data and testing runtime
+    /// crates. A test file importing `std.testing`, `std.collections` and `std.serde`'s `json` derive, compiled with
+    /// the project's own module that does the same, failed with rustc's E0433 for `incan_std_data` and
+    /// `incan_std_testing`; they build and pass, and the project's program builds and runs.
+    #[test]
+    fn e2e_a_projects_own_tests_link_the_data_and_testing_runtime_of_the_standard_library_compiled_from_source_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        std::fs::create_dir_all(project.path().join("src"))?;
+        std::fs::create_dir_all(project.path().join("tests"))?;
+        std::fs::write(
+            project.path().join("loaf.toml"),
+            r#"[project]
+name = "own_tests"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+        )?;
+        std::fs::write(
+            project.path().join("src/points.incn"),
+            r#"from std.collections import Deque
+from std.serde import json
+
+
+@derive(json)
+pub model Point:
+    pub x: int
+    pub y: int
+
+
+pub def queued(values: list[int]) -> int:
+    mut pending = Deque[int].from_iter(values)
+    pending.append(0)
+    return len(pending)
+"#,
+        )?;
+        std::fs::write(
+            project.path().join("src/main.incn"),
+            r#"from points import Point, queued
+
+
+def main() -> None:
+    println(Point(x=1, y=2).to_json())
+    println(queued([3]))
+"#,
+        )?;
+        std::fs::write(
+            project.path().join("tests/test_points.incn"),
+            r#"from std.collections import Deque
+from std.serde import json
+from std.testing import assert_eq, assert_is_ok
+from points import Point, queued
+
+
+@derive(json)
+model Label:
+    text: str
+
+
+def test_point_round_trips_through_json() -> None:
+    point = assert_is_ok(Point.from_json(Point(x=1, y=2).to_json()))
+    assert_eq(point.x + point.y, 3)
+
+
+def test_label_round_trips_through_json() -> None:
+    label = assert_is_ok(Label.from_json(Label(text="a").to_json()))
+    assert_eq(label.text, "a")
+
+
+def test_points_queue_in_a_deque() -> None:
+    mut pending = Deque[int].from_iter([1])
+    pending.append(2)
+    assert_eq(len(pending), 2)
+    assert_eq(queued([1]), 2)
+"#,
+        )?;
+        let incan_home = project.path().join(".incan-home");
+
+        assert_command_succeeded(
+            &run_on_source_standard_library(project.path(), &incan_home, &["oven", "bake", "--project", "."])?,
+            "the project's explicit bake",
+        );
+        let build = run_on_source_standard_library(project.path(), &incan_home, &["build", "src/main.incn"])?;
+        assert_command_succeeded(&build, "the project's program build");
+        let program = run_on_source_standard_library(project.path(), &incan_home, &["run", "src/main.incn"])?;
+        assert_command_succeeded(&program, "the project's program run");
+        let stdout = String::from_utf8_lossy(&program.stdout);
+        assert!(
+            stdout.contains(r#"{"x":1,"y":2}"#) && stdout.contains('2'),
+            "the program printed its point and queue:\n{stdout}"
+        );
+        let tests = run_on_source_standard_library(project.path(), &incan_home, &["test", "tests"])?;
+        assert_command_succeeded(&tests, "the project's own test batch");
+        let stdout = String::from_utf8_lossy(&tests.stdout);
+        assert!(
+            stdout.contains("3 passed"),
+            "every project test ran and passed:\n{stdout}"
+        );
+        Ok(())
+    }
 }

@@ -1,0 +1,9 @@
+"""Weights over a nomination or a raw score."""
+
+from crate.search.models import Nomination
+
+
+pub def weigh(value: Nomination | int) -> int:
+    match value:
+        Nomination(item) => return item.rank
+        int(number) => return number

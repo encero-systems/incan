@@ -971,7 +971,11 @@ impl TypeChecker {
             }
             if trait_typed_local { value_ty } else { ann_ty }
         } else {
-            self.settle_open_constructor_side(&assign.value, value_ty)
+            let settled = self.settle_open_constructor_side(&assign.value, value_ty.clone());
+            if settled != value_ty {
+                self.record_settled_branch_values(&assign.value, &settled);
+            }
+            settled
         };
 
         self.record_assignment_binding_type(span, ty.clone());

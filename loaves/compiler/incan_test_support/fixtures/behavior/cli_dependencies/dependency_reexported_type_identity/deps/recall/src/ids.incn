@@ -1,0 +1,13 @@
+"""Identifiers shared by the search modules."""
+
+
+@derive(Clone, Eq)
+pub newtype EntryId = str
+
+
+pub def entry_id(value: str) -> EntryId:
+    return EntryId(value)
+
+
+pub def entry_id_text(identifier: EntryId) -> str:
+    return identifier.0

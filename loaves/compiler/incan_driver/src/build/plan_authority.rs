@@ -1,7 +1,7 @@
 //! The authority a selected plan runs under: compiler-owned roots, rematerialized caller-owned closures, registry
 //! leaf authorities, and the checks that a plan covers every declared Rust library.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
@@ -12,7 +12,8 @@ use crate::build::caller_owned::{
     deduplicate_caller_owned_libraries_prefer_extern, first_unselected_private_provider_edge,
     load_receipted_public_provider_dependency,
 };
-use crate::build::plan_selection::{registry_leaf_authority_for_plan_selection, select_published_project_plan};
+use crate::build::oven_project::select_oven_direct_rustc_plan;
+use crate::build::plan_selection::{registry_leaf_authority_for_plan_selection, select_exact_published_provider_plan};
 use crate::build::provider_compilation::{
     caller_owned_library_dependencies_for_compilation,
     caller_owned_library_dependencies_missing_from_selected_plan_with_owned_roots, plan_with_provider_compilation_role,
@@ -175,8 +176,9 @@ fn rematerialize_caller_owned_provider_graph(
     consumer_output_root: &Path,
     registry_authority: Option<&OvenRegistryLeafAuthority>,
     extra_dependency_search_paths: &[PathBuf],
-    compiler_owned_roots: &[PathBuf],
-    selected_path_authority: Option<&OvenSelectedPathRustcAuthority>,
+    inherited_compiler_owned_roots: &[PathBuf],
+    provider_compiler_runtime_libraries: &BTreeMap<String, Vec<OvenCallerOwnedRustcLibrary>>,
+    provider_compiler_runtime_registry_authorities: &BTreeMap<String, OvenRegistryLeafAuthority>,
     visiting: &mut BTreeSet<PathBuf>,
     authority_context: &mut Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
@@ -222,8 +224,9 @@ fn rematerialize_caller_owned_provider_graph(
                 consumer_output_root,
                 registry_authority,
                 extra_dependency_search_paths,
-                compiler_owned_roots,
-                selected_path_authority,
+                inherited_compiler_owned_roots,
+                provider_compiler_runtime_libraries,
+                provider_compiler_runtime_registry_authorities,
                 visiting,
                 authority_context,
             )?;
@@ -240,6 +243,43 @@ fn rematerialize_caller_owned_provider_graph(
         let edition = caller_owned_library_edition(artifact)?;
         let is_proc_macro = caller_owned_library_is_proc_macro(artifact)?;
         let provider_dependencies = caller_owned_library_rust_dependencies(artifact)?;
+        let preferred_runtime_registry_authority =
+            provider_compiler_runtime_registry_authorities.get(&artifact.dependency_key);
+        let provider_registry_authority = preferred_runtime_registry_authority.map(|preferred| {
+            registry_authority
+                .map(|authority| authority.with_preferred_target_cohort(preferred))
+                .unwrap_or_else(|| preferred.clone())
+        });
+        let runtime_cohort_registry_externs = provider_dependencies
+            .iter()
+            .filter(|dependency| matches!(dependency.source, DependencySource::Registry))
+            .filter(|dependency| {
+                let package = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
+                preferred_runtime_registry_authority.is_some_and(|authority| authority.contains_target_package(package))
+            })
+            .map(|dependency| dependency.crate_name.replace('-', "_"))
+            .collect::<BTreeSet<_>>();
+        // The selected release runtime and its overlapping registry packages are one ABI cohort. Remove historical
+        // consumer externs for those direct aliases so the preferred authority below supplies the base's unit.
+        provider_plan
+            .externs
+            .retain(|(crate_name, _)| !runtime_cohort_registry_externs.contains(crate_name));
+        provider_plan
+            .caller_owned_library_digests
+            .retain(|crate_name, _| !runtime_cohort_registry_externs.contains(crate_name));
+        let provider_runtime_libraries = provider_compiler_runtime_libraries
+            .get(&artifact.dependency_key)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        replace_selected_compiler_runtime_libraries(&mut provider_plan, &provider_runtime_libraries)?;
+        let mut provider_compiler_owned_roots = inherited_compiler_owned_roots.to_vec();
+        provider_compiler_owned_roots.extend(compiler_owned_roots(&provider_plan));
+        provider_compiler_owned_roots.sort();
+        provider_compiler_owned_roots.dedup();
+        let provider_selected_path_authority =
+            OvenSelectedPathRustcAuthority::new(&provider_compiler_owned_roots, &provider_plan);
         let provider_dependencies =
             caller_owned_library_dependencies_for_compilation(provider_dependencies, &provider_plan);
         let provider_dependencies =
@@ -247,7 +287,7 @@ fn rematerialize_caller_owned_provider_graph(
         let provider_dependencies = caller_owned_library_dependencies_missing_from_selected_plan_with_owned_roots(
             &provider_dependencies,
             &provider_plan,
-            compiler_owned_roots,
+            &provider_compiler_owned_roots,
         );
         let mut provider_rust_libraries = materialize_declared_rust_libraries_with_selected_path_authority(
             &consumer_output_root
@@ -259,8 +299,8 @@ fn rematerialize_caller_owned_provider_graph(
             &receipt.intent.target,
             profile,
             &provider_dependencies,
-            registry_authority,
-            selected_path_authority,
+            provider_registry_authority.as_ref().or(registry_authority),
+            Some(&provider_selected_path_authority),
         )
         .map_err(oven_rustc_error)?;
         nested_libraries.append(&mut provider_rust_libraries);
@@ -351,12 +391,21 @@ fn rematerialize_caller_owned_provider_graph(
 /// `-L dependency=...` search.
 #[derive(Default)]
 pub struct CallerOwnedProviderRegistryClosure {
+    /// Provider-owned registry units available for coherent re-materialization.
     pub provider_authorities: Vec<OvenRegistryLeafAuthority>,
+    /// Verified dependency search paths needed by the provider's selected closure.
     pub dependency_search_paths: Vec<PathBuf>,
+    /// Compiler-release runtime artifacts selected by each provider's own receipt.
+    ///
+    /// Re-materialization may attach these exact sealed artifacts to the provider compilation, but never interprets
+    /// their workspace-inherited Cargo manifests as caller-owned path crates.
+    pub compiler_runtime_libraries: BTreeMap<String, Vec<OvenCallerOwnedRustcLibrary>>,
+    /// Release-base registry authority paired with each provider's selected compiler runtime cohort.
+    pub compiler_runtime_registry_authorities: BTreeMap<String, OvenRegistryLeafAuthority>,
 }
 
 impl CallerOwnedProviderRegistryClosure {
-    /// Join the consumer's own authority with every collected provider authority into one lookup surface.
+    /// Join every provider authority ahead of the consumer's own authority into one lookup surface.
     ///
     /// Joining decides only what is *discoverable*; safety against a genuinely diverging shared package is decided
     /// beforehand by [`caller_owned_provider_registry_conflict`] and per-lookup by `select_sealed_registry_leaf`'s
@@ -366,7 +415,7 @@ impl CallerOwnedProviderRegistryClosure {
             return consumer;
         }
         Some(OvenRegistryLeafAuthority::aggregate(
-            consumer.into_iter().chain(self.provider_authorities.iter().cloned()),
+            self.provider_authorities.iter().cloned().chain(consumer),
         ))
     }
 }
@@ -382,6 +431,43 @@ pub fn collect_caller_owned_provider_registry_leaf_authority(
     store: &OvenStore,
     provider_plan: &ProviderPlan,
     profile: &str,
+    include_compiler_runtime_libraries: bool,
+) -> CliResult<CallerOwnedProviderRegistryClosure> {
+    collect_caller_owned_provider_registry_leaf_authority_with_toolchain_fallback(
+        store,
+        provider_plan,
+        profile,
+        false,
+        include_compiler_runtime_libraries,
+    )
+}
+
+/// Collect provider registry authority for test re-materialization, including compiler-Loaf-backed providers.
+///
+/// Normal bake conflict detection intentionally compares only provider-owned stored deltas. Generated tests also
+/// have to re-materialize a provider whose entire Rust dependency closure came from the installed release Loaf, so
+/// that path may resolve the provider receipt through the normal toolchain selector as a fallback.
+pub fn collect_test_provider_registry_leaf_authority(
+    store: &OvenStore,
+    provider_plan: &ProviderPlan,
+    profile: &str,
+) -> CliResult<CallerOwnedProviderRegistryClosure> {
+    collect_caller_owned_provider_registry_leaf_authority_with_toolchain_fallback(
+        store,
+        provider_plan,
+        profile,
+        true,
+        true,
+    )
+}
+
+/// Walk one provider graph while preserving whether compiler-Loaf fallback is allowed at each node.
+fn collect_caller_owned_provider_registry_leaf_authority_with_toolchain_fallback(
+    store: &OvenStore,
+    provider_plan: &ProviderPlan,
+    profile: &str,
+    allow_toolchain_fallback: bool,
+    include_compiler_runtime_libraries: bool,
 ) -> CliResult<CallerOwnedProviderRegistryClosure> {
     let mut closure = CallerOwnedProviderRegistryClosure::default();
     let mut visiting = BTreeSet::new();
@@ -410,6 +496,8 @@ pub fn collect_caller_owned_provider_registry_leaf_authority(
             profile,
             &mut closure,
             &mut visiting,
+            allow_toolchain_fallback,
+            include_compiler_runtime_libraries,
         )?;
     }
     closure.dependency_search_paths.sort();
@@ -428,6 +516,8 @@ fn collect_caller_owned_provider_registry_leaf_authority_graph(
     profile: &str,
     closure: &mut CallerOwnedProviderRegistryClosure,
     visiting: &mut BTreeSet<PathBuf>,
+    allow_toolchain_fallback: bool,
+    include_compiler_runtime_libraries: bool,
 ) -> CliResult<()> {
     let canonical_root = fs::canonicalize(&artifact.crate_root).map_err(|error| {
         CliError::failure(format!(
@@ -459,13 +549,34 @@ fn collect_caller_owned_provider_registry_leaf_authority_graph(
                 profile,
                 closure,
                 visiting,
+                allow_toolchain_fallback,
+                include_compiler_runtime_libraries,
             )?;
         }
-        if let Some((provider_authority, provider_search_paths)) =
-            caller_owned_provider_registry_leaf_authority(store, artifact, profile)?
-        {
-            closure.provider_authorities.push(provider_authority);
+        if let Some((
+            provider_authority,
+            provider_search_paths,
+            compiler_runtime_libraries,
+            compiler_runtime_registry_authority,
+        )) = caller_owned_provider_registry_leaf_authority(
+            store,
+            artifact,
+            profile,
+            allow_toolchain_fallback,
+            include_compiler_runtime_libraries,
+        )? {
+            if let Some(provider_authority) = provider_authority {
+                closure.provider_authorities.push(provider_authority);
+            }
             closure.dependency_search_paths.extend(provider_search_paths);
+            closure
+                .compiler_runtime_libraries
+                .insert(artifact.dependency_key.clone(), compiler_runtime_libraries);
+            if let Some(compiler_runtime_registry_authority) = compiler_runtime_registry_authority {
+                closure
+                    .compiler_runtime_registry_authorities
+                    .insert(artifact.dependency_key.clone(), compiler_runtime_registry_authority);
+            }
         }
         Ok(())
     })();
@@ -473,36 +584,90 @@ fn collect_caller_owned_provider_registry_leaf_authority_graph(
     result
 }
 
-/// Return one caller-owned provider's own receipt-bound registry-leaf authority and dependency search closure, if
-/// it declared any registry dependencies of its own.
+/// Return one caller-owned provider's receipt-bound native closure, including compiler runtime artifacts.
 ///
 /// This never bakes or invokes Cargo -- it only selects an already-published receipt, the same select-only step
 /// normal build/run try before falling back to the explicit baker. A provider without a verified receipt for this
-/// profile, or without any registry dependencies of its own, contributes nothing here; the ordinary
-/// [`materialize_declared_rust_libraries_with_selected_path_authority`] failure surfaces an actionable error once
-/// something actually needs a registry leaf this authority does not have. The returned search paths are the
-/// provider's own already-materialized `artifact_plan().dependency_search_paths` -- the same directories that made
-/// this provider's own standalone bake link successfully, including proc-macro/build-script outputs that have no
-/// registry-leaf entry of their own.
+/// profile contributes nothing here. The returned search paths are the provider's own already-materialized
+/// `artifact_plan().dependency_search_paths` -- the same directories that made this provider's standalone bake link
+/// successfully, including proc-macro/build-script outputs that have no registry-leaf entry. Compiler runtime
+/// libraries are retained separately so source-backed provider re-materialization consumes their release-cohort
+/// artifacts instead of treating their workspace-inherited Cargo manifests as user path dependencies.
 fn caller_owned_provider_registry_leaf_authority(
     store: &OvenStore,
     artifact: &LibraryArtifactMetadata,
     profile: &str,
-) -> CliResult<Option<(OvenRegistryLeafAuthority, Vec<PathBuf>)>> {
+    allow_toolchain_fallback: bool,
+    include_compiler_runtime_libraries: bool,
+) -> CliResult<
+    Option<(
+        Option<OvenRegistryLeafAuthority>,
+        Vec<PathBuf>,
+        Vec<OvenCallerOwnedRustcLibrary>,
+        Option<OvenRegistryLeafAuthority>,
+    )>,
+> {
     let Some(project_root) = dependency_project_root(&artifact.crate_root) else {
         return Ok(None);
     };
     let Some(receipt) = read_verified_caller_owned_provider_receipt(&project_root, profile) else {
         return Ok(None);
     };
-    let Some(selection) = select_published_project_plan(store, &receipt, OvenToolchainMaterialization::Reused)? else {
+    let selection = if let Some(selection) =
+        select_exact_published_provider_plan(store, &receipt, OvenToolchainMaterialization::Reused)?
+    {
+        selection.plan_selection
+    } else if allow_toolchain_fallback {
+        let dependencies = caller_owned_library_rust_dependencies(artifact)?;
+        let Some(selection) = select_oven_direct_rustc_plan(store, &receipt, &dependencies)? else {
+            return Ok(None);
+        };
+        selection
+    } else {
         return Ok(None);
     };
-    let Some(authority) = registry_leaf_authority_for_plan_selection(&selection.plan_selection)? else {
-        return Ok(None);
-    };
-    let search_paths = selection.plan_selection.artifact_plan().dependency_search_paths.clone();
-    Ok(Some((authority, search_paths)))
+    let authority = registry_leaf_authority_for_plan_selection(&selection)?;
+    let search_paths = selection.artifact_plan().dependency_search_paths.clone();
+    let mut compiler_runtime_libraries = Vec::new();
+    let mut compiler_runtime_registry_authority = None;
+    if include_compiler_runtime_libraries {
+        compiler_runtime_registry_authority = selection
+            .compiler_runtime_registry_leaf_authority()
+            .map_err(oven_rustc_error)?;
+        let runtime_names = selection
+            .artifacts()
+            .compiler_runtime_crate_names()
+            .map_err(oven_rustc_error)?;
+        for (crate_name, output) in &selection.artifact_plan().externs {
+            if !runtime_names.contains(crate_name) {
+                continue;
+            }
+            let digest = selection
+                .artifacts()
+                .externs
+                .iter()
+                .find(|artifact| artifact.crate_name == *crate_name)
+                .map(|artifact| artifact.digest.clone())
+                .ok_or_else(|| {
+                    CliError::failure(format!(
+                        "Oven Alpha selected compiler runtime `{crate_name}` for pub::{} without a sealed artifact digest",
+                        artifact.dependency_key
+                    ))
+                })?;
+            compiler_runtime_libraries.push(OvenCallerOwnedRustcLibrary {
+                crate_name: crate_name.clone(),
+                output: output.clone(),
+                digest,
+                expose_extern: true,
+            });
+        }
+    }
+    Ok(Some((
+        authority,
+        search_paths,
+        compiler_runtime_libraries,
+        compiler_runtime_registry_authority,
+    )))
 }
 
 /// Read and identity-verify one caller-owned provider's own Oven receipt for `profile`, if one exists.
@@ -551,13 +716,13 @@ pub fn rematerialize_caller_owned_libraries_with_authority_context(
     consumer_output_root: &Path,
     registry_authority: Option<&OvenRegistryLeafAuthority>,
     extra_dependency_search_paths: &[PathBuf],
+    provider_compiler_runtime_libraries: &BTreeMap<String, Vec<OvenCallerOwnedRustcLibrary>>,
+    provider_compiler_runtime_registry_authorities: &BTreeMap<String, OvenRegistryLeafAuthority>,
     mut authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
     let mut libraries = Vec::new();
     let mut visiting = BTreeSet::new();
     let compiler_owned_roots = compiler_owned_roots_with_provider_plan(artifact_plan, Some(provider_plan));
-    let selected_path_authority = (!compiler_owned_roots.is_empty())
-        .then(|| OvenSelectedPathRustcAuthority::new(&compiler_owned_roots, artifact_plan));
     for provider in provider_plan.active_records().filter(|provider| {
         matches!(
             provider.authority,
@@ -594,7 +759,8 @@ pub fn rematerialize_caller_owned_libraries_with_authority_context(
             registry_authority,
             extra_dependency_search_paths,
             &compiler_owned_roots,
-            selected_path_authority.as_ref(),
+            provider_compiler_runtime_libraries,
+            provider_compiler_runtime_registry_authorities,
             &mut visiting,
             &mut authority_context,
         )?);
@@ -647,6 +813,8 @@ pub fn rematerialize_caller_owned_libraries(
         consumer_output_root,
         registry_authority,
         &[],
+        &BTreeMap::new(),
+        &BTreeMap::new(),
         None,
     )
 }
@@ -681,6 +849,28 @@ pub fn replace_caller_owned_package_libraries(
         ));
     }
     Ok(())
+}
+
+/// Replace a selected plan's compiler runtime externs with one receipt-bound release cohort.
+///
+/// Compiler runtime crates are compiled against one another. Replacing only a missing crate can therefore expose two
+/// nominally identical Rust types from different `incan_std_core` artifacts. The replacement is all-or-nothing for
+/// the names present in the provider receipt; ordinary user path and registry dependencies are left untouched.
+pub fn replace_selected_compiler_runtime_libraries(
+    artifact_plan: &mut OvenRustcArtifactPlan,
+    runtime_libraries: &[OvenCallerOwnedRustcLibrary],
+) -> CliResult<()> {
+    let runtime_names = runtime_libraries
+        .iter()
+        .map(|library| library.crate_name.as_str())
+        .collect::<BTreeSet<_>>();
+    artifact_plan
+        .externs
+        .retain(|(crate_name, _)| !runtime_names.contains(crate_name.as_str()));
+    artifact_plan
+        .caller_owned_library_digests
+        .retain(|crate_name, _| !runtime_names.contains(crate_name.as_str()));
+    attach_caller_owned_rustc_libraries(artifact_plan, runtime_libraries).map_err(oven_rustc_error)
 }
 
 /// Replace receipt-selected historical package outputs with their current-cohort re-materializations.

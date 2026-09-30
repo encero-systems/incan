@@ -3676,6 +3676,16 @@ impl<'a> IrEmitter<'a> {
             })
             .chain(imported_project_types)
             .collect();
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1561 -- `Decision(ids=[])` in a module that imports `Decision` but not the
+        //   `EvidenceId` of its `list[EvidenceId]` field spelled `Vec::<EvidenceId>::new()` there (E0425).
+        // - Behavior evidence: the `constructor_arguments_name_field_types_the_module_does_not_import` behavior
+        //   fixture.
+        // - Semantic owner: lowering's `unbound_nominal_type_paths`, which places each such type at its declaring
+        //   module; `emit_type` only spells the path it records.
+        // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves nominal
+        //   types through their canonical identities and has no bare-name spellings.
+        self.unbound_nominal_type_paths = program.unbound_nominal_type_paths.clone();
         // RFC 023: propagate rust.module() path from IR to emitter for @rust.extern delegation.
         if self.rust_module_path.is_none() {
             self.rust_module_path = program.rust_module_path.clone();

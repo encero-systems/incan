@@ -20,8 +20,8 @@ use crate::build::plan_authority::{
 };
 use crate::build::plan_selection::{
     format_oven_registry_dependency_requirements, interop_final_plan_required_error,
-    receipt_requires_final_interop_plan, registry_leaf_authority_for_plan_selection,
-    select_or_bake_generated_project_plan, select_published_project_plan,
+    packaged_provider_selection_links_source_stdlib, receipt_requires_final_interop_plan,
+    registry_leaf_authority_for_plan_selection, select_or_bake_generated_project_plan, select_published_project_plan,
 };
 use crate::build::provider_compilation::{
     checked_packaged_provider_profiles, checked_provider_compilation_requirements,
@@ -564,15 +564,18 @@ pub fn prepare_oven_project(
     // registry authority for a consumer-declared dependency. With nothing consumer-declared there is nothing for it
     // to usurp, and composing the sealed package closures is the route that links a single provider's registry
     // closure once (#1469); rebuilding the consumer against the base Loaf and relinking the provider's closure
-    // beside it refused `itoa` twice. A diamond whose providers each compiled one shared unit for themselves is
-    // the shape neither route builds: rustc refuses the colliding `StableCrateId`s, and the reconciliation that
-    // would keep one compiled instance of every shared registry unit across sealed closures is #1241.
+    // beside it refused `itoa` twice. A diamond whose providers each compiled one shared registry unit is composed
+    // by portable selected-unit identity: one provider payload remains authoritative and a semantic mismatch fails
+    // closed before Rustc can observe colliding `StableCrateId`s.
     let consumer_declares_registry_roots = !oven_plan_dependencies.is_empty();
     let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
         || (oven_plan_mode == OvenProjectPlanMode::ExplicitBake && !consumer_declares_registry_roots)
     {
-        compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
-            .map_err(oven_plan_error)?
+        packaged_provider_selection_links_source_stdlib(
+            compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
+                .map_err(oven_plan_error)?,
+            &provider_plan,
+        )?
     } else {
         None
     };

@@ -1,0 +1,1 @@
+pub from crate.renamed import salute as wave

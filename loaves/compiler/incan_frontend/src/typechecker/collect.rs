@@ -16,6 +16,7 @@ use super::{
 };
 
 mod decl_helpers;
+mod declaration_scopes;
 pub(super) mod decorators;
 mod forward_references;
 mod std_root_imports;

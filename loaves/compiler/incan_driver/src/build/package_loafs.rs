@@ -677,6 +677,7 @@ mod tests {
         let checked = CheckedPackagedProviderProfile {
             dependency_key: "provider".to_string(),
             artifact_root,
+            source_available: false,
             profile: "debug".to_string(),
             package: OvenPackagedLibraryLoafProfile {
                 receipt: provider_receipt.clone(),

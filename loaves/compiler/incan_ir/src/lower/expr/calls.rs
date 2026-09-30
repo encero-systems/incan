@@ -3545,7 +3545,7 @@ impl AstLowering {
             }
             if stdlib::is_graph_constructor_type(&constructor_name) && args.is_empty() {
                 let hook_name = self
-                    .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK, true)
+                    .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK)
                     .unwrap_or_else(|| TYPE_CONSTRUCTOR_HOOK.to_string());
                 let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
                 let receiver_ty = if lowered_type_args.is_empty() {
@@ -4511,7 +4511,7 @@ impl AstLowering {
         };
         let ret_ty = self.lower_type(&hook.return_type.node);
         let hook_name = self
-            .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK, true)
+            .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK)
             .unwrap_or_else(|| TYPE_CONSTRUCTOR_HOOK.to_string());
         Ok(Some((
             IrExprKind::MethodCall {

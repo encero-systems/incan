@@ -165,6 +165,7 @@ A `match` has one type, which every arm produces.
 
 - An arm whose body is an expression produces that expression's value. An arm whose body is a block produces no value, and a block whose last statement is `return`, `break` or `continue` takes no part.
 - A literal arm of a `match` written to a place of a declared type (an annotated binding, a `return`, an argument) takes that type. When the type is numeric or an `Option` that holds no union, each arm is assignable to it and the `match` has it. Otherwise the arms unify: an arm assignable to another arm's type takes that type, so `i8` and `int` arms make an `int` match, and `Some(1)` and `None` arms an `Option[int]` one, and the `match` is then assignable to the place as any value is.
+- An `Option` payload or `Result` side that one arm leaves open, as `None`, `Ok(...)` and `Err(...)` do, takes the type another arm gives it, whichever arm comes first: `None` and `Some("a")` arms make an `Option[str]` match, and `Err("x")` and `Ok(1)` arms a `Result[int, str]` one.
 - A narrower numeric arm is widened, and a payload arm is wrapped in `Some`, in the arm itself (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)).
 
 Refused (`INCAN-T0001`): arms that share no type, in any position, a `match` used as a statement included.

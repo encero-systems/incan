@@ -158,7 +158,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     return path;
                 }
-                Self::emit_path_ident(name)
+                Self::emit_path_ident(self.unbound_nominal_type_path(name))
             }
             IrType::RustDisplay(display) => display.parse().unwrap_or_else(|_| quote! { _ }),
             IrType::ExternalUnion { .. } => self.emit_union_type_path(ty),
@@ -181,7 +181,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     quote! { #n < #(#ts),* > }
                 } else {
-                    let n = Self::emit_path_ident(name);
+                    let n = Self::emit_path_ident(self.unbound_nominal_type_path(name));
                     quote! { #n < #(#ts),* > }
                 }
             }
@@ -215,6 +215,12 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::Unknown => quote! { _ },
         }
+    }
+
+    /// Return the spelling of a nominal type name in the program being emitted: the crate path lowering recorded for a
+    /// type the program names without binding it (#1561), or the name itself.
+    fn unbound_nominal_type_path<'n>(&'n self, name: &'n str) -> &'n str {
+        self.unbound_nominal_type_paths.get(name).map_or(name, String::as_str)
     }
 
     /// Emit the Rust function type for a callable value.
@@ -611,7 +617,11 @@ impl<'a> IrEmitter<'a> {
         arm: &MatchArm,
         pattern_guard: Option<TokenStream>,
     ) -> Result<Option<TokenStream>, EmitError> {
-        let arm_guard = arm.guard.as_ref().map(|guard| self.emit_expr(guard)).transpose()?;
+        let arm_guard = arm
+            .guard
+            .as_ref()
+            .map(|guard| self.emit_condition_position_expr(guard))
+            .transpose()?;
         let guard = match (pattern_guard, arm_guard) {
             (Some(pattern_guard), Some(arm_guard)) => Some(quote! { (#pattern_guard) && (#arm_guard) }),
             (Some(pattern_guard), None) => Some(pattern_guard),

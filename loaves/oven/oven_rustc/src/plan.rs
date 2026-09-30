@@ -214,6 +214,42 @@ impl OvenDirectRustcPlanSelection {
             Self::PackagedProvider(packages) => packages.registry_leaf_authority(),
         }
     }
+
+    /// Return the release-base registry authority when this selection links its compiler runtime cohort.
+    ///
+    /// Project extensions can retain their Cargo-built runtime in the conservative composition regime. Only an
+    /// extension whose selected compiler-runtime externs all come from its exact base may canonicalize overlapping
+    /// registry dependencies onto that base. Stored direct plans and source-free package compositions keep their own
+    /// already-selected authority.
+    pub fn compiler_runtime_registry_leaf_authority(
+        &self,
+    ) -> Result<Option<OvenRegistryLeafAuthority>, OvenRustcError> {
+        match self {
+            Self::ToolchainLoaf(native) => Ok(Some(native.registry_leaf_authority())),
+            Self::ProjectExtension(extension) => {
+                let runtime_names = extension.base.artifacts.compiler_runtime_crate_names()?;
+                let selected_runtime_externs = extension
+                    .artifact_plan
+                    .externs
+                    .iter()
+                    .filter(|(crate_name, _)| runtime_names.contains(crate_name))
+                    .collect::<Vec<_>>();
+                if selected_runtime_externs.is_empty() {
+                    return Ok(None);
+                }
+                let uses_release_base = selected_runtime_externs.iter().all(|(crate_name, selected_path)| {
+                    extension
+                        .base
+                        .artifact_plan
+                        .externs
+                        .iter()
+                        .any(|(base_name, base_path)| base_name == crate_name && base_path == selected_path)
+                });
+                Ok(uses_release_base.then(|| extension.base.registry_leaf_authority()))
+            }
+            Self::Stored(_) | Self::PackagedProvider(_) => Ok(None),
+        }
+    }
 }
 
 /// Receipt-validated stored direct-Rustc inputs held under a caller-owned lease.
