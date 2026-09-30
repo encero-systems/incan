@@ -74,20 +74,7 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| ())?;
     let environment = env::vars()
-        .filter(|(name, _)| {
-            matches!(
-                name.as_str(),
-                "CARGO_CRATE_NAME"
-                    | "CARGO_MANIFEST_DIR"
-                    | "CARGO_PKG_NAME"
-                    | "CARGO_PKG_VERSION"
-                    | "CARGO_PRIMARY_PACKAGE"
-                    | "HOST"
-                    | "OUT_DIR"
-                    | "PROFILE"
-                    | "TARGET"
-            ) || name.starts_with("CARGO_FEATURE_")
-        })
+        .filter(|(name, _)| rustc_compile_environment_name(name))
         .collect();
     let working_directory = env::current_dir()
         .and_then(std::fs::canonicalize)
@@ -144,6 +131,25 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         return Err(());
     }
     Ok(exit_code)
+}
+
+/// Select Cargo's documented compile-time crate environment without inheriting Cargo's own ambient configuration.
+fn rustc_compile_environment_name(name: &str) -> bool {
+    matches!(
+        name,
+        "CARGO_BIN_NAME"
+            | "CARGO_CRATE_NAME"
+            | "CARGO_MANIFEST_DIR"
+            | "CARGO_MANIFEST_PATH"
+            | "CARGO_PRIMARY_PACKAGE"
+            | "DEBUG"
+            | "HOST"
+            | "OPT_LEVEL"
+            | "OUT_DIR"
+            | "PROFILE"
+            | "TARGET"
+    ) || name.starts_with("CARGO_FEATURE_")
+        || name.starts_with("CARGO_PKG_")
 }
 
 /// Read one compiler stdin source without allocating beyond the per-record capture limit.
@@ -433,6 +439,42 @@ mod tests {
         assert!(cargo_output_is_entirely_fresh(fresh));
         assert!(!cargo_output_is_entirely_fresh(rebuilt));
         assert!(!cargo_output_is_entirely_fresh(b"not-json\n"));
+    }
+
+    /// Compile-time package metadata is captured while Cargo's ambient configuration remains excluded.
+    #[test]
+    fn compile_environment_filter_covers_cargo_package_contract() {
+        for name in [
+            "CARGO_CRATE_NAME",
+            "CARGO_MANIFEST_DIR",
+            "CARGO_MANIFEST_PATH",
+            "CARGO_PKG_AUTHORS",
+            "CARGO_PKG_DESCRIPTION",
+            "CARGO_PKG_HOMEPAGE",
+            "CARGO_PKG_LICENSE",
+            "CARGO_PKG_LICENSE_FILE",
+            "CARGO_PKG_NAME",
+            "CARGO_PKG_README",
+            "CARGO_PKG_REPOSITORY",
+            "CARGO_PKG_RUST_VERSION",
+            "CARGO_PKG_VERSION",
+            "CARGO_PKG_VERSION_MAJOR",
+            "CARGO_PKG_VERSION_MINOR",
+            "CARGO_PKG_VERSION_PATCH",
+            "CARGO_PKG_VERSION_PRE",
+            "OUT_DIR",
+        ] {
+            assert!(
+                rustc_compile_environment_name(name),
+                "compile fact `{name}` was omitted"
+            );
+        }
+        for name in ["CARGO_HOME", "CARGO_TARGET_DIR", "CARGO_ENCODED_RUSTFLAGS"] {
+            assert!(
+                !rustc_compile_environment_name(name),
+                "ambient Cargo setting `{name}` leaked"
+            );
+        }
     }
 
     #[test]

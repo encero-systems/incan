@@ -81,7 +81,9 @@ enum CompiledPath<'a> {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum CompiledEnvironmentValue<'a> {
     Text { value: &'a str },
+    CapturedText { value: &'a str },
     Path { value: CompiledPath<'a> },
+    OutDir { relative: &'a str },
     SensitiveDigest { hmac_sha256: &'a str },
 }
 
@@ -309,9 +311,13 @@ fn compiled_environment_value<'a>(
 ) -> CompiledEnvironmentValue<'a> {
     match value {
         OvenSelectedRustFacetEnvironmentValue::Text { value } => CompiledEnvironmentValue::Text { value },
+        OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
+            CompiledEnvironmentValue::CapturedText { value }
+        }
         OvenSelectedRustFacetEnvironmentValue::Path { value } => CompiledEnvironmentValue::Path {
             value: compiled_path(value, unit),
         },
+        OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => CompiledEnvironmentValue::OutDir { relative },
         OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { hmac_sha256 } => {
             CompiledEnvironmentValue::SensitiveDigest { hmac_sha256 }
         }

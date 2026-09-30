@@ -240,8 +240,12 @@ type SupplementalSourceTrees = BTreeMap<(String, String), BTreeMap<String, Strin
 /// A compiler-visible environment value rebound from a portable selected graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OvenMaterializedRustFacetEnvironmentValue {
+    /// Exact scalar text admitted by the selected graph.
     Text(String),
+    /// Path resolved beneath an admitted owner.
     Path(PathBuf),
+    /// Path resolved beneath the unit-private staged generated-output tree.
+    OutDir(String),
 }
 
 /// One ordered linked-library input after its declared owner has been physically admitted.
@@ -866,7 +870,8 @@ fn materialize_environment(
         .iter()
         .map(|(name, value)| {
             let value = match value {
-                OvenSelectedRustFacetEnvironmentValue::Text { value } => {
+                OvenSelectedRustFacetEnvironmentValue::Text { value }
+                | OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
                     OvenMaterializedRustFacetEnvironmentValue::Text(value.clone())
                 }
                 OvenSelectedRustFacetEnvironmentValue::Path { value } => {
@@ -875,6 +880,9 @@ fn materialize_environment(
                         value,
                         "selected Rust environment path",
                     )?)
+                }
+                OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => {
+                    OvenMaterializedRustFacetEnvironmentValue::OutDir(relative.clone())
                 }
                 OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {
                     return Err(OvenRustcError::InvalidInput {

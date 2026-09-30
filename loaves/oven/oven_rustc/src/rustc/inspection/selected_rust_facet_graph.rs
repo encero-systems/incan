@@ -11,9 +11,9 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 9;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 10;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
-pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/4";
+pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/5";
 
 /// Command purpose whose dependency roles and feature activation produced a selected Rust graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,8 +112,12 @@ pub struct OvenSelectedRustFacetPath {
 pub enum OvenSelectedRustFacetEnvironmentValue {
     /// Explicit portable non-path value, including an explicitly selected empty string.
     Text { value: String },
+    /// Exact compiler environment observed at the Cargo compatibility boundary.
+    CapturedText { value: String },
     /// Path rebound through one retained owner by the physical projection adapter.
     Path { value: OvenSelectedRustFacetPath },
+    /// Path rebound below the unit-private staged `OUT_DIR` at compiler launch.
+    OutDir { relative: String },
     /// Selection-only identity for a sensitive value that must never enter the projection payload.
     SensitiveDigest { hmac_sha256: String },
 }
@@ -921,6 +925,16 @@ impl OvenSelectedRustFacetGraph {
                     &mut referenced_owners,
                     &format!("{field}.environment.{name}"),
                 )?;
+            }
+            if unit
+                .environment
+                .values()
+                .any(|value| matches!(value, OvenSelectedRustFacetEnvironmentValue::OutDir { .. }))
+                && !unit.generated_inputs.iter().any(|input| input.name == "out_dir")
+            {
+                return Err(selected_graph_missing(format!(
+                    "{field}.generated_inputs out_dir for environment"
+                )));
             }
             if unit.include_dirs.is_empty() {
                 return Err(selected_graph_missing(format!("{field}.include_dirs")));

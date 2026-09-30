@@ -3,9 +3,9 @@
 use std::collections::BTreeSet;
 
 use oven_model::manifest::{
-    RustFactArgument, RustFactArtifact, RustFactEnvironment, RustFactExecutable, RustFactLibrary, RustFactLibraryKind,
-    RustFactLinkObject, RustFactOut, RustFactOutput, RustFactRecord, RustFactWorkObservation, RustFactWorkRecord,
-    is_sha256_identity,
+    RustFactArgument, RustFactArtifact, RustFactCompileEnvironment, RustFactEnvironment, RustFactExecutable,
+    RustFactLibrary, RustFactLibraryKind, RustFactLinkObject, RustFactOut, RustFactOutput, RustFactRecord,
+    RustFactWorkObservation, RustFactWorkRecord, is_sha256_identity,
 };
 use serde::{Deserialize, Serialize};
 
@@ -58,7 +58,8 @@ pub struct HarvestSource {
 /// One candidate `[[rust.facts]]` record plus observations checked before the proposal reaches disk.
 ///
 /// `harvested-from` is derived by admission from `evidence.receipt`. Complete link/tool observations become typed
-/// records; unresolved environment values and incomplete publisher work remain refusals.
+/// records; portable environment values become typed declarations, while unresolved paths and incomplete publisher
+/// work remain refusals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarvestFact {
@@ -74,6 +75,9 @@ pub struct HarvestFact {
     pub cfg: Vec<String>,
     /// Retained generated inputs: `name` is the member path, `path` is `out/<name>` relative to the proposal.
     pub out: Vec<RustFactOut>,
+    /// Exact compile-time environment emitted by the script, with generated paths relative to `OUT_DIR`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<RustFactCompileEnvironment>,
     /// Script environment values that losslessly name retained owner-relative inputs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment_inputs: Vec<HarvestEnvironmentInput>,
@@ -204,7 +208,7 @@ pub enum HarvestEffectClass {
     Cfg,
     /// Retained generated inputs were observed.
     Out,
-    /// Retained environment-to-input bindings were observed.
+    /// Compile-time environment values were observed.
     EnvironmentInput,
     /// Publisher-only native-link work was observed.
     Link,
@@ -219,7 +223,7 @@ impl HarvestFact {
         if !self.cfg.is_empty() {
             effects.push(HarvestEffectClass::Cfg);
         }
-        if !self.environment_inputs.is_empty() {
+        if !self.environment.is_empty() || !self.environment_inputs.is_empty() {
             effects.push(HarvestEffectClass::EnvironmentInput);
         }
         if !self.link_observations.is_empty() || !self.link.is_empty() {
@@ -371,6 +375,7 @@ impl HarvestProposal {
             features: fact.features.clone(),
             cfg: fact.cfg.clone(),
             out,
+            environment: fact.environment.clone(),
             link,
             tool,
             harvested_from: self.evidence.receipt.clone(),
@@ -461,8 +466,8 @@ pub enum HarvestRefusalReason {
     LinkedPaths,
     /// The script ran compiler/tool work but its typed `tool` declaration was incomplete or invalid.
     ToolProbes,
-    /// The script emitted `rustc-env` values, which Cargo set on the consumer's compilation and no record key
-    /// carries.
+    /// The script emitted a compile environment value that cannot be represented portably as literal text or an
+    /// `OUT_DIR`-relative path.
     EnvironmentObserved,
     /// A recognized script-emitted constant disagrees with the value derived from the selected binding.
     BindingDerivedEnvironmentMismatch,

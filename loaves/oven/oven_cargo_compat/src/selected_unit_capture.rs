@@ -432,6 +432,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         unit.artifact_paths.dedup();
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
         unit.compiler_arguments = rustc_rebuild_arguments(&item.invocation.arguments)?;
+        unit.compile_environment = item.invocation.environment.clone();
         unit.sysroot_externs = extern_arguments(&item.invocation.arguments)?.sysroot;
         unit.target_is_explicit = Some(argument_value(&item.invocation.arguments, "--target").is_some());
     }
@@ -1138,6 +1139,9 @@ pub struct OvenLegacyCargoSelectedUnit {
     /// Ordered portable compiler arguments retained from Cargo's exact successful rustc invocation.
     #[serde(default)]
     pub compiler_arguments: Vec<OvenSelectedRustFacetCompilerArgument>,
+    /// Exact Cargo compile-time environment observed for this successful rustc invocation.
+    #[serde(default)]
+    pub compile_environment: BTreeMap<String, String>,
     pub effective_features: Vec<String>,
     pub dependencies: Vec<OvenLegacyCargoSelectedDependency>,
     /// Bare compiler/sysroot externs admitted from the verified rustc invocation.
@@ -1171,6 +1175,8 @@ struct PortableSelectedUnitKey<'a> {
     platform: Option<&'a str>,
     target_is_explicit: Option<bool>,
     cfg: &'a [String],
+    compiler_arguments: &'a [OvenSelectedRustFacetCompilerArgument],
+    compile_environment: BTreeMap<&'a str, String>,
     effective_features: &'a [String],
     sysroot_externs: &'a [String],
     build_script: Option<PortableBuildScriptKey<'a>>,
@@ -1273,17 +1279,39 @@ fn selected_unit_portable_identity(
         platform: unit.platform.as_deref(),
         target_is_explicit: unit.target_is_explicit,
         cfg: &unit.cfg,
+        compiler_arguments: &unit.compiler_arguments,
+        compile_environment: unit
+            .compile_environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), portable_compile_environment_value(name, value, unit)))
+            .collect(),
         effective_features: &unit.effective_features,
         sysroot_externs: &unit.sysroot_externs,
         build_script: unit.build_script.as_ref().map(PortableBuildScriptKey::new),
         dependencies,
     };
-    let identity = serde_json::to_vec(&("incan.oven.legacy-cargo-selected-unit/2", key))
+    let identity = serde_json::to_vec(&("incan.oven.legacy-cargo-selected-unit/3", key))
         .map(|bytes| digest_bytes(&bytes))
         .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode selected-unit capture: {error}")))?;
     visiting.remove(&index);
     memo.insert(index, identity.clone());
     Ok(identity)
+}
+
+/// Remove transient Cargo roots from one compiler environment value before selected-capture identity hashing.
+fn portable_compile_environment_value(name: &str, value: &str, unit: &OvenLegacyCargoSelectedUnit) -> String {
+    match name {
+        "CARGO_MANIFEST_DIR" => "@manifest-dir".to_string(),
+        "CARGO_MANIFEST_PATH" => "@manifest-dir/Cargo.toml".to_string(),
+        "OUT_DIR" => unit
+            .dependencies
+            .iter()
+            .filter_map(|dependency| dependency.build_script.as_ref())
+            .find(|facts| value == facts.out_dir.to_string_lossy())
+            .map(|_| "@oven-out-dir".to_string())
+            .unwrap_or_else(|| value.to_string()),
+        _ => value.to_string(),
+    }
 }
 
 /// Registry source evidence joined by exact Cargo package coordinates before the transient publisher is released.
@@ -1555,6 +1583,7 @@ fn capture_legacy_cargo_selected_units_inner(
             target_is_explicit: None,
             cfg: Vec::new(),
             compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: features,
             dependencies,
             sysroot_externs: Vec::new(),
@@ -2033,6 +2062,7 @@ mod tests {
                 target_is_explicit: None,
                 cfg: Vec::new(),
                 compiler_arguments: Vec::new(),
+                compile_environment: BTreeMap::new(),
                 effective_features: Vec::new(),
                 dependencies: Vec::new(),
                 sysroot_externs: Vec::new(),
@@ -2126,7 +2156,7 @@ mod tests {
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc.clone(),
                 "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "--cfg", "target_has_atomic=\"ptr\"", "-C", "opt-level=3", "-C", "embed-bitcode=no", "--check-cfg", "cfg(docsrs,test)", "-C", "metadata=0123456789abcdef", "-C", "extra-filename=-sealed", "-C", "strip=debuginfo", "--emit", "link", "--out-dir", target.to_string_lossy(), "/fixture/dep/src/lib.rs"],
-                "environment": {"CARGO_MANIFEST_DIR": "/fixture/dep", "CARGO_PKG_NAME": "dep", "CARGO_PKG_VERSION": "2.0.0"}
+                "environment": {"CARGO_CRATE_NAME": "dep", "CARGO_MANIFEST_DIR": "/fixture/dep", "CARGO_PKG_NAME": "dep", "CARGO_PKG_VERSION": "2.0.0", "CARGO_PKG_VERSION_MAJOR": "2", "CARGO_PKG_VERSION_MINOR": "0", "CARGO_PKG_VERSION_PATCH": "0", "CARGO_PKG_VERSION_PRE": ""}
             }),
             serde_json::json!({
                 "reason": "compiler-artifact", "package_id": "root 1.0.0",
@@ -2153,6 +2183,9 @@ mod tests {
         assert_eq!(capture.roots, [1]);
         assert!(capture.rustc_invocations_observed);
         assert_eq!(capture.units[0].cfg, ["target_has_atomic=\"ptr\""]);
+        assert_eq!(capture.units[0].compile_environment["CARGO_CRATE_NAME"], "dep");
+        assert_eq!(capture.units[0].compile_environment["CARGO_PKG_VERSION"], "2.0.0");
+        assert_eq!(capture.units[0].compile_environment["CARGO_PKG_VERSION_PRE"], "");
         assert_eq!(
             capture.units[0].compiler_arguments,
             [

@@ -763,6 +763,23 @@ pub(crate) fn validate_selected_graph_environment(
     field: &str,
 ) -> Result<(), OvenSelectedRustFacetGraphError> {
     validate_selected_graph_environment_name(name, field)?;
+    match value {
+        OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
+            if value.len() > 16 * 1024 || value.contains('\0') {
+                return Err(selected_graph_invalid(
+                    field,
+                    "captured compiler environment must be at most 16384 bytes and contain no NUL",
+                ));
+            }
+            return Ok(());
+        }
+        OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => {
+            return validate_selected_graph_path(relative, field, true);
+        }
+        OvenSelectedRustFacetEnvironmentValue::Text { .. }
+        | OvenSelectedRustFacetEnvironmentValue::Path { .. }
+        | OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {}
+    }
     if selected_graph_environment_is_path_list(name) {
         return Err(selected_graph_invalid(
             field,

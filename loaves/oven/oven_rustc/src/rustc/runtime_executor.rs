@@ -430,6 +430,7 @@ fn compile_rebuild_unit(
     output_root: &Path,
     artifact: &Path,
 ) -> Result<(), OvenRustcError> {
+    let private_out_dir = stage_private_out_dir(source, artifact)?;
     let mut command = rebuild_unit_command(
         closure,
         unit,
@@ -441,6 +442,7 @@ fn compile_rebuild_unit(
         externs,
         output_root,
         artifact,
+        private_out_dir.as_deref(),
     )?;
     let result = command.output().map_err(|source_error| OvenRustcError::Io {
         path: closure.rustc().to_path_buf(),
@@ -452,6 +454,90 @@ fn compile_rebuild_unit(
         });
     }
     verified_regular_file(artifact, "runtime rebuild output")?;
+    Ok(())
+}
+
+/// Copy the captured generated tree into a fresh directory owned only by this unit compilation.
+fn stage_private_out_dir(
+    source: &super::OvenMaterializedRustFacetUnit,
+    artifact: &Path,
+) -> Result<Option<PathBuf>, OvenRustcError> {
+    let outputs = source
+        .generated_inputs
+        .iter()
+        .filter(|(name, _, _)| name == "out_dir")
+        .collect::<Vec<_>>();
+    let ([] | [_]) = outputs.as_slice() else {
+        return Err(runtime_executor_invalid(
+            "runtime executor OUT_DIR",
+            "unit declares more than one generated out_dir input",
+        ));
+    };
+    let Some((_, captured, _)) = outputs.first() else {
+        return Ok(None);
+    };
+    let unit_root = artifact.parent().ok_or_else(|| {
+        runtime_executor_invalid("runtime executor OUT_DIR", "artifact has no private unit directory")
+    })?;
+    let destination = unit_root.join("out");
+    fs::create_dir_all(&destination).map_err(|source_error| OvenRustcError::Io {
+        path: destination.clone(),
+        source: source_error,
+    })?;
+    copy_generated_tree(captured, captured, &destination)?;
+    Ok(Some(destination))
+}
+
+/// Copy one verified generated tree without following links or admitting undeclared file kinds.
+fn copy_generated_tree(root: &Path, directory: &Path, destination: &Path) -> Result<(), OvenRustcError> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|source| OvenRustcError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| OvenRustcError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let source_path = entry.path();
+        let relative = source_path.strip_prefix(root).map_err(|_| {
+            runtime_executor_invalid("runtime executor OUT_DIR", "generated member escapes its captured root")
+        })?;
+        let destination_path = destination.join(relative);
+        let metadata = fs::symlink_metadata(&source_path).map_err(|source| OvenRustcError::Io {
+            path: source_path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(runtime_executor_invalid(
+                "runtime executor OUT_DIR",
+                format!("generated member {} is a symlink", source_path.display()),
+            ));
+        }
+        if metadata.is_dir() {
+            fs::create_dir_all(&destination_path).map_err(|source| OvenRustcError::Io {
+                path: destination_path.clone(),
+                source,
+            })?;
+            copy_generated_tree(root, &source_path, destination)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &destination_path).map_err(|source| OvenRustcError::Io {
+                path: destination_path,
+                source,
+            })?;
+        } else {
+            return Err(runtime_executor_invalid(
+                "runtime executor OUT_DIR",
+                format!(
+                    "generated member {} is not a regular file or directory",
+                    source_path.display()
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -479,6 +565,7 @@ fn rebuild_unit_command(
     externs: &[(String, PathBuf)],
     output_root: &Path,
     artifact: &Path,
+    private_out_dir: Option<&Path>,
 ) -> Result<Command, OvenRustcError> {
     let mut command = super::rustc_probe_command(closure.rustc());
     let crate_type = match unit.crate_kind {
@@ -541,6 +628,22 @@ fn rebuild_unit_command(
         match value {
             OvenMaterializedRustFacetEnvironmentValue::Text(text) => command.env(name, text),
             OvenMaterializedRustFacetEnvironmentValue::Path(path) => command.env(name, path),
+            OvenMaterializedRustFacetEnvironmentValue::OutDir(relative) => {
+                let out_dir = private_out_dir.ok_or_else(|| {
+                    runtime_executor_invalid(
+                        "runtime executor OUT_DIR",
+                        format!("environment `{name}` requires an absent generated out_dir"),
+                    )
+                })?;
+                command.env(
+                    name,
+                    if relative == "." {
+                        out_dir.to_path_buf()
+                    } else {
+                        out_dir.join(relative)
+                    },
+                )
+            }
         };
     }
     for feature in &unit.features {
@@ -597,24 +700,43 @@ fn append_compiler_target(command: &mut Command, compiler_target: &std::ffi::OsS
 
 /// Append ordered physically admitted linked-library inputs to one rustc invocation.
 ///
-/// Exact archives are passed directly to the linker instead of becoming `-L`/`-l` discovery inputs. Repeated
-/// archives remain repeated and their order is unchanged. Provider inputs have already been checked against held
-/// target-specific provenance and exact member bytes; frameworks use only their admitted search root, while system
-/// inputs pass their exact selected artifact directly to the linker.
+/// Exact archives use rustc's native search and library arguments so rlib metadata retains Cargo's link directive.
+/// Repeated archives remain repeated and their order is unchanged. Provider inputs have already been checked against
+/// held target-specific provenance and exact member bytes; frameworks and system libraries use only their admitted
+/// search root and Cargo-equivalent rustc metadata arguments.
 fn append_materialized_link_arguments(
     command: &mut Command,
     libraries: &[OvenMaterializedRustFacetLinkedLibrary],
 ) -> Result<(), OvenRustcError> {
     for library in libraries {
         match library {
-            OvenMaterializedRustFacetLinkedLibrary::Archive { artifact, .. } => {
-                command.arg("-C").arg(format!("link-arg={}", artifact.display()));
+            OvenMaterializedRustFacetLinkedLibrary::Archive {
+                name, kind, artifact, ..
+            } => {
+                let parent = artifact.parent().ok_or_else(|| {
+                    runtime_executor_invalid(
+                        "runtime executor linked archive",
+                        format!("archive {} has no admitted search directory", artifact.display()),
+                    )
+                })?;
+                let rustc_kind = match kind {
+                    crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static => "static",
+                    crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic => "dylib",
+                    crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework
+                    | crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::System => {
+                        return Err(runtime_executor_invalid(
+                            "runtime executor linked archive",
+                            format!("archive `{name}` has provider linkage kind {kind:?}"),
+                        ));
+                    }
+                };
+                command.arg("-L").arg(format!("native={}", parent.display()));
+                command.arg("-l").arg(format!("{rustc_kind}={name}"));
             }
             OvenMaterializedRustFacetLinkedLibrary::Provider {
                 name,
                 kind,
                 search_root,
-                artifact,
                 ..
             } => match kind {
                 crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework => {
@@ -622,7 +744,8 @@ fn append_materialized_link_arguments(
                     command.arg("-l").arg(format!("framework={name}"));
                 }
                 crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::System => {
-                    command.arg("-C").arg(format!("link-arg={}", artifact.display()));
+                    command.arg("-L").arg(format!("native={}", search_root.display()));
+                    command.arg("-l").arg(name);
                 }
                 crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static
                 | crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic => {
@@ -687,12 +810,18 @@ pub(crate) mod tests {
                 .map(|argument| argument.to_string_lossy().into_owned())
                 .collect::<Vec<_>>(),
             [
-                "-C",
-                "link-arg=admitted/libfirst.a",
-                "-C",
-                "link-arg=admitted/libsecond.a",
-                "-C",
-                "link-arg=admitted/libfirst.a",
+                "-L",
+                "native=admitted",
+                "-l",
+                "static=first",
+                "-L",
+                "native=admitted",
+                "-l",
+                "static=second",
+                "-L",
+                "native=admitted",
+                "-l",
+                "static=first",
             ]
         );
         Ok(())
@@ -751,8 +880,10 @@ pub(crate) mod tests {
                 "framework=admitted/provider",
                 "-l",
                 "framework=Security",
-                "-C",
-                "link-arg=admitted/provider/libsqlite3.tbd",
+                "-L",
+                "native=admitted/provider",
+                "-l",
+                "sqlite3",
             ]
         );
         Ok(())
@@ -818,6 +949,7 @@ pub(crate) mod tests {
                 &[],
                 output_root.path(),
                 &output_root.path().join(format!("lib{}.rlib", unit.crate_name)),
+                None,
             )?;
             Ok(command
                 .get_args()
@@ -837,6 +969,124 @@ pub(crate) mod tests {
         let path = arguments_for(OvenSelectedRustFacetSourceKind::Path)?;
         assert!(!path.iter().any(|argument| argument == "--cap-lints"));
         assert!(path.windows(2).any(|pair| pair == ["-C", "embed-bitcode=no"]));
+        Ok(())
+    }
+
+    /// A rebuilt registry unit can include source from its captured generated output through a private OUT_DIR.
+    #[test]
+    fn publisher_rebuild_stages_a_private_out_dir() -> Result<(), Box<dyn std::error::Error>> {
+        compile_synthetic_registry_unit(
+            "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\npub fn value() -> u8 { GENERATED }\n",
+            &[("generated.rs", "const GENERATED: u8 = 7;\n")],
+            BTreeMap::from([(
+                "OUT_DIR".to_string(),
+                OvenMaterializedRustFacetEnvironmentValue::OutDir(".".to_string()),
+            )]),
+            &[],
+        )
+    }
+
+    /// Cargo package metadata captured for the unit remains available to compile-time `env!` expansion.
+    #[test]
+    fn publisher_rebuild_replays_cargo_package_environment() -> Result<(), Box<dyn std::error::Error>> {
+        compile_synthetic_registry_unit(
+            "pub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\n",
+            &[],
+            BTreeMap::from([(
+                "CARGO_PKG_VERSION".to_string(),
+                OvenMaterializedRustFacetEnvironmentValue::Text("9.8.7-made-up".to_string()),
+            )]),
+            &[],
+        )
+    }
+
+    /// Build-script cfg and rustc-env outputs reach the same rebuilt unit together.
+    #[test]
+    fn publisher_rebuild_replays_build_script_cfg_and_environment() -> Result<(), Box<dyn std::error::Error>> {
+        compile_synthetic_registry_unit(
+            "#[cfg(synthetic_switch)]\npub const MARKER: &str = env!(\"SYNTHETIC_MARKER\");\n",
+            &[],
+            BTreeMap::from([(
+                "SYNTHETIC_MARKER".to_string(),
+                OvenMaterializedRustFacetEnvironmentValue::Text("apricot".to_string()),
+            )]),
+            &["synthetic_switch"],
+        )
+    }
+
+    /// Compile one made-up registry package through the actual retained-rustc rebuild boundary.
+    fn compile_synthetic_registry_unit(
+        source_text: &str,
+        generated: &[(&str, &str)],
+        environment: BTreeMap<String, OvenMaterializedRustFacetEnvironmentValue>,
+        cfg: &[&str],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+        let graph = fixture.foundation.selected_graph().graph();
+        let selected_identity = fixture
+            .materialized
+            .rebuild_order()
+            .next()
+            .ok_or("the fixture declares no rebuild unit")?;
+        let mut unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == selected_identity)
+            .ok_or("the first rebuild unit is absent from the selected graph")?
+            .clone();
+        unit.package = "velvet-fixture".to_string();
+        unit.package_version = "9.8.7".to_string();
+        unit.crate_name = "velvet_fixture".to_string();
+        unit.source.kind = OvenSelectedRustFacetSourceKind::Registry;
+        unit.cfg = cfg.iter().map(|value| (*value).to_string()).collect();
+
+        let scratch = tempfile::tempdir()?;
+        let source_root = scratch.path().join("source");
+        let captured_out = scratch.path().join("captured-out");
+        let output_root = scratch.path().join("build");
+        fs::create_dir_all(&source_root)?;
+        fs::create_dir_all(&output_root)?;
+        let root_module = source_root.join("lib.rs");
+        fs::write(&root_module, source_text)?;
+        let mut generated_inputs = Vec::new();
+        if !generated.is_empty() {
+            fs::create_dir_all(&captured_out)?;
+            for (name, contents) in generated {
+                fs::write(captured_out.join(name), contents)?;
+            }
+            generated_inputs.push((
+                "out_dir".to_string(),
+                captured_out,
+                selected_graph_sha256(b"synthetic generated output"),
+            ));
+        }
+        let mut source = fixture
+            .materialized
+            .sources()
+            .unit(selected_identity)
+            .ok_or("the first rebuild unit was not materialized")?
+            .clone();
+        source.source_root = source_root;
+        source.root_module = root_module;
+        source.environment = environment;
+        source.generated_inputs = generated_inputs;
+        source.linked_libraries.clear();
+        source.sysroot_externs.clear();
+        let artifact = output_root.join("libvelvet_fixture.rlib");
+        compile_rebuild_unit(
+            &closure,
+            &unit,
+            &source,
+            &graph.selection,
+            fixture.materialized.sources().compiler_target(),
+            fixture.materialized.artifact_plan(),
+            &BTreeSet::new(),
+            &[],
+            &output_root,
+            &artifact,
+        )?;
+        assert!(artifact.is_file());
         Ok(())
     }
 
@@ -1475,6 +1725,7 @@ pub(crate) mod tests {
             &[],
             output_root.path(),
             &output_root.path().join(format!("lib{}.rlib", unit.crate_name)),
+            None,
         )?;
 
         assert_eq!(command.get_program(), fixture.rustc.as_os_str());

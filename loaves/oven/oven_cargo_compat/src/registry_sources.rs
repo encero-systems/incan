@@ -622,6 +622,7 @@ mod tests {
             target_is_explicit: Some(true),
             cfg: vec![cfg.to_string()],
             compiler_arguments: Vec::new(),
+            compile_environment: Default::default(),
             effective_features: vec!["std".to_string()],
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),

@@ -75,16 +75,12 @@ pub struct OvenLegacyCargoSelectedGeneratedBinding {
 /// One selected environment value matched to an exact build-script observation.
 ///
 /// Every `rustc-env` line a build script emitted gets one binding, so the closure digest states what was observed
-/// and what became of it; the binding decides whether the graph carries the value. RFC 119 makes a script's
-/// directives capture provenance rather than unit authority, so every observed value is retained here and in the
-/// closure digest but withheld from the graph.
+/// and what became of it; the binding decides whether the graph carries the exact text or a private-OUT_DIR path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenLegacyCargoSelectedEnvironmentBinding {
     /// Exact raw Cargo observation retained only for producer-side comparison.
     pub observed_value: String,
-    /// Portable selected value that enters graph identity after the comparison succeeds, or `None` when the graph
-    /// admits no retained representation for the name: the entry then stays identity-bound through the build-script
-    /// closure digest and does not reach the graph.
+    /// Portable selected value that enters graph identity after the comparison succeeds.
     pub value: Option<OvenSelectedRustFacetEnvironmentValue>,
 }
 
@@ -131,6 +127,8 @@ pub struct OvenLegacyCargoDeclaredBuildScriptFacts {
     pub cfg: Vec<String>,
     /// Declared generated inputs by name and digest, which the observation was required to match.
     pub out: BTreeMap<String, String>,
+    /// Declared compile-time environment values required to match the observation.
+    pub environment: Vec<oven_model::manifest::RustFactCompileEnvironment>,
 }
 
 /// All non-Cargo physical facts needed to turn one capture into a portable raw graph.
@@ -1564,15 +1562,18 @@ pub fn legacy_cargo_foundation_projection(
                     "does not have one exact final publisher binding",
                 ));
             }
-            let environment = if adoption.is_some() {
-                BTreeMap::new()
-            } else {
-                facts
-                    .environment
-                    .iter()
-                    .map(|(name, value)| (name.clone(), observed_environment_binding(name, value)))
-                    .collect()
-            };
+            let environment = facts
+                .environment
+                .iter()
+                .map(|(name, value)| {
+                    let binding = adoption
+                        .and_then(|adoption| adoption.record.environment.iter().find(|item| item.name == *name))
+                        .map(|declared| declared_environment_binding(declared, value))
+                        .transpose()?
+                        .unwrap_or_else(|| observed_environment_binding(name, value));
+                    Ok((name.clone(), binding))
+                })
+                .collect::<Result<BTreeMap<_, _>, OvenLegacyCargoError>>()?;
             build_scripts.insert(
                 edge,
                 OvenLegacyCargoSelectedBuildScriptBinding {
@@ -1590,6 +1591,7 @@ pub fn legacy_cargo_foundation_projection(
                             .iter()
                             .map(|out| (out.name.clone(), out.digest.clone()))
                             .collect(),
+                        environment: adoption.record.environment.clone(),
                     }),
                 },
             );
@@ -1624,13 +1626,40 @@ pub fn legacy_cargo_foundation_projection(
 
 /// Bind one observed `rustc-env` line of an observation-governed build-script edge.
 ///
-/// Script-emitted environment is capture evidence rather than selected-unit authority under RFC 119. The value is
-/// therefore withheld from the graph and stays identity-bound through the build-script closure digest.
+/// The exact captured text becomes selected-unit authority and stays identity-bound through both the graph and the
+/// build-script closure digest. It is never recovered from the publisher's ambient environment.
 fn observed_environment_binding(_name: &str, observed: &str) -> OvenLegacyCargoSelectedEnvironmentBinding {
     OvenLegacyCargoSelectedEnvironmentBinding {
         observed_value: observed.to_string(),
-        value: None,
+        value: Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+            value: observed.to_string(),
+        }),
     }
+}
+
+/// Convert one registry-declared rustc environment value into its portable selected-graph representation.
+fn declared_environment_binding(
+    declared: &oven_model::manifest::RustFactCompileEnvironment,
+    observed: &str,
+) -> Result<OvenLegacyCargoSelectedEnvironmentBinding, OvenLegacyCargoError> {
+    let value = match (&declared.literal, &declared.out) {
+        (Some(value), None) if value == observed => {
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: value.clone() }
+        }
+        (None, Some(relative)) => OvenSelectedRustFacetEnvironmentValue::OutDir {
+            relative: relative.clone(),
+        },
+        _ => {
+            return Err(projection_error(
+                "selected build-script environment",
+                "does not match its declared literal or OUT_DIR-relative value",
+            ));
+        }
+    };
+    Ok(OvenLegacyCargoSelectedEnvironmentBinding {
+        observed_value: observed.to_string(),
+        value: Some(value),
+    })
 }
 
 /// Identify the execution node that supplies retained build-script facts to a consumer edge.
@@ -1682,6 +1711,7 @@ pub fn project_legacy_cargo_selected_graph_with_identities(
                 None => continue,
             };
             let build_script_facts = projected_build_script_facts(capture, sealed, index)?;
+            let environment = projected_compile_environment(capture_unit, binding, &build_script_facts)?;
             let crate_kind = captured_crate_kind(capture_unit)?;
             let domain = captured_domain(capture_unit, &sealed.selection)?;
             let role = captured_role(capture_unit, crate_kind, domain)?;
@@ -1704,7 +1734,7 @@ pub fn project_legacy_cargo_selected_graph_with_identities(
                 cfg: build_script_facts.cfg,
                 compiler_arguments: capture_unit.compiler_arguments.clone(),
                 sysroot_externs: capture_unit.sysroot_externs.clone(),
-                environment: build_script_facts.environment,
+                environment,
                 include_dirs: binding.include_dirs.clone(),
                 exclude_dirs: binding.exclude_dirs.clone(),
                 dependencies,
@@ -2240,6 +2270,119 @@ struct ProjectedBuildScriptFacts {
     linked_libraries: Vec<OvenSelectedRustFacetLinkedLibrary>,
 }
 
+/// Merge Cargo's exact compile-time environment with the build-script values selected for one unit.
+fn projected_compile_environment(
+    unit: &OvenLegacyCargoSelectedUnit,
+    binding: &OvenLegacyCargoSelectedGraphUnitBinding,
+    build_script: &ProjectedBuildScriptFacts,
+) -> Result<BTreeMap<String, OvenSelectedRustFacetEnvironmentValue>, OvenLegacyCargoError> {
+    let mut environment = build_script.environment.clone();
+    for (name, observed) in &unit.compile_environment {
+        let value = match name.as_str() {
+            "CARGO_MANIFEST_DIR" => {
+                validate_captured_manifest_environment(unit, name, observed)?;
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: binding.source.owner.clone(),
+                        path: binding.source.root.clone(),
+                    },
+                }
+            }
+            "CARGO_MANIFEST_PATH" => {
+                validate_captured_manifest_environment(unit, name, observed)?;
+                let manifest = format!("{}/Cargo.toml", binding.source.root.trim_end_matches('/'));
+                if !binding.source_members.iter().any(|member| member.path == "Cargo.toml") {
+                    return Err(projection_error(
+                        "selected compile environment",
+                        "CARGO_MANIFEST_PATH has no retained Cargo.toml source member",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: binding.source.owner.clone(),
+                        path: manifest,
+                    },
+                }
+            }
+            "OUT_DIR" => {
+                let captured_out_dir = unit
+                    .dependencies
+                    .iter()
+                    .filter_map(|dependency| dependency.build_script.as_ref())
+                    .any(|facts| facts.out_dir.to_string_lossy() == observed.as_str());
+                if !captured_out_dir
+                    || !build_script
+                        .generated_inputs
+                        .iter()
+                        .any(|input| input.name == "out_dir")
+                {
+                    return Err(projection_error(
+                        "selected compile environment",
+                        "captured OUT_DIR does not match a retained generated output",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: ".".to_string(),
+                }
+            }
+            _ => OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: observed.clone(),
+            },
+        };
+        match environment.insert(name.clone(), value.clone()) {
+            Some(previous) if previous != value => {
+                return Err(projection_error(
+                    "selected compile environment",
+                    &format!("`{name}` has conflicting Cargo and build-script values"),
+                ));
+            }
+            Some(_) | None => {}
+        }
+    }
+    Ok(environment)
+}
+
+/// Check a transient Cargo manifest path before rebinding it beneath the unit's admitted source owner.
+fn validate_captured_manifest_environment(
+    unit: &OvenLegacyCargoSelectedUnit,
+    name: &str,
+    observed: &str,
+) -> Result<(), OvenLegacyCargoError> {
+    let module = Path::new(&unit.root_module);
+    let mut source_root = unit.source_path.as_path();
+    for _ in module.components() {
+        source_root = source_root.parent().ok_or_else(|| {
+            projection_error(
+                "selected compile environment",
+                "captured source does not contain its declared root module",
+            )
+        })?;
+    }
+    if source_root.join(module) != unit.source_path {
+        return Err(projection_error(
+            "selected compile environment",
+            "captured source does not end in its declared root module",
+        ));
+    }
+    let expected = match name {
+        "CARGO_MANIFEST_DIR" => source_root.to_path_buf(),
+        "CARGO_MANIFEST_PATH" => source_root.join("Cargo.toml"),
+        _ => {
+            return Err(projection_error(
+                "selected compile environment",
+                "requested manifest validation for an unsupported variable",
+            ));
+        }
+    };
+    if Path::new(observed) != expected {
+        return Err(projection_error(
+            "selected compile environment",
+            &format!("{name} does not match the captured unit source"),
+        ));
+    }
+    Ok(())
+}
+
 /// Attach checked build-script cfg, environment, generated output and linked-library facts to one consumer.
 fn projected_build_script_facts(
     capture: &OvenLegacyCargoSelectedUnitCapture,
@@ -2289,20 +2432,23 @@ fn projected_build_script_facts(
                     "does not match its exact captured value",
                 ));
             }
-            // A withheld entry is a checked observation the graph does not carry: the exact-value comparison
-            // above still holds it to the capture, and the closure digest keeps its identity.
+            // Older sealed bindings may withhold an entry. Current projections carry exact captured text or a
+            // declared OUT_DIR-relative path, while the comparison above still checks every value against capture.
             let Some(value) = &bound.value else {
                 continue;
             };
             match value {
                 OvenSelectedRustFacetEnvironmentValue::Text { value } if value == observed => {}
+                OvenSelectedRustFacetEnvironmentValue::CapturedText { value } if value == observed => {}
                 OvenSelectedRustFacetEnvironmentValue::Text { .. } => {
                     return Err(projection_error(
                         "selected build-script environment",
                         "text value does not exactly match its captured value",
                     ));
                 }
-                OvenSelectedRustFacetEnvironmentValue::Path { .. }
+                OvenSelectedRustFacetEnvironmentValue::OutDir { .. } => {}
+                OvenSelectedRustFacetEnvironmentValue::CapturedText { .. }
+                | OvenSelectedRustFacetEnvironmentValue::Path { .. }
                 | OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {
                     return Err(projection_error(
                         "selected build-script environment",
@@ -2740,6 +2886,7 @@ mod tests {
                     name: "embed-bitcode".to_string(),
                     value: "no".to_string(),
                 }],
+                compile_environment: BTreeMap::new(),
                 effective_features: vec!["derive".to_string()],
                 dependencies: Vec::new(),
                 sysroot_externs: Vec::new(),
@@ -3041,6 +3188,45 @@ mod tests {
         Ok(())
     }
 
+    /// Cargo package text stays exact while transient manifest paths are checked and rebound to admitted source.
+    #[test]
+    fn projection_replays_captured_cargo_compile_environment() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut capture, sources) = release_shaped_capture("sha256:fixture", BTreeMap::new())?;
+        capture.units[1].compile_environment = BTreeMap::from([
+            ("CARGO_MANIFEST_DIR".to_string(), "/transient/serde".to_string()),
+            (
+                "CARGO_MANIFEST_PATH".to_string(),
+                "/transient/serde/Cargo.toml".to_string(),
+            ),
+            ("CARGO_PKG_VERSION".to_string(), "1.0.0".to_string()),
+        ]);
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        let unit = &finalized.graph.graph().units[0];
+        assert_eq!(
+            unit.environment["CARGO_PKG_VERSION"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: "1.0.0".to_string()
+            }
+        );
+        assert!(matches!(
+            unit.environment["CARGO_MANIFEST_DIR"],
+            OvenSelectedRustFacetEnvironmentValue::Path { .. }
+        ));
+
+        capture.units[1]
+            .compile_environment
+            .insert("CARGO_MANIFEST_DIR".to_string(), "/ambient/wrong".to_string());
+        let refused = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none());
+        assert!(
+            refused
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("does not match the captured unit source")),
+            "a manifest path unrelated to the captured source must be refused"
+        );
+        Ok(())
+    }
+
     /// The foundation must take its artifact owner from the graph's Constituent owner rather than from the capture
     /// receipt, even when portable closure identity makes those digests equal for this projection.
     #[test]
@@ -3213,6 +3399,7 @@ mod tests {
     fn adoption_registry(
         checksum: &str,
         cfg: &str,
+        environment: &str,
     ) -> Result<(tempfile::TempDir, oven_model::loaf_registry::LoafRegistry), Box<dyn std::error::Error>> {
         let root = tempdir()?;
         let manifest_dir = root.path().join("crates-io/serde/1.0.0");
@@ -3220,7 +3407,7 @@ mod tests {
         fs::write(
             manifest_dir.join("loaf.toml"),
             format!(
-                "[project]\nname = \"serde\"\nversion = \"1.0.0\"\n\n[source]\nregistry = \"https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{checksum}\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\nprofile = \"release\"\nfeatures = [\"derive\"]\ncfg = [{cfg}]\n"
+                "[project]\nname = \"serde\"\nversion = \"1.0.0\"\n\n[source]\nregistry = \"https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{checksum}\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\nprofile = \"release\"\nfeatures = [\"derive\"]\ncfg = [{cfg}]\n{environment}"
             ),
         )?;
         let index_dir = root.path().join("index/se/rd");
@@ -3235,11 +3422,8 @@ mod tests {
         Ok((root, registry))
     }
 
-    /// A build script that reemits configuration through `rustc-env` gives the graph no admissible value: the
-    /// validator retains an unregistered name neither as text nor otherwise, so the observation is withheld from
-    /// the graph and the unit publishes with an empty environment. A registry declaration for the exact source and
-    /// selection is the RFC 119 answer: the projection carries the declared facts and nothing else, and the graph
-    /// looks the same either way.
+    /// A build script's captured environment enters graph identity, while an adopted registry record must declare
+    /// the same value before it can govern the unit.
     #[test]
     fn a_registry_declaration_governs_an_adopted_unit_and_must_agree_with_its_observation()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3248,12 +3432,17 @@ mod tests {
         let (capture, sources) = release_shaped_capture(&checksum, script_environment)?;
 
         let unadopted = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
-        assert!(
-            unadopted.graph.graph().units[0].environment.is_empty(),
-            "without a declaration the script-emitted environment is withheld from the graph, not refused"
+        assert_eq!(
+            unadopted.graph.graph().units[0].environment["CFG_OPT_LEVEL"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: "3".to_string() },
+            "the exact observed environment must remain compiler-visible and identity-bearing"
         );
 
-        let (registry_root, registry) = adoption_registry(&checksum, "")?;
+        let (registry_root, registry) = adoption_registry(
+            &checksum,
+            "",
+            "environment = [{ name = \"CFG_OPT_LEVEL\", literal = \"3\" }]\n",
+        )?;
         let authority = LoafRegistryAuthority::resolve(&capture, &registry, "release")?;
         assert!(
             authority.adoption(1).is_some(),
@@ -3273,14 +3462,10 @@ mod tests {
             "a fixture index line lists no binding status, so the adoption is harvested"
         );
         assert!(oven_model::manifest::is_sha256_identity(&records[0].index_line_digest));
-        let refused = finalize_release_shaped(&capture, &sources, &authority);
-        assert!(
-            refused
-                .as_ref()
-                .err()
-                .is_some_and(|error| error.to_string().contains("cannot carry observed rustc-env")),
-            "an adopted record must refuse script environment it cannot carry: {:?}",
-            refused.as_ref().err().map(ToString::to_string)
+        let adopted = finalize_release_shaped(&capture, &sources, &authority)?;
+        assert_eq!(
+            adopted.graph.graph().units[0].environment["CFG_OPT_LEVEL"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: "3".to_string() }
         );
         assert!(authority.evidence_digest().is_some());
 
@@ -3295,7 +3480,8 @@ mod tests {
                 digest: digest(b"adopted script probe"),
                 output: None,
             });
-        let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &registry, "release")?;
+        let (_probe_root, probe_registry) = adoption_registry(&checksum, "", "")?;
+        let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &probe_registry, "release")?;
         let refused_probe = finalize_release_shaped(&probed_capture, &probed_sources, &probed_authority);
         assert!(
             refused_probe
@@ -3333,7 +3519,7 @@ mod tests {
             "registry evidence must bind the governing manifest bytes"
         );
 
-        let (_root, disagreeing) = adoption_registry(&checksum, "\"has_answer\"")?;
+        let (_root, disagreeing) = adoption_registry(&checksum, "\"has_answer\"", "")?;
         let authority = LoafRegistryAuthority::resolve(&capture, &disagreeing, "release")?;
         let refused = finalize_release_shaped(&capture, &sources, &authority);
         assert!(
@@ -3345,23 +3531,21 @@ mod tests {
             refused.as_ref().err().map(ToString::to_string)
         );
 
-        let (_root, other_profile) = adoption_registry(&checksum, "")?;
+        let (_root, other_profile) = adoption_registry(&checksum, "", "")?;
         let authority = LoafRegistryAuthority::resolve(&capture, &other_profile, "debug")?;
         assert!(authority.is_empty(), "a record bound to another profile adopts nothing");
         Ok(())
     }
 
-    /// `libm` reemits its configuration through `rustc-env` for its own test logging; the values are not portable
-    /// text (`["arch", "default"]`) and the names are nobody's public compiler fact. Without a registry declaration
-    /// the release publisher must still publish: every entry is withheld from the graph, and the closure digest
-    /// binds every observation (#1704).
+    /// `libm` reemits configuration through `rustc-env`; exact captured text remains both compiler-visible and
+    /// identity-bearing without being inferred from the publisher's ambient environment.
     #[test]
-    fn an_unadopted_script_environment_is_withheld_from_the_graph_and_bound_by_the_closure_digest_issue1704()
+    fn an_unadopted_script_environment_is_carried_by_the_graph_and_bound_by_the_closure_digest_issue1704()
     -> Result<(), Box<dyn std::error::Error>> {
         let checksum = format!("sha256:{}", "b".repeat(64));
-        let withheld_value = "[\"arch\", \"default\"]";
+        let captured_value = "[\"arch\", \"default\"]";
         let script_environment = BTreeMap::from([
-            ("CFG_CARGO_FEATURES".to_string(), withheld_value.to_string()),
+            ("CFG_CARGO_FEATURES".to_string(), captured_value.to_string()),
             ("CFG_OPT_LEVEL".to_string(), "3".to_string()),
             ("CFG_TARGET_FEATURES".to_string(), "[\"neon\", \"sha2\"]".to_string()),
             ("PROFILE".to_string(), "release".to_string()),
@@ -3370,17 +3554,19 @@ mod tests {
 
         let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let unit = &finalized.graph.graph().units[0];
-        assert!(
-            unit.environment.is_empty(),
-            "an ungoverned script-emitted directive must not become a selected unit fact"
+        assert_eq!(
+            unit.environment["CFG_CARGO_FEATURES"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: captured_value.to_string()
+            }
         );
         let encoded = String::from_utf8(finalized.graph.to_json_bytes()?)?;
         assert!(
-            !encoded.contains("CFG_CARGO_FEATURES") && !encoded.contains(withheld_value),
-            "a withheld observation must not reach the serialized graph"
+            encoded.contains("CFG_CARGO_FEATURES") && encoded.contains("captured_text"),
+            "captured compile environment must reach the serialized graph"
         );
 
-        // The binder states the withholding per key, and the closure digest changes with the withheld value.
+        // The binder states the captured value per key, and the closure digest changes with that value.
         let directory = tempdir()?;
         let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "release-stdlib")?)?;
         let toolchain_owner = digest(b"release toolchain owner");
@@ -3404,9 +3590,19 @@ mod tests {
             vec!["CFG_CARGO_FEATURES", "CFG_OPT_LEVEL", "CFG_TARGET_FEATURES", "PROFILE"],
             "every observed key gets one binding"
         );
-        assert_eq!(edge.environment["CFG_CARGO_FEATURES"].value, None);
-        assert_eq!(edge.environment["CFG_CARGO_FEATURES"].observed_value, withheld_value);
-        assert_eq!(edge.environment["PROFILE"].value, None);
+        assert_eq!(
+            edge.environment["CFG_CARGO_FEATURES"].value,
+            Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: captured_value.to_string()
+            })
+        );
+        assert_eq!(edge.environment["CFG_CARGO_FEATURES"].observed_value, captured_value);
+        assert_eq!(
+            edge.environment["PROFILE"].value,
+            Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: "release".to_string()
+            })
+        );
         let closure_digest = legacy_cargo_build_script_closure_digest(&capture, &bindings)?;
         let (changed_capture, _) = release_shaped_capture(
             &checksum,
@@ -3430,7 +3626,7 @@ mod tests {
         assert_ne!(
             closure_digest,
             legacy_cargo_build_script_closure_digest(&changed_capture, &changed_bindings)?,
-            "a withheld value still binds the capture receipt through the closure digest"
+            "a captured value still binds the capture receipt through the closure digest"
         );
         Ok(())
     }
@@ -3541,6 +3737,7 @@ mod tests {
             target_is_explicit: Some(false),
             cfg: Vec::new(),
             compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
@@ -4085,6 +4282,7 @@ mod tests {
             target_is_explicit: Some(false),
             cfg: Vec::new(),
             compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
@@ -4187,6 +4385,7 @@ mod tests {
             target_is_explicit: Some(false),
             cfg: Vec::new(),
             compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),

@@ -268,8 +268,8 @@ impl LoafRegistryAuthority {
     /// Require the observed build-script facts of one adopted unit to agree with its declaration.
     ///
     /// `facts` is the observation from the unit's build-script edge, or `None` when the unit has none; a declaration
-    /// then must state no `cfg` answer and no generated input. `has_tool_probes` closes the separate capture channel
-    /// that a registry declaration also cannot represent.
+    /// then must state no `cfg`, environment, or generated input. `has_tool_probes` closes the separate capture
+    /// channel that a registry declaration also cannot represent.
     pub fn check_observation(
         adoption: &LoafRegistryAdoption,
         facts: Option<&OvenLegacyCargoBuildScriptFacts>,
@@ -282,16 +282,16 @@ impl LoafRegistryAuthority {
             ))
         };
         if let Some(facts) = facts {
-            if !facts.environment.is_empty() {
-                return Err(refuse(
-                    "the declaration cannot carry observed rustc-env values".to_string(),
-                ));
-            }
+            validate_declared_environment(adoption, facts).map_err(&refuse)?;
             if !facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty() {
                 return Err(refuse(
                     "the declaration cannot carry observed linked libraries or search paths".to_string(),
                 ));
             }
+        } else if !adoption.record.environment.is_empty() {
+            return Err(refuse(
+                "declares rustc-env values for a unit with no observed build script".to_string(),
+            ));
         }
         if has_tool_probes {
             return Err(refuse("the declaration cannot carry observed tool probes".to_string()));
@@ -330,6 +330,40 @@ impl LoafRegistryAuthority {
         }
         Ok(())
     }
+}
+
+/// Require every declared compile-time environment value to equal its exact build-script observation.
+fn validate_declared_environment(
+    adoption: &LoafRegistryAdoption,
+    facts: &OvenLegacyCargoBuildScriptFacts,
+) -> Result<(), String> {
+    if adoption.record.environment.len() != facts.environment.len() {
+        return Err("declared and observed rustc-env key sets differ".to_string());
+    }
+    for declared in &adoption.record.environment {
+        let Some(observed) = facts.environment.get(&declared.name) else {
+            return Err(format!("declared rustc-env `{}` was not observed", declared.name));
+        };
+        let matches = match (&declared.literal, &declared.out) {
+            (Some(value), None) => value == observed,
+            (None, Some(relative)) => {
+                let expected = if relative == "." {
+                    facts.out_dir.clone()
+                } else {
+                    facts.out_dir.join(relative)
+                };
+                expected.to_string_lossy() == observed.as_str()
+            }
+            _ => false,
+        };
+        if !matches {
+            return Err(format!(
+                "declared rustc-env `{}` does not equal the observed value",
+                declared.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Recover the captured package root by stripping the registry record's checked root-module path.

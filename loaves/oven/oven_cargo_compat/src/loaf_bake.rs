@@ -891,6 +891,7 @@ mod tests {
             target_is_explicit: Some(true),
             cfg: cfg.iter().map(|value| (*value).to_string()).collect(),
             compiler_arguments: Vec::new(),
+            compile_environment: Default::default(),
             effective_features: vec!["std".to_string()],
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
