@@ -50,7 +50,7 @@ impl<'a> IrEmitter<'a> {
                 if Self::constant_bool(condition) == Some(true) {
                     return Ok(Some(failure));
                 }
-                let condition_tokens = self.emit_expr(condition)?;
+                let condition_tokens = self.emit_condition_position_expr(condition)?;
                 Ok(Some(quote! {
                     if #condition_tokens {
                         #failure
@@ -217,6 +217,13 @@ impl<'a> IrEmitter<'a> {
             BinOp::Eq
         };
         let failure_condition = self.emit_binop_expr(&failure_op, left, right)?;
+        let failure_condition = if self.condition_position_exposes_struct_literal(left)
+            || self.condition_position_exposes_struct_literal(right)
+        {
+            quote! { (#failure_condition) }
+        } else {
+            failure_condition
+        };
         let failure = self.emit_assert_comparison_failure(failure_kind, message)?;
         Ok(quote! {
             if #failure_condition {

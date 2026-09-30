@@ -448,7 +448,11 @@ impl<'a> IrEmitter<'a> {
             }
             BuiltinFn::Int => {
                 if let Some(arg) = args.first() {
-                    let a = self.emit_expr(arg)?;
+                    let a = if matches!(arg.ty, IrType::Bool) {
+                        self.emit_condition_position_expr(arg)?
+                    } else {
+                        self.emit_expr(arg)?
+                    };
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
                             Ok(quote! { incan_std_core::conversions::int_from_str(&#a) })
@@ -757,7 +761,11 @@ impl<'a> IrEmitter<'a> {
             }
             BuiltinFnId::Int => {
                 if let Some(arg) = args.first() {
-                    let a = self.emit_expr(arg)?;
+                    let a = if matches!(arg.ty, IrType::Bool) {
+                        self.emit_condition_position_expr(arg)?
+                    } else {
+                        self.emit_expr(arg)?
+                    };
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
                             Ok(Some(quote! { incan_std_core::conversions::int_from_str(&#a) }))

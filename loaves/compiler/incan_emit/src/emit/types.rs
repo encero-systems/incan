@@ -617,7 +617,11 @@ impl<'a> IrEmitter<'a> {
         arm: &MatchArm,
         pattern_guard: Option<TokenStream>,
     ) -> Result<Option<TokenStream>, EmitError> {
-        let arm_guard = arm.guard.as_ref().map(|guard| self.emit_expr(guard)).transpose()?;
+        let arm_guard = arm
+            .guard
+            .as_ref()
+            .map(|guard| self.emit_condition_position_expr(guard))
+            .transpose()?;
         let guard = match (pattern_guard, arm_guard) {
             (Some(pattern_guard), Some(arm_guard)) => Some(quote! { (#pattern_guard) && (#arm_guard) }),
             (Some(pattern_guard), None) => Some(pattern_guard),
