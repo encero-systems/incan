@@ -3085,7 +3085,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/kernel/incan_vocab/src/lib.rs` | 6 | 514 | 205 | unaffected | - | - | - | #1561 | checker 6 | vocab registration contract crate. Reviewed at crate level. |
 
-    #### `loaves/oven/oven_cargo_compat` (184 tests in 12 files: unaffected 184)
+    #### `loaves/oven/oven_cargo_compat` (185 tests in 12 files: unaffected 185)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3099,7 +3099,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_cargo_compat/src/native_trace.rs` | 4 | 341 | 104 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/registry_sources.rs` | 2 | 725 | 131 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/rustc_trace.rs` | 6 | 536 | 139 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 23 | 4534 | 1769 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 24 | 4696 | 1861 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 14 | 2809 | 979 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
     #### `loaves/oven/oven_interop` (20 tests in 1 file: unaffected 20)

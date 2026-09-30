@@ -674,54 +674,90 @@ fn selected_domain_key(domain: OvenSelectedRustFacetDomain) -> u8 {
     }
 }
 
-/// Encode the strict Incan policy request from validated physical facts and retained package sources.
-pub fn encode_selected_graph_policy_request(
-    selected: &ValidatedOvenSelectedRustFacetGraph,
+/// Encode one environment value in the closed v5 policy vocabulary.
+///
+/// Captured text and private `OUT_DIR` locations keep their distinct selected-graph identity forms, but the policy
+/// exchange needs only exact text or an owner-relative path. This prevents capture provenance from expanding the
+/// exchange vocabulary while preserving the graph digest that authenticates that provenance.
+fn encode_policy_environment_value(
+    value: &OvenSelectedRustFacetEnvironmentValue,
+    generated_inputs: &[OvenSelectedRustFacetGeneratedInput],
+) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    match value {
+        OvenSelectedRustFacetEnvironmentValue::Text { value }
+        | OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
+            Ok(serde_json::json!({"kind": "text", "value": value}))
+        }
+        OvenSelectedRustFacetEnvironmentValue::Path { value } => {
+            Ok(serde_json::json!({"kind": "path", "value": value}))
+        }
+        OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => {
+            let mut matching = generated_inputs.iter().filter(|input| input.name == "out_dir");
+            let Some(generated) = matching.next() else {
+                return Err(projection_error(
+                    "policy environment OUT_DIR",
+                    "does not bind exactly one generated out_dir input",
+                ));
+            };
+            if matching.next().is_some() {
+                return Err(projection_error(
+                    "policy environment OUT_DIR",
+                    "does not bind exactly one generated out_dir input",
+                ));
+            }
+            let path = if relative == "." {
+                generated.source.path.clone()
+            } else {
+                format!("{}/{relative}", generated.source.path.trim_end_matches('/'))
+            };
+            Ok(serde_json::json!({
+                "kind": "path",
+                "value": {"owner": generated.source.owner, "path": path},
+            }))
+        }
+        OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { hmac_sha256 } => {
+            Ok(serde_json::json!({"kind": "sensitive_digest", "hmac_sha256": hmac_sha256}))
+        }
+    }
+}
+
+/// Encode every selected environment entry using only kinds accepted by the v5 Incan decoder.
+fn encode_policy_environment(
+    unit: &OvenSelectedRustFacetUnit,
+) -> Result<serde_json::Map<String, serde_json::Value>, OvenLegacyCargoError> {
+    unit.environment
+        .iter()
+        .map(|(name, value)| {
+            encode_policy_environment_value(value, &unit.generated_inputs).map(|encoded| (name.clone(), encoded))
+        })
+        .collect()
+}
+
+/// Encode one physical unit while keeping compiler-only cfg and argument facts behind its authenticated identity.
+fn encode_policy_unit(unit: &OvenSelectedRustFacetUnit) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    Ok(serde_json::json!({
+        "identity": unit.identity,
+        "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
+        "domain": serde_json::to_value(unit.domain).map_err(|error| projection_error("policy unit domain", &error.to_string()))?,
+        "role": serde_json::to_value(unit.role).map_err(|error| projection_error("policy unit role", &error.to_string()))?,
+        "crate_kind": serde_json::to_value(unit.crate_kind).map_err(|error| projection_error("policy crate kind", &error.to_string()))?,
+        "closure": {
+            "environment": encode_policy_environment(unit)?,
+            "generated_inputs": unit.generated_inputs,
+            "linked_libraries": unit.linked_libraries,
+            "sysroot_externs": unit.sysroot_externs,
+        },
+        "features": unit.features,
+    }))
+}
+
+/// Encode retained package catalogs for the selected physical units.
+fn encode_policy_catalogs(
+    graph: &OvenSelectedRustFacetGraph,
     capture: &OvenLegacyCargoSelectedUnitCapture,
     sources: &[OvenLegacyCargoInspectionSource],
     intent_owner: &str,
-) -> Result<serde_json::Value, OvenLegacyCargoError> {
-    let graph = selected.graph();
-    let units = graph
-        .units
-        .iter()
-        .map(|unit| {
-            Ok(serde_json::json!({
-                "identity": unit.identity,
-                "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
-                "domain": serde_json::to_value(unit.domain).map_err(|error| projection_error("policy unit domain", &error.to_string()))?,
-                "role": serde_json::to_value(unit.role).map_err(|error| projection_error("policy unit role", &error.to_string()))?,
-                "crate_kind": serde_json::to_value(unit.crate_kind).map_err(|error| projection_error("policy crate kind", &error.to_string()))?,
-                "closure": {
-                    "environment": unit.environment,
-                    "generated_inputs": unit.generated_inputs,
-                    "linked_libraries": unit.linked_libraries,
-                    "sysroot_externs": unit.sysroot_externs,
-                },
-                "features": unit.features,
-            }))
-        })
-        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
-    let roots = graph
-        .exposed_roots
-        .values()
-        .map(|root| serde_json::to_value(root).map_err(|error| projection_error("policy root", &error.to_string())))
-        .collect::<Result<Vec<_>, _>>()?;
-    let bindings = graph
-        .units
-        .iter()
-        .flat_map(|unit| {
-            unit.dependencies.iter().map(move |dependency| {
-                serde_json::json!({
-                    "parent_unit": unit.identity,
-                    "alias": dependency.alias,
-                    "child_unit": dependency.unit,
-                })
-            })
-        })
-        .collect::<Vec<_>>();
-    // The engine keys catalogs by package identity and refuses a repeated key, so a package compiled in both
-    // domains (a host rlib feeding a proc-macro and a target rlib) contributes its manifest once.
+) -> Result<Vec<serde_json::Value>, OvenLegacyCargoError> {
     let mut catalogs = Vec::new();
     let mut seen = BTreeSet::new();
     for unit in &graph.units {
@@ -747,8 +783,7 @@ pub fn encode_selected_graph_policy_request(
                 "does not bind exactly one retained source",
             ));
         };
-        let manifest_path = source.source_root.join("Cargo.toml");
-        let manifest_bytes = fs::read(&manifest_path)
+        let manifest_bytes = fs::read(source.source_root.join("Cargo.toml"))
             .map_err(|error| projection_error("policy catalog manifest", &error.to_string()))?;
         let manifest_digest = selected_graph_sha256(&manifest_bytes);
         let declared_manifest = source
@@ -788,6 +823,41 @@ pub fn encode_selected_graph_policy_request(
             "build_unit_present": build_unit_present,
         }));
     }
+    Ok(catalogs)
+}
+
+/// Encode the strict Incan policy request from validated physical facts and retained package sources.
+pub fn encode_selected_graph_policy_request(
+    selected: &ValidatedOvenSelectedRustFacetGraph,
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sources: &[OvenLegacyCargoInspectionSource],
+    intent_owner: &str,
+) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    let graph = selected.graph();
+    let units = graph
+        .units
+        .iter()
+        .map(encode_policy_unit)
+        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
+    let roots = graph
+        .exposed_roots
+        .values()
+        .map(|root| serde_json::to_value(root).map_err(|error| projection_error("policy root", &error.to_string())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let bindings = graph
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.dependencies.iter().map(move |dependency| {
+                serde_json::json!({
+                    "parent_unit": unit.identity,
+                    "alias": dependency.alias,
+                    "child_unit": dependency.unit,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let catalogs = encode_policy_catalogs(graph, capture, sources, intent_owner)?;
     Ok(serde_json::json!({
         "schema": "incan.oven.rust-policy-exchange/5",
         "operation": "validate_selected_rust_graph",
@@ -3224,6 +3294,98 @@ mod tests {
                 .is_some_and(|error| error.to_string().contains("does not match the captured unit source")),
             "a manifest path unrelated to the captured source must be refused"
         );
+        Ok(())
+    }
+
+    /// The policy projection collapses internal provenance variants onto the decoder's closed environment kinds,
+    /// carries generated and native-link closure facts, and leaves cfg/check-cfg behind the authenticated identity.
+    #[test]
+    fn policy_unit_encoding_uses_only_decoder_environment_kinds() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let mut graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        let unit = graph.units.get_mut(0).ok_or("fixture graph lost its selected unit")?;
+        let generated_source = OvenSelectedRustFacetPath {
+            owner: unit.source.owner.clone(),
+            path: "generated-outputs/fixture".to_string(),
+        };
+        unit.generated_inputs = vec![OvenSelectedRustFacetGeneratedInput {
+            name: "out_dir".to_string(),
+            source: generated_source.clone(),
+            digest: oven_rustc::rustc::selected_graph_generated_input_digest(&[])?,
+            members: Vec::new(),
+        }];
+        unit.linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: generated_source.owner.clone(),
+                path: format!("{}/libfixture.a", generated_source.path),
+            },
+            digest: digest(b"fixture archive"),
+        }];
+        unit.compiler_arguments = vec![OvenSelectedRustFacetCompilerArgument::CheckCfg {
+            value: "cfg(fixture)".to_string(),
+        }];
+        unit.cfg = vec!["fixture".to_string()];
+        unit.environment = BTreeMap::from([
+            (
+                "CAPTURED".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                    value: "captured".to_string(),
+                },
+            ),
+            (
+                "OUT_DIR".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: ".".to_string(),
+                },
+            ),
+            (
+                "OUT_DIR_CHILD".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: "install".to_string(),
+                },
+            ),
+            (
+                "OWNER_PATH".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: unit.source.owner.clone(),
+                        path: unit.source.root.clone(),
+                    },
+                },
+            ),
+            (
+                "PUBLIC".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Text {
+                    value: "public".to_string(),
+                },
+            ),
+            (
+                "SECRET".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::SensitiveDigest {
+                    hmac_sha256: format!("hmac-sha256:{}", "a".repeat(64)),
+                },
+            ),
+        ]);
+
+        let encoded = encode_policy_unit(unit)?;
+        assert!(encoded.get("cfg").is_none() && encoded.get("compiler_arguments").is_none());
+        assert!(encoded["closure"]["generated_inputs"].is_array());
+        assert!(encoded["closure"]["linked_libraries"].is_array());
+        assert_eq!(encoded["closure"]["environment"]["CAPTURED"]["kind"], "text");
+        assert_eq!(encoded["closure"]["environment"]["PUBLIC"]["kind"], "text");
+        assert_eq!(encoded["closure"]["environment"]["OWNER_PATH"]["kind"], "path");
+        assert_eq!(encoded["closure"]["environment"]["OUT_DIR"]["kind"], "path");
+        assert_eq!(
+            encoded["closure"]["environment"]["OUT_DIR"]["value"]["path"],
+            generated_source.path
+        );
+        assert_eq!(
+            encoded["closure"]["environment"]["OUT_DIR_CHILD"]["value"]["path"],
+            "generated-outputs/fixture/install"
+        );
+        assert_eq!(encoded["closure"]["environment"]["SECRET"]["kind"], "sensitive_digest");
         Ok(())
     }
 

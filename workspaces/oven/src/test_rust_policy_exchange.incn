@@ -60,6 +60,89 @@ def provider_input(members: list[JsonValue]) -> JsonValue:
     )
 
 
+def archive_input() -> JsonValue:
+    """Build one generated-output-owned static archive in the Rust encoder's wire shape."""
+    return JsonValue.object(
+        {"input": JsonValue.string("archive"), "name": JsonValue.string("fixture"), "kind": JsonValue.string("static"), "artifact": JsonValue.object(
+            {"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string("out/libfixture.a")},
+        ), "digest": JsonValue.string("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")},
+    )
+
+
+def selected_closure(scenario: str, environment_value: str) -> JsonValue:
+    """Build one named physical-closure scenario for a policy request."""
+    a_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    b_digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    if scenario == "malformed":
+        return JsonValue.object({"environment": JsonValue.object({})})
+    if scenario == "sensitive_environment":
+        return closure([], [], [], {"DEP_TOKEN": JsonValue.object(
+            {"kind": JsonValue.string("sensitive_digest"), "hmac_sha256": JsonValue.string(environment_value)},
+        )})
+    if scenario == "path_environment":
+        return closure([], [], [], {"OUT_DIR": JsonValue.object(
+            {"kind": JsonValue.string("path"), "value": JsonValue.object(
+                {"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string(environment_value)},
+            )},
+        )})
+    if scenario == "encoder_closure":
+        return closure(
+            [generated_input(
+                [member("alpha\".rs", a_digest), member("β.rs", b_digest)],
+                "sha256:f61e5bd9646057789fd47fd72359af7793ac0ebb7711de66de78a7f1ae2af99f",
+            )],
+            [archive_input()],
+            [],
+            {
+                "CAPTURED": JsonValue.object({"kind": JsonValue.string("text"), "value": JsonValue.string("exact")}),
+                "OWNER_PATH": JsonValue.object({"kind": JsonValue.string("path"), "value": JsonValue.object(
+                    {"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string("out")},
+                )}),
+                "SECRET": JsonValue.object({"kind": JsonValue.string("sensitive_digest"), "hmac_sha256": JsonValue.string(environment_value)}),
+            },
+        )
+    if scenario == "unknown_environment_kind":
+        return closure([], [], [], {"FUTURE": JsonValue.object(
+            {"kind": JsonValue.string("future"), "value": JsonValue.string("unsupported")},
+        )})
+    if scenario == "unsupported_sysroot_extern":
+        return closure([], [], [JsonValue.string("std")], {})
+    if scenario == "duplicate_sysroot_extern":
+        return closure([], [], [JsonValue.string("proc_macro"), JsonValue.string("proc_macro")], {})
+    if scenario == "unsorted_generated_members":
+        return generated_closure(generated_input(
+            [member("z.rs", b_digest), member("a.rs", a_digest)],
+            "sha256:declared",
+        ))
+    if scenario == "inconsistent_generated_digest":
+        return generated_closure(generated_input(
+            [member("a.rs", a_digest)],
+            "sha256:not-the-member-catalog",
+        ))
+    if scenario == "canonical_generated_members":
+        return generated_closure(generated_input(
+            [member("alpha\".rs", a_digest), member("β.rs", b_digest)],
+            "sha256:f61e5bd9646057789fd47fd72359af7793ac0ebb7711de66de78a7f1ae2af99f",
+        ))
+    if scenario == "unsorted_provider_members":
+        return provider_closure(provider_input(
+            [member("z.a", b_digest), member("libfixture.a", a_digest)],
+        ))
+    if scenario == "provider_missing_artifact_member":
+        return provider_closure(provider_input(
+            [member("a.a", a_digest), member("z.a", b_digest)],
+        ))
+    if scenario == "empty_generated_input":
+        return generated_closure(generated_input(
+            [],
+            "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            name="empty-generated",
+        ))
+    if scenario == "empty":
+        return empty_closure()
+    return fail_t[JsonValue]("unknown closure fixture: " + scenario)
+
+
 def request(
     role: str = "library",
     extra: str = "",
@@ -70,56 +153,7 @@ def request(
     environment_value: str = "hmac-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 ) -> str:
     """Build one selected leaf around a named physical-closure scenario."""
-    a_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    b_digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    mut selected_closure = empty_closure()
-    if closure_case == "malformed":
-        selected_closure = JsonValue.object({"environment": JsonValue.object({})})
-    elif closure_case == "sensitive_environment":
-        selected_closure = closure([], [], [], {"DEP_TOKEN": JsonValue.object(
-            {"kind": JsonValue.string("sensitive_digest"), "hmac_sha256": JsonValue.string(environment_value)},
-        )})
-    elif closure_case == "path_environment":
-        selected_closure = closure([], [], [], {"OUT_DIR": JsonValue.object(
-            {"kind": JsonValue.string("path"), "value": JsonValue.object(
-                {"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string(environment_value)},
-            )},
-        )})
-    elif closure_case == "unsupported_sysroot_extern":
-        selected_closure = closure([], [], [JsonValue.string("std")], {})
-    elif closure_case == "duplicate_sysroot_extern":
-        selected_closure = closure([], [], [JsonValue.string("proc_macro"), JsonValue.string("proc_macro")], {})
-    elif closure_case == "unsorted_generated_members":
-        selected_closure = generated_closure(generated_input(
-            [member("z.rs", b_digest), member("a.rs", a_digest)],
-            "sha256:declared",
-        ))
-    elif closure_case == "inconsistent_generated_digest":
-        selected_closure = generated_closure(generated_input(
-            [member("a.rs", a_digest)],
-            "sha256:not-the-member-catalog",
-        ))
-    elif closure_case == "canonical_generated_members":
-        selected_closure = generated_closure(generated_input(
-            [member("alpha\".rs", a_digest), member("β.rs", b_digest)],
-            "sha256:f61e5bd9646057789fd47fd72359af7793ac0ebb7711de66de78a7f1ae2af99f",
-        ))
-    elif closure_case == "unsorted_provider_members":
-        selected_closure = provider_closure(provider_input(
-            [member("z.a", b_digest), member("libfixture.a", a_digest)],
-        ))
-    elif closure_case == "provider_missing_artifact_member":
-        selected_closure = provider_closure(provider_input(
-            [member("a.a", a_digest), member("z.a", b_digest)],
-        ))
-    elif closure_case == "empty_generated_input":
-        selected_closure = generated_closure(generated_input(
-            [],
-            "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-            name="empty-generated",
-        ))
-    elif closure_case != "empty":
-        return fail_t[str]("unknown closure fixture: " + closure_case)
+    physical_closure = selected_closure(closure_case, environment_value)
     mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(schema), "operation": JsonValue.string(operation), "graph_digest": JsonValue.string(
         "sha256:selected-graph",
     ), "context": JsonValue.object(
@@ -134,7 +168,7 @@ def request(
                 )},
             ), "domain": JsonValue.string("target"), "role": JsonValue.string(role), "crate_kind": JsonValue.string(
                 "rlib",
-            ), "closure": selected_closure, "features": JsonValue.array([])},
+            ), "closure": physical_closure, "features": JsonValue.array([])},
         )],
     ), "roots": JsonValue.array([JsonValue.object(
         {"unit": JsonValue.string("sha256:root-unit"), "requested_features": JsonValue.array([]), "default_features": JsonValue.bool(
@@ -240,6 +274,14 @@ pub def test_selected_leaf_echoes_exact_empty_closure() -> None:
 pub def test_sensitive_closure_digest_is_structurally_preserved() -> None:
     """Protects the sensitive-digest wire shape without exposing a raw environment value."""
     assert status(evaluate(request(closure_case="sensitive_environment"))) == "selected"
+
+
+pub def test_every_rust_encoder_environment_kind_and_replay_closure_field_is_decoded() -> None:
+    """Accept text, path and sensitive-digest environment plus generated-out and native-archive wire shapes."""
+    assert status(evaluate(request(closure_case="encoder_closure"))) == "selected"
+    unknown = evaluate(request(closure_case="unknown_environment_kind"))
+    assert status(unknown) == "refused"
+    assert refusal_fields(unknown) == ["units", "0", "closure", "environment", "FUTURE", "kind"]
 
 
 pub def test_core_engine_dispatches_the_rust_policy_schema() -> None:
