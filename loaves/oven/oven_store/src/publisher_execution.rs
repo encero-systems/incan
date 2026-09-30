@@ -1,6 +1,8 @@
 //! Receipt-bound, hermetic publisher execution for native-link and generator work.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(target_os = "macos")]
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -18,6 +20,7 @@ use crate::process::{BoundedProcessTermination, run_bounded_process};
 /// headers and a colocated SDK remain readable; generator tools retain executable-file-only access. Hosts without an
 /// equivalent process-tree filesystem sandbox fail closed.
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
 fn run_hermetic_process(
     executable: &Path,
     executable_read_path: &Path,
@@ -68,6 +71,7 @@ fn run_hermetic_process(
 
 /// Refuse publisher execution when no process-tree filesystem confinement primitive is implemented.
 #[cfg(not(target_os = "macos"))]
+#[allow(clippy::too_many_arguments)]
 fn run_hermetic_process(
     _executable: &Path,
     _executable_read_path: &Path,
@@ -1093,8 +1097,7 @@ mod tool_execution {
 
             let fact_owner = tempdir()?;
             let product_root = tempdir()?;
-            let executable_owner_identity =
-                crate::publisher_owner::publisher_owner_identity(executable_owner.path(), ["tree-writer"])?;
+            let executable_owner_identity = digest_bytes(b"fixture executable owner");
             let tool = RustFactTool {
                 name: "tree-writer".to_string(),
                 target: "aarch64-apple-darwin".to_string(),
@@ -1908,11 +1911,14 @@ mod link_execution {
         Ok((physical, logical))
     }
 
+    /// The physical environment a tool runs with, and its logical, path-free form for the receipt.
+    type MaterializedEnvironment = (BTreeMap<String, std::ffi::OsString>, BTreeMap<String, String>);
+
     /// Materialize the complete environment from literals and admitted input paths.
     fn materialize_environment(
         environment: &BTreeMap<&str, PublisherExecutionEnvironmentValue<'_>>,
         inputs: &BTreeMap<String, PathBuf>,
-    ) -> Result<(BTreeMap<String, std::ffi::OsString>, BTreeMap<String, String>), PublisherExecutionError> {
+    ) -> Result<MaterializedEnvironment, PublisherExecutionError> {
         let mut physical = BTreeMap::new();
         let mut logical = BTreeMap::new();
         for (name, value) in environment {
