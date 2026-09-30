@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use oven_model::manifest::{
     RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactExecutable, RustFactLibrary, RustFactLibraryKind,
@@ -182,13 +182,9 @@ fn harvest_contract_preserves_tool_probe_and_product_identities() -> TestResult 
     Ok(())
 }
 
-#[test]
-/// A build script's compiler probes propose their answers as `cfg` with the probe digests as evidence. A probe's
-/// own output left in OUT_DIR is neither `out` nor a product, while a file the script wrote stays `out`. Units
-/// that asked differently but answered the same fold into one fact; different answers still conflict, and a
-/// probe of another target stays tool work.
-fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
-    let probed_out = || OvenLegacyCargoSelectedGeneratedOutput {
+/// Retained output containing one generated input and one compiler-probe output.
+fn probed_output() -> OvenLegacyCargoSelectedGeneratedOutput {
+    OvenLegacyCargoSelectedGeneratedOutput {
         relative_root: "generated-outputs/probed".to_string(),
         digest: selected_graph_sha256(b"probed tree"),
         members: vec![
@@ -201,8 +197,15 @@ fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
                 digest: selected_graph_sha256(b"probe metadata"),
             },
         ],
-    };
-    let unit = library("rustix", "1.1.5", &["std"]);
+    }
+}
+
+/// Build the paired host/target selection used to prove compiler-probe folding and refusal behavior.
+fn probe_only_selection(
+    unit: &OvenLegacyCargoSelectedUnit,
+    host_answers: &[&str],
+    host_probe_target: &str,
+) -> OvenLegacyCargoSelectedUnitCapture {
     let probe = |out_dir: &str, target: &str, spelling: &[u8]| OvenLegacyCargoBuildScriptToolProbe {
         package_id: unit.package_id.clone(),
         out_dir: PathBuf::from(out_dir),
@@ -214,39 +217,46 @@ fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
             digest: selected_graph_sha256(b"probe metadata"),
         }),
     };
-    let selection = |host_answers: &[&str], host_probe_target: &str| {
-        let mut target_facts = facts(&["static_assertions"], Some(probed_out()));
-        target_facts.out_dir = PathBuf::from("/transient/target-out");
-        let mut host_facts = facts(host_answers, Some(probed_out()));
-        host_facts.out_dir = PathBuf::from("/transient/host-out");
-        let mut selected = capture(vec![
-            (unit.clone(), Some(target_facts)),
-            (unit.clone(), Some(host_facts)),
-        ]);
-        // An earlier probe of the target unit wrote other bytes to the same path before the last one replaced
-        // them, as rustix's feature probes do; the member must match one probe's bytes, not every probe's.
-        let mut earlier = probe(
+    let mut target_facts = facts(&["static_assertions"], Some(probed_output()));
+    target_facts.out_dir = PathBuf::from("/transient/target-out");
+    let mut host_facts = facts(host_answers, Some(probed_output()));
+    host_facts.out_dir = PathBuf::from("/transient/host-out");
+    let mut selected = capture(vec![
+        (unit.clone(), Some(target_facts)),
+        (unit.clone(), Some(host_facts)),
+    ]);
+    // An earlier probe of the target unit wrote other bytes to the same path before the last one replaced
+    // them, as rustix's feature probes do; the member must match one probe's bytes, not every probe's.
+    let mut earlier = probe(
+        "/transient/target-out",
+        "x86_64-unknown-linux-gnu",
+        b"earlier probe at opt-level 3",
+    );
+    if let Some(output) = earlier.output.as_mut() {
+        output.digest = selected_graph_sha256(b"earlier probe metadata");
+    }
+    selected.build_script_tool_probes.extend([
+        earlier,
+        probe(
             "/transient/target-out",
             "x86_64-unknown-linux-gnu",
-            b"earlier probe at opt-level 3",
-        );
-        if let Some(output) = earlier.output.as_mut() {
-            output.digest = selected_graph_sha256(b"earlier probe metadata");
-        }
-        selected.build_script_tool_probes.extend([
-            earlier,
-            probe(
-                "/transient/target-out",
-                "x86_64-unknown-linux-gnu",
-                b"probe at opt-level 3",
-            ),
-            probe("/transient/host-out", host_probe_target, b"probe at opt-level 0"),
-        ]);
-        selected
-    };
+            b"probe at opt-level 3",
+        ),
+        probe("/transient/host-out", host_probe_target, b"probe at opt-level 0"),
+    ]);
+    selected
+}
+
+#[test]
+/// A build script's compiler probes propose their answers as `cfg` with the probe digests as evidence. A probe's
+/// own output left in OUT_DIR is neither `out` nor a product, while a file the script wrote stays `out`. Units
+/// that asked differently but answered the same fold into one fact; different answers still conflict, and a
+/// probe of another target stays tool work.
+fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
+    let unit = library("rustix", "1.1.5", &["std"]);
 
     let report = harvest_registry_units(
-        &selection(&["static_assertions"], "x86_64-unknown-linux-gnu"),
+        &probe_only_selection(&unit, &["static_assertions"], "x86_64-unknown-linux-gnu"),
         &evidence(),
         "release",
     )?;
@@ -279,7 +289,7 @@ fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
     assert!(written["rust"]["facts"][0].get("tool").is_none());
 
     let disagreeing = harvest_registry_units(
-        &selection(&["other_answer"], "x86_64-unknown-linux-gnu"),
+        &probe_only_selection(&unit, &["other_answer"], "x86_64-unknown-linux-gnu"),
         &evidence(),
         "release",
     )?;
@@ -292,7 +302,7 @@ fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
     );
 
     let foreign = harvest_registry_units(
-        &selection(&["static_assertions"], "aarch64-apple-darwin"),
+        &probe_only_selection(&unit, &["static_assertions"], "aarch64-apple-darwin"),
         &evidence(),
         "release",
     )?;
@@ -305,7 +315,7 @@ fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
     assert!(foreign.refusals.iter().any(|refusal| refusal.package == "rustix"));
 
     // A file at a probe's output path holding other bytes was rewritten by the script: refuse, never choose.
-    let mut rewritten = selection(&["static_assertions"], "x86_64-unknown-linux-gnu");
+    let mut rewritten = probe_only_selection(&unit, &["static_assertions"], "x86_64-unknown-linux-gnu");
     for probe in &mut rewritten.build_script_tool_probes {
         if let Some(output) = probe.output.as_mut() {
             output.digest = selected_graph_sha256(b"what the probe wrote before the script replaced it");
@@ -1778,17 +1788,16 @@ fn capture_with_members(members: Vec<OvenLegacyCargoInspectionSourceMember>) -> 
     )])
 }
 
-#[test]
-fn the_written_report_is_canonical_and_idempotent() -> TestResult {
-    let retained = tempdir()?;
-    let member_root = retained.path().join("generated-outputs/abc/nested");
+/// Materialize the retained members and capture used by the canonical report persistence test.
+fn canonical_report_fixture(retained: &Path) -> Result<OvenLegacyCargoSelectedUnitCapture, std::io::Error> {
+    let member_root = retained.join("generated-outputs/abc/nested");
     fs::create_dir_all(&member_root)?;
     fs::write(member_root.join("generated.rs"), b"pub mod generated {}\n")?;
     fs::write(
-        retained.path().join("generated-outputs/abc/private.rs"),
+        retained.join("generated-outputs/abc/private.rs"),
         b"pub mod private {}\n",
     )?;
-    let capture = capture(vec![
+    Ok(capture(vec![
         (
             library("serde_core", "1.0.228", &["std"]),
             Some(facts(
@@ -1810,7 +1819,13 @@ fn the_written_report_is_canonical_and_idempotent() -> TestResult {
             )),
         ),
         (library("quote", "1.0.0", &[]), None),
-    ]);
+    ]))
+}
+
+#[test]
+fn the_written_report_is_canonical_and_idempotent() -> TestResult {
+    let retained = tempdir()?;
+    let capture = canonical_report_fixture(retained.path())?;
     let report = harvest_registry_units(&capture, &evidence(), "release")?;
     let output = tempdir()?;
     let written = write_harvest_report(&report, output.path(), retained.path())?;
