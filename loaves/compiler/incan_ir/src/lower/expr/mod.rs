@@ -2918,7 +2918,8 @@ impl AstLowering {
 
             // ---- Match expressions (delegated to patterns submodule) ----
             ast::Expr::Match(s, arms) => {
-                let scrutinee = self.lower_expr_spanned(s)?;
+                let mut scrutinee = self.lower_expr_spanned(s)?;
+                self.pin_settled_in_place_result_constructors(s.span, &mut scrutinee);
                 let in_place = self.match_is_in_place(s.span, &scrutinee);
                 let scrutinee = if in_place {
                     Self::in_place_scrutinee(scrutinee)

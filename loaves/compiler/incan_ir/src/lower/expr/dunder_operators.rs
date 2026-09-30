@@ -7,7 +7,9 @@
 //! `a != b`. The other comparison dunders and `__str__` are methods of a source type or trait, except through a type
 //! parameter's builtin bound: `T with Ord`, `T with Eq` and `T with Display` lower to Rust's `Ord`, `PartialEq` and
 //! `Display`, which name no dunder, so there `a.__lt__(b)` is `a < b` and `value.__str__()` is the value's display
-//! text.
+//! text. An ordering dunder of the builtin `Ord` trait is also its operator on a type this compilation emits no
+//! projection of that dunder for: one that derives `Ord`, whose Rust `PartialOrd` is derived, and an adopter declared
+//! in another module, whose Rust `PartialOrd` calls the dunder its `Ord` impl has.
 
 use super::super::super::TypedExpr;
 use super::super::super::expr::{
@@ -27,8 +29,10 @@ impl AstLowering {
     ///
     /// `dispatch` is the checked dispatch of the call. `__ne__` is rewritten when its dispatch reaches the builtin
     /// `Eq` trait's default, which an `Ord` adopter that imports only `Ord` reaches without the trait in scope. The
-    /// other comparison dunders, and `__str__`, are rewritten only for a receiver whose type is a type parameter and
-    /// whose dispatch goes through a trait the builtin registry maps to a Rust trait.
+    /// ordering dunders are rewritten for a receiver whose type is a type parameter and whose dispatch goes through a
+    /// trait the builtin registry maps to a Rust trait, and for a dispatch through the builtin `Ord` trait that does
+    /// not reach a local adopter's projection (a derived `Ord`, or an adopter from another module). `__str__` is
+    /// rewritten only through a type parameter's bound.
     pub(in crate::lower) fn lower_dunder_as_operation(
         &self,
         method: &str,
@@ -48,17 +52,23 @@ impl AstLowering {
             };
             return Ok((text, IrType::String));
         }
-        let through_eq_default = matches!(dispatch, Some(IrMethodDispatch::Trait(trait_dispatch))
-                if builtin_traits::from_str(trait_declaration_name(trait_dispatch)) == Some(TraitId::Eq)
+        let reaches_stdlib_trait = |trait_id: TraitId| {
+            matches!(dispatch, Some(IrMethodDispatch::Trait(trait_dispatch))
+                if builtin_traits::from_str(trait_declaration_name(trait_dispatch)) == Some(trait_id)
                     && trait_dispatch.trait_module_path.as_ref().and_then(|path| path.first()).map(String::as_str)
-                        == Some(stdlib::STDLIB_ROOT));
+                        == Some(stdlib::STDLIB_ROOT))
+        };
+        let through_eq_default = reaches_stdlib_trait(TraitId::Eq);
+        let ordered = through_builtin_bound
+            || (reaches_stdlib_trait(TraitId::Ord)
+                && !self.receiver_adopts_the_builtin_source_trait(&receiver, dispatch));
         let op = match magic_methods::comparison_from_str(method) {
             Some(ComparisonDunderId::Eq) => Some(BinOp::Eq),
             Some(ComparisonDunderId::Ne) if through_builtin_bound || through_eq_default => Some(BinOp::Ne),
-            Some(ComparisonDunderId::Lt) if through_builtin_bound => Some(BinOp::Lt),
-            Some(ComparisonDunderId::Le) if through_builtin_bound => Some(BinOp::Le),
-            Some(ComparisonDunderId::Gt) if through_builtin_bound => Some(BinOp::Gt),
-            Some(ComparisonDunderId::Ge) if through_builtin_bound => Some(BinOp::Ge),
+            Some(ComparisonDunderId::Lt) if ordered => Some(BinOp::Lt),
+            Some(ComparisonDunderId::Le) if ordered => Some(BinOp::Le),
+            Some(ComparisonDunderId::Gt) if ordered => Some(BinOp::Gt),
+            Some(ComparisonDunderId::Ge) if ordered => Some(BinOp::Ge),
             _ => None,
         };
         let single_positional =

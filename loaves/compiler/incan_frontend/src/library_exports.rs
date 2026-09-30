@@ -1520,6 +1520,9 @@ fn checked_trait_export(trait_decl: &TraitDecl, checker: &TypeChecker) -> Option
 }
 
 /// Extract the checked public enum contract, including value-enum metadata when present.
+///
+/// Each variant publishes the payload its own enum declares, as the enum's checked metadata records it, whatever other
+/// enum in scope shares the variant's name.
 fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<CheckedEnumExport> {
     let symbol = checker.lookup_symbol(enum_decl.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Enum(enum_info)) = &symbol.kind else {
@@ -1528,12 +1531,12 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
 
     let mut variants = Vec::new();
     for variant in &enum_decl.variants {
-        let fields = checker
-            .lookup_symbol(variant.node.name.as_str())
-            .and_then(|symbol| match &symbol.kind {
-                SymbolKind::Variant(info) => Some(info.fields.clone()),
-                _ => None,
-            })
+        // Not the bare variant name's symbol: that binds whichever enum declared the name first, and it keeps a payload
+        // type declared after the enum as a placeholder.
+        let fields = enum_info
+            .variant_fields
+            .get(&variant.node.name)
+            .cloned()
             .unwrap_or_else(|| {
                 variant
                     .node

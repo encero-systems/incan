@@ -3,9 +3,10 @@
 //! bounds reach the type's own `__eq__` and `__lt__`, and the defaults `Ord` supplies for the rest, or the type's own
 //! override of one. A dunder called through a builtin bound is the operation it defines, `__ne__` reaches the `Eq`
 //! default of an adopter that imports only `Ord`, a trait default passes `self` to a method that takes its own type by
-//! value, and a trait default's call of a method its trait declares has the declared result.
+//! value, and a trait default's call of a method its trait declares has the declared result. An adopter declared in
+//! another module, and a type that derives `Ord`, get the ordering dunders as their operators.
 
-use super::generated_programs::{run_project_module_with_stdlib, run_with_stdlib};
+use super::generated_programs::{run_modules_with_stdlib, run_project_module_with_stdlib, run_with_stdlib};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -499,5 +500,159 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(stdout, "x!\n6\nhi LABEL\n[4, 4]\n");
+    Ok(())
+}
+
+/// A type imported from another module that adopts `std.derives.comparison.Ord` or `Eq`, under any spelling, gets the
+/// dunders of the trait in the importing module, which need not import the trait: `__ge__`, `__le__`, `__gt__` and
+/// `__ne__` compare as its operators do, and an adopter's own `__ge__` override is the one `__ge__` reaches. A type
+/// imported from another module that derives `Ord` compares the same way.
+#[test]
+fn comparison_dunders_of_an_adopter_from_another_module_build_issue1561() -> TestResult {
+    let stdout = run_modules_with_stdlib(
+        &[(
+            "scores",
+            r#"
+from std.derives import comparison
+from std.derives.comparison import Eq, Ord
+from std.derives.comparison import Ord as Ordered
+
+
+pub model Score with Ord:
+    pub points: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.points == other.points
+
+    def __lt__(self, other: Self) -> bool:
+        return self.points < other.points
+
+
+pub enum Level with Ordered:
+    Low
+    High
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+
+pub model Qualified with comparison.Ord:
+    pub v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+pub model Reversed with Ord:
+    pub v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v > other.v
+
+    def __ge__(self, other: Self) -> bool:
+        return false
+
+
+pub model Key with Eq:
+    pub id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.id == other.id
+
+
+@derive(Eq, Ord)
+pub model Derived:
+    pub n: int
+"#,
+        )],
+        r#"
+from scores import Score, Level, Qualified, Reversed, Key, Derived
+
+
+def main() -> None:
+    println(Score(points=2).__ge__(Score(points=3)))
+    println(Score(points=2).__le__(Score(points=3)))
+    println(Score(points=2).__gt__(Score(points=3)))
+    println(Score(points=2).__ne__(Score(points=3)))
+    println(Level.High.__gt__(Level.Low))
+    println(Qualified(v=2).__le__(Qualified(v=1)))
+    println(Reversed(v=1).__ge__(Reversed(v=0)))
+    println(Reversed(v=1).__le__(Reversed(v=0)))
+    println(Key(id=1).__ne__(Key(id=2)))
+    println(Derived(n=1).__ge__(Derived(n=2)))
+"#,
+    )?;
+    assert_eq!(
+        stdout,
+        "false\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\n"
+    );
+    Ok(())
+}
+
+/// A type that derives `Ord` implements Rust's ordering traits from the derive, and has no source `Ord` impl, so each
+/// ordering dunder called on it is the operator it defines: `a.__ge__(b)` is `a >= b`, for a model, an enum, a newtype
+/// and a generic model, on a value and on `self` in a method. `__ne__` and `__eq__` are `!=` and `==`.
+#[test]
+fn dunders_of_a_derived_ord_are_its_operators_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+@derive(Eq, Ord)
+model Score:
+    points: int
+
+    def at_least(self, other: Score) -> bool:
+        return self.__ge__(other)
+
+
+@derive(Eq, Ord)
+enum Level:
+    Low
+    High
+
+
+@derive(Eq, Ord)
+model Pair[T]:
+    left: T
+    right: T
+
+
+@derive(Eq, Ord)
+type Rank = newtype int
+
+
+def main() -> None:
+    a = Score(points=2)
+    b = Score(points=3)
+    println(a.__ge__(b))
+    println(a.__le__(b))
+    println(a.__gt__(b))
+    println(a.__lt__(b))
+    println(a.__ne__(b))
+    println(a.__eq__(b))
+    println(a.__ge__(b) == (a >= b))
+    println(b.at_least(a))
+    println(Level.High.__gt__(Level.Low))
+    println(Pair(left=1, right=2).__lt__(Pair(left=1, right=3)))
+    println(Rank(1).__ge__(Rank(2)))
+"#,
+    )?;
+    assert_eq!(
+        stdout,
+        "false\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\n"
+    );
     Ok(())
 }

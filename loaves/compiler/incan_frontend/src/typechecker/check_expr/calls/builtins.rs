@@ -240,10 +240,14 @@ impl TypeChecker {
                 ConstructorId::Ok | ConstructorId::Err => {
                     // The payload is checked against the payload type of the `Result` the destination expects, so an
                     // integer literal in `Ok(1)` at a `Result[float, str]` destination takes the float type (#1859).
-                    let expected_payload =
-                        Self::matching_collection_constructor_args(expected_return_ty, CollectionTypeId::Result, 2)
-                            .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Err)))
-                            .cloned();
+                    let expected_sides =
+                        Self::matching_collection_constructor_args(expected_return_ty, CollectionTypeId::Result, 2);
+                    let expected_payload = expected_sides
+                        .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Err)))
+                        .cloned();
+                    let expected_open_side = expected_sides
+                        .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Ok)))
+                        .cloned();
                     let arg_types = match (expected_payload, args) {
                         (Some(expected_payload), [CallArg::Positional(expr)]) => {
                             self.call_argument_depth += 1;
@@ -273,6 +277,24 @@ impl TypeChecker {
                         .unwrap_or(ResolvedType::Unknown);
                     let inferred_arg = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
 
+                    // The side the constructor leaves open is the side its destination gives (#1561). A side the
+                    // call still infers, the callee's own type parameter, stays open here, so the call's type
+                    // arguments come from all of its arguments before that side is settled (`pick(Err(2), 5)` for
+                    // `def pick[T](r: Result[T, int], d: T)` builds its `Err` with the `int` that `d` fixes). With no
+                    // destination side, the side is the enclosing function's.
+                    let (current_ok, current_err) = match expected_open_side {
+                        Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) if cid == ConstructorId::Ok => {
+                            (current_ok, ResolvedType::Unknown)
+                        }
+                        Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) => {
+                            (ResolvedType::Unknown, current_err)
+                        }
+                        Some(side) if !matches!(side, ResolvedType::Unknown) && cid == ConstructorId::Ok => {
+                            (current_ok, side)
+                        }
+                        Some(side) if !matches!(side, ResolvedType::Unknown) => (side, current_err),
+                        _ => (current_ok, current_err),
+                    };
                     let (ok_ty, err_ty) = if cid == ConstructorId::Ok {
                         // `Ok(...)` must reflect the payload type so return checking can catch mismatches against the
                         // declared `Result[T, E]`.

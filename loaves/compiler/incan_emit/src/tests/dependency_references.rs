@@ -8,7 +8,7 @@ use super::packages::{TestResult, parse, provider_plan_of, publish_package};
 use crate::IrCodegen;
 
 /// Publish `provider` as the dependency `name`, generate `consumer` against it, and run the consumer.
-fn run_consumer(name: &str, provider: &str, consumer: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub(super) fn run_consumer(name: &str, provider: &str, consumer: &str) -> Result<String, Box<dyn std::error::Error>> {
     let (manifest, provider_code) = publish_package(name, provider, &[])?;
     let program = parse(consumer)?;
     let mut codegen = IrCodegen::new();

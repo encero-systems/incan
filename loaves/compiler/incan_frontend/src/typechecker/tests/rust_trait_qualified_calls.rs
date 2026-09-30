@@ -2,7 +2,8 @@
 //!
 //! `Trait.method(receiver, args...)` passes its receiver explicitly. The Rust declaration's receiver decides whether
 //! that argument is borrowed exclusively, shared, or moved; these tests pin that the typechecker records that mode
-//! as the first argument's boundary coercion when metadata declares it, and refuses the call when it cannot know.
+//! as the first argument's boundary coercion when metadata declares it, refuses the call when it cannot know, and
+//! leaves a call whose receiver is of unknown type as open as it is without metadata.
 
 use super::*;
 use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc, RustTraitInfo, RustTypeInfo};
@@ -321,4 +322,57 @@ pub class Signer:
         self.handle.update(chunk.as_slice())
 "#,
     );
+}
+
+/// #1561: a receiver of unknown type leaves a trait-qualified call as open as it is without metadata.
+///
+/// The guard `borrow_mut()` returns through an uninspected `Rc[RefCell[...]]` has no type the checker knows, as in the
+/// standard library's `Read.by_ref(cursor).take(size)` reads. It may be `Self` or a guard that reaches it, so no
+/// receiver borrow is recorded (the backend keeps its guard reborrow) and the result is not `&mut ?`, whose methods
+/// were refused: the call's type is unknown and `take` stays open.
+#[test]
+fn an_unknown_receiver_leaves_the_trait_qualified_call_open_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+from rust::demo import Engine, Mac
+
+pub class Signer:
+    handle: Rc[RefCell[Engine]]
+
+    def limited(self, size: u64) -> None:
+        mut guard = self.handle.borrow_mut()
+        _ = Mac.by_ref(guard).take(size)
+"#;
+    let (mut checker, _workspace) = checker_with_seeded_trait(vec![
+        trait_method("by_ref", "&mut self", &[], "&mut Self"),
+        trait_method("take", "self", &[("limit", "u64")], "Take<Self>"),
+    ])?;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex failed: {errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse failed: {errors:?}")))?;
+    checker.check_program(&ast).map_err(|errors| {
+        std::io::Error::other(format!(
+            "a trait-qualified call on a receiver of unknown type should stay open: {errors:?}"
+        ))
+    })?;
+    let call = "Mac.by_ref(guard)";
+    let call_start = source.find(call).ok_or("fixture must call Mac.by_ref(guard)")?;
+    let receiver_start = call_start + "Mac.by_ref(".len();
+    assert!(
+        !checker
+            .type_info()
+            .rust
+            .arg_coercions
+            .contains_key(&(receiver_start, receiver_start + "guard".len())),
+        "no receiver borrow is recorded for a receiver of unknown type"
+    );
+    let call_ty = checker
+        .type_info()
+        .expr_type(Span::new(call_start, call_start + call.len()))
+        .cloned();
+    assert!(
+        matches!(call_ty, None | Some(ResolvedType::Unknown)),
+        "the call's type stays unknown, got {call_ty:?}"
+    );
+    Ok(())
 }

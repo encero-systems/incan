@@ -39,6 +39,7 @@ use incan_lang::lang::surface::{
     frozen_set_methods, iterator_methods, list_methods, result_methods, set_methods,
 };
 use incan_lang::lang::text_codecs::{self, DecodeErrorsPolicy};
+use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, IntegerHelperOperation, NumericFamily};
@@ -720,6 +721,26 @@ impl TypeChecker {
         }
     }
 
+    /// Settle the `Result` sides an `Ok(...)` or `Err(...)` leaves open where the value is used in place, as the
+    /// iterable of a `for` statement or the subject of a `match`, and record the settled type as the value's own
+    /// (#1561).
+    ///
+    /// Nothing binds such a value, so no annotation spells the side the constructor leaves open: it is settled as for a
+    /// constructor bound to a local (see [`Self::settle_open_constructor_side`]), so `Err(m) => println(m)` over
+    /// `match Ok(1):` in a function returning no `Result` is checked against `None`. Lowering spells the recorded type
+    /// on the constructor.
+    pub(in crate::typechecker) fn settle_open_constructor_sides_in_place(
+        &mut self,
+        value: &Spanned<Expr>,
+        ty: ResolvedType,
+    ) -> ResolvedType {
+        let settled = self.settle_open_constructor_side(value, ty.clone());
+        if settled != ty {
+            self.record_expr_type(value.span, settled.clone());
+        }
+        settled
+    }
+
     /// Settle the open `Result` sides of the member type `member_ty` that one collection literal's `members` share,
     /// each member in turn (see [`Self::settle_open_constructor_side`]).
     fn settle_open_member_sides<'a>(
@@ -774,24 +795,31 @@ impl TypeChecker {
                     && sides.len() == 2
                     && matches!(sides[side], ResolvedType::Unknown) =>
             {
-                sides[side] = match self.symbols.enclosing_declared_return_type() {
-                    Some(ResolvedType::Generic(returned, returned_sides))
-                        if collection_type_id(returned.as_str()) == Some(CollectionTypeId::Result)
-                            && returned_sides.len() == 2 =>
-                    {
-                        returned_sides[side].clone()
-                    }
-                    _ => ResolvedType::Unit,
-                };
+                sides[side] = self.open_result_side_type(side);
                 ResolvedType::Generic(name, sides)
             }
             other => other,
         }
     }
 
+    /// The type an open side `side` (0 for success, 1 for error) of an `Ok(...)` or `Err(...)` is built with when
+    /// nothing fixes it: that side of the enclosing function's `Result` return type, or `None` when the function
+    /// returns no `Result` (#1561).
+    pub(in crate::typechecker) fn open_result_side_type(&self, side: usize) -> ResolvedType {
+        match self.symbols.enclosing_declared_return_type() {
+            Some(ResolvedType::Generic(returned, returned_sides))
+                if collection_type_id(returned.as_str()) == Some(CollectionTypeId::Result)
+                    && returned_sides.len() == 2 =>
+            {
+                returned_sides[side].clone()
+            }
+            _ => ResolvedType::Unit,
+        }
+    }
+
     /// Return the `Ok` or `Err` constructor `expr` produces: a call of it, in parentheses, or as the value of an `if`
     /// with an `else` (the first branch that produces one), as lowering finds the constructor a closure returns.
-    fn returned_result_constructor(&self, expr: &Spanned<Expr>) -> Option<ConstructorId> {
+    pub(in crate::typechecker) fn returned_result_constructor(&self, expr: &Spanned<Expr>) -> Option<ConstructorId> {
         match &expr.node {
             Expr::Paren(inner) => self.returned_result_constructor(inner),
             Expr::Call(callee, type_args, call_args) if type_args.is_empty() && call_args.len() == 1 => {
@@ -3269,7 +3297,8 @@ impl TypeChecker {
     /// and `self` moves the value. That mode is recorded as the first argument's Rust boundary coercion, the same fact
     /// lowering and emission already consume for every other inspected Rust parameter, so the emitter never derives
     /// it from the method or trait name. The remaining arguments and the result follow the ordinary trait-method
-    /// validation; a method the trait does not declare is reported here instead of by rustc against generated code.
+    /// validation; a method the trait does not declare is reported here instead of by rustc against generated code. A
+    /// receiver of unknown type records no mode and gives the call a result of unknown type, as without metadata.
     fn resolve_rust_trait_qualified_call(&mut self, call: RustTraitQualifiedCall<'_>) -> ResolvedType {
         let RustTraitQualifiedCall {
             rust_path,
@@ -3317,6 +3346,14 @@ impl TypeChecker {
             self.preserve_unresolved_rust_call_argument_returns(args);
             return ResolvedType::Unknown;
         };
+        // A receiver of unknown type, such as the guard `borrow_mut()` returns when nothing types it, may be the
+        // trait's `Self` or a guard or reference that reaches one. Neither the borrow that turns it into the declared
+        // receiver nor `Self` in the result can be decided, so the call keeps the facts it has without metadata: no
+        // receiver borrow, a result of unknown type, and its arguments handed to Rust as they are (#1561).
+        if Self::is_unknown_behind_references(receiver_ty) {
+            self.preserve_unresolved_rust_call_argument_returns(args);
+            return ResolvedType::Unknown;
+        }
         let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
         if let Some((mutable, _)) = Self::rust_display_borrow_kind(receiver_display.as_str()) {
             let already_borrowed = match receiver_ty {
@@ -3370,6 +3407,15 @@ impl TypeChecker {
         // lowering and emission pair each argument with its own parameter shape.
         self.record_rust_trait_qualified_call_site_params(span, sig, receiver_ty, rust_path);
         ret
+    }
+
+    /// Return whether `ty` is unknown, directly or behind shared and mutable references.
+    fn is_unknown_behind_references(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Unknown => true,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::is_unknown_behind_references(inner),
+            _ => false,
+        }
     }
 
     /// Record the call-site parameters of a trait-qualified call with the receiver parameter in first position.
@@ -7171,10 +7217,11 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        // RFC 023: Method calls on generic type variables are permissive.
-        //
-        // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
-        // At the Incan typechecker level we allow the call and return the same type variable.
+        // RFC 023: the Rust backend infers the bound a method call on a type parameter needs only for `.clone()`
+        // (`T: Clone`), which returns the parameter. Inside the declaration that introduces the parameter, its bounds
+        // are all it has, so any other method no bound declares is refused. A bound whose trait the checker cannot see
+        // (a Rust trait, an unresolved name) may declare it, and the result's type is then unknown rather than the
+        // parameter's. A placeholder of no enclosing declaration stays permissive.
         if self.is_generic_placeholder_type(&base_ty) {
             if let Some(ret) = self.generic_reflection_magic_method_return_type(method) {
                 if let Some(id) = magic_methods::from_str(method) {
@@ -7186,6 +7233,17 @@ impl TypeChecker {
                 }
                 self.validate_reflection_magic_call(method, type_args, args, span);
                 return ret;
+            }
+            if let Some(type_param) = self.rigid_type_param_name(&base_ty)
+                && method != trait_bounds::rust::CLONE_METHOD
+            {
+                if self.active_type_param_bounds_are_visible(type_param)
+                    && !self.active_type_param_bound_declares_member(type_param, method)
+                {
+                    self.errors
+                        .push(errors::type_parameter_method_not_declared(type_param, method, span));
+                }
+                return ResolvedType::Unknown;
             }
             return base_ty.clone();
         }

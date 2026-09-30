@@ -1,8 +1,8 @@
 //! A `Result` or `Option` stays a value across its methods (#1561): a receiver the program reads again after a method
 //! call stays usable, an `unwrap_or` default is a value of the payload type, an observer closure passed to `inspect` or
 //! `inspect_err` takes the payload it observes, and a side of a `Result` that an `Ok(...)` or `Err(...)` leaves open is
-//! built with the type the checker gives it, in a binding, a closure's result, a comprehension and a collection
-//! literal whose other members fix it.
+//! built with the type the checker gives it, in a binding, a closure's result, a comprehension, a collection literal
+//! whose other members fix it, a `match` subject, a loop's iterable and a call argument whose other arguments fix it.
 
 use super::generated_programs::run_with_stdlib;
 
@@ -269,5 +269,124 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(stdout, "2\nX\n15\n2\n2\n0\n4\n5\n");
+    Ok(())
+}
+
+/// An `Ok(...)` or `Err(...)` used in place, as a `match` subject or in a loop's iterable, is built with the side the
+/// checker settles for what it leaves open: `None` in a function that returns no `Result`, where an arm that ignores
+/// that side runs, and the enclosing function's side where it returns one. Parentheses, tuples, sets and nested lists
+/// hold such constructors too.
+#[test]
+fn open_result_sides_of_match_subjects_and_loop_iterables_build_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+def run() -> Result[str, int]:
+    match Ok("a"):
+        Ok(v) => println(v.upper())
+        Err(e) => println(e + 1)
+    for x in [Err(2), Ok("b")]:
+        match x:
+            Ok(v) => println(v)
+            Err(e) => println(e)
+    return Ok("done")
+
+
+def main() -> None:
+    match Ok(1):
+        Ok(v) => println(v)
+        Err(_) => println("e")
+    match (Ok(2)):
+        Ok(v) => println(v)
+        Err(_) => println("e")
+    match Err("only"):
+        Ok(_) => println("ok")
+        Err(m) => println(m)
+    for x in [Ok(3), Err("bad")]:
+        match x:
+            Ok(v) => println(v)
+            Err(m) => println(m)
+    for r, n in [(Ok(4), 1)]:
+        match r:
+            Ok(v) => println(v + n)
+            Err(_) => println("e")
+    for row in [[Err("x")]]:
+        for r in row:
+            match r:
+                Ok(_) => println("ok")
+                Err(m) => println(m)
+    for s in {Ok(6)}:
+        match s:
+            Ok(v) => println(v)
+            Err(_) => println("e")
+    println(run().unwrap_or("none"))
+"#,
+    )?;
+    assert_eq!(stdout, "1\n2\nonly\n3\nbad\n5\nx\n6\nA\n2\nb\ndone\n");
+    Ok(())
+}
+
+/// An `Ok(...)` or `Err(...)` argument of a generic call is built with the type arguments the call infers from all of
+/// its arguments: `pick(Err(2), 5)` builds `Err` with the `int` that `5` fixes `T` to, in a function returning no
+/// `Result` and in one returning another `Result` type alike, for a later, named or non-literal argument, a list of
+/// constructors and a generic method. A constructor passed to a concrete `Result` parameter takes that parameter's
+/// side, and a side no argument fixes is `None`.
+#[test]
+fn constructor_arguments_build_with_the_type_arguments_the_call_infers_issue1561() -> TestResult {
+    let stdout = run_with_stdlib(
+        r#"
+model Picker:
+    n: int
+
+    def pick[T](self, r: Result[T, int], d: T) -> T:
+        return r.unwrap_or(d)
+
+
+def pick[T](r: Result[T, int], d: T) -> T:
+    return r.unwrap_or(d)
+
+
+def pick_first[T](d: T, r: Result[T, int]) -> T:
+    return r.unwrap_or(d)
+
+
+def pick_list[T](rs: list[Result[T, int]], d: T) -> T:
+    return rs[0].unwrap_or(d)
+
+
+def first[T](r: Result[T, int]) -> Option[T]:
+    match r:
+        Ok(v) => return Some(v)
+        Err(_) => return None
+
+
+def show(r: Result[int, str]) -> None:
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)
+
+
+def run() -> Result[str, int]:
+    println(pick(Err(2), 5))
+    show(Err("x"))
+    show(Ok(3))
+    return Ok("done")
+
+
+def main() -> None:
+    println(pick(Err(2), 5))
+    println(pick(Ok(7), 5))
+    println(pick(d=8, r=Err(2)))
+    println(pick_first("a", Err(2)))
+    d = "w"
+    println(pick(Err(2), d))
+    println(pick_list([Err(2)], 9))
+    println(Picker(n=1).pick(Err(2), 10))
+    match first(Err(3)):
+        Some(_) => println("some")
+        None => println("none")
+    println(run().unwrap_or("none"))
+"#,
+    )?;
+    assert_eq!(stdout, "5\n7\n8\na\nw\n9\n10\nnone\n5\nx\n3\ndone\n");
     Ok(())
 }

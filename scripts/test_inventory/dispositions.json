@@ -3186,7 +3186,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/comparison_adopters.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of Eq and Ord adopters that define their dunders, dunder calls through builtin bounds, __ne__ through the Eq supertrait of an Ord-only adopter, and trait defaults calling methods on self, and the dunders of adopters of every spelling and of unimported builtin bounds in a project module (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of Eq and Ord adopters that define their dunders, dunder calls through builtin bounds, __ne__ through the Eq supertrait of an Ord-only adopter, and trait defaults calling methods on self, the dunders of adopters of every spelling and of unimported builtin bounds in a project module, of adopters imported from another module, and of types that derive Ord (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3195,9 +3195,17 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_trait_adopters_of_every_kind.incn",
           "notes": "Compares and sorts enum, newtype, class and generic adopters under an imported, aliased and module-qualified Ord, and a user trait declaring __eq__; the fixture prints each result."
         },
+        "comparison_dunders_of_an_adopter_from_another_module_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_dunders_of_an_adopter_from_another_module",
+          "notes": "Calls the Ord and Eq dunders of adopters imported from another module under every spelling, one overriding __ge__, and of an imported derived Ord; the module fixture prints each result."
+        },
         "comparison_dunders_through_every_spelling_build_in_a_project_module_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_dunders_through_every_spelling.incn",
           "notes": "Checks the program as a project module and calls the dunders of Eq and Ord adopters named through an alias or their module, and of type parameters bounded by unimported Display, Eq and Ord; the fixture prints each result."
+        },
+        "dunders_of_a_derived_ord_are_its_operators_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/dunders_of_a_derived_ord.incn",
+          "notes": "Calls each ordering dunder on derived-Ord models, an enum, a generic model and a newtype, and on self; the fixture prints each result."
         },
         "dunders_through_builtin_bounds_are_their_operations_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/dunders_through_builtin_bounds.incn",
@@ -3238,6 +3246,24 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
         }
       }
+    },
+    "loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs": {
+      "disposition": "retire",
+      "notes": "publishes a library whose enums share variant names, or declare a variant's payload type after the enum, the way a library build publishes it, and builds and runs a consumer against its generated crate with rustc (#1561); retires with the Rust-source backend (#654).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "a_variant_payload_declared_after_its_enum_publishes_its_type_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_enums_sharing_variant_names",
+          "notes": "Publishes an enum whose variant carries a model declared after the enum; the consumer builds the variant from the model and reads the payload's field. The fixture's provider declares the same enum and the consumer prints the field."
+        },
+        "enums_sharing_a_variant_name_publish_each_enums_own_payload_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_enums_sharing_variant_names",
+          "notes": "Publishes a value enum beside payload enums of other arities that share its variant names, in both declaration orders; the consumer constructs, matches and prints each. The fixture's provider adds enums imported from a sibling module."
+        }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs": {
       "disposition": "retire",
@@ -3445,6 +3471,28 @@
         "value_written_to_an_option_place_is_wrapped_in_some_issue1858": {
           "notes": "Asserts a payload value written to an `Option` return type, field, constructor field and list element is `Some(...)`, and an `Option` value is written as it is; the fixture reads each place back.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/value_written_to_option_place_is_wrapped.incn"
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/generic_call_arguments.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of generic calls whose type arguments come from their arguments: a type parameter's value where its bound names the expected trait, arguments binding one type parameter to numeric types that widen to one, and bounded type arguments the call settles or the expected type fixes (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "arguments_binding_one_type_parameter_build_with_the_type_they_widen_to_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/arguments_binding_one_type_parameter_widen_to_one_type.incn",
+          "notes": "Passes an i8 and an int, and an f32 and a float literal, for one type parameter of a function, a generic method and a generic model's constructor, in both orders; the fixture prints each result."
+        },
+        "bounded_type_arguments_the_call_settles_or_expects_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/bounded_type_arguments_the_call_settles_or_expects.incn",
+          "notes": "Calls Display-bounded generics whose type argument an Err settles inside a Result function, an explicit type argument fixes, or an annotated binding fixes; the fixture prints each result."
+        },
+        "type_parameter_values_build_where_a_bound_makes_them_the_expected_type_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/type_parameter_values_where_a_bound_makes_them_the_expected_type.incn",
+          "notes": "Passes a bounded type parameter's value to a trait-typed parameter, clones it, returns it as an Option and passes it to a callee's type parameter; the fixture prints each result."
         }
       },
       "twin": ""
@@ -3742,7 +3790,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/result_method_receivers.rs": {
       "disposition": "retire",
-      "notes": "builds and runs the generated Rust of Result and Option receivers read again after a method call, unwrap_or defaults, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open in bindings, closures, comprehensions and collection literals (#1561); retires with the Rust-source backend.",
+      "notes": "builds and runs the generated Rust of Result and Option receivers read again after a method call, unwrap_or defaults, closures observing a Result payload through inspect and inspect_err, and Result sides an Ok(...) or Err(...) leaves open in bindings, closures, comprehensions, collection literals, match subjects, loop iterables and generic call arguments (#1561); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3755,9 +3803,17 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/collection_literals_of_constructors_share_one_result_type.incn",
           "notes": "Reads both sides of list, nested list and dict literals mixing Ok and Err, and a list mixing None and Some; the fixture prints each result."
         },
+        "constructor_arguments_build_with_the_type_arguments_the_call_infers_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/constructor_arguments_take_the_type_arguments_the_call_infers.incn",
+          "notes": "Passes Ok and Err to generic functions and a generic method whose other arguments fix the open side, and to a concrete Result parameter, inside and outside a Result function; the fixture prints each result."
+        },
         "open_result_sides_build_with_the_type_the_checker_gives_them_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/open_result_sides_take_the_enclosing_function_side.incn",
           "notes": "Reads the open side of an or_else result and a bound Ok inside a Result function and leaves it unread elsewhere; the fixture prints each result."
+        },
+        "open_result_sides_of_match_subjects_and_loop_iterables_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/open_result_sides_of_match_subjects_and_loop_iterables.incn",
+          "notes": "Matches on Ok and Err subjects and loops over lists, tuples, nested lists and sets of constructors inside and outside a Result function; the fixture prints each result."
         },
         "option_and_result_unwrap_or_keep_their_values_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn",
@@ -3790,6 +3846,20 @@
           "notes": "Compiles a module named `gen` reached by `from gen import ...` and `import gen`; the named fixture imports and calls it both ways."
         }
       }
+    },
+    "loaves/compiler/incan_emit/src/tests/rust_trait_unknown_receivers.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of trait-qualified `Read.by_ref` calls on a receiver of unknown type with `std::io::Read` inspected: a bounded read through a RefCell guard and an adapter over the reader it returns (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "bounded_reads_through_an_untyped_guard_build_with_read_inspected_issue1561": {
+          "twin": "",
+          "notes": "open (harness-deps): the assertion is that `Read.by_ref(cursor).take(size).read_to_end(out)` and `BufReader.new(Read.by_ref(cursor))` over the guard `borrow_mut()` returns build and read 4, 2 and 3 bytes with `std::io::Read` inspected, as without metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_read_by_ref_through_a_field_guard.incn` carries the `Buffer` class and prints the three lengths. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+        }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_emit/src/tests/slice_hooks.rs": {
       "disposition": "retire",
@@ -6408,6 +6478,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/enum_variant_exports.rs": {
+      "disposition": "keep",
+      "notes": "typechecker tests of the variants a checked module publishes for its enums: the checked export, the checked API and the library manifest record each enum's own payloads when enums share variant names, beside enums imported from a sibling module and for a payload type declared after the enum (#1561); typechecker and library manifests only, no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/error_display.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6459,6 +6537,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/frozen_collection_reads.rs": {
       "disposition": "keep",
       "notes": "typechecker tests of the reads a `const` frozen collection answers (membership, `FrozenSet.contains`, `FrozenList` indexing, #1757); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/generic_call_type_arguments.rs": {
+      "disposition": "keep",
+      "notes": "typechecker tests of a type parameter's values and methods inside its declaration and of the type arguments a generic call's arguments bind or leave open (#1561); typechecker only, no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

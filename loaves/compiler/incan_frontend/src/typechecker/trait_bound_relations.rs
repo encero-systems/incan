@@ -455,6 +455,57 @@ impl TypeChecker {
             .then_some(name.as_str())
     }
 
+    /// Whether the checker sees every method the bounds of the active type parameter `placeholder_name` give it: each
+    /// bound names a trait whose declaration it has, or a `CallableN` trait (#1561).
+    ///
+    /// A bound on a Rust trait, or on a trait the checker cannot resolve, may declare methods the checker does not
+    /// know, so a method call through such a parameter is left to the Rust compiler.
+    pub(in crate::typechecker) fn active_type_param_bounds_are_visible(&self, placeholder_name: &str) -> bool {
+        let Some(bounds) = self
+            .current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(placeholder_name))
+        else {
+            return false;
+        };
+        bounds.iter().all(|bound| {
+            self.lookup_trait_adoption_info(bound).is_some() || self.callable_trait_for_bound(bound).is_some()
+        })
+    }
+
+    /// Whether a trait a bound of the active type parameter `placeholder_name` names, or one of its supertraits,
+    /// declares a member called `member`: a method, a method alias or a property (#1561).
+    ///
+    /// A method call through such a bound that does not resolve failed for a reason reported where it arises (two
+    /// supertraits that disagree on the member), not because no bound declares it.
+    pub(in crate::typechecker) fn active_type_param_bound_declares_member(
+        &self,
+        placeholder_name: &str,
+        member: &str,
+    ) -> bool {
+        let Some(bounds) = self
+            .current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(placeholder_name))
+        else {
+            return false;
+        };
+        let declares = |info: &crate::symbols::TraitInfo| {
+            info.methods.contains_key(member)
+                || info.method_aliases.contains_key(member)
+                || info.properties.contains_key(member)
+        };
+        bounds.iter().any(|bound| {
+            self.lookup_trait_adoption_info(bound).is_some_and(declares)
+                || self
+                    .semantic_supertrait_closure(&bound.name)
+                    .iter()
+                    .any(|(name, _)| self.lookup_semantic_trait_info(name).is_some_and(declares))
+        })
+    }
+
     /// Check whether an active generic placeholder already carries the bound required by a nested generic call.
     pub(in crate::typechecker) fn active_type_param_satisfies_bound_info(
         &self,
@@ -576,6 +627,9 @@ impl TypeChecker {
         if self.type_bound_names_match(active, required) && self.type_bound_args_match(active, required, bindings) {
             return true;
         }
+        if self.builtin_comparison_bound_implies(active, required) {
+            return true;
+        }
 
         let Some(active_trait) = self.lookup_semantic_trait_info(&active.name) else {
             return false;
@@ -607,6 +661,42 @@ impl TypeChecker {
                 self.type_bound_names_match(&candidate, required)
                     && self.type_bound_args_match(&candidate, required, bindings)
             })
+    }
+
+    /// Whether a bound on the builtin `Eq` or `Ord` implies the builtin bound `required`, as Rust's `Eq: PartialEq` and
+    /// `Ord: Eq + PartialOrd` do (#1561).
+    ///
+    /// A module that names the builtin without importing it binds a stub that declares no supertraits, so `T with Ord`
+    /// did not meet a callee's `T with Eq`, although the generated Rust bound does. The relation is the one the derive
+    /// table records for `@derive(Eq)` and `@derive(Ord)`, which bring exactly those traits with them.
+    fn builtin_comparison_bound_implies(&self, active: &TypeBoundInfo, required: &TypeBoundInfo) -> bool {
+        let Some(active_derive) = [TraitId::Eq, TraitId::Ord]
+            .into_iter()
+            .find(|trait_id| self.bound_names_builtin_trait(active, *trait_id))
+            .and_then(|trait_id| derives::from_str(builtin_traits::as_str(trait_id)))
+        else {
+            return false;
+        };
+        derives::implied_derives(active_derive).iter().any(|implied| {
+            builtin_traits::from_str(derives::as_str(*implied))
+                .is_some_and(|trait_id| self.bound_names_builtin_trait(required, trait_id))
+        })
+    }
+
+    /// Whether a checked bound names the builtin trait `trait_id` (see [`Self::bound_is_builtin_trait`]), the
+    /// builtin's own stub that a module binds without importing it included.
+    fn bound_names_builtin_trait(&self, bound: &TypeBoundInfo, trait_id: TraitId) -> bool {
+        if self.bound_is_builtin_trait(bound, trait_id) {
+            return true;
+        }
+        bound.module_path.is_none()
+            && self.import_binding_path(&bound.name).is_none()
+            && builtin_traits::from_str(Self::type_bound_source_name(bound)) == Some(trait_id)
+            && self
+                .symbols
+                .lookup(&bound.name)
+                .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+                .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin)
     }
 
     /// Check whether `ty` satisfies a nominal trait bound `bound_trait` under RFC 042 semantics.

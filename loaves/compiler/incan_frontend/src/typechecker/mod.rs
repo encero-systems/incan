@@ -3431,18 +3431,48 @@ impl TypeChecker {
     /// Dependency types retain the spelling used in their declaring module (for example `json.Serialize`) together
     /// with the provider module and source trait name. That qualified spelling is not a consumer binding, so exact
     /// provider metadata is consulted after ordinary semantic lookup rather than leaking the dependency's import into
-    /// the consumer scope.
+    /// the consumer scope. It is consulted first when the spelling names another trait here (see
+    /// [`Self::adoption_spelling_names_another_trait`]).
     pub fn lookup_trait_adoption_info(&self, adoption: &TypeBoundInfo) -> Option<&TraitInfo> {
-        if let Some(info) = self.lookup_semantic_trait_info(&adoption.name) {
+        let exact = || {
+            let module_path = adoption.module_path.as_ref()?;
+            let source_name = adoption
+                .source_name
+                .as_deref()
+                .or_else(|| adoption.name.rsplit('.').next())?;
+            self.dependency_module_traits
+                .get(&format!("{}.{}", module_path.join("."), source_name))
+        };
+        if self.adoption_spelling_names_another_trait(adoption)
+            && let Some(info) = exact()
+        {
             return Some(info);
         }
-        let module_path = adoption.module_path.as_ref()?;
-        let source_name = adoption
-            .source_name
-            .as_deref()
-            .or_else(|| adoption.name.rsplit('.').next())?;
-        self.dependency_module_traits
-            .get(&format!("{}.{}", module_path.join("."), source_name))
+        self.lookup_semantic_trait_info(&adoption.name).or_else(exact)
+    }
+
+    /// Whether the bare name a standard-library trait adoption of another module's type spells names another trait,
+    /// or none, in this module (#1561).
+    ///
+    /// An adoption keeps the spelling of the module that declares the adopting type. A type imported from another
+    /// module that adopts `std.derives.comparison.Ord` spells `Ord` there, and in a module that does not import `Ord`
+    /// that name is the builtin's methodless stub, so the defaults the type gets from the trait (`__ge__`, `__ne__`)
+    /// were not found on it. A standard-library trait reaches a module through an import of the standard library, so a
+    /// bare name that no such import binds does not name it here, except in the standard library's own source. The
+    /// adopted trait's exact metadata is then read by its module path.
+    fn adoption_spelling_names_another_trait(&self, adoption: &TypeBoundInfo) -> bool {
+        let under_stdlib = adoption
+            .module_path
+            .as_ref()
+            .and_then(|path| path.first())
+            .is_some_and(|root| root == stdlib::STDLIB_ROOT);
+        if !under_stdlib || adoption.name.contains('.') || self.checks_standard_library_source() {
+            return false;
+        }
+        !self
+            .import_binding_path(&adoption.name)
+            .and_then(|bound| bound.first())
+            .is_some_and(|root| root == stdlib::STDLIB_ROOT)
     }
 
     /// Return the transitive supertrait closure for one trait using visible symbols first, then cached `pub::`
@@ -8633,6 +8663,100 @@ impl TypeChecker {
         Some(conventions::NEWTYPE_FROM_UNDERLYING_METHOD.to_string())
     }
 
+    /// Return the type parameter `ty` names when it is a type parameter of an enclosing generic declaration, seen from
+    /// inside that declaration's body, where it is one fixed type whatever a caller later picks for it (#1561).
+    ///
+    /// Inside the body such a parameter is a named placeholder in scope; a callee's own type parameters, still to be
+    /// inferred at a call, are type variables and are not rigid.
+    fn rigid_type_param_name<'a>(&self, ty: &'a ResolvedType) -> Option<&'a str> {
+        let ResolvedType::Named(_) = ty else {
+            return None;
+        };
+        self.generic_placeholder_name(ty)
+            .and_then(|_| self.active_type_param_name(ty))
+    }
+
+    /// Whether a value of type `actual` is a value of the enclosing declaration's type parameter `type_param` (#1561).
+    ///
+    /// A value of a concrete type is not one: `return 0` from `def f[T](x: T) -> T` is refused, as the generated Rust
+    /// refuses it, because a caller may pick any type for `T`. Only a value of that same parameter is, together with a
+    /// borrowed one (`&T`, which the destination copies), a value whose type is still to be inferred (an unresolved
+    /// callee type parameter) and a union whose members all are. An unknown value, left to the error that made it
+    /// unknown, and a never-returning one are accepted.
+    fn value_is_rigid_type_param(&self, actual: &ResolvedType, type_param: &str) -> bool {
+        match actual {
+            ResolvedType::Named(name) => name == type_param,
+            ResolvedType::Unknown | ResolvedType::Never | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer => {
+                true
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.value_is_rigid_type_param(inner, type_param),
+            ResolvedType::Generic(name, members) if name == UNION_TYPE_NAME => members
+                .iter()
+                .all(|member| self.value_is_rigid_type_param(member, type_param)),
+            _ => false,
+        }
+    }
+
+    /// Whether a value of the enclosing declaration's type parameter `type_param` (of type `actual`, the parameter
+    /// itself) can be used where `expected` is required (#1561).
+    ///
+    /// Inside its declaration a type parameter is one type the declaration does not choose, so a value of it is not a
+    /// value of a concrete type: `return x` from `def f[T](x: T) -> int` is refused, as the generated Rust refuses it.
+    /// A bound makes it a value of a trait the bound implies (`T with Shape` where a `Shape` is expected). A
+    /// `CallableN` bound does not make it a function value, since an adopting model meets the bound too; a bound on
+    /// a trait the checker cannot see (a Rust `Fn` marker) may, and is left to the Rust compiler. A union takes the
+    /// value when one member does, an `Option` when its payload does, and a borrow when the borrowed type does. A
+    /// destination still to be inferred (a callee's type parameter, a placeholder of no enclosing declaration),
+    /// `Self`, a Rust type and a name the checker does not know are left to the checks that own them.
+    fn rigid_type_param_value_fits(&self, type_param: &str, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match expected {
+            ResolvedType::Named(name) if name == type_param => true,
+            ResolvedType::Unknown
+            | ResolvedType::Never
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::SelfType
+            | ResolvedType::RustPath(_) => true,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.types_compatible(actual, inner),
+            ResolvedType::Generic(name, members) if name == UNION_TYPE_NAME => {
+                members.iter().any(|member| self.types_compatible(actual, member))
+            }
+            _ if expected.is_option() => expected
+                .option_inner_type()
+                .is_some_and(|inner| self.types_compatible(actual, inner)),
+            ResolvedType::Function(..) => !self.active_type_param_bounds_are_visible(type_param),
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                if self.is_generic_placeholder_type(expected) {
+                    return true;
+                }
+                if self.lookup_semantic_trait_info(name).is_some() {
+                    return self.active_type_param_implies_trait_type(type_param, expected);
+                }
+                self.lookup_semantic_type_info(name).is_none() && collection_type_id(name.as_str()).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the bounds of the enclosing declaration's type parameter `type_param` imply the trait `trait_ty` names
+    /// (`Shape`, or `Iterable[int]` with its type arguments), so a value of the parameter is a value of that trait.
+    fn active_type_param_implies_trait_type(&self, type_param: &str, trait_ty: &ResolvedType) -> bool {
+        let (name, type_args) = match trait_ty {
+            ResolvedType::Named(name) => (name, Vec::new()),
+            ResolvedType::Generic(name, args) => (name, args.clone()),
+            _ => return false,
+        };
+        let required = TypeBoundInfo {
+            name: name.clone(),
+            source_name: None,
+            type_args,
+            module_path: None,
+            implementation_type_params: Vec::new(),
+            inferred: false,
+        };
+        self.active_type_param_satisfies_bound_info(type_param, &required, &HashMap::new())
+    }
+
     /// Return whether `actual` can be used where `expected` is required, with a recursion cap for pathological unions.
     pub fn types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
         const MAX_TYPE_COMPATIBILITY_DEPTH: usize = 512;
@@ -8692,7 +8816,13 @@ impl TypeChecker {
         match (actual, expected) {
             (ResolvedType::Never, _) => true,
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
+            (actual, expected) if let Some(type_param) = self.rigid_type_param_name(expected) => {
+                self.value_is_rigid_type_param(actual, type_param)
+            }
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
+            (actual, expected) if let Some(type_param) = self.rigid_type_param_name(actual) => {
+                self.rigid_type_param_value_fits(type_param, actual, expected)
+            }
             (actual, _) if self.is_generic_placeholder_type(actual) => true,
             (_, expected) if self.is_generic_placeholder_type(expected) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
