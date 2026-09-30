@@ -25,6 +25,7 @@ use oven_cargo_compat::{
     legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings, proposal_directory_names,
     runtime_foundation_for_publisher_rebuild, runtime_foundation_inventories_from_policy_response,
 };
+use oven_model::digest::digest_bytes;
 use oven_model::loaf_registry::{LoafRegistry, checkout_head_commit};
 use oven_model::manifest::{ProjectManifest, RustFactArgument};
 use oven_rustc::loaf::{
@@ -51,10 +52,14 @@ use oven_store::store::{
     OvenStore, PublishedOvenStore,
 };
 use oven_store::{OvenReceipt, receipt_with_build_unit_input};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const POLICY_EXCHANGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
 
+use super::equivalence::{
+    CaptureFileInput, CaptureManifestInput, CaptureSetup, DependencyIdentity, ExecutableIdentity, IdentityInputs,
+    NameDigest, UnitManifest, write_capture_manifest,
+};
 use super::{
     CliError, CliResult, CompleteLoafEnvelopeReuseInput, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
@@ -110,6 +115,30 @@ struct PublisherGeneratedOwnerRoot {
     identity: String,
     /// Physical root containing exactly the receipt-bound products.
     root: PathBuf,
+    /// Registry binding whose publisher work produced this owner.
+    binding: String,
+    /// Final selected unit identity after the product is attached.
+    unit_identity: String,
+    /// Receipt that attests the product closure.
+    attestation_reference: String,
+    /// Retained native objects compared independently of their archive container.
+    native_objects: Vec<PathBuf>,
+    /// Package coordinate used to pair retained native objects after graph rekeying.
+    package: String,
+    /// Original capture index used to resolve the final identity after all products rekey the graph.
+    capture_index: usize,
+}
+
+/// Zero-byte registry `asset` event claim emitted beside a locally baked publisher asset.
+#[derive(Serialize)]
+struct PublisherAssetClaim<'a> {
+    schema: u64,
+    event: &'static str,
+    binding: &'a str,
+    archive_digest: &'a str,
+    unit_identity: &'a str,
+    builder_kind: &'static str,
+    attestation_reference: &'a str,
 }
 
 /// Stable coordinates used to find one selected unit after another publisher product rekeys the graph.
@@ -221,7 +250,18 @@ fn execute_adopted_publisher_work(
             graph = finalize_publisher_native_link(graph, &consuming_identity, &product)?;
             generated.push(PublisherGeneratedOwnerRoot {
                 identity: product.receipt.identity.clone(),
-                root: product.product_root,
+                root: product.product_root.clone(),
+                binding: publisher_binding(adoption, link.name.as_str()),
+                unit_identity: consuming_identity,
+                attestation_reference: product.receipt.identity.clone(),
+                native_objects: product
+                    .receipt
+                    .objects
+                    .iter()
+                    .map(|object| product.product_root.join(&object.name))
+                    .collect(),
+                package: adoption.package.clone(),
+                capture_index,
             });
         }
         for tool in &adoption.record.tool {
@@ -261,10 +301,22 @@ fn execute_adopted_publisher_work(
             write_publisher_tool_receipt(&receipt, &product_root)?;
             graph = finalize_publisher_tool_product(graph, &receipt).map_err(oven_error)?;
             generated.push(PublisherGeneratedOwnerRoot {
-                identity: receipt.identity,
+                identity: receipt.identity.clone(),
                 root: product_root,
+                binding: publisher_binding(adoption, tool.name.as_str()),
+                unit_identity: consuming_identity,
+                attestation_reference: receipt.identity,
+                native_objects: Vec::new(),
+                package: adoption.package.clone(),
+                capture_index,
             });
         }
+    }
+    for owner in &mut generated {
+        let unit = coordinates
+            .get(&owner.capture_index)
+            .ok_or_else(|| CliError::failure(format!("publisher owner lost capture unit {}", owner.capture_index)))?;
+        owner.unit_identity = selected_identity_for_coordinates(graph.graph(), unit)?;
     }
     finalized.unit_identities = coordinates
         .iter()
@@ -274,6 +326,318 @@ fn execute_adopted_publisher_work(
         .collect::<CliResult<_>>()?;
     finalized.graph = graph;
     Ok(generated)
+}
+
+/// Spell one native/tool fact binding independently of publisher-local paths.
+fn publisher_binding(adoption: &oven_cargo_compat::LoafRegistryAdoption, producer: &str) -> String {
+    let selection = &adoption.record;
+    format!(
+        "{} {} {} {} [{}] {}",
+        adoption.package,
+        adoption.version,
+        selection.target,
+        selection.profile,
+        selection.features.join(","),
+        producer
+    )
+}
+
+/// Write one canonical zero-byte registry asset-event claim per executed native/tool binding.
+fn write_publisher_asset_claims(
+    owners: &[PublisherGeneratedOwnerRoot],
+    archive_digest: &str,
+    destination: &Path,
+) -> CliResult<()> {
+    fs::create_dir_all(destination).map_err(|error| {
+        CliError::failure(format!(
+            "could not create publisher asset-claim directory {}: {error}",
+            destination.display()
+        ))
+    })?;
+    for (index, owner) in owners.iter().enumerate() {
+        let claim = PublisherAssetClaim {
+            schema: 1,
+            event: "asset",
+            binding: &owner.binding,
+            archive_digest,
+            unit_identity: &owner.unit_identity,
+            builder_kind: "local",
+            attestation_reference: &owner.attestation_reference,
+        };
+        let mut bytes = serde_json::to_vec_pretty(&claim)
+            .map_err(|error| CliError::failure(format!("could not encode publisher asset claim: {error}")))?;
+        bytes.push(b'\n');
+        let path = destination.join(format!("{index:04}.json"));
+        fs::write(&path, bytes).map_err(|error| {
+            CliError::failure(format!(
+                "could not write publisher asset claim {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+/// Write paired Cargo-harvest and Cargo-free Oven-publisher manifests from one finalized release graph.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the evidence writer names both producers and their shared authority"
+)]
+fn write_release_equivalence_captures(
+    options: &OvenLoafBakeCommandOptions,
+    finalized: &oven_cargo_compat::OvenFinalizedCompilerSupportSelectedGraph,
+    build: &oven_rustc::rustc::OvenRuntimeFoundationBuild,
+    publisher_owners: &[PublisherGeneratedOwnerRoot],
+    asset_root: &Path,
+    output_root: &Path,
+) -> CliResult<()> {
+    let compiler =
+        finalized.capture.compiler.as_ref().ok_or_else(|| {
+            CliError::failure("equivalence capture requires the observed compiler selection".to_string())
+        })?;
+    let setup = CaptureSetup {
+        cargo: capture_executable_identity(&options.cargo)?,
+        rustc: capture_executable_identity(&options.rustc)?,
+        host: compiler.host.clone(),
+        target: compiler.target.clone(),
+        profile: finalized.graph.graph().selection.intent.profile.clone(),
+    };
+    let mut cargo_units = Vec::new();
+    let mut oven_units = Vec::new();
+    for (ordinal, rebuilt) in build.outputs().iter().enumerate() {
+        let graph_unit = finalized
+            .graph
+            .graph()
+            .units
+            .iter()
+            .find(|unit| unit.identity == rebuilt.selected_identity)
+            .ok_or_else(|| {
+                CliError::failure(format!(
+                    "rebuilt unit `{}` is absent from the selected graph",
+                    rebuilt.selected_identity
+                ))
+            })?;
+        let capture_index = finalized
+            .unit_identities
+            .iter()
+            .find_map(|(index, identity)| (identity == &rebuilt.selected_identity).then_some(*index))
+            .ok_or_else(|| {
+                CliError::failure(format!(
+                    "rebuilt unit `{}` has no Cargo capture binding",
+                    rebuilt.selected_identity
+                ))
+            })?;
+        let captured = finalized
+            .capture
+            .units
+            .get(capture_index)
+            .ok_or_else(|| CliError::failure(format!("Cargo capture unit {capture_index} is absent")))?;
+        let cargo_artifact = captured
+            .artifact_paths
+            .iter()
+            .find(|path| path.is_file() && path.extension() == rebuilt.artifact.extension())
+            .or_else(|| captured.artifact_paths.iter().find(|path| path.is_file()))
+            .ok_or_else(|| {
+                CliError::failure(format!(
+                    "Cargo capture for `{}` has no retained artifact",
+                    captured.package
+                ))
+            })?;
+        let extension = rebuilt
+            .artifact
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin");
+        let role = equivalence_artifact_role(extension);
+        let artifact_path = format!("units/{ordinal:04}/artifact.{extension}");
+        let mut cargo_native = captured
+            .dependencies
+            .iter()
+            .filter_map(|dependency| dependency.build_script.as_ref())
+            .flat_map(|script| {
+                script.publisher_native_probes.iter().filter_map(move |probe| {
+                    probe
+                        .output
+                        .as_ref()
+                        .map(|output| script.out_dir.join(&output.relative_path))
+                })
+            })
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        cargo_native.sort();
+        cargo_native.dedup();
+        let mut oven_native = publisher_owners
+            .iter()
+            .filter(|owner| owner.package == graph_unit.package)
+            .flat_map(|owner| owner.native_objects.iter().cloned())
+            .collect::<Vec<_>>();
+        oven_native.sort();
+        let manifest_digest = captured
+            .registry_source
+            .as_ref()
+            .and_then(|source| source.members.iter().find(|member| member.path == "Cargo.toml"))
+            .map(|member| member.digest.clone())
+            .unwrap_or_else(|| graph_unit.source.digest.clone());
+        let unit = UnitManifest {
+            binding: format!(
+                "{} {} {:?} {} [{}]",
+                graph_unit.package,
+                graph_unit.package_version,
+                graph_unit.domain,
+                setup.profile,
+                graph_unit.features.join(",")
+            ),
+            package: graph_unit.package.clone(),
+            version: graph_unit.package_version.clone(),
+            unit_identity: graph_unit.identity.clone(),
+            features: graph_unit.features.clone(),
+            source_digest: graph_unit.source.digest.clone(),
+            manifest_digest,
+            identity_inputs: IdentityInputs {
+                cfg: graph_unit.cfg.clone(),
+                out: graph_unit
+                    .generated_inputs
+                    .iter()
+                    .map(|input| super::equivalence::PathDigest {
+                        path: input.name.clone(),
+                        digest: input.digest.clone(),
+                    })
+                    .collect(),
+                native: graph_unit
+                    .linked_libraries
+                    .iter()
+                    .enumerate()
+                    .map(|(index, library)| {
+                        serde_json::to_vec(library)
+                            .map(|bytes| NameDigest {
+                                name: format!("native-{index:04}"),
+                                digest: digest_bytes(&bytes),
+                            })
+                            .map_err(|error| {
+                                CliError::failure(format!("could not encode native identity input: {error}"))
+                            })
+                    })
+                    .collect::<CliResult<Vec<_>>>()?,
+                tools: Vec::new(),
+                dependencies: graph_unit
+                    .dependencies
+                    .iter()
+                    .map(|dependency| DependencyIdentity {
+                        name: dependency.alias.clone(),
+                        unit_identity: dependency.unit.clone(),
+                    })
+                    .collect(),
+            },
+            native_objects: Vec::new(),
+            artifacts: Vec::new(),
+            asset_archive: None,
+        };
+        cargo_units.push((
+            unit.clone(),
+            vec![CaptureFileInput {
+                role: role.to_string(),
+                path: artifact_path.clone(),
+                source: cargo_artifact.clone(),
+            }],
+            cargo_native
+                .into_iter()
+                .enumerate()
+                .map(|(index, source)| CaptureFileInput {
+                    role: "native-object".to_string(),
+                    path: format!("units/{ordinal:04}/native/{index:04}.o"),
+                    source,
+                })
+                .collect(),
+            None,
+        ));
+        oven_units.push((
+            unit,
+            vec![CaptureFileInput {
+                role: role.to_string(),
+                path: artifact_path,
+                source: rebuilt.artifact.clone(),
+            }],
+            oven_native
+                .into_iter()
+                .enumerate()
+                .map(|(index, source)| CaptureFileInput {
+                    role: "native-object".to_string(),
+                    path: format!("units/{ordinal:04}/native/{index:04}.o"),
+                    source,
+                })
+                .collect(),
+            Some(asset_root.join(oven_rustc::rustc::OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME)),
+        ));
+    }
+    let root = output_root.join("equivalence");
+    write_capture_manifest(
+        &root.join("cargo-capture.json"),
+        CaptureManifestInput {
+            producer: "cargo-harvest",
+            cargo_free: false,
+            setup: setup.clone(),
+            units: cargo_units,
+        },
+    )
+    .map_err(|error| CliError::failure(format!("could not write Cargo equivalence capture: {error}")))?;
+    write_capture_manifest(
+        &root.join("oven-capture.json"),
+        CaptureManifestInput {
+            producer: "oven-publisher",
+            cargo_free: true,
+            setup,
+            units: oven_units,
+        },
+    )
+    .map_err(|error| CliError::failure(format!("could not write Oven equivalence capture: {error}")))
+}
+
+/// Record one executable's raw bytes and first version line for equivalence setup identity.
+fn capture_executable_identity(executable: &Path) -> CliResult<ExecutableIdentity> {
+    let bytes = fs::read(executable).map_err(|error| {
+        CliError::failure(format!(
+            "could not read equivalence executable {}: {error}",
+            executable.display()
+        ))
+    })?;
+    let output = Command::new(executable).arg("--version").output().map_err(|error| {
+        CliError::failure(format!(
+            "could not identify equivalence executable {}: {error}",
+            executable.display()
+        ))
+    })?;
+    if !output.status.success() {
+        return Err(CliError::failure(format!(
+            "equivalence executable {} refused --version",
+            executable.display()
+        )));
+    }
+    let version = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if version.is_empty() {
+        return Err(CliError::failure(format!(
+            "equivalence executable {} returned no version",
+            executable.display()
+        )));
+    }
+    Ok(ExecutableIdentity {
+        version,
+        digest: digest_bytes(&bytes),
+    })
+}
+
+/// Map a retained compiler output suffix to the schema-1 artifact role vocabulary.
+fn equivalence_artifact_role(extension: &str) -> &'static str {
+    match extension {
+        "rlib" => "rlib",
+        "rmeta" => "rmeta",
+        "dylib" | "so" | "dll" => "proc-macro",
+        _ => "executable",
+    }
 }
 
 /// Capture the stable source coordinates of one selected unit before publisher products rekey it.
@@ -1278,6 +1642,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &staged_root.join(&foundation_relative),
             )
             .map_err(oven_error)?;
+            write_publisher_asset_claims(
+                &publisher_generated_owners,
+                admitted.foundation_identity(),
+                &staged_root.join("asset-claims"),
+            )?;
             let foundation_member = OvenReleaseRuntimeFoundationMember {
                 schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
                 label: "rust-policy-foundation".to_string(),
@@ -1300,6 +1669,14 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &scratch.path().join("runtime-closure-build"),
             )
             .map_err(oven_error)?;
+            write_release_equivalence_captures(
+                &options,
+                finalized,
+                &build,
+                &publisher_generated_owners,
+                &staged_root.join(&foundation_member.foundation_relative_path),
+                &staged_root,
+            )?;
             let closure_store_relative = PathBuf::from("runtime-closures/store");
             let closure_store = OvenStore::new(staged_root.join(&closure_store_relative), limits);
             let closure_manifest = publish_runtime_closure(
@@ -2178,6 +2555,30 @@ mod publisher_tests {
             parsed.publisher.link_owners,
             vec![PathBuf::from("/toolchain/clang"), PathBuf::from("/tools/protoc")]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn publisher_asset_claim_names_binding_unit_builder_and_attestation() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let owner = PublisherGeneratedOwnerRoot {
+            identity: digest_bytes(b"owner"),
+            root: root.path().join("owner"),
+            binding: "native-sys 1.0 target release [] native".to_string(),
+            unit_identity: digest_bytes(b"unit"),
+            attestation_reference: digest_bytes(b"receipt"),
+            native_objects: Vec::new(),
+            package: "native-sys".to_string(),
+            capture_index: 0,
+        };
+        let archive = digest_bytes(b"archive");
+        write_publisher_asset_claims(&[owner], &archive, &root.path().join("claims"))?;
+        let claim: serde_json::Value = serde_json::from_slice(&fs::read(root.path().join("claims/0000.json"))?)?;
+        assert_eq!(claim["event"], "asset");
+        assert_eq!(claim["archive_digest"], archive);
+        assert_eq!(claim["builder_kind"], "local");
+        assert_eq!(claim["unit_identity"], digest_bytes(b"unit"));
+        assert_eq!(claim["attestation_reference"], digest_bytes(b"receipt"));
         Ok(())
     }
 }
