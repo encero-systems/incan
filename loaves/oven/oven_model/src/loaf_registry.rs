@@ -6,6 +6,7 @@
 //! changes only how the same files arrive. Nothing here executes package content, and a lookup is fail-closed: a
 //! registry that describes a different source than the one being built is a refusal, never a silent miss.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -13,7 +14,8 @@ use serde::Deserialize;
 
 use crate::digest::digest_bytes;
 use crate::manifest::{
-    ManifestError, ProjectManifest, RustFactOut, RustFactRecord, RustFactSelection, is_sha256_identity,
+    ManifestError, ProjectManifest, RustFactArtifact, RustFactArtifactKind, RustFactOut, RustFactRecord,
+    RustFactSelection, is_sha256_identity,
 };
 
 /// A registered Loaf registry read from a local checkout.
@@ -280,6 +282,15 @@ impl LoafRegistry {
                     )));
                 }
             }
+            for source in record
+                .link
+                .iter()
+                .flat_map(|link| link.sources.iter())
+                .chain(record.tool.iter().flat_map(|tool| tool.inputs.iter()))
+            {
+                validate_fact_artifact(&manifest_root, source)
+                    .map_err(|message| mismatch(format!("publisher input `{}` {message}", source.name)))?;
+            }
         }
         Ok(Some(LoafRegistryPackage {
             name: name.to_string(),
@@ -292,6 +303,91 @@ impl LoafRegistry {
             index_facts: entry.facts,
         }))
     }
+}
+
+/// Verify one fact-declared input against immutable bytes beneath the registry record directory.
+fn validate_fact_artifact(root: &Path, artifact: &RustFactArtifact) -> Result<(), String> {
+    let path = root.join(&artifact.path);
+    let mut current = root.to_path_buf();
+    for component in Path::new(&artifact.path).components() {
+        current.push(component.as_os_str());
+        let component_metadata =
+            fs::symlink_metadata(&current).map_err(|error| format!("cannot inspect path component: {error}"))?;
+        if component_metadata.file_type().is_symlink() {
+            return Err("is symlink-substituted".to_string());
+        }
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(|error| format!("cannot be read: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err("is symlink-substituted".to_string());
+    }
+    match artifact.kind {
+        RustFactArtifactKind::File => {
+            if !metadata.is_file() {
+                return Err("is not a regular file".to_string());
+            }
+            let bytes = fs::read(&path).map_err(|error| format!("cannot be read: {error}"))?;
+            if digest_bytes(&bytes) != artifact.digest {
+                return Err("does not match its declared digest".to_string());
+            }
+        }
+        RustFactArtifactKind::Tree => {
+            if !metadata.is_dir() {
+                return Err("is not a directory tree".to_string());
+            }
+            let mut members = Vec::new();
+            collect_fact_tree_members(&path, &path, &mut members)?;
+            members.sort_by(|left, right| left.0.cmp(&right.0));
+            let declared = artifact
+                .members
+                .iter()
+                .map(|member| (member.path.clone(), member.digest.clone()))
+                .collect::<Vec<_>>();
+            if members != declared {
+                return Err("does not match its complete declared member catalog".to_string());
+            }
+            let catalog = members
+                .iter()
+                .map(|(path, digest)| (path, digest))
+                .collect::<BTreeMap<_, _>>();
+            let bytes =
+                serde_json::to_vec(&catalog).map_err(|error| format!("cannot encode its member catalog: {error}"))?;
+            if digest_bytes(&bytes) != artifact.digest {
+                return Err("tree digest does not match its declared member catalog".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Collect one tree's regular files while refusing symlinks and special filesystem entries.
+fn collect_fact_tree_members(root: &Path, directory: &Path, members: &mut Vec<(String, String)>) -> Result<(), String> {
+    let entries = fs::read_dir(directory).map_err(|error| format!("cannot read tree: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot read tree entry: {error}"))?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|error| format!("cannot inspect tree entry: {error}"))?;
+        if metadata.file_type().is_symlink() {
+            return Err("contains a symlink".to_string());
+        }
+        if metadata.is_dir() {
+            collect_fact_tree_members(root, &path, members)?;
+        } else if metadata.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| "contains a member outside its root".to_string())?;
+            let portable = relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            let bytes = fs::read(&path).map_err(|error| format!("cannot read tree member: {error}"))?;
+            members.push((portable, digest_bytes(&bytes)));
+        } else {
+            return Err("contains a non-file entry".to_string());
+        }
+    }
+    Ok(())
 }
 
 /// The `HEAD` commit of the nearest git checkout enclosing `path`, or `None` when no ancestor is one.
@@ -653,6 +749,62 @@ mod tests {
         assert!(registry.package("serde", "1.0.227", CHECKSUM)?.is_none());
         assert!(registry.package("absent", "1.0.0", CHECKSUM)?.is_none());
         assert!(is_sha256_identity(&package.index_line_digest()));
+        Ok(())
+    }
+
+    #[test]
+    fn loaf_registry_link_tool_records_round_trip_without_product_bytes() -> TestResult {
+        let root = tempfile::tempdir()?;
+        registry_fixture(root.path(), b"#[doc(hidden)]\npub mod __private228 {}\n", CHECKSUM)?;
+        let manifest_path = root.path().join("crates-io/serde/1.0.228/loaf.toml");
+        let source_path = root.path().join("crates-io/serde/1.0.228/c/source.c");
+        fs::create_dir_all(source_path.parent().ok_or("source has no parent")?)?;
+        fs::write(&source_path, b"int native(void) { return 1; }\n")?;
+        let mut manifest = fs::read_to_string(&manifest_path)?;
+        let digest = digest_bytes(b"int native(void) { return 1; }\n");
+        let executable_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        manifest.push_str(&format!(
+            "\n[[rust.facts.link]]\nname = \"native\"\ntarget = \"aarch64-apple-darwin\"\nexecutable = {{ name = \"clang\", owner = \"{executable_digest}\", path = \"bin/clang\", digest = \"{executable_digest}\" }}\nobjects = [{{ name = \"native.o\", language = \"c\", arguments = [{{ input = \"source\" }}, {{ output = \"native.o\" }}] }}]\nsources = [{{ name = \"source\", kind = \"file\", path = \"c/source.c\", digest = \"{digest}\" }}]\nlibrary = {{ name = \"native\", kind = \"static\" }}\n"
+        ));
+        fs::write(manifest_path, manifest)?;
+
+        let registry = LoafRegistry::open(root.path())?;
+        let package = registry
+            .package("serde", "1.0.228", CHECKSUM)?
+            .ok_or("serde must be described")?;
+        let record = package
+            .fact_record(&RustFactSelection {
+                toolchain: "rustc 1.98.0 (88d9e12ae 2026-08-18)".to_string(),
+                target: "aarch64-apple-darwin".to_string(),
+                profile: "release".to_string(),
+                features: vec!["default".to_string(), "std".to_string()],
+            })
+            .ok_or("the release record must bind")?;
+        assert_eq!(record.link[0].library.name, "native");
+        fs::write(source_path, b"tampered\n")?;
+        assert!(matches!(
+            registry.package("serde", "1.0.228", CHECKSUM),
+            Err(LoafRegistryError::Mismatch { .. })
+        ));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loaf_registry_link_tool_inputs_refuse_symlink_substitution() -> TestResult {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("real.c"), b"int real(void);\n")?;
+        symlink(root.path().join("real.c"), root.path().join("source.c"))?;
+        let artifact = RustFactArtifact {
+            name: "source".to_string(),
+            kind: RustFactArtifactKind::File,
+            path: "source.c".to_string(),
+            digest: digest_bytes(b"int real(void);\n"),
+            members: Vec::new(),
+        };
+        assert!(validate_fact_artifact(root.path(), &artifact).is_err());
         Ok(())
     }
 

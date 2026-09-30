@@ -417,6 +417,16 @@ fetch-release-support-workspace-sources:
 test-oven: test-prewarm-oven-loafs test-prewarm-oven-release-loafs
 	@$(MAKE) --no-print-directory test-oven-replay
 
+.PHONY: test-oven-artifact-equivalence  ## test - Compare one Cargo harvest with one Cargo-free Oven publisher bake
+test-oven-artifact-equivalence: build-quiet
+	@test -n "$(OVEN_EQUIV_CARGO_MANIFEST)" || { echo "OVEN_EQUIV_CARGO_MANIFEST is required" >&2; exit 2; }
+	@test -n "$(OVEN_EQUIV_OVEN_MANIFEST)" || { echo "OVEN_EQUIV_OVEN_MANIFEST is required" >&2; exit 2; }
+	@test -n "$(OVEN_EQUIV_ATTESTATION)" || { echo "OVEN_EQUIV_ATTESTATION is required" >&2; exit 2; }
+	@"$(TARGET_DIR)/debug/incan" oven equivalence \
+		--cargo-manifest "$(OVEN_EQUIV_CARGO_MANIFEST)" \
+		--oven-manifest "$(OVEN_EQUIV_OVEN_MANIFEST)" \
+		--output "$(OVEN_EQUIV_ATTESTATION)"
+
 .PHONY: test-oven-partition  ## test - Replay one deterministic prewarmed Oven compiler-suite partition
 # CI restores the complete compiler and release envelopes before invoking this target. Keep it replay-only: a
 # partition must never silently publish or prewarm an authority that its receipt is supposed to consume.
@@ -969,9 +979,13 @@ toolchain-release-smoke: toolchain-release-build
 # DataFusion, and the clean rooms provision Rust twice -- so they run in front of a release, not every PR.
 # =============================================================================
 
-.PHONY: gate-incql  ## gate - Build the real IncQL consumer end to end (INCQL_CHECKOUT=..., INCAN=...)
+.PHONY: gate-incql  ## gate - Prove the pinned Cargo-free IncQL closure (INCQL_CHECKOUT=..., INCAN=..., INCQL_EQUIVALENCE_REPORT=...)
 gate-incql:
-	@bash scripts/gate_incql.sh --incan "$${INCAN:-"$(TARGET_DIR)/release/incan"}"
+	@test -n "$${INCQL_CHECKOUT:-}" || { echo "INCQL_CHECKOUT is required" >&2; exit 2; }
+	@test -n "$${INCAN:-}" || { echo "INCAN is required" >&2; exit 2; }
+	@test -n "$${INCQL_EQUIVALENCE_REPORT:-}" || { echo "INCQL_EQUIVALENCE_REPORT is required" >&2; exit 2; }
+	@bash scripts/gate_incql.sh --incql "$${INCQL_CHECKOUT}" --incan "$${INCAN}" \
+		--equivalence-report "$${INCQL_EQUIVALENCE_REPORT}"
 
 .PHONY: gate-cleanroom  ## gate - Install into containers with and without a mismatched Rust (DIST=...)
 gate-cleanroom:

@@ -12,7 +12,7 @@ pub mod cli;
 pub mod commands;
 
 pub use cli::{
-    LockArgs, OvenCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
+    LockArgs, OvenCommand, OvenGateCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
     OvenLegacyCargoCommand, OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags,
     OvenStoreCommand, PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
 };
@@ -70,6 +70,34 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             output,
             format,
         }),
+        OvenCommand::Inventory {
+            incan_lock,
+            incan_harvest,
+            incql_lock,
+            incql_harvest,
+            output,
+            check,
+        } => commands::oven_inventory(commands::OvenInventoryCommandOptions {
+            incan_lock,
+            incan_harvest,
+            incql_lock,
+            incql_harvest,
+            output,
+            check,
+        }),
+        OvenCommand::Equivalence {
+            cargo_manifest,
+            oven_manifest,
+            output,
+        } => commands::oven_equivalence(&cargo_manifest, &oven_manifest, &output),
+        OvenCommand::Gate { command } => match command {
+            OvenGateCommand::RegistryPin { pin, checkout } => commands::oven_gate_registry_pin(&pin, &checkout),
+            OvenGateCommand::ConsumerGraph {
+                expect,
+                equivalence_report,
+                locks,
+            } => commands::oven_gate_consumer_graph(&expect, &locks, &equivalence_report),
+        },
         OvenCommand::Interop { command } => match command {
             OvenInteropCommand::Bake {
                 project,

@@ -11,9 +11,9 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 7;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 8;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
-pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/2";
+pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/3";
 
 /// Command purpose whose dependency roles and feature activation produced a selected Rust graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

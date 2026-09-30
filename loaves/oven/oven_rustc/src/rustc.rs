@@ -37,6 +37,7 @@ pub use artifact::*;
 )]
 pub use compiled_unit::*;
 pub use diagnostics::*;
+pub use direct_compiler::OvenPublisherLinkProduct;
 pub use inspection::*;
 pub use registry_leaf::*;
 #[allow(

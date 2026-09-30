@@ -2738,6 +2738,7 @@ mod tests {
                     linked_paths: Vec::new(),
                     out_dir: PathBuf::from("/transient/serde/out"),
                     output: None,
+                    publisher_work: Vec::new(),
                 }),
             });
         capture.units.insert(0, root);
@@ -2859,6 +2860,7 @@ mod tests {
             linked_paths: Vec::new(),
             out_dir: PathBuf::from("/transient/probe-only/out"),
             output: None,
+            publisher_work: Vec::new(),
         };
         capture.units[2]
             .dependencies
@@ -2876,6 +2878,7 @@ mod tests {
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
                 rustc_target: "x86_64-unknown-linux-gnu".to_string(),
                 digest: digest(b"pruned script probe"),
+                output: None,
             });
         let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let graph = finalized.graph.graph();
@@ -3059,6 +3062,7 @@ mod tests {
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
                 rustc_target: "x86_64-unknown-linux-gnu".to_string(),
                 digest: digest(b"adopted script probe"),
+                output: None,
             });
         let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &registry, "release")?;
         let refused_probe = finalize_release_shaped(&probed_capture, &probed_sources, &probed_authority);
@@ -3330,6 +3334,7 @@ mod tests {
                     },
                 ],
             }),
+            publisher_work: Vec::new(),
         };
         capture.units[0]
             .dependencies
@@ -3823,6 +3828,7 @@ mod tests {
                             })
                             .collect(),
                     }),
+                    publisher_work: Vec::new(),
                 }),
             });
         capture.units.push(OvenLegacyCargoSelectedUnit {
@@ -3952,6 +3958,7 @@ mod tests {
                 linked_paths: vec!["native=/transient/out".to_string()],
                 out_dir: PathBuf::from("/transient/out"),
                 output: None,
+                publisher_work: Vec::new(),
             }),
             registry_source: None,
         });
@@ -4010,6 +4017,7 @@ mod tests {
                 target_context: "x86_64-unknown-linux-gnu".to_string(),
                 rustc_target: "x86_64-unknown-linux-gnu".to_string(),
                 digest: digest(b"first bounded probe"),
+                output: None,
             });
         let first_probe_digest = legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?;
         let mut relocated_capture = capture.clone();

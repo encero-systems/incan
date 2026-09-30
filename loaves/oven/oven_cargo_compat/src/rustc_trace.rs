@@ -45,13 +45,13 @@ pub struct OvenLegacyRustcInvocation {
     pub stdin_probe_output: Option<OvenLegacyStdinProbeOutput>,
 }
 
-/// Physical evidence captured immediately after a successful metadata-only stdin probe.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Physical evidence captured immediately after a successful stdin probe that emitted only metadata or LLVM IR.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OvenLegacyStdinProbeOutput {
     /// Output path relative to the verified build-script OUT_DIR.
     pub relative_path: String,
-    /// Digest of the regular metadata file before control returns to the build script.
+    /// Digest of the regular output file before control returns to the build script.
     pub digest: String,
 }
 

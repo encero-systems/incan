@@ -40,6 +40,32 @@ pub enum OvenHarvestProfileArgument {
     Debug,
 }
 
+/// Release-evidence gates owned by Oven.
+#[derive(Subcommand, Debug)]
+pub enum OvenGateCommand {
+    /// Verify a checkout and its committed lock against a schema-1 registry pin
+    RegistryPin {
+        /// Schema-1 checkout and lock pin
+        #[arg(long, value_name = "PATH")]
+        pin: PathBuf,
+        /// Git checkout to verify
+        #[arg(long, value_name = "PATH")]
+        checkout: PathBuf,
+    },
+    /// Verify an admitted consumer graph against data-driven expectations and equivalence evidence
+    ConsumerGraph {
+        /// Schema-1 TOML gate expectations
+        #[arg(long, value_name = "PATH")]
+        expect: PathBuf,
+        /// Schema-1 artifact-equivalence attestation
+        #[arg(long = "equivalence-report", value_name = "PATH")]
+        equivalence_report: PathBuf,
+        /// Root and quickstart Oven locks whose registry records form the consumer graph
+        #[arg(value_name = "LOCK", required = true)]
+        locks: Vec<PathBuf>,
+    },
+}
+
 impl OvenHarvestProfileArgument {
     /// The profile name as a fact record and the publisher spell it.
     pub fn as_str(self) -> &'static str {
@@ -222,6 +248,54 @@ pub enum OvenCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
+    },
+    /// Generate or check a binding-level inventory of harvested registry closure facts
+    Inventory {
+        /// Cargo lock supplying the exact Incan registry package identities
+        #[arg(long = "incan-lock", value_name = "PATH")]
+        incan_lock: PathBuf,
+        /// Incan harvest directory containing proposals and selected-unit refusals
+        #[arg(long = "incan-harvest", value_name = "PATH")]
+        incan_harvest: PathBuf,
+        /// Cargo lock supplying the exact IncQL registry package identities
+        #[arg(long = "incql-lock", value_name = "PATH")]
+        incql_lock: Option<PathBuf>,
+        /// IncQL harvest directory containing proposals and selected-unit refusals
+        #[arg(long = "incql-harvest", value_name = "PATH")]
+        incql_harvest: Option<PathBuf>,
+        /// Write the generated canonical inventory
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present = "check",
+            conflicts_with = "check"
+        )]
+        output: Option<PathBuf>,
+        /// Check the generated inventory against this fixture
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present = "output",
+            conflicts_with = "output"
+        )]
+        check: Option<PathBuf>,
+    },
+    /// Prove literal artifact equivalence between Cargo harvest and Oven publisher captures
+    Equivalence {
+        /// Schema-1 Cargo harvest capture manifest
+        #[arg(long = "cargo-manifest", value_name = "PATH")]
+        cargo_manifest: PathBuf,
+        /// Schema-1 Cargo-free Oven publisher capture manifest
+        #[arg(long = "oven-manifest", value_name = "PATH")]
+        oven_manifest: PathBuf,
+        /// Destination for schema-1 attestation evidence
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+    },
+    /// Run release-evidence gates over Oven-owned semantic state
+    Gate {
+        #[command(subcommand)]
+        command: OvenGateCommand,
     },
     /// Bake locked C/C++ interop shims and static inputs into one receipt-bound direct-rustc plan
     Interop {

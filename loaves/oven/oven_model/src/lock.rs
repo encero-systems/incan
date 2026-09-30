@@ -111,6 +111,7 @@ pub struct SemanticLockState {
 /// selected from) and the binding's status as the registry published it. Consumer policy on `harvested` versus
 /// `attested` is not decided here; the lock only records what governed the unit.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegistryRecord {
     /// Package name as the registry publishes it.
     pub package: String,

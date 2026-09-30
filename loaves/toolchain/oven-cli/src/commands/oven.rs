@@ -6,7 +6,10 @@
 //! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
 mod case_partition;
+mod equivalence;
+mod gate;
 mod harvest;
+mod inventory;
 mod loaf_bake;
 mod loaf_bake_evidence;
 mod options;
@@ -14,7 +17,10 @@ mod suite_environment;
 mod suite_execution;
 mod support;
 
+pub use equivalence::oven_equivalence;
+pub use gate::{oven_gate_consumer_graph, oven_gate_registry_pin};
 pub use harvest::oven_harvest;
+pub use inventory::oven_inventory;
 pub use loaf_bake::oven_legacy_cargo_bake_loafs;
 #[cfg(test)]
 use loaf_bake::{finish_loaf_bake_after_publication, loaf_envelope_default_limits};

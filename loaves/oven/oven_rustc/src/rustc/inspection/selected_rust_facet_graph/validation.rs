@@ -10,9 +10,10 @@ use super::{
     OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCrateKind,
     OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue,
     OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetGraphError,
-    OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath, OvenSelectedRustFacetSelection,
-    OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
-    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit,
+    OvenSelectedRustFacetUnitRole,
 };
 
 /// Build the refusal for a required selected-graph field that was absent or empty.
@@ -601,6 +602,7 @@ struct OvenSelectedRustFacetUnitIdentityInput<'a> {
     exclude_dirs: &'a [OvenSelectedRustFacetPath],
     dependencies: &'a [OvenSelectedRustFacetDependency],
     generated_inputs: &'a [OvenSelectedRustFacetGeneratedInput],
+    linked_libraries: &'a [OvenSelectedRustFacetLinkedLibrary],
 }
 
 /// Derive one canonical unit identity from effective compiler inputs and canonical dependency identities.
@@ -638,6 +640,7 @@ pub fn selected_graph_unit_identity(
         exclude_dirs: &unit.exclude_dirs,
         dependencies: &unit.dependencies,
         generated_inputs: &unit.generated_inputs,
+        linked_libraries: &unit.linked_libraries,
     };
     let bytes = serde_json::to_vec(&(OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN, input))
         .map_err(|error| selected_graph_invalid("unit identity", format!("cannot encode: {error}")))?;

@@ -21,8 +21,8 @@ use super::{
 
 /// Domain separator for a compiled unit identity.
 ///
-/// Version 2 drops the selection-global root feature set from the identity. The two schemes name different things,
-/// so the separator moves with them rather than letting a v1 identity be mistaken for a v2 one.
+/// The separator moves whenever the compiler-visible identity vocabulary changes, so outputs from distinct schemes
+/// cannot be mistaken for each other.
 pub const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-rust-unit/3";
 
 /// Content address of one direct-Rustc compilation unit.
@@ -510,6 +510,37 @@ mod tests {
         .validated()?)
     }
 
+    /// Build one consumer graph whose linked archive is already an admitted asset-side product.
+    fn graph_with_link_product(
+        archive_digest: &str,
+    ) -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
+        let baseline = graph("0.1.0", false)?;
+        let mut graph = baseline.into_graph();
+        let product_owner = selected_graph_sha256(b"publisher product asset");
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: product_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture graph has no unit")?;
+        unit.linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "native".to_string(),
+            kind: OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: product_owner,
+                path: "lib/libnative.a".to_string(),
+            },
+            digest: archive_digest.to_string(),
+        }];
+        unit.identity = selected_graph_unit_identity(&graph.selection, unit)?;
+        let identity = unit.identity.clone();
+        graph
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph has no exposed root")?
+            .unit = identity;
+        Ok(graph.validated()?)
+    }
+
     /// Build the fixture graph with one root request mutated, leaving every unit fact this unit compiles with intact.
     fn graph_with_root_selection(
         root_features: &[&str],
@@ -790,6 +821,23 @@ mod tests {
         let first = graph("0.1.0", true)?;
         let second = graph("0.2.0", true)?;
         assert_ne!(only_identity(&first)?, only_identity(&second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_link_tool_identity_changes_with_admitted_product_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let first = graph_with_link_product(&selected_graph_sha256(b"first archive"))?;
+        let second = graph_with_link_product(&selected_graph_sha256(b"second archive"))?;
+        assert_ne!(first.graph().units[0].identity, second.graph().units[0].identity);
+        assert_ne!(only_identity(&first)?, only_identity(&second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn selected_link_tool_identity_retains_admitted_link_products() -> Result<(), Box<dyn std::error::Error>> {
+        let first = graph_with_link_product(&selected_graph_sha256(b"first archive"))?;
+        let second = graph_with_link_product(&selected_graph_sha256(b"second archive"))?;
+        assert_ne!(first.graph().units[0].identity, second.graph().units[0].identity);
         Ok(())
     }
 

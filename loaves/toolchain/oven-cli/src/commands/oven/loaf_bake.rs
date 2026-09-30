@@ -21,9 +21,9 @@ use oven_cargo_compat::{
     OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, OvenLegacyCargoCompilerSuiteResult,
     OvenLegacyCargoFoundationSelection, OvenLegacyCargoSelectedUnitCapture, ambient_harvest_hazards,
     encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, harvest_notes_for_checkout,
-    harvest_registry_units, legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
+    harvest_registry_units_to_dir, legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
     legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings, proposal_directory_names,
-    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response, write_harvest_report,
+    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
 };
 use oven_model::loaf_registry::{LoafRegistry, checkout_head_commit};
 use oven_model::manifest::ProjectManifest;
@@ -35,10 +35,12 @@ use oven_rustc::loaf::{
     stage_release_runtime_foundation_toolchain,
 };
 use oven_rustc::rustc::{
-    OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset, execute_runtime_foundation_rebuild,
+    OvenPublisherLinkProduct, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset,
+    ValidatedOvenSelectedRustFacetGraph, execute_runtime_foundation_rebuild, finalize_publisher_link_product,
     publish_runtime_closure, publish_runtime_foundation_asset,
 };
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
+use oven_store::publisher_execution::write_publisher_execution_receipt;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
     OvenStore, PublishedOvenStore,
@@ -94,6 +96,22 @@ struct StagedReleaseToolchain {
     compiler_closure_identity: String,
     /// Exact retained members below `root`.
     members: Vec<OvenReleaseToolchainMember>,
+}
+
+/// Finalize one publisher-only native product as an asset-side receipt and selected-unit link input.
+///
+/// This is deliberately part of the explicit Loaf publisher rather than any normal build path. The returned graph
+/// carries the receipt identity as the archive owner; callers publish `product_root` as that owner's immutable asset
+/// and provide the same root when the graph is physically materialized.
+pub(crate) fn finalize_publisher_native_link(
+    selected: ValidatedOvenSelectedRustFacetGraph,
+    consuming_unit_identity: &str,
+    product: &OvenPublisherLinkProduct,
+) -> CliResult<ValidatedOvenSelectedRustFacetGraph> {
+    write_publisher_execution_receipt(&product.receipt, &product.product_root)
+        .map_err(|error| CliError::failure(format!("could not finalize native publisher receipt: {error}")))?;
+    finalize_publisher_link_product(selected, consuming_unit_identity, Some(product))
+        .map_err(|error| CliError::failure(format!("could not bind native publisher product: {error}")))
 }
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
@@ -1661,14 +1679,14 @@ fn harvest_release_entry(
         &prepared.publisher,
         HarvestPublisherIdentity::new(&receipt.identity, compiler_closure, ambient_harvest_hazards(), notes),
     );
-    let report = harvest_registry_units(capture, &evidence, profile).map_err(oven_error)?;
     let loaf_name = prepared
         .preparation
         .loaf_identity
         .strip_prefix("sha256:")
         .unwrap_or(&prepared.preparation.loaf_identity);
     let retained_root = staged_root.join(format!("{loaf_name}.loaf"));
-    write_harvest_report(&report, harvest_dir, &retained_root).map_err(oven_error)?;
+    let report =
+        harvest_registry_units_to_dir(capture, &evidence, profile, harvest_dir, &retained_root).map_err(oven_error)?;
     let proposals = proposal_directory_names(&report).map_err(oven_error)?;
     announce_oven_progress(
         "HARVESTED",
