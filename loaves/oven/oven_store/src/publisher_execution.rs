@@ -569,6 +569,13 @@ mod tool_execution {
                     source,
                 })?;
             }
+            if output.kind == RustFactArtifactKind::Tree {
+                fs::create_dir(&path).map_err(|source| OvenPublisherToolError::Io {
+                    producer: request.tool.name.clone(),
+                    path: path.clone(),
+                    source,
+                })?;
+            }
             if outputs.insert(output.name.clone(), path).is_some() {
                 return invalid(&request.tool.name, "output names must be unique");
             }
@@ -1000,6 +1007,94 @@ mod tool_execution {
     /// Return a typed invalid-request result without repeating producer conversion.
     fn invalid<T>(producer: &str, message: &str) -> Result<T, OvenPublisherToolError> {
         Err(invalid_error(producer, message))
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    mod tests {
+        use std::error::Error;
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        use oven_model::manifest::{
+            RustFactArgument, RustFactArtifactKind, RustFactExecutable, RustFactOutput, RustFactTool,
+        };
+        use tempfile::tempdir;
+
+        use super::{
+            OvenPublisherExecutionMode, OvenPublisherToolError, OvenPublisherToolOwner, OvenPublisherToolRequest,
+            execute_publisher_tool,
+        };
+        use crate::digest_bytes;
+
+        /// Return whether the managed host refused a nested Seatbelt profile before the fixture could run.
+        fn confinement_was_denied(error: &OvenPublisherToolError) -> bool {
+            matches!(
+                error,
+                OvenPublisherToolError::Execution { message, .. }
+                    if message.contains("sandbox_apply: Operation not permitted")
+            )
+        }
+
+        #[test]
+        /// A declared tree exists when the tool starts, so shell redirection can create a member inside it.
+        fn publisher_tool_creates_declared_tree_output_before_execution() -> Result<(), Box<dyn Error>> {
+            let executable_owner = tempdir()?;
+            let executable_path = executable_owner.path().join("tree-writer");
+            let executable_bytes = b"#!/bin/sh\nset -eu\nprintf '%s' generated > \"$1/member.rs\"\n";
+            fs::write(&executable_path, executable_bytes)?;
+            let mut permissions = fs::metadata(&executable_path)?.permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable_path, permissions)?;
+
+            let fact_owner = tempdir()?;
+            let product_root = tempdir()?;
+            let executable_owner_identity =
+                crate::publisher_owner::publisher_owner_identity(executable_owner.path(), ["tree-writer"])?;
+            let tool = RustFactTool {
+                name: "tree-writer".to_string(),
+                target: "aarch64-apple-darwin".to_string(),
+                executable: RustFactExecutable {
+                    name: "tree-writer".to_string(),
+                    owner: executable_owner_identity.clone(),
+                    path: "tree-writer".to_string(),
+                    digest: digest_bytes(executable_bytes),
+                },
+                arguments: vec![RustFactArgument::Output {
+                    output: "generated-tree".to_string(),
+                }],
+                environment: Vec::new(),
+                inputs: Vec::new(),
+                outputs: vec![RustFactOutput {
+                    name: "generated-tree".to_string(),
+                    kind: RustFactArtifactKind::Tree,
+                    path: "generated".to_string(),
+                }],
+            };
+            let request = OvenPublisherToolRequest {
+                mode: OvenPublisherExecutionMode::Publisher,
+                tool: &tool,
+                fact_owner: OvenPublisherToolOwner {
+                    identity: digest_bytes(b"fixture fact owner"),
+                    root: fact_owner.path(),
+                },
+                executable_owner: OvenPublisherToolOwner {
+                    identity: executable_owner_identity,
+                    root: executable_owner.path(),
+                },
+                host: "aarch64-apple-darwin",
+                target: "aarch64-apple-darwin",
+                consuming_units: &["sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],
+                product_root: product_root.path(),
+            };
+
+            match execute_publisher_tool(&request) {
+                Ok(receipt) => assert_eq!(receipt.outputs[0].members[0].path, "member.rs"),
+                Err(error) if confinement_was_denied(&error) => return Ok(()),
+                Err(error) => return Err(error.into()),
+            }
+            assert_eq!(fs::read(product_root.path().join("generated/member.rs"))?, b"generated");
+            Ok(())
+        }
     }
 }
 
