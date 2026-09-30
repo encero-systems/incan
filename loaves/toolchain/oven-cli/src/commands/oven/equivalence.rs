@@ -28,61 +28,61 @@ const ARTIFACT_ROLES: &[&str] = &[
 /// One exact executable identity in the deterministic capture setup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ExecutableIdentity {
-    version: String,
-    digest: String,
+pub(crate) struct ExecutableIdentity {
+    pub(crate) version: String,
+    pub(crate) digest: String,
 }
 
 /// Recorded Cargo, rustc, platform, and profile setup shared by both captures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CaptureSetup {
-    cargo: ExecutableIdentity,
-    rustc: ExecutableIdentity,
-    host: String,
-    target: String,
-    profile: String,
+pub(crate) struct CaptureSetup {
+    pub(crate) cargo: ExecutableIdentity,
+    pub(crate) rustc: ExecutableIdentity,
+    pub(crate) host: String,
+    pub(crate) target: String,
+    pub(crate) profile: String,
 }
 
 /// One path-named digest-bearing `out` identity input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PathDigest {
-    path: String,
-    digest: String,
+pub(crate) struct PathDigest {
+    pub(crate) path: String,
+    pub(crate) digest: String,
 }
 
 /// One name-bearing native or tool identity input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NameDigest {
-    name: String,
-    digest: String,
+pub(crate) struct NameDigest {
+    pub(crate) name: String,
+    pub(crate) digest: String,
 }
 
 /// One dependency identity entering a captured unit identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DependencyIdentity {
-    name: String,
-    unit_identity: String,
+pub(crate) struct DependencyIdentity {
+    pub(crate) name: String,
+    pub(crate) unit_identity: String,
 }
 
 /// Complete negative identity inputs for one captured unit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct IdentityInputs {
-    cfg: Vec<String>,
-    out: Vec<PathDigest>,
-    native: Vec<NameDigest>,
-    tools: Vec<NameDigest>,
-    dependencies: Vec<DependencyIdentity>,
+pub(crate) struct IdentityInputs {
+    pub(crate) cfg: Vec<String>,
+    pub(crate) out: Vec<PathDigest>,
+    pub(crate) native: Vec<NameDigest>,
+    pub(crate) tools: Vec<NameDigest>,
+    pub(crate) dependencies: Vec<DependencyIdentity>,
 }
 
 /// One declared metadata-reachable product in a capture manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ArtifactManifest {
+pub(crate) struct ArtifactManifest {
     role: String,
     path: String,
     digest: String,
@@ -91,38 +91,142 @@ struct ArtifactManifest {
 /// One Oven asset archive declared beside a captured unit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ArchiveManifest {
+pub(crate) struct ArchiveManifest {
     path: String,
     digest: String,
 }
 
 /// One binding and every identity input and product its metadata reaches.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UnitManifest {
-    binding: String,
-    package: String,
-    version: String,
-    unit_identity: String,
-    features: Vec<String>,
-    source_digest: String,
-    manifest_digest: String,
-    identity_inputs: IdentityInputs,
-    artifacts: Vec<ArtifactManifest>,
+pub(crate) struct UnitManifest {
+    pub(crate) binding: String,
+    pub(crate) package: String,
+    pub(crate) version: String,
+    pub(crate) unit_identity: String,
+    pub(crate) features: Vec<String>,
+    pub(crate) source_digest: String,
+    pub(crate) manifest_digest: String,
+    pub(crate) identity_inputs: IdentityInputs,
+    /// Native object members compared individually because Cargo's archive member names are not reproducible.
     #[serde(default)]
-    asset_archive: Option<ArchiveManifest>,
+    pub(crate) native_objects: Vec<PathDigest>,
+    pub(crate) artifacts: Vec<ArtifactManifest>,
+    #[serde(default)]
+    pub(crate) asset_archive: Option<ArchiveManifest>,
 }
 
 /// One complete Cargo harvest or Oven publisher capture manifest.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CaptureManifest {
+#[derive(Serialize)]
+pub(crate) struct CaptureManifest {
     schema: u64,
     producer: String,
     cargo_free: bool,
     artifact_root: String,
     setup: CaptureSetup,
     units: Vec<UnitManifest>,
+}
+
+/// One source file copied into a schema-1 capture under a normalized evidence path.
+pub(crate) struct CaptureFileInput {
+    pub(crate) role: String,
+    pub(crate) path: String,
+    pub(crate) source: PathBuf,
+}
+
+/// Complete physical inputs for writing one schema-1 capture manifest.
+pub(crate) struct CaptureManifestInput {
+    pub(crate) producer: &'static str,
+    pub(crate) cargo_free: bool,
+    pub(crate) setup: CaptureSetup,
+    pub(crate) units: Vec<(
+        UnitManifest,
+        Vec<CaptureFileInput>,
+        Vec<CaptureFileInput>,
+        Option<PathBuf>,
+    )>,
+}
+
+/// Copy and hash one producer's complete evidence closure, then atomically write its schema-1 manifest.
+pub(crate) fn write_capture_manifest(path: &Path, input: CaptureManifestInput) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|error| format!("could not create capture directory: {error}"))?;
+    let artifact_root_name = format!("{}-artifacts", input.producer);
+    let artifact_root = parent.join(&artifact_root_name);
+    fs::create_dir_all(&artifact_root).map_err(|error| format!("could not create capture artifacts: {error}"))?;
+    let mut units = Vec::new();
+    for (mut unit, artifacts, native_objects, archive) in input.units {
+        unit.artifacts = copy_capture_files(&artifact_root, artifacts)?;
+        unit.native_objects = copy_capture_path_digests(&artifact_root, native_objects)?;
+        unit.asset_archive = archive
+            .map(|source| copy_capture_archive(&artifact_root, &unit.binding, &source))
+            .transpose()?;
+        units.push(unit);
+    }
+    units.sort_by(|left, right| left.binding.cmp(&right.binding));
+    let manifest = CaptureManifest {
+        schema: EQUIVALENCE_SCHEMA,
+        producer: input.producer.to_string(),
+        cargo_free: input.cargo_free,
+        artifact_root: artifact_root_name,
+        setup: input.setup,
+        units,
+    };
+    let mut bytes =
+        serde_json::to_vec_pretty(&manifest).map_err(|error| format!("could not encode capture: {error}"))?;
+    bytes.push(b'\n');
+    fs::write(path, bytes).map_err(|error| format!("could not write capture {}: {error}", path.display()))
+}
+
+/// Copy ordinary capture artifacts and return their sorted declarations.
+fn copy_capture_files(root: &Path, inputs: Vec<CaptureFileInput>) -> Result<Vec<ArtifactManifest>, String> {
+    let mut output = Vec::new();
+    for input in inputs {
+        let bytes = fs::read(&input.source)
+            .map_err(|error| format!("could not read capture input {}: {error}", input.source.display()))?;
+        let destination = root.join(&input.path);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("could not create capture artifact parent: {error}"))?;
+        }
+        fs::write(&destination, &bytes)
+            .map_err(|error| format!("could not write capture artifact {}: {error}", destination.display()))?;
+        output.push(ArtifactManifest {
+            role: input.role,
+            path: input.path,
+            digest: digest_bytes(&bytes),
+        });
+    }
+    output.sort_by(|left, right| (&left.role, &left.path).cmp(&(&right.role, &right.path)));
+    Ok(output)
+}
+
+/// Copy native objects while retaining only their normalized path and raw digest.
+fn copy_capture_path_digests(root: &Path, inputs: Vec<CaptureFileInput>) -> Result<Vec<PathDigest>, String> {
+    Ok(copy_capture_files(root, inputs)?
+        .into_iter()
+        .map(|artifact| PathDigest {
+            path: artifact.path,
+            digest: artifact.digest,
+        })
+        .collect())
+}
+
+/// Copy the Oven asset descriptor used as this transition's content-addressed archive witness.
+fn copy_capture_archive(root: &Path, binding: &str, source: &Path) -> Result<ArchiveManifest, String> {
+    let bytes = fs::read(source).map_err(|error| format!("could not read Oven asset witness: {error}"))?;
+    let name = digest_bytes(binding.as_bytes()).replace(':', "-");
+    let relative = format!("assets/{name}.loaf.json");
+    let destination = root.join(&relative);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("could not create asset witness parent: {error}"))?;
+    }
+    fs::write(&destination, &bytes).map_err(|error| format!("could not write asset witness: {error}"))?;
+    Ok(ArchiveManifest {
+        path: relative,
+        digest: digest_bytes(&bytes),
+    })
 }
 
 /// One verified metadata-reachable product and its raw-byte digest.
@@ -141,6 +245,7 @@ struct CapturedUnit {
     source_digest: String,
     manifest_digest: String,
     identity_inputs: IdentityInputs,
+    native_objects: Vec<PathDigest>,
     artifacts: BTreeMap<(String, String), CapturedArtifact>,
     archive_digest: Option<String>,
 }
@@ -189,6 +294,7 @@ struct EvidenceBinding {
     source_digest: String,
     manifest_digest: String,
     identity_inputs: IdentityInputs,
+    native_objects: Vec<PathDigest>,
     artifacts: Vec<EvidenceArtifact>,
 }
 
@@ -327,6 +433,21 @@ fn capture_unit(root: &Path, unit: &UnitManifest, field: &str, oven: bool) -> Re
     validate_digest(&unit.manifest_digest, &format!("{field}.manifest_digest"))?;
     validate_sorted_strings(&unit.features, &format!("{field}.features"))?;
     validate_identity_inputs(&unit.identity_inputs, &format!("{field}.identity_inputs"))?;
+    validate_path_digests(&unit.native_objects, &format!("{field}.native_objects"))?;
+    for (index, object) in unit.native_objects.iter().enumerate() {
+        let object_field = format!("{field}.native_objects[{index}]");
+        let relative = safe_relative_path(&object.path, &format!("{object_field}.path"))?;
+        let actual = digest_bytes(
+            &fs::read(regular_file(root, &relative, &object_field)?)
+                .map_err(|error| format!("could not read {object_field}: {error}"))?,
+        );
+        if actual != object.digest {
+            return Err(format!(
+                "{object_field} declared digest {}, but raw bytes have {actual}",
+                object.digest
+            ));
+        }
+    }
     let mut artifacts = BTreeMap::new();
     let mut prior_key: Option<(String, String)> = None;
     for (index, artifact) in unit.artifacts.iter().enumerate() {
@@ -369,6 +490,7 @@ fn capture_unit(root: &Path, unit: &UnitManifest, field: &str, oven: bool) -> Re
         source_digest: unit.source_digest.clone(),
         manifest_digest: unit.manifest_digest.clone(),
         identity_inputs: unit.identity_inputs.clone(),
+        native_objects: unit.native_objects.clone(),
         artifacts,
         archive_digest,
     })
@@ -542,6 +664,11 @@ fn compare_captures(cargo: Capture, oven: Capture) -> Result<EquivalenceEvidence
             .get(&binding)
             .ok_or_else(|| format!("missing Oven binding {binding}"))?;
         compare_unit_identity(&binding, cargo_unit, oven_unit)?;
+        if cargo_unit.native_objects != oven_unit.native_objects {
+            return Err(format!(
+                "{binding}: native object inventory or bytes differ; Cargo archives themselves are not compared"
+            ));
+        }
         let cargo_artifacts: BTreeSet<_> = cargo_unit.artifacts.keys().cloned().collect();
         let oven_artifacts: BTreeSet<_> = oven_unit.artifacts.keys().cloned().collect();
         if cargo_artifacts != oven_artifacts {
@@ -583,6 +710,7 @@ fn compare_captures(cargo: Capture, oven: Capture) -> Result<EquivalenceEvidence
             source_digest: oven_unit.source_digest.clone(),
             manifest_digest: oven_unit.manifest_digest.clone(),
             identity_inputs: oven_unit.identity_inputs.clone(),
+            native_objects: oven_unit.native_objects.clone(),
             artifacts,
         });
     }
@@ -712,10 +840,13 @@ mod tests {
     fn write_capture(root: &Path, producer: &str, cargo_free: bool) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let artifact_root = root.join("artifacts");
         let artifact = artifact_root.join("deps/libfixture.rlib");
+        let native_object = artifact_root.join("native/fixture.o");
         let archive = artifact_root.join("assets/fixture.loaf");
         fs::create_dir_all(artifact.parent().ok_or("artifact has no parent")?)?;
+        fs::create_dir_all(native_object.parent().ok_or("native object has no parent")?)?;
         fs::create_dir_all(archive.parent().ok_or("archive has no parent")?)?;
         fs::write(&artifact, b"fixture rlib bytes\n")?;
+        fs::write(&native_object, b"fixture object bytes\n")?;
         fs::write(&archive, b"oven asset archive\n")?;
         let mut unit = serde_json::json!({
             "binding": "fixture 1.0.0 target release",
@@ -732,6 +863,10 @@ mod tests {
                 "tools": [{"name": "generator", "digest": digest_bytes(b"tool")}],
                 "dependencies": [{"name": "dependency", "unit_identity": digest_bytes(b"dependency")}]
             },
+            "native_objects": [{
+                "path": "native/fixture.o",
+                "digest": digest_bytes(&fs::read(&native_object)?)
+            }],
             "artifacts": [{
                 "role": "rlib",
                 "path": "deps/libfixture.rlib",
@@ -762,6 +897,27 @@ mod tests {
         let path = root.join("capture.json");
         save(&path, &manifest)?;
         Ok(path)
+    }
+
+    #[test]
+    fn native_archives_compare_object_bytes_instead_of_archive_container_bytes() -> TestResult {
+        let fixture = Fixture::new()?;
+        let mut oven = load(&fixture.oven_manifest)?;
+        let archive = fixture.oven.join("artifacts/assets/fixture.loaf");
+        fs::write(&archive, b"different archive container bytes\n")?;
+        oven["units"][0]["asset_archive"]["digest"] = serde_json::json!(digest_bytes(&fs::read(&archive)?));
+        save(&fixture.oven_manifest, &oven)?;
+        fixture.run()?;
+
+        fs::write(
+            fixture.oven.join("artifacts/native/fixture.o"),
+            b"changed object bytes\n",
+        )?;
+        oven["units"][0]["native_objects"][0]["digest"] = serde_json::json!(digest_bytes(b"changed object bytes\n"));
+        save(&fixture.oven_manifest, &oven)?;
+        let error = fixture.run().err().ok_or("changed native object was accepted")?;
+        assert!(error.contains("native object inventory or bytes differ"), "{error}");
+        Ok(())
     }
 
     /// Load one mutable capture manifest.
