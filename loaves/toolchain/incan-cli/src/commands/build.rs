@@ -731,6 +731,77 @@ mod tests {
     #[cfg(feature = "rust_inspect")]
     use rust_inspect::InspectorConfig;
 
+    /// Copy a source tree into an isolated component fixture without following symlinks.
+    fn copy_source_tree(from: &Path, to: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        fs::create_dir_all(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let source = entry.path();
+            let destination = to.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                copy_source_tree(&source, &destination)?;
+            } else if entry.file_type()?.is_file() {
+                fs::copy(source, destination)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// #1976: SDK prewarm cache hits must not be the only check of `std.async`; its complete source graph must pass a
+    /// fresh source check with an isolated SDK home.
+    #[test]
+    fn std_async_component_sources_typecheck_from_source_issue1976() -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "INCAN_TEST_1976_STDLIB_SOURCE_CHILD";
+        const ENTRY: &str = "INCAN_TEST_1976_STDLIB_SOURCE_ENTRY";
+        if env::var_os(CHILD).is_some() {
+            let entry = env::var(ENTRY)?;
+            crate::commands::diagnostics::check_path(
+                Path::new(&entry),
+                crate::commands::diagnostics::DiagnosticOutputFormat::Text,
+            )?;
+            return Ok(());
+        }
+
+        let root = incan_test_support::repo_root();
+        let state = tempfile::tempdir()?;
+        let stdlib = state.path().join("stdlib");
+        copy_source_tree(&root.join("loaves/stdlib"), &stdlib)?;
+        let component = stdlib.join("async");
+        let component_manifest = fs::read_to_string(component.join("loaf.toml"))?;
+        let sdk_profile = component_manifest
+            .find("\n[sdk]\n")
+            .ok_or("async component manifest has no SDK profile")?;
+        fs::write(component.join("loaf.toml"), &component_manifest[..sdk_profile])?;
+        fs::write(
+            component.join("rust/Cargo.toml"),
+            "[package]\nname = \"incan_std_async\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\ntokio = { version = \"1\", features = [\"rt-multi-thread\", \"macros\", \"time\", \"sync\", \"net\"] }\n",
+        )?;
+        let entry = component.join("src/lib.incn");
+        let child = std::process::Command::new(env::current_exe()?)
+            .args([
+                "--exact",
+                "commands::build::tests::std_async_component_sources_typecheck_from_source_issue1976",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env(ENTRY, &entry)
+            .env("INCAN_SOURCE_ROOT", &root)
+            .env("INCAN_STDLIB", &stdlib)
+            .env("INCAN_STDLIB_DIR", &stdlib)
+            .env("INCAN_HOME", state.path().join("home"))
+            .env(incan_provider::SDK_PROVIDER_BUILD_ENV, "stdlib-async")
+            .env_remove(incan_provider::inventory::SDK_INVENTORY_OVERRIDE_ENV)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            child.status.success(),
+            "the std.async source-check child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(stdout.contains("1 passed"), "the child ran no exact test:\n{stdout}");
+        Ok(())
+    }
+
     #[test]
     fn completed_output_reuse_requires_the_implicit_default_backend_selection() {
         let default = BackendSelectionOptions::default();
