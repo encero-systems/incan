@@ -1470,3 +1470,48 @@ def without_probe() -> bool:
     }
     Ok(())
 }
+
+/// A generic collection comprehension may keep its source only when its element parameter declares `Clone` (#1983).
+#[test]
+fn reused_generic_comprehension_source_requires_clone_issue1983() -> Result<(), String> {
+    let errors = match check_str(
+        r#"
+def copy_and_keep[T](items: list[T]) -> list[T]:
+    copied = [item for item in items]
+    println(len(copied))
+    return items
+"#,
+    ) {
+        Err(errors) => errors,
+        Ok(()) => return Err("a reused generic comprehension source must require Clone".to_string()),
+    };
+    let diagnostic = errors.iter().find(|error| {
+        error.message.contains("type parameter 'T'") && error.hints.iter().any(|hint| hint.contains("T with Clone"))
+    });
+    if diagnostic.is_none() {
+        return Err(format!(
+            "expected the comprehension Clone-bound diagnostic, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        ));
+    }
+
+    check_str(
+        r#"
+def copy_and_keep[T with Clone](items: list[T]) -> list[T]:
+    copied = [item for item in items]
+    println(len(copied))
+    return items
+"#,
+    )
+    .map_err(|bounded_errors| format!("the bounded copy must check: {bounded_errors:?}"))?;
+
+    check_str(
+        r#"
+def copy_all[T](items: list[T]) -> list[T]:
+    return [item for item in items]
+"#,
+    )
+    .map_err(|last_use_errors| format!("the last-use move must remain unbounded: {last_use_errors:?}"))?;
+
+    Ok(())
+}

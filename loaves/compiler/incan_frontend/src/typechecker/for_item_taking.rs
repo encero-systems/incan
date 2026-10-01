@@ -34,6 +34,7 @@ use std::collections::{HashMap, HashSet};
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::keywords::KeywordId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::traits::TraitId;
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{SemanticSourceTargetKind, SurfaceFeatureKey};
 
@@ -65,6 +66,8 @@ pub(super) struct ForItemTaking {
     reassignments: Vec<Reassignment>,
     /// Every `break` and `continue` checked so far: where it is, and the start of the loop it leaves.
     loop_exits: Vec<(usize, usize)>,
+    /// Comprehension sources waiting for every later binding read to be known (#1983).
+    copying_comprehensions: Vec<CopyingComprehension>,
 }
 
 /// A list whose items a `for` loop takes out.
@@ -94,7 +97,77 @@ struct Reassignment {
     block_path: Vec<usize>,
 }
 
+/// One comprehension over a collection whose borrowed iteration plan copies elements.
+#[derive(Debug, Clone)]
+struct CopyingComprehension {
+    symbol: SymbolId,
+    source_span: Span,
+    collection_type: String,
+    type_param: String,
+    has_clone_bound: bool,
+    can_consume_if_last: bool,
+}
+
 impl TypeChecker {
+    /// Record a collection comprehension whose source-consumption decision must be shared with lowering (#1983).
+    ///
+    /// The body read ledger already used by item-taking loops is the authority for whether a direct immutable list
+    /// binding has a later read. Nested blocks, loops, closures, mutable bindings, sets, and dicts conservatively keep
+    /// their source because the legacy emitter cannot consume them through its direct-list path.
+    pub(super) fn plan_comprehension_collection_source(&mut self, iter_expr: &Spanned<Expr>, iter_ty: &ResolvedType) {
+        let Some(type_param) = comprehension_copied_element_type(iter_ty)
+            .and_then(|element| self.active_type_param_name(element))
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        let Expr::Ident(name) = &iter_expr.node else {
+            return;
+        };
+        let Some(symbol) = self.symbols.lookup(name) else {
+            return;
+        };
+        let is_immutable = self
+            .symbols
+            .get(symbol)
+            .is_some_and(|definition| matches!(&definition.kind, SymbolKind::Variable(info) if !info.is_mutable));
+        let can_consume_if_last = is_immutable
+            && is_list_type(iter_ty)
+            && self.for_item_taking.block_path.len() == 1
+            && self.loop_stack.is_empty()
+            && self.closure_depth == 0;
+        let has_clone_bound = self.active_type_param_satisfies_builtin_bound(&type_param, TraitId::Clone);
+        self.for_item_taking.copying_comprehensions.push(CopyingComprehension {
+            symbol,
+            source_span: iter_expr.span,
+            collection_type: iter_ty.to_string(),
+            type_param,
+            has_clone_bound,
+            can_consume_if_last,
+        });
+    }
+
+    /// Finalize comprehension source plans after the complete callable body has populated the binding-read ledger.
+    pub(super) fn finalize_comprehension_collection_sources(&mut self) {
+        let pending = std::mem::take(&mut self.for_item_taking.copying_comprehensions);
+        for comprehension in pending {
+            let has_later_read =
+                self.for_item_taking.list_reads.iter().any(|(symbol, span)| {
+                    *symbol == comprehension.symbol && span.start > comprehension.source_span.start
+                });
+            let consumed = comprehension.can_consume_if_last && !has_later_read;
+            self.type_info
+                .record_comprehension_source_consumption(comprehension.source_span, consumed);
+            if !consumed && !comprehension.has_clone_bound {
+                self.errors.push(errors::comprehension_element_copy_missing_clone_bound(
+                    &comprehension.type_param,
+                    &comprehension.collection_type,
+                    comprehension.source_span,
+                ));
+            }
+        }
+    }
+
     /// Decide, before its body is checked, whether a `for` loop takes the items out of the list it iterates, and
     /// return whether the loop's bindings own the items they hold: because the loop takes them, or because it iterates
     /// a value only it holds and so receives each item by value already.
@@ -564,6 +637,34 @@ impl TypeChecker {
             span: definition.span,
             scope: definition.scope,
         })
+    }
+}
+
+/// Return the direct element type a borrowed comprehension copies from this collection type.
+fn comprehension_copied_element_type(ty: &ResolvedType) -> Option<&ResolvedType> {
+    let ty = match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+        other => other,
+    };
+    match ty {
+        ResolvedType::Generic(name, args)
+            if matches!(
+                collection_type_id(name),
+                Some(CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict)
+            ) =>
+        {
+            args.first()
+        }
+        _ => None,
+    }
+}
+
+/// Return whether `ty` is an ordinary list, looking through a parameter reference wrapper.
+fn is_list_type(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => is_list_type(inner),
+        ResolvedType::Generic(name, _) => collection_type_id(name) == Some(CollectionTypeId::List),
+        _ => false,
     }
 }
 

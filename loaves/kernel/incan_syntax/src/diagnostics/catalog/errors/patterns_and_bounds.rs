@@ -108,3 +108,25 @@ pub fn nominal_type_argument_missing_bound(
     ))
     .with_hint(format!("Declare the type parameter as '{argument} with {bound}'"))
 }
+
+/// Report a comprehension that must copy elements of an unbounded type parameter from a retained collection
+/// (#1983).
+///
+/// `type_param` is the collection element parameter and `collection_type` is the checked collection spelling. The
+/// source may omit `Clone` only when the checker proves that the comprehension consumes the collection and therefore
+/// moves its elements.
+pub fn comprehension_element_copy_missing_clone_bound(
+    type_param: &str,
+    collection_type: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "This comprehension keeps its '{collection_type}' source, so it must copy elements of type parameter \
+             '{type_param}', which does not declare 'Clone'"
+        ),
+        span,
+    )
+    .with_note("A comprehension may move unbounded elements only when it consumes its collection source")
+    .with_hint(format!("Declare the type parameter as '{type_param} with Clone'"))
+}

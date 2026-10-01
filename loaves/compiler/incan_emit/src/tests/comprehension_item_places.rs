@@ -106,3 +106,22 @@ def main() -> None:
     assert_eq!(output, "3\n");
     Ok(())
 }
+
+/// A reused generic list parameter stays available when `Clone` permits the comprehension to copy its elements
+/// (#1983).
+#[test]
+fn generic_list_comprehension_copies_bounded_items_issue1983() -> TestResult {
+    let output = program_output(
+        r#"
+def copy_and_keep[T with Clone](items: list[T]) -> list[T]:
+    copied = [item for item in items]
+    println(len(copied))
+    return items
+
+def main() -> None:
+    println(len(copy_and_keep([1, 2, 3])))
+"#,
+    )?;
+    assert_eq!(output, "3\n3\n");
+    Ok(())
+}
