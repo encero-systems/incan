@@ -4341,9 +4341,9 @@ impl TypeChecker {
             };
             let adoption = TypeBoundInfo {
                 name: type_name.clone(),
-                source_name: None,
+                source_name: self.trait_bound_source_name(type_name),
                 type_args: trait_args,
-                module_path: None,
+                module_path: self.trait_bound_module_path(type_name),
                 implementation_type_params: Vec::new(),
                 inferred: false,
             };
@@ -4727,9 +4727,9 @@ impl TypeChecker {
 
         let adoption = TypeBoundInfo {
             name: trait_name.to_string(),
-            source_name: None,
+            source_name: self.trait_bound_source_name(trait_name),
             type_args: trait_args,
-            module_path: None,
+            module_path: self.trait_bound_module_path(trait_name),
             implementation_type_params: Vec::new(),
             inferred: false,
         };

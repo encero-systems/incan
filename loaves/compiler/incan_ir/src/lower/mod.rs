@@ -351,7 +351,7 @@ pub struct AstLowering {
     /// actually adopted rather than inferring it from the identity the call resolved to. A trait adopted through a
     /// source-module derive (`@derive(codec)`) counts as adopted, like one written in a `with` clause.
     pub adopted_traits_by_type: HashMap<String, HashSet<String>>,
-    /// Trait names this program declares.
+    /// Trait names this program declares or imports.
     ///
     /// A value typed as a trait names no implementation, so a method call on one cannot be projected: the trait's own
     /// declaration is an abstract slot and only adopting types emit a wrapper beside it. A supertrait makes this
@@ -2654,6 +2654,12 @@ impl AstLowering {
             })
             .collect();
         self.alias_imported_dependency_trait_decls();
+        self.declared_trait_names.extend(
+            self.import_aliases
+                .keys()
+                .filter(|name| self.trait_decls.contains_key(*name))
+                .cloned(),
+        );
         self.symbol_aliases = program
             .declarations
             .iter()

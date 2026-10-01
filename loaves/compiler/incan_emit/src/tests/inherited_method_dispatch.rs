@@ -2,6 +2,7 @@
 
 use incan_frontend::{lexer, parser};
 
+use super::generated_programs::run_modules_with_stdlib;
 use super::mut_ownership_regressions::run_generated_program;
 use crate::IrCodegen;
 
@@ -81,5 +82,41 @@ def main() -> None:
 "#,
     )?;
     assert_eq!(run_generated_program(&rust)?, "child\nchild\n");
+    Ok(())
+}
+
+/// A parameter typed by an imported subtrait can call a method declared by its unimported generic supertrait.
+#[test]
+fn subtrait_bound_exposes_the_unimported_supertrait_method() -> TestResult {
+    let readers = r#"
+pub trait Reader[T]:
+    def read(self) -> T: ...
+
+
+pub trait TaggedReader[T] with Reader[T]:
+    def tag(self) -> str: ...
+
+
+pub model Packet with TaggedReader[int]:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+    def tag(self) -> str:
+        return "packet"
+"#;
+    let main = r#"
+from readers import Packet, TaggedReader
+
+
+def read_tagged[T](value: TaggedReader[T]) -> T:
+    return value.read()
+
+
+def main() -> None:
+    println(read_tagged(Packet(value=42)))
+"#;
+    assert_eq!(run_modules_with_stdlib(&[("readers", readers)], main)?, "42\n");
     Ok(())
 }

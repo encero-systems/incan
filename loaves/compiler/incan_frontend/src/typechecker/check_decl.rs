@@ -1175,7 +1175,7 @@ impl TypeChecker {
                 supertrait_name,
                 &instantiated,
                 supertrait_args,
-                None,
+                origin_module_path,
                 seen,
                 out,
             );

@@ -975,6 +975,10 @@ impl AstLowering {
                 } else if let Some(dependency_path) = self.unimported_dependency_trait_path(&declaration_name, receiver)
                 {
                     dependency_path
+                } else if let Some(project_path) =
+                    self.unimported_project_trait_path(&declaration_name, module_path.as_deref())
+                {
+                    project_path
                 } else {
                     trait_name
                 };
@@ -991,6 +995,35 @@ impl AstLowering {
                 }))
             }
         }
+    }
+
+    /// Return the crate-qualified path of a project trait whose declaration is not imported at this call site.
+    ///
+    /// A subtrait import makes its own Rust trait available but does not bring an unimported supertrait into scope.
+    /// Calls resolved to that supertrait therefore need its declaring-module path so emission selects UFCS rather
+    /// than depending on Rust method lookup through an absent `use` binding.
+    fn unimported_project_trait_path(&self, declaration_name: &str, module_path: Option<&[String]>) -> Option<String> {
+        let module_path = module_path?;
+        if module_path.is_empty()
+            || stdlib::is_any_stdlib_path(module_path)
+            || module_path
+                .first()
+                .is_some_and(|root| root == keywords::as_str(KeywordId::Pub))
+        {
+            return None;
+        }
+        if self.current_source_module_name.as_deref().is_some_and(|name| {
+            name.split('.')
+                .filter(|segment| !segment.is_empty())
+                .eq(module_path.iter().map(String::as_str))
+        }) {
+            return None;
+        }
+        let imported = self.import_aliases.values().any(|path| {
+            path.split_last()
+                .is_some_and(|(name, owner)| name == declaration_name && owner == module_path)
+        });
+        (!imported).then(|| format!("crate::{}::{declaration_name}", module_path.join("::")))
     }
 
     /// Return the Rust path of a trait that a `pub::` dependency declares and exports, for a call on one of that
@@ -4058,6 +4091,26 @@ mod tests {
         assert!(
             !lowering.receiver_adopts_the_dispatched_trait(&receiver, Some(&trait_dispatch("DataSet"))),
             "a value typed as the trait itself names no implementation to project"
+        );
+    }
+
+    /// An imported subtrait does not put its project-owned supertrait into Rust method-lookup scope.
+    #[test]
+    fn unimported_project_supertrait_dispatch_uses_its_declaring_module_path() {
+        let mut lowering = AstLowering::new();
+        lowering.import_aliases.insert(
+            "TaggedReader".to_string(),
+            vec!["readers".to_string(), "TaggedReader".to_string()],
+        );
+
+        assert_eq!(
+            lowering.unimported_project_trait_path("Reader", Some(&["readers".to_string()])),
+            Some("crate::readers::Reader".to_string())
+        );
+        assert_eq!(
+            lowering.unimported_project_trait_path("TaggedReader", Some(&["readers".to_string()])),
+            None,
+            "a directly imported trait keeps ordinary method lookup"
         );
     }
 

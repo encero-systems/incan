@@ -3565,7 +3565,12 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "tests": {},
+      "tests": {
+        "subtrait_bound_exposes_the_unimported_supertrait_method": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_modules_and_imports/subtrait_bound_calls_unimported_supertrait_method",
+          "notes": "Asserts a parameter typed by an imported generic subtrait can call its unimported supertrait method; the named fixture runs the same multi-module call."
+        }
+      },
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/subtrait_default_and_class_override.incn"
     },
     "loaves/compiler/incan_emit/src/tests/iterator_adopters.rs": {
