@@ -9385,14 +9385,6 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/oven/oven_rustc/src/rustc.rs": {
-      "disposition": "unaffected",
-      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
-      "owner": 1561,
-      "split_required": true,
-      "split_target": "",
-      "twin": ""
-    },
     "loaves/oven/oven_rustc/src/rustc/compiled_unit.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9458,6 +9450,70 @@
       "twin": ""
     },
     "loaves/oven/oven_rustc/src/rustc/substitution.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/compiler_environment.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/direct_execution.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/foundation_composition.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/native_inputs.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/path_library_execution.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/receipts_and_inspection.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/registry_and_toolchain.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/tests/source_roles.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
