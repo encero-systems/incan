@@ -11,7 +11,7 @@ use crate::build::{
 };
 use crate::error::{CliError, CliResult};
 use crate::project::{effective_project_manifest_for_exact_root, resolve_source_root};
-use incan_frontend::library_manifest::digest_cargo_path_source_tree_with_cache;
+use incan_frontend::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
 use incan_frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryManifestIndexEntry, load_provider_dependency_artifact,
 };
@@ -164,6 +164,7 @@ impl ProjectSourceAuthorityDigester {
                 }
             };
             records.insert(format!("incan-dependency:{name}"), child_digest);
+            append_provider_artifact_authority(name, &dependency.path, &mut records)?;
         }
 
         let mut rust_path_dependencies =
@@ -210,6 +211,30 @@ impl ProjectSourceAuthorityDigester {
         self.project_digests.insert(canonical_root, digest.clone());
         Ok(digest)
     }
+}
+
+/// Bind a materialized provider's stable package content into its consumer's completed-output authority.
+///
+/// Authored source remains independently bound above. This additional record ensures a genuinely different sealed
+/// native provider invalidates warm consumer reuse, while the provider digest itself excludes package-store access
+/// bookkeeping that cannot affect execution.
+fn append_provider_artifact_authority(
+    dependency_name: &str,
+    dependency_root: &Path,
+    records: &mut BTreeMap<String, String>,
+) -> CliResult<()> {
+    let artifact_root = dependency_root.join("target/lib");
+    if !artifact_root.is_dir() {
+        return Ok(());
+    }
+    let artifact_digest = digest_provider_artifact(&artifact_root).map_err(|error| {
+        CliError::failure(format!(
+            "Oven Alpha cannot digest the packaged provider for pub::{dependency_name} at {}: {error}",
+            artifact_root.display()
+        ))
+    })?;
+    records.insert(format!("incan-provider-artifact:{dependency_name}"), artifact_digest);
+    Ok(())
 }
 
 /// Digest the exact build-input graph for a completed project output without observing generated or unrelated files.
@@ -675,7 +700,9 @@ pub fn prepared_oven_receipt_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::build::test_support::{fixture_project_output_publication, fixture_project_output_publication_for};
+    use crate::build::test_support::{
+        fixture_project_output_publication, fixture_project_output_publication_for, packaged_provider_authority_fixture,
+    };
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
 
@@ -801,6 +828,56 @@ mod tests {
 
         fs::write(provider.join("src/lib.incn"), "pub def value() -> int:\n    return 2\n")?;
         assert_ne!(initial, digest_baked_project_source_authority(project.path())?);
+        Ok(())
+    }
+
+    /// Consumer reuse ignores provider-store access bookkeeping but misses when declared provider content changes.
+    #[test]
+    fn consumer_bake_authority_reseals_after_real_provider_content_change_issue1979()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (provider, artifact) = packaged_provider_authority_fixture(&["debug"])?;
+        let consumer = tempfile::tempdir()?;
+        fs::create_dir(consumer.path().join("src"))?;
+        fs::write(
+            consumer.path().join(LOAF_MANIFEST_FILENAME),
+            format!(
+                "[project]\nname = \"orchard_consumer\"\n\n[dependencies]\nprovider = {{ path = {:?} }}\n",
+                provider.path()
+            ),
+        )?;
+        fs::write(
+            consumer.path().join("src/main.incn"),
+            "from pub::provider import provider\n\ndef main() -> None:\n    assert provider() == 1\n",
+        )?;
+        let provider_artifact_initial = digest_provider_artifact(&artifact.crate_root)?;
+        let provider_source_initial = digest_baked_project_source_authority(provider.path())?;
+        let initial_provider_bytes = fs::read(&artifact.crate_lib_path)?;
+        let initial = digest_baked_project_source_authority(consumer.path())?;
+
+        let bookkeeping = artifact.crate_root.join("oven/loafs/entries/sha256-orchard-plan.loaf");
+        fs::create_dir_all(&bookkeeping)?;
+        fs::write(bookkeeping.join("last-used"), "100")?;
+        assert_eq!(
+            provider_artifact_initial,
+            digest_provider_artifact(&artifact.crate_root)?
+        );
+        assert_eq!(
+            provider_source_initial,
+            digest_baked_project_source_authority(provider.path())?
+        );
+        assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
+        fs::write(bookkeeping.join("last-used"), "200")?;
+        assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
+
+        fs::write(&artifact.crate_lib_path, "pub fn provider() -> i32 { 2 }\n")?;
+        let changed = digest_baked_project_source_authority(consumer.path())?;
+        assert_ne!(
+            initial, changed,
+            "changed provider content must invalidate consumer bake reuse"
+        );
+
+        fs::write(&artifact.crate_lib_path, initial_provider_bytes)?;
+        assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
         Ok(())
     }
 

@@ -17,11 +17,14 @@ use crate::library_manifest::{
     LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyMetadata,
 };
 
-/// Hash every immutable manifest, generated source, and generated-project input in one provider artifact tree.
+/// Hash every declared manifest, generated source, native output, and generated-project input in one provider
+/// artifact tree.
 ///
 /// Compiler, VCS, and test-runner output directories are deliberately excluded because they are mutable caches
-/// rather than provider content. Generated providers normally use an external shared target directory, but these
-/// exclusions keep integrity stable if a backend tool creates conventional local output later.
+/// rather than provider content. The nested package Loaf store is excluded as a unit: `oven/package-loafs.json`
+/// declares the provider's exact immutable dependency closure, while the store below `oven/loafs` also contains
+/// access markers, leases, and accounting caches. Generated providers normally use an external shared target
+/// directory, but these exclusions keep integrity stable if a backend tool creates conventional local output later.
 pub fn digest_provider_artifact(root: &Path) -> Result<String, ProviderArtifactDigestError> {
     if !root.is_dir() {
         return Err(ProviderArtifactDigestError::InvalidRoot {
@@ -719,12 +722,17 @@ fn artifact_directory_entries(
         })?;
         if file_type.is_dir() {
             let is_mutable_output = matches!(file_name, Some(".git" | ".incan" | ".ralph-cache" | "target"));
+            let is_package_loaf_store = relative == Path::new("oven/loafs");
             // v0.5 providers briefly placed the compiler-owned Rust-inspection Cargo target below the published
             // `oven/` directory. It is mutable preparation state, not provider content. Exclude the legacy location
             // so an existing generated provider remains loadable while current builders place it under `target/`.
             let is_legacy_rust_inspect_output = relative == Path::new("oven/rust-inspect");
             let is_nested_target = file_name == Some("target");
-            if is_mutable_output || is_legacy_rust_inspect_output || (exclude_nested_targets && is_nested_target) {
+            if is_mutable_output
+                || is_package_loaf_store
+                || is_legacy_rust_inspect_output
+                || (exclude_nested_targets && is_nested_target)
+            {
                 continue;
             }
         }
@@ -809,6 +817,39 @@ mod tests {
             fs::write(artifact.path().join(directory).join("mutable"), "not provider content")?;
         }
         assert_eq!(source_changed, digest_provider_artifact(artifact.path())?);
+        Ok(())
+    }
+
+    /// Store access and accounting mutations do not change a packaged provider's declared content identity.
+    #[test]
+    fn packaged_provider_digest_ignores_nested_store_bookkeeping_but_tracks_declared_closure_issue1979() -> TestResult {
+        let artifact = tempfile::tempdir()?;
+        fs::create_dir_all(artifact.path().join("src"))?;
+        fs::create_dir_all(artifact.path().join("oven/loafs/entries/sha256-fixture.loaf"))?;
+        fs::write(artifact.path().join("fixture_library.incnlib"), "manifest")?;
+        fs::write(artifact.path().join("src/lib.rs"), "pub fn value() -> i32 { 1 }")?;
+        fs::write(
+            artifact.path().join("oven/package-loafs.json"),
+            r#"{"profiles":{"debug":{"identity":"sha256:fixture-plan"}}}"#,
+        )?;
+        let entry = artifact.path().join("oven/loafs/entries/sha256-fixture.loaf");
+        fs::write(entry.join("loaf.json"), "immutable store manifest")?;
+        fs::write(entry.join("last-used"), "100")?;
+        fs::write(entry.join(".active.lock"), "first lease")?;
+        fs::write(entry.join(".physical-bytes-cache"), "10")?;
+        let initial = digest_provider_artifact(artifact.path())?;
+
+        fs::write(entry.join("last-used"), "200")?;
+        fs::write(entry.join(".active.lock"), "second lease")?;
+        fs::write(entry.join(".physical-bytes-cache"), "20")?;
+        fs::write(entry.join("receipt-written-at"), "2032-01-02T03:04:05Z")?;
+        assert_eq!(initial, digest_provider_artifact(artifact.path())?);
+
+        fs::write(
+            artifact.path().join("oven/package-loafs.json"),
+            r#"{"profiles":{"debug":{"identity":"sha256:changed-plan"}}}"#,
+        )?;
+        assert_ne!(initial, digest_provider_artifact(artifact.path())?);
         Ok(())
     }
 
