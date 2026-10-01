@@ -743,6 +743,22 @@ impl TypeChecker {
         ty
     }
 
+    /// Type-check a type-owned receiver with the destination type inherited from its enclosing method call.
+    ///
+    /// The caller must establish that the enclosing method returns `Self`; only that contract makes the enclosing
+    /// destination a sound expectation for the receiver expression. Keeping the receiver-span marker active preserves
+    /// static type and enum-member resolution while contextual generic inference walks an instance method chain.
+    pub fn check_type_receiver_expr_with_expected(
+        &mut self,
+        expr: &Spanned<Expr>,
+        expected: &ResolvedType,
+    ) -> ResolvedType {
+        self.type_receiver_spans.push((expr.span.start, expr.span.end));
+        let ty = self.check_expr_with_expected(expr, Some(expected));
+        self.type_receiver_spans.pop();
+        ty
+    }
+
     /// Return whether a span identifies a type receiver.
     pub fn is_type_receiver_span(&self, span: Span) -> bool {
         self.type_receiver_spans

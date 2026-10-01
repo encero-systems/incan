@@ -344,6 +344,95 @@ def use_annotated_local(x: Carrier[Order]) -> Carrier[Order]:
     Ok(())
 }
 
+/// An annotated destination flows backward through `-> Self` methods so a generic method deeper in the chain can bind
+/// a type parameter that appears only in its return type. Without the destination, the bounded parameter stays open.
+#[test]
+fn expected_type_flows_through_self_returning_method_chain() -> Result<(), String> {
+    let accepted = r#"
+@derive(Clone)
+model InputRow:
+  value: int
+
+@derive(Clone)
+model OutputRow:
+  value: int
+
+class Frame[T with Clone]:
+  rows: list[T]
+
+  def select[U with Clone](self) -> Frame[U]:
+    return Frame[U](rows=[])
+
+  def order_by(self) -> Self:
+    return self
+
+  def limit(self, _count: int) -> Self:
+    return self
+
+def plan(source: Frame[InputRow]) -> Frame[OutputRow]:
+  result: Frame[OutputRow] = source.select().order_by().limit(10)
+  return result
+"#;
+    check_str(accepted).map_err(|errors| format!("expected chained contextual inference to pass: {errors:?}"))?;
+
+    let refused = r#"
+@derive(Clone)
+model InputRow:
+  value: int
+
+class Frame[T with Clone]:
+  rows: list[T]
+
+  def select[U with Clone](self) -> Frame[U]:
+    return Frame[U](rows=[])
+
+  def order_by(self) -> Self:
+    return self
+
+def plan(source: Frame[InputRow]) -> None:
+  source.select().order_by()
+"#;
+    let errors = check_str_err(refused, "an uncontextualized bounded method parameter must stay open");
+    if errors
+        .iter()
+        .any(|error| error.message.contains("Cannot infer type parameter 'U' of 'select'"))
+    {
+        Ok(())
+    } else {
+        Err(format!("expected the bounded inference diagnostic, got: {errors:?}"))
+    }
+}
+
+/// A dependency method's exported return type keeps its provider-qualified owner while the consumer annotation uses
+/// the imported spelling; contextual generic inference must compare their shared identity before walking arguments.
+#[test]
+fn expected_type_infers_through_public_library_owner_alias() {
+    let mut checker = TypeChecker::new();
+    let identity = PublicLibraryTypeIdentity::new("incql", &["dataset".to_string(), "LazyFrame".to_string()]);
+    checker
+        .public_library_type_identities
+        .insert("LazyFrame".to_string(), identity.clone());
+    checker
+        .public_library_type_identities
+        .insert("pub::incql::LazyFrame".to_string(), identity);
+
+    let returned = ResolvedType::Generic(
+        "pub::incql::LazyFrame".to_string(),
+        vec![ResolvedType::TypeVar("U".to_string())],
+    );
+    let destination = ResolvedType::Generic(
+        "LazyFrame".to_string(),
+        vec![ResolvedType::Named("PaidOrderReview".to_string())],
+    );
+    let mut bindings = std::collections::HashMap::new();
+    checker.infer_type_param_bindings(&returned, &destination, &mut bindings);
+
+    assert_eq!(
+        bindings.get("U"),
+        Some(&ResolvedType::Named("PaidOrderReview".to_string()))
+    );
+}
+
 /// `Self` in non-receiver parameters must use the same call-site substitution as the return type (#237 follow-up).
 #[test]
 fn test_self_param_substituted_at_call_site_for_method_args() -> Result<(), Vec<CompileError>> {

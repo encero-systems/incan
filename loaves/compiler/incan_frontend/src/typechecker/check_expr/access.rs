@@ -6032,7 +6032,29 @@ impl TypeChecker {
             return self.check_builtin_list_repeat_call(args, span);
         }
 
-        let mut base_ty = self.check_type_receiver_expr(base);
+        let receiver_expected = expected_return_ty.and_then(|expected| {
+            let owner = match expected {
+                ResolvedType::Generic(name, _) | ResolvedType::Named(name) => name,
+                _ => return None,
+            };
+            let method_info = self
+                .lookup_semantic_trait_info(owner)
+                .and_then(|info| info.methods.get(method))
+                .or_else(|| match self.lookup_semantic_type_info(owner) {
+                    Some(TypeInfo::Model(info)) => info.methods.get(method),
+                    Some(TypeInfo::Class(info)) => info.methods.get(method),
+                    Some(TypeInfo::Newtype(info)) => info.methods.get(method),
+                    Some(TypeInfo::Enum(info)) => info.methods.get(method),
+                    Some(TypeInfo::Builtin | TypeInfo::TypeAlias) | None => None,
+                });
+            method_info
+                .is_some_and(|info| matches!(info.return_type, ResolvedType::SelfType))
+                .then_some(expected)
+        });
+        let mut base_ty = match receiver_expected {
+            Some(expected) => self.check_type_receiver_expr_with_expected(base, expected),
+            None => self.check_type_receiver_expr(base),
+        };
         // In a declared type's own method, a `Self` value (`other: Self`) is that type, so a method called on it
         // resolves as it does on `self`; a trait default keeps `Self` open (#1561).
         if matches!(base_ty, ResolvedType::SelfType)
