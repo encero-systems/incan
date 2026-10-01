@@ -7290,6 +7290,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/package_inherent_methods_issue1174",
           "notes": "The suppression decision dies with the crate; the fixture's consumer calls the dependency's inherent method on the dependency's type directly."
         },
+        "builtin_clone_identity_without_dispatch_keeps_native_method": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/native_clone_on_union_and_option_fields.incn",
+          "notes": "The source-identity projection decision dies with the crate; the fixture clones a union field and an Option field that implement Rust Clone but have no source-trait projection."
+        },
         "concrete_source_trait_can_use_recoverable_projection": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/trait_dispatch_receiver_shapes.incn",
           "notes": "The projection decision dies with the crate; the fixture dispatches a source trait's method on its concrete adopter."

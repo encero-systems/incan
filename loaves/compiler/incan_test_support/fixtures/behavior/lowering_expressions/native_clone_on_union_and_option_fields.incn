@@ -1,0 +1,32 @@
+# behavior: clone on union and Option fields uses Rust Clone rather than a source-trait projection that those carriers do not implement
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::builtin_clone_identity_without_dispatch_keeps_native_method
+# expect-stdout:
+#   cloned
+
+@derive(Clone)
+model LeftValue:
+    value: int
+
+
+@derive(Clone)
+model RightValue:
+    value: str
+
+
+type Choice = Union[LeftValue, RightValue]
+
+
+@derive(Clone)
+model Packet:
+    choice: Choice
+    maybe: Option[LeftValue]
+
+
+def clone_fields(packet: Packet) -> None:
+    copied_choice = packet.choice.clone()
+    copied_maybe = packet.maybe.clone()
+    println("cloned")
+
+
+def main() -> None:
+    clone_fields(Packet(choice=LeftValue(value=1), maybe=Some(LeftValue(value=2))))

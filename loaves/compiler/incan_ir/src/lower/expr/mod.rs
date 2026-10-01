@@ -98,6 +98,35 @@ fn can_use_source_method_projection(receiver: &TypedExpr, dispatch: Option<&IrMe
             )))
 }
 
+/// Return whether a checked method identity names Rust `Clone::clone` through Incan's source-owned builtin trait.
+///
+/// Source-module identities include the `std` root, while compiled-provider identities start at the mounted module.
+/// Both identify the same native trait slot and must therefore bypass recoverable source-method projection.
+fn is_builtin_clone_method_identity(identity: Option<&incan_semantics_core::CanonicalSymbolId>) -> bool {
+    let Some(identity) = identity else {
+        return false;
+    };
+    if identity.kind != incan_semantics_core::SemanticSourceTargetKind::Method
+        || identity.declaration_name != trait_bounds::rust::CLONE_METHOD
+    {
+        return false;
+    }
+    let Some(source_module) = builtin_traits::source_module(TraitId::Clone) else {
+        return false;
+    };
+    let mounted_module = source_module
+        .strip_prefix(stdlib::STDLIB_ROOT)
+        .and_then(|path| path.strip_prefix('.'))
+        .unwrap_or(source_module);
+    let module_path = match &identity.origin {
+        incan_semantics_core::SymbolOrigin::Module(path) => path,
+        incan_semantics_core::SymbolOrigin::Package { module_path, .. } => module_path,
+        _ => return false,
+    };
+    module_path.iter().map(String::as_str).eq(source_module.split('.'))
+        || module_path.iter().map(String::as_str).eq(mounted_module.split('.'))
+}
+
 /// Group an operator-shaped operand of `not`, unary `-` and `~` so the operator applies to the whole expression.
 ///
 /// `not (a == b)` negates the comparison. The Rust-emission backend spells a prefix operator directly in front of the
@@ -304,6 +333,9 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
+        if is_builtin_clone_method_identity(identity) {
+            return (trait_bounds::rust::CLONE_METHOD.to_string(), dispatch);
+        }
         let adopts_builtin_source_trait = self.receiver_adopts_the_builtin_source_trait(receiver, dispatch.as_ref());
         if !(can_use_source_method_projection(receiver, dispatch.as_ref()) || adopts_builtin_source_trait)
             || (!adopts_builtin_source_trait && self.method_belongs_to_an_imported_type(identity))
@@ -3964,6 +3996,34 @@ mod tests {
             &receiver,
             Some(&trait_dispatch(builtin_traits::as_str(TraitId::Clone)))
         ));
+    }
+
+    /// A clone call whose checked identity comes from the source stdlib keeps Rust's native method even when the
+    /// checker records no explicit trait dispatch for a nominal union carrier.
+    #[test]
+    fn builtin_clone_identity_without_dispatch_keeps_native_method() -> Result<(), Box<dyn std::error::Error>> {
+        let source_module = builtin_traits::source_module(TraitId::Clone).ok_or("Clone must have a source module")?;
+        let identity = incan_semantics_core::CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::Member,
+            origin: incan_semantics_core::SymbolOrigin::Module(source_module.split('.').map(str::to_string).collect()),
+            declaration_name: trait_bounds::rust::CLONE_METHOD.to_string(),
+            kind: incan_semantics_core::SemanticSourceTargetKind::Method,
+            scope_discriminant: None,
+            declaration_span: incan_semantics_core::HirSourceSpan::new(0, 0),
+        };
+        let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Choice".to_string()));
+        let lowering = AstLowering::new();
+
+        let (method, dispatch) = lowering.project_method_target_for_identity(
+            Some(&identity),
+            trait_bounds::rust::CLONE_METHOD,
+            &receiver,
+            None,
+        );
+
+        assert_eq!(method, trait_bounds::rust::CLONE_METHOD);
+        assert!(dispatch.is_none());
+        Ok(())
     }
 
     #[test]
