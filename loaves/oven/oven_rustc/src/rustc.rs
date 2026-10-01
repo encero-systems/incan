@@ -65,7 +65,7 @@ pub use toolchain::{resolve_active_rustc, rustc_host_target, rustc_identity};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
@@ -3523,10 +3523,45 @@ fn direct_rustc_excludes_inherited_environment(name: &OsStr) -> bool {
 }
 
 /// Clear ambient Cargo state before direct consumer execution; the explicit compiler path remains authoritative.
+///
+/// Direct `rustc` launches must not inherit `CARGO_HOME`: even a cache-location variable is ambient Cargo state at
+/// this boundary, and retaining it would make the compiler invocation depend on an input absent from its receipt.
 pub fn clear_inherited_cargo_environment(command: &mut Command) {
     for (name, _) in env::vars_os().filter(|(name, _)| direct_rustc_excludes_inherited_environment(name)) {
         command.env_remove(name);
     }
+    command.env_remove("CARGO_HOME");
+}
+
+/// Clear ambient compiler controls for a Cargo launch while retaining its resolved Cargo home.
+///
+/// Cargo needs its home to locate registry sources during locked offline publication. An explicit command value or
+/// inherited `CARGO_HOME` wins; otherwise the default is resolved from `HOME` and written onto the child command so
+/// the launch no longer relies on Cargo rediscovering that location after the rest of its ambient state is removed.
+pub fn clear_inherited_cargo_environment_for_cargo(command: &mut Command) {
+    let cargo_home = explicit_command_cargo_home(command)
+        .or_else(|| env::var_os("CARGO_HOME").filter(|value| !value.is_empty()))
+        .or_else(|| {
+            env::var_os("HOME")
+                .filter(|value| !value.is_empty())
+                .map(|home| PathBuf::from(home).join(".cargo").into_os_string())
+        });
+    for (name, _) in env::vars_os().filter(|(name, _)| direct_rustc_excludes_inherited_environment(name)) {
+        command.env_remove(name);
+    }
+    if let Some(cargo_home) = cargo_home {
+        command.env("CARGO_HOME", cargo_home);
+    }
+}
+
+/// Return a Cargo home already set directly on a command before ambient resolution is applied.
+fn explicit_command_cargo_home(command: &Command) -> Option<OsString> {
+    command
+        .get_envs()
+        .find(|(name, _)| *name == OsStr::new("CARGO_HOME"))
+        .and_then(|(_, value)| value)
+        .filter(|value| !value.is_empty())
+        .map(OsString::from)
 }
 
 /// Apply the named Oven compiler-suite contract to a direct compiler invocation.
@@ -4973,7 +5008,7 @@ impl PathRustcMaterializationState {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -5037,6 +5072,20 @@ mod tests {
                 "`{kept}` selects or locates the compiler and must survive the scrub"
             );
         }
+    }
+
+    #[test]
+    fn direct_rustc_launches_remove_an_explicit_cargo_home() {
+        let mut command = Command::new("rustc");
+        command.env("CARGO_HOME", "custom-cargo-home");
+
+        super::clear_inherited_cargo_environment(&mut command);
+
+        assert!(
+            command
+                .get_envs()
+                .any(|(name, value)| { name == OsStr::new("CARGO_HOME") && value.is_none() })
+        );
     }
 
     #[test]

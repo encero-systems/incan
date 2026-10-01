@@ -11,7 +11,7 @@ use std::{fs, thread};
 use oven_rustc::loaf::{LOAF_TEMP_SEQUENCE, OvenLoafError, OvenSourceCompilerVocabSupportRequest};
 use oven_rustc::rustc::{
     OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcAuxiliaryTarget, OvenRustcSupportingArtifact,
-    clear_inherited_cargo_environment,
+    clear_inherited_cargo_environment_for_cargo,
 };
 use oven_store::digest_bytes;
 use oven_store::process::{isolate_process_group, terminate_process_group};
@@ -197,7 +197,7 @@ pub fn bake_source_compiler_vocab_support(
     if plan.intent.profile == "release" {
         command.arg("--release");
     }
-    clear_inherited_cargo_environment(&mut command);
+    clear_inherited_cargo_environment_for_cargo(&mut command);
     command.env("RUSTC", rustc).env("CARGO_NET_OFFLINE", "true");
     if plan.intent.profile == "debug" {
         command.env("CARGO_PROFILE_DEV_DEBUG", "0");
@@ -230,7 +230,7 @@ pub fn bake_source_compiler_vocab_support(
     if plan.intent.profile == "release" {
         wasm_command.arg("--release");
     }
-    clear_inherited_cargo_environment(&mut wasm_command);
+    clear_inherited_cargo_environment_for_cargo(&mut wasm_command);
     wasm_command.env("RUSTC", rustc).env("CARGO_NET_OFFLINE", "true");
     if plan.intent.profile == "debug" {
         wasm_command.env("CARGO_PROFILE_DEV_DEBUG", "0");
