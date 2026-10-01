@@ -629,6 +629,78 @@ fn first_conflicting_package_with_allows_a_byte_identical_provider_leaf() -> Res
 }
 
 #[test]
+fn first_conflicting_package_with_follows_the_selected_version_when_crate_names_repeat()
+-> Result<(), Box<dyn std::error::Error>> {
+    let consumer_root = tempfile::tempdir()?;
+    let provider_root = tempfile::tempdir()?;
+    let older_bytes = b"sealed widget graph version 7";
+    let selected_bytes = b"sealed widget graph version 8";
+    let consumer_artifact = consumer_root.path().join("libwidget_graph-consumer8.rlib");
+    fs::write(&consumer_artifact, selected_bytes)?;
+    fs::write(provider_root.path().join("libwidget_graph-provider7.rlib"), older_bytes)?;
+    fs::write(
+        provider_root.path().join("libwidget_graph-provider8.rlib"),
+        selected_bytes,
+    )?;
+    let plan = OvenRustcArtifactPlan {
+        source_path_projection: None,
+        dependency_search_paths: Vec::new(),
+        native_search_paths: Vec::new(),
+        externs: vec![("widget_graph".to_string(), consumer_artifact)],
+        compile_environment: BTreeMap::new(),
+        caller_owned_library_digests: BTreeMap::new(),
+    };
+    let leaf = |version: &str, identity: &str, relative_path: &str, bytes: &[u8]| OvenRustcRegistryLeaf {
+        domain: Default::default(),
+        crate_kind: Default::default(),
+        selected_unit_identity: Some(identity.to_string()),
+        package: "widget-graph".to_string(),
+        version: version.to_string(),
+        crate_name: "widget_graph".to_string(),
+        features: Vec::new(),
+        source: fixture_registry_source(),
+        artifact: OvenRustcArtifactExtern {
+            crate_name: "widget_graph".to_string(),
+            relative_path: relative_path.to_string(),
+            digest: digest_bytes(bytes),
+        },
+    };
+    let consumer_authority = OvenRegistryLeafAuthority::new(
+        consumer_root.path().to_path_buf(),
+        vec![leaf(
+            "8.0.0",
+            "sha256:selected-v8",
+            "libwidget_graph-consumer8.rlib",
+            selected_bytes,
+        )],
+    );
+    let provider_authority = OvenRegistryLeafAuthority::new(
+        provider_root.path().to_path_buf(),
+        vec![
+            leaf(
+                "7.1.0",
+                "sha256:older-v7",
+                "libwidget_graph-provider7.rlib",
+                older_bytes,
+            ),
+            leaf(
+                "8.0.0",
+                "sha256:selected-v8",
+                "libwidget_graph-provider8.rlib",
+                selected_bytes,
+            ),
+        ],
+    );
+
+    assert_eq!(
+        provider_authority.first_conflicting_package_with_reconciled_authority(&plan, Some(&consumer_authority),)?,
+        None,
+        "an older same-name unit must not be compared with the exact version selected by the extern edge"
+    );
+    Ok(())
+}
+
+#[test]
 fn first_conflicting_package_with_ignores_an_unrelated_package() -> Result<(), Box<dyn std::error::Error>> {
     let consumer_root = tempfile::tempdir()?;
     let provider_root = tempfile::tempdir()?;

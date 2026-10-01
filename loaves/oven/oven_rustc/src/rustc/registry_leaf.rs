@@ -196,12 +196,20 @@ impl OvenRegistryLeafAuthority {
             if fs::canonicalize(&candidate_path).ok().as_deref() == fs::canonicalize(existing_path).ok().as_deref() {
                 continue;
             }
-            if reconciled
-                .map(|authority| authority.has_compatible_unit_at_path(&entry.leaf, existing_path))
+            if let Some(selected_leaf) = reconciled
+                .map(|authority| authority.target_leaf_at_path(existing_path))
                 .transpose()?
-                .unwrap_or(false)
+                .flatten()
             {
-                continue;
+                // One Cargo graph may legitimately contain multiple versions whose crates have the same Rust name.
+                // The extern path identifies which unit this edge selected; leaves for another package version do
+                // not conflict with that edge even though their crate names coincide.
+                if selected_leaf.package != entry.leaf.package || selected_leaf.version != entry.leaf.version {
+                    continue;
+                }
+                if registry_units_are_compatible(selected_leaf, &entry.leaf) {
+                    continue;
+                }
             }
             let existing_bytes = fs::read(existing_path).map_err(|source| OvenRustcError::Io {
                 path: existing_path.clone(),
@@ -310,14 +318,14 @@ impl OvenRegistryLeafAuthority {
         named
     }
 
-    /// Return whether `path` is this authority's selected representative of the same portable unit as `leaf`.
-    fn has_compatible_unit_at_path(&self, leaf: &OvenRustcRegistryLeaf, path: &Path) -> Result<bool, OvenRustcError> {
+    /// Return the target-linked registry leaf whose sealed artifact is `path`.
+    fn target_leaf_at_path(&self, path: &Path) -> Result<Option<&OvenRustcRegistryLeaf>, OvenRustcError> {
         let selected_path = fs::canonicalize(path).map_err(|source| OvenRustcError::Io {
             path: path.to_path_buf(),
             source,
         })?;
         for candidate in &self.entries {
-            if !registry_units_are_compatible(&candidate.leaf, leaf) {
+            if !participates_in_target_link_collision(&candidate.leaf) {
                 continue;
             }
             let candidate_path = safe_artifact_path(
@@ -330,10 +338,10 @@ impl OvenRegistryLeafAuthority {
                 source,
             })?;
             if candidate_path == selected_path {
-                return Ok(true);
+                return Ok(Some(&candidate.leaf));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 }
 
