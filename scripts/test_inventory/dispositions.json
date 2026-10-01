@@ -4102,6 +4102,10 @@
       "split_target": "",
       "twin": "",
       "tests": {
+        "an_empty_list_keeps_the_import_of_its_expected_model_element_type": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+          "notes": "The module fixture explicitly imports a model used only as the destination-provided element type of an empty list and runs the constructor whose generated Rust names it."
+        },
         "a_type_the_module_imports_keeps_its_import_beside_an_unimported_one_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
           "notes": "The module fixture imports one declaration under another name and fills a list of it beside empty lists of types it does not import; the fixture prints each result."

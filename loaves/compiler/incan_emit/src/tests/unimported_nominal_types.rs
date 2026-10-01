@@ -103,3 +103,23 @@ def main() -> None:
     assert_eq!(stdout, "1\np\n");
     Ok(())
 }
+
+/// An imported model used only as the destination-provided element type of an empty list keeps its Rust import,
+/// because empty-list emission names that type explicitly even though no source expression names it.
+#[test]
+fn an_empty_list_keeps_the_import_of_its_expected_model_element_type() -> TestResult {
+    let stdout = run_modules_with_stdlib(
+        &[("ids", IDS), ("records", RECORDS)],
+        r#"
+from ids import Evidence
+from records import Decision
+
+
+def main() -> None:
+    decision = Decision(name="empty", admitted_evidence_ids=[], scores={}, seen=set(), first=None, nested=[], pairs=[], kinds={})
+    println(len(decision.nested))
+"#,
+    )?;
+    assert_eq!(stdout, "0\n");
+    Ok(())
+}

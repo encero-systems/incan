@@ -12,14 +12,14 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3553 | 245 | 8 |
-| re-point | 522 | 86 | 1054 |
-| retire | 1499 | 153 | 0 |
-| unaffected | 1632 | 158 | 5 |
+| keep | 3554 | 245 | 8 |
+| re-point | 522 | 86 | 1055 |
+| retire | 1501 | 153 | 0 |
+| unaffected | 1633 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7206** | **642** | **1067** |
+| **Total** | **7210** | **642** | **1068** |
 
-- Retire-class tests: 1499, of which twinned 1021, dies 294, open 184 (neither yet).
+- Retire-class tests: 1501, of which twinned 1023, dies 294, open 184 (neither yet).
 - Retire-class files with open rows: 33 (a file whose retire tests are all twinned or recorded `dies` is done).
 - Files whose test region exceeds the split threshold of 1500 lines: 19, of which 1 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
@@ -292,7 +292,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 |---|---|---|---|---|---|
 | `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement | generated-text hit is a diagnostic string |
 
-### `loaves/compiler/incan_emit` (1139 tests in 100 files: keep 100, retire 1037, unaffected 2)
+### `loaves/compiler/incan_emit` (1140 tests in 100 files: keep 100, retire 1038, unaffected 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -319,7 +319,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs` | 1 | 145 | 20 | retire (retire 1) | 1/1 | 0 | - | #1561 | codegen 1, legacy_ir 1 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 1 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 0 open. |
 | `loaves/compiler/incan_emit/src/emit/mod.rs` | 21 | 4759 | 1010 | retire (retire 21) | 14/21 | 4 | - | #1561 | codegen 16, checker 4, legacy_ir 19 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 13 twinned by behavior fixtures under fixtures/behavior/emit_*, 4 dies, 3 open. |
 | `loaves/compiler/incan_emit/src/emit/native_unions.rs` | 8 | 2072 | 1082 | retire (retire 8) | 7/8 | 1 | - | #1561 | codegen 6, checker 7, parser 7, legacy_ir 6 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 4 twinned by behavior fixtures under fixtures/behavior/emit_*, 1 dies, 3 open. |
-| `loaves/compiler/incan_emit/src/emit/program.rs` | 11 | 4739 | 374 | retire (retire 11) | 8/11 | 2 | - | #1561 | codegen 11, text 2, checker 6, legacy_ir 11, formatter 8 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 5 open. |
+| `loaves/compiler/incan_emit/src/emit/program.rs` | 11 | 4744 | 374 | retire (retire 11) | 8/11 | 2 | - | #1561 | codegen 11, text 2, checker 6, legacy_ir 11, formatter 8 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 5 open. |
 | `loaves/compiler/incan_emit/src/emit/statements.rs` | 8 | 1995 | 315 | retire (retire 8) | 5/8 | 0 | - | #1561 | codegen 7, text 4, legacy_ir 8 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 3 open. |
 | `loaves/compiler/incan_emit/src/emit/types.rs` | 3 | 732 | 61 | retire (retire 3) | 2/3 | 0 | - | #1561 | codegen 3, legacy_ir 2 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 2 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 1 open. |
 | `loaves/compiler/incan_emit/src/ownership.rs` | 48 | 2581 | 928 | retire (retire 48) | 36/48 | 3 | - | #1561 | legacy_ir 48 | emitter-side ownership and argument plans (borrow/clone/move for generated Rust) on synthetic IR. Twinned by the ownership_* behavior fixtures and re-point interop programs per test; `rust::` programs are candidates; the unspellable item and receiver types die. |
@@ -368,7 +368,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/tests/trait_slot_mut_parameters.rs` | 1 | 80 | 80 | retire (retire 1) | 1/1 | 0 | - | #1561 | codegen 1, checker 1, parser 1 | asserts the Rust spelling of a trait's bodiless slot and its implementation for `mut` scalar parameters (#1827); retires with the Rust-source backend (#654). |
 | `loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs` | 9 | 360 | 360 | retire (retire 9) | 9/9 | 0 | - | #1561 | codegen 9, text 1, parser 9 | asserts the generated Rust text of multi-target assignments that write existing places or declare a name beside a place (#1798, #1799, #1806); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/tests/tuple_element_places.rs` | 4 | 127 | 127 | retire (retire 4) | 4/4 | 0 | - | #1561 | codegen 4, parser 4 | builds and runs the generated Rust of places reached through a constant tuple index: a method call and an assignment through a tuple element of a local, a nested tuple, a list element, a loop variable, a field and a `mut` tuple parameter (#1561); retires with the Rust-source backend. |
-| `loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs` | 2 | 106 | 106 | retire (retire 2) | 2/2 | 0 | - | #1561 | - | builds and runs the generated Rust of a module that passes empty collections and None where types another module declares, and this module does not import, are expected (#1561); retires with the Rust-source backend (#654). |
+| `loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs` | 3 | 126 | 126 | retire (retire 3) | 3/3 | 0 | - | #1561 | - | builds and runs the generated Rust of a module that passes empty collections and None where types another module declares, and this module does not import, are expected (#1561); retires with the Rust-source backend (#654). |
 | `loaves/compiler/incan_emit/src/tests/union_member_identity.rs` | 8 | 269 | 269 | retire (retire 8) | 8/8 | 0 | - | #1561 | codegen 8, parser 8, legacy_ir 1 | asserts the generated Rust of unions whose members name their declarations across the modules of a crate (reached through signatures, generic types, aliases and import aliases) and of narrowing over alias-typed unions (#1796); retires with the Rust-source backend (#654). |
 | `loaves/compiler/incan_emit/src/tests/variant_pattern_emission.rs` | 2 | 115 | 115 | retire (retire 2) | 2/2 | 0 | - | #1561 | codegen 2, parser 2 | compiles, or asserts, the Rust text emission gives variant patterns written without their enum or through a variant alias, locally and over another module's enum; generated Rust dies with #654. |
 | `loaves/compiler/incan_emit/src/trait_bound_inference.rs` | 15 | 4763 | 705 | retire (retire 15) | 7/15 | 4 | - | #1561 | codegen 5, legacy_ir 15 | infers Rust trait bounds for generated generics. Twinned by the ownership_numerics_and_bounds fixtures (a bound is proved by the program running for concrete types); the absent-bound tests are open on a candidate that instantiates a non-`Clone` Rust type; the metadata-free, legacy-encoding and conservative-fallback tests die; the implementation-bound tests are open on #1280. |
@@ -1321,6 +1321,7 @@ Per-test overrides in `loaves/compiler/incan_emit/src/tests/unimported_nominal_t
 |---|---|---|---|---|---|
 | `empty_collections_and_none_for_types_the_module_does_not_import_build_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import` | - | - | Constructs an imported model with empty list, dict, set, nested and tuple-typed fields and None, and passes an empty list and None to imported functions, none of whose types the module imports; the module fixture prints each result. |
 | `a_type_the_module_imports_keeps_its_import_beside_an_unimported_one_issue1561` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import` | - | - | The module fixture imports one declaration under another name and fills a list of it beside empty lists of types it does not import; the fixture prints each result. |
+| `an_empty_list_keeps_the_import_of_its_expected_model_element_type` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import` | - | - | The module fixture explicitly imports a model used only as the destination-provided element type of an empty list and runs the constructor whose generated Rust names it. |
 
 Per-test overrides in `loaves/compiler/incan_emit/src/tests/union_member_identity.rs`:
 
@@ -1855,7 +1856,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2089 tests in 114 files: keep 2089)
+### `loaves/compiler/incan_frontend` (2090 tests in 114 files: keep 2090)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1945,7 +1946,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_symbols_and_identity.rs` | 30 | 1041 | 1041 | keep | - | - | - | #1561 | checker 29, parser 5 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_trait_adoptions.rs` | 9 | 808 | 808 | keep | - | - | - | #1561 | checker 9, parser 3 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/read_only_binding_changes.rs` | 6 | 402 | 402 | keep | - | - | - | #1561 | checker 5 | typechecker only: changes through a binding declared without `mut` or a parameter not marked `mut` by a changing method call, and through the variable of a `for` loop or a list comprehension that reads such a place's items in place, are refused with `INCAN-T0001`, and changes the place permits are accepted (#1561); no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_constructors_and_fields.rs` | 15 | 974 | 974 | keep | - | - | - | #1561 | checker 14, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_constructors_and_fields.rs` | 16 | 1047 | 1047 | keep | - | - | - | #1561 | checker 15, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_generics_and_traits.rs` | 22 | 1375 | 1375 | keep | - | - | - | #1561 | checker 21, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_imports_and_types.rs` | 58 | 1277 | 1277 | keep | - | - | - | #1561 | checker 44, parser 5 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_metadata_and_methods.rs` | 27 | 1301 | 1301 | keep | - | - | - | #1561 | checker 23, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
@@ -1974,7 +1975,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/tests/semantic_digest_invariants.rs` | 9 | 293 | 293 | keep | - | - | - | #1561 | replacement 9, checker 9, parser 9 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/tests/stdlib_module_trait_tests.rs` | 5 | 132 | 132 | keep | - | - | - | #1561 | checker 5, parser 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 
-### `loaves/compiler/incan_ir` (322 tests in 47 files: keep 1, retire 321)
+### `loaves/compiler/incan_ir` (323 tests in 47 files: keep 1, retire 322)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|

@@ -124,8 +124,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "658bf8d29b206a2386fc57c5f5d149cdba6f95c078f1cc47350a41dedf47161a",
-      "lines": 4738
+      "sha256": "397d4306991d83cf0046faedf70c7daeec022a294e437dd5b8bdef10c9be4923",
+      "lines": 4743
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
@@ -762,6 +762,21 @@
       "compatibility_issue": "1986",
       "behavior_evidence": "cli_values_and_calls/str_const_assignment_to_owned_places behavior fixture; field_assignment_targets_retain_their_checked_storage_type_issue1986",
       "semantic_owner": "lowering: AssignTarget field storage type; ownership: Assignment value-use conversion",
+      "retirement_condition": "the Rust-source backend is deleted (#654)"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1998",
+      "behavior_evidence": "unimported_nominal_types::an_empty_list_keeps_the_import_of_its_expected_model_element_type and constructor_arguments_name_field_types_the_module_does_not_import behavior fixture",
+      "semantic_owner": "generated-use analysis retains nominal imports when empty-list destination typing becomes textual Rust",
       "retirement_condition": "the Rust-source backend is deleted (#654)"
     }
   ]
