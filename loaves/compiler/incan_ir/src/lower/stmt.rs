@@ -131,6 +131,12 @@ impl AstLowering {
         field: &str,
         target_span: ast::Span,
     ) -> Result<AssignTarget, LoweringError> {
+        let ty = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(target_span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .unwrap_or(IrType::Unknown);
         Ok(AssignTarget::Field {
             object: Box::new(self.lower_expr_spanned(object)?),
             field: self
@@ -139,6 +145,7 @@ impl AstLowering {
                 .and_then(|info| info.rust_field_access_name(target_span))
                 .unwrap_or(field)
                 .to_string(),
+            ty,
         })
     }
 

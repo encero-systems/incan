@@ -7743,6 +7743,10 @@
           "notes": "Asserts the legacy IR writes each target's copy of a chained integer literal, or its negation, in that target's type over `int`, `float` and `f32` targets in either order; the fixture prints each target.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/chained_integer_literal_takes_each_target_type.incn"
         },
+        "field_assignment_targets_retain_their_checked_storage_type_issue1986": {
+          "notes": "Asserts the legacy IR retains the checked `str` storage type on direct and nested field assignment targets; the fixture assigns a `str` constant to those fields and other owned places, then prints the stored text.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/str_const_assignment_to_owned_places.incn"
+        },
         "float_typed_integer_literal_lowers_as_a_float_literal_issue1831": {
           "notes": "Asserts the legacy IR writes an integer literal in a float slot as a float literal, in a declaration, a reassignment, a negation and a tuple element; the fixture prints the stored floats.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/integer_literal_assigned_to_float_binding.incn"

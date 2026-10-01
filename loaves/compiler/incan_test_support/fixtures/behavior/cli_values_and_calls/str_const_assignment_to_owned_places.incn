@@ -1,0 +1,34 @@
+# behavior: a str constant becomes owned when assigned to direct and nested model fields, list and dict elements, and a field augmented assignment keeps its owned result
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::field_assignment_targets_retain_their_checked_storage_type_issue1986
+# expect-stdout:
+#   hello
+
+const GREETING: str = "hello"
+
+
+model Label:
+    text: str
+
+
+model Holder:
+    label: Label
+
+
+def main() -> None:
+    mut label = Label(text="initial")
+    label.text = GREETING
+
+    mut holder = Holder(label=Label(text="initial"))
+    holder.label.text = GREETING
+
+    mut items: list[str] = ["initial"]
+    items[0] = GREETING
+
+    mut table: dict[str, str] = {"message": "initial"}
+    table["message"] = GREETING
+
+    label.text += ""
+    assert holder.label.text == label.text
+    assert items[0] == label.text
+    assert table["message"] == label.text
+    println(label.text)

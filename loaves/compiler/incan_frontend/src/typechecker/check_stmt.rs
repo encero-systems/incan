@@ -620,6 +620,7 @@ impl TypeChecker {
         match &obj_ty {
             ResolvedType::SelfType => {
                 if let Some(expected_ty) = self.trait_required_field_type(field, field_assign.target_span) {
+                    self.record_expr_type(field_assign.target_span, expected_ty.clone());
                     let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                     if !self.types_compatible(&value_ty, &expected_ty) {
                         self.errors.push(errors::field_type_mismatch(
@@ -635,6 +636,7 @@ impl TypeChecker {
             ResolvedType::Named(type_name) => {
                 match self.resolve_nominal_field_type(type_name, None, field, field_assign.target_span) {
                     Some(expected_ty) => {
+                        self.record_expr_type(field_assign.target_span, expected_ty.clone());
                         let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {
                             self.errors.push(errors::field_type_mismatch(
@@ -659,6 +661,7 @@ impl TypeChecker {
                     field_assign.target_span,
                 ) {
                     Some(expected_ty) => {
+                        self.record_expr_type(field_assign.target_span, expected_ty.clone());
                         let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {
                             self.errors.push(errors::field_type_mismatch(
@@ -681,6 +684,7 @@ impl TypeChecker {
             // would.
             ResolvedType::RustPath(path) => match self.rust_path_field_type(path, field) {
                 Some(expected_ty) => {
+                    self.record_expr_type(field_assign.target_span, expected_ty.clone());
                     let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                     if !self.types_compatible(&value_ty, &expected_ty) {
                         self.errors.push(errors::field_type_mismatch(

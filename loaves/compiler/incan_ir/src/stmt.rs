@@ -118,8 +118,15 @@ pub enum AssignTarget {
         name: String,
         reference_kind: IrStaticReferenceKind,
     },
-    /// Field access (obj.field)
-    Field { object: Box<IrExpr>, field: String },
+    /// Field access (`obj.field`) with the storage type retained for assignment conversion.
+    Field {
+        /// Value whose field is written.
+        object: Box<IrExpr>,
+        /// Emitted field name.
+        field: String,
+        /// Type stored in the field.
+        ty: IrType,
+    },
     /// Index access (`list[i]`)
     Index { object: Box<IrExpr>, index: Box<IrExpr> },
 }
