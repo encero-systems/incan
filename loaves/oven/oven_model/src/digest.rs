@@ -42,16 +42,20 @@ fn canonical_json_value(value: serde_json::Value) -> serde_json::Value {
         serde_json::Value::Array(values) => {
             serde_json::Value::Array(values.into_iter().map(canonical_json_value).collect())
         }
-        serde_json::Value::Object(values) => serde_json::Value::Object(
+        serde_json::Value::Object(values) => canonical_json_object(
             values
                 .into_iter()
                 .map(|(key, value)| (key, canonical_json_value(value)))
-                .collect::<BTreeMap<_, _>>()
-                .into_iter()
                 .collect(),
         ),
         value => value,
     }
+}
+
+/// Canonicalize an explicitly ordered JSON object by sorting its entries by key.
+fn canonical_json_object(mut entries: Vec<(String, serde_json::Value)>) -> serde_json::Value {
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    serde_json::Value::Object(entries.into_iter().collect())
 }
 
 /// Failure while hashing a complete generated provider artifact.
@@ -808,8 +812,16 @@ mod tests {
     /// Canonical JSON identity bytes do not inherit the build graph's `serde_json/preserve_order` map behavior.
     #[test]
     fn canonical_json_identity_ignores_object_order_issue1988() -> TestResult {
-        let first = serde_json::json!({"source_digest": "sha256:source", "output_digest": "sha256:output"});
-        let second = serde_json::json!({"output_digest": "sha256:output", "source_digest": "sha256:source"});
+        let source = serde_json::Value::String("sha256:source".to_owned());
+        let output = serde_json::Value::String("sha256:output".to_owned());
+        let first = canonical_json_object(vec![
+            ("source_digest".to_owned(), source.clone()),
+            ("output_digest".to_owned(), output.clone()),
+        ]);
+        let second = canonical_json_object(vec![
+            ("output_digest".to_owned(), output),
+            ("source_digest".to_owned(), source),
+        ]);
 
         assert_eq!(canonical_json_bytes(&first)?, canonical_json_bytes(&second)?);
         Ok(())

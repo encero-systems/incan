@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::Parser;
-use serde::Serialize;
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 
@@ -899,10 +900,240 @@ pub fn render_json(inventory: &Value) -> Result<String, InventoryError> {
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
     let mut bytes = Vec::new();
     let mut serializer = serde_json::Serializer::with_formatter(&mut bytes, formatter);
-    inventory.serialize(&mut serializer)?;
+    OrderedInventoryValue::root(inventory).serialize(&mut serializer)?;
     let mut rendered = String::from_utf8(bytes)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+/// A JSON value rendered with the inventory schema's explicit field order.
+///
+/// `serde_json::Map` deliberately uses its default sorted representation in this workspace. The inventory remains
+/// readable and byte-stable by declaring its record field order here instead of selecting a process-wide Cargo
+/// feature that changes every crate's JSON object semantics.
+struct OrderedInventoryValue<'a> {
+    value: &'a Value,
+    path: Vec<String>,
+}
+
+impl<'a> OrderedInventoryValue<'a> {
+    /// Wrap the root inventory document for stable serialization.
+    fn root(value: &'a Value) -> Self {
+        Self {
+            value,
+            path: Vec::new(),
+        }
+    }
+
+    /// Wrap a child while retaining the schema path needed to order its fields.
+    fn child(&self, key: &str, value: &'a Value) -> Self {
+        let mut path = self.path.clone();
+        path.push(key.to_owned());
+        Self { value, path }
+    }
+}
+
+impl Serialize for OrderedInventoryValue<'_> {
+    /// Serialize objects in schema order and arrays in their authored order.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self.value {
+            Value::Array(values) => {
+                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    sequence.serialize_element(&Self {
+                        value,
+                        path: self.path.clone(),
+                    })?;
+                }
+                sequence.end()
+            }
+            Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_by(|(left, _), (right, _)| {
+                    inventory_field_rank(&self.path, object, left)
+                        .cmp(&inventory_field_rank(&self.path, object, right))
+                        .then_with(|| left.cmp(right))
+                });
+                let mut map = serializer.serialize_map(Some(entries.len()))?;
+                for (key, value) in entries {
+                    map.serialize_entry(key, &self.child(key, value))?;
+                }
+                map.end()
+            }
+            value => value.serialize(serializer),
+        }
+    }
+}
+
+/// Return an explicit schema position for one inventory object field.
+fn inventory_field_rank(path: &[String], object: &Map<String, Value>, key: &str) -> usize {
+    let fields = inventory_field_order(path, object);
+    fields
+        .iter()
+        .position(|candidate| *candidate == key)
+        .unwrap_or(fields.len())
+}
+
+/// Return the declared field order for root, summary, manifest, and dependency records.
+fn inventory_field_order(path: &[String], object: &Map<String, Value>) -> &'static [&'static str] {
+    if path.is_empty() {
+        &["schema_version", "generated_by", "summary", "manifests"]
+    } else if path == ["summary"] {
+        &[
+            "manifest_count",
+            "by_category",
+            "workspace_member_count",
+            "workspace_packages",
+            "proc_macro_members",
+            "members_with_bins",
+            "members_with_features",
+            "members_with_dev_dependencies",
+            "members_with_build_scripts",
+            "manifests_with_lints_table",
+            "manifests_with_build_scripts",
+            "editions",
+            "third_party_packages_used_by_members",
+            "third_party_package_count_members",
+            "crate_level_lint_attributes",
+        ]
+    } else if path.last().is_some_and(|segment| segment == "manifests") {
+        &[
+            "path",
+            "category",
+            "cargo_lock_beside",
+            "is_virtual_workspace",
+            "declares_own_workspace",
+            "package",
+            "inherited_package_keys",
+            "lib",
+            "bins",
+            "explicit_tests",
+            "explicit_examples",
+            "explicit_benches",
+            "features",
+            "default_features",
+            "dependencies",
+            "build_script",
+            "lints",
+            "package_metadata",
+            "target_roots",
+            "crate_level_attributes",
+            "workspace",
+            "patch",
+            "profile",
+        ]
+    } else if object.contains_key("kind") && object.contains_key("workspace_inherited") {
+        &[
+            "package",
+            "kind",
+            "origin",
+            "workspace_inherited",
+            "version_req",
+            "features",
+            "default_features",
+            "optional",
+            "renamed_from",
+            "path",
+            "git",
+        ]
+    } else {
+        nested_inventory_field_order(path, object)
+    }
+}
+
+/// Return the declared field order for nested inventory and imported TOML record shapes.
+fn nested_inventory_field_order(path: &[String], object: &Map<String, Value>) -> &'static [&'static str] {
+    match path.last().map(String::as_str) {
+        Some("package") if path.iter().any(|segment| segment == "workspace") => &[
+            "version",
+            "description",
+            "edition",
+            "rust-version",
+            "license",
+            "authors",
+            "repository",
+            "homepage",
+            "readme",
+            "keywords",
+            "categories",
+        ],
+        Some("package") => &[
+            "name",
+            "version",
+            "edition",
+            "rust_version",
+            "license",
+            "publish",
+            "description",
+            "resolver",
+            "auto_discovery_off",
+        ],
+        Some("lib") => &["name", "path", "proc_macro", "crate_type", "doctest"],
+        Some("bins") => &["name", "path"],
+        Some("dependencies") => &["normal", "dev", "build", "target"],
+        Some("build_script") => &["present", "declared", "path"],
+        Some("workspace") => &["members", "exclude", "resolver", "package", "dependencies"],
+        Some("target_roots") => &[
+            "lib",
+            "bin:incan-ci-tool-outputs",
+            "bin:incan-cargo-manifest-inventory",
+            "bin:incan",
+            "bin:incan-lsp",
+            "bin:oven",
+        ],
+        Some("git") => &["git", "branch", "tag", "rev"],
+        Some("profile") => &["oven-test", "dev"],
+        Some("clippy") if path.iter().any(|segment| segment == "lints") => &[
+            "assigning_clones",
+            "dbg_macro",
+            "enum_variant_names",
+            "len_without_is_empty",
+            "literal_string_with_formatting_args",
+            "new_ret_no_self",
+            "print_stderr",
+            "print_stdout",
+            "rc_buffer",
+            "result_unit_err",
+            "single_match",
+            "str_to_string",
+            "todo",
+            "too_long_first_doc_paragraph",
+            "too_many_arguments",
+            "type_complexity",
+            "unnecessary_map_or",
+            "useless_asref",
+            "vec_init_then_push",
+            "wrong_self_convention",
+            "complexity",
+            "correctness",
+            "perf",
+            "restriction",
+            "style",
+            "suspicious",
+        ],
+        Some("rust") if path.iter().any(|segment| segment == "lints") => &[
+            "elided_lifetimes_in_paths",
+            "explicit_outlives_requirements",
+            "unreachable_pub",
+            "unsafe_op_in_unsafe_fn",
+            "unused_extern_crates",
+            "unused_lifetimes",
+            "unexpected_cfgs",
+        ],
+        _ if object.contains_key("level") => &["level", "priority", "check-cfg"],
+        _ if object.contains_key("inherits") => &["inherits", "debug", "incremental"],
+        _ if object.len() == 2 && object.contains_key("path") && object.contains_key("version") => &["path", "version"],
+        _ if object.len() == 2 && object.contains_key("path") && object.contains_key("default-features") => {
+            &["path", "default-features"]
+        }
+        _ if object.len() == 2 && object.contains_key("version") && object.contains_key("features") => {
+            &["version", "features"]
+        }
+        _ => &[],
+    }
 }
 
 /// Render one Markdown row per manifest with the facts a Rust facet must carry.
@@ -1081,12 +1312,16 @@ fn lint_attribute_text(record: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::env;
     use std::error::Error;
     use std::fs;
     use std::path::Path;
 
-    use super::{build_inventory, crate_level_attributes, manifests_from_git_output, render_json};
+    use super::{
+        DEPENDENCY_TABLES, build_inventory, crate_level_attributes, find_manifests, load_toml,
+        manifests_from_git_output, render_json,
+    };
     use serde_json::json;
 
     /// Tracked discovery ignores absent and untracked manifests because Git supplies the source list.
@@ -1137,5 +1372,57 @@ mod tests {
             assert_eq!(fs::read_to_string(&output)?, rendered);
         }
         Ok(())
+    }
+
+    /// No repository manifest may globally select insertion-order semantics for shared JSON or TOML values.
+    #[test]
+    fn workspace_manifests_do_not_enable_global_preserve_order_features() -> Result<(), Box<dyn Error>> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .ok_or("CI tools manifest is not nested three levels below the repository root")?;
+        let mut enablers = BTreeSet::new();
+        for manifest in find_manifests(root)? {
+            collect_forbidden_order_features(&load_toml(&manifest)?, &manifest, &mut enablers);
+        }
+        if !enablers.is_empty() {
+            return Err(format!(
+                "workspace manifests enable globally hazardous map-order features: {}",
+                enablers.into_iter().collect::<Vec<_>>().join(", ")
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Collect `preserve_order` feature selections on shared JSON and TOML dependencies from nested manifest tables.
+    fn collect_forbidden_order_features(value: &toml::Value, manifest: &Path, enablers: &mut BTreeSet<String>) {
+        let Some(table) = value.as_table() else {
+            return;
+        };
+        for (section, _) in DEPENDENCY_TABLES {
+            let Some(dependencies) = table.get(section).and_then(toml::Value::as_table) else {
+                continue;
+            };
+            for (alias, dependency) in dependencies {
+                let Some(dependency) = dependency.as_table() else {
+                    continue;
+                };
+                let package = dependency.get("package").and_then(toml::Value::as_str).unwrap_or(alias);
+                let selects_preserve_order = dependency
+                    .get("features")
+                    .and_then(toml::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(toml::Value::as_str)
+                    .any(|feature| feature == "preserve_order");
+                if matches!(package, "serde_json" | "toml") && selects_preserve_order {
+                    enablers.insert(format!("{} [{section}].{alias}", manifest.display()));
+                }
+            }
+        }
+        for child in table.values() {
+            collect_forbidden_order_features(child, manifest, enablers);
+        }
     }
 }

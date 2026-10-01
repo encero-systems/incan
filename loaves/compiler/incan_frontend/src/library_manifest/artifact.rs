@@ -1033,8 +1033,8 @@ mod tests {
         Ok(())
     }
 
-    /// The debug compiler-suite requester is built with the workspace test graph, while SDK prewarm builds only the
-    /// compiler binaries. Tooling-only `preserve_order` features must not make their provider identities diverge.
+    /// Semantically equal provider manifests must retain one identity even when their Cargo fields are authored in
+    /// different orders by the compiler-suite requester and the SDK publisher.
     #[test]
     fn debug_compiler_suite_requester_and_sdk_publisher_agree_on_provider_identity_issue1988() -> TestResult {
         let publisher = tempfile::tempdir()?;

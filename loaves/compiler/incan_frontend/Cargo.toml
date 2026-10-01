@@ -48,8 +48,4 @@ tempfile = { version = "3", optional = true }
 incan_std_core = { workspace = true }
 incan_test_support = { workspace = true }
 rust_inspect = { workspace = true, features = ["test_fixtures"] }
-# Keep the #1988 compiler-suite requester feature shape under the focused frontend tests. Production identity must
-# remain equal to the SDK publisher built without these insertion-order features.
-serde_json = { workspace = true, features = ["preserve_order"] }
 tempfile = "3"
-toml = { version = "0.9", features = ["preserve_order"] }
