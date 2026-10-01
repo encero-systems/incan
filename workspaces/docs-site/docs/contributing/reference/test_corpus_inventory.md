@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3545 | 245 | 8 |
+| keep | 3546 | 245 | 8 |
 | re-point | 521 | 86 | 1048 |
 | retire | 1490 | 153 | 0 |
-| unaffected | 1597 | 155 | 5 |
+| unaffected | 1598 | 155 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7153** | **639** | **1061** |
+| **Total** | **7155** | **639** | **1061** |
 
 - Retire-class tests: 1490, of which twinned 1017, dies 294, open 179 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -121,7 +121,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (757 tests in 107 files: keep 371, re-point 137, retire 103, unaffected 146)
+### `loaves/compiler/incan_driver` (758 tests in 107 files: keep 371, re-point 137, retire 103, unaffected 147)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -159,7 +159,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/publication.rs` | 1 | 1014 | 63 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/replacement.rs` | 5 | 533 | 161 | keep | - | - | - | #1561 | replacement 4, checker 4, parser 1 | replacement build pipeline (session projection, exact numeric report). |
 | `loaves/compiler/incan_driver/src/build/reuse.rs` | 1 | 679 | 35 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 19 | 1846 | 1171 | unaffected | - | - | - | #1561 | codegen 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 20 | 1923 | 1223 | unaffected | - | - | - | #1561 | codegen 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build_unit.rs` | 1 | 202 | 27 | unaffected | - | - | - | #1561 | checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/cargo_policy.rs` | 4 | 270 | 92 | retire (retire 4) | 2/4 | 2 | - | #1561 | - | Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests. |
 | `loaves/compiler/incan_driver/src/generated_cache.rs` | 18 | 1510 | 447 | retire | 0/18 | 18 | - | #1561 | - | generated-project cache identity and pruning; dies with the generated-project route. |
@@ -1846,7 +1846,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2081 tests in 114 files: keep 2081)
+### `loaves/compiler/incan_frontend` (2082 tests in 114 files: keep 2082)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1867,7 +1867,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/contract_metadata.rs` | 5 | 517 | 89 | keep | - | - | - | #1561 | parser 2, formatter 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/hir.rs` | 7 | 540 | 328 | keep | - | - | - | #1561 | checker 7, parser 7 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/library_exports.rs` | 6 | 2268 | 179 | keep | - | - | - | #1561 | checker 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/library_manifest/artifact.rs` | 16 | 1677 | 937 | keep | - | - | - | #1561 | checker 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/library_manifest/artifact.rs` | 17 | 1718 | 970 | keep | - | - | - | #1561 | checker 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/library_manifest/published_layout.rs` | 2 | 287 | 47 | keep | - | - | - | #1561 | checker 2 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/library_manifest/tests/export_round_trips.rs` | 23 | 1170 | 1170 | keep | - | - | - | #1561 | checker 21 | split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/library_manifest/tests/formats_and_metadata.rs` | 18 | 572 | 572 | keep | - | - | - | #1561 | checker 17 | split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
