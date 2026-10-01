@@ -12,6 +12,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use oven_model::digest::canonical_json_bytes;
 use oven_rustc::rustc::substitution::RustcUnitRequest;
 use oven_rustc::rustc::{
     OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetSourceMember, selected_graph_generated_input_digest,
@@ -581,7 +582,7 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
         .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
         .collect::<BTreeMap<_, _>>();
     let source_digest = digest_bytes(&regular_file_bytes(&canonical_source).ok()?);
-    let encoded = serde_json::to_vec(&serde_json::json!({
+    let encoded = canonical_json_bytes(&serde_json::json!({
         "arguments": normalized_arguments,
         "environment": semantic_environment,
         "source_digest": source_digest,
@@ -692,7 +693,7 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
         .iter()
         .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
         .collect::<BTreeMap<_, _>>();
-    let encoded = serde_json::to_vec(&serde_json::json!({
+    let encoded = canonical_json_bytes(&serde_json::json!({
         "arguments": arguments,
         "environment": environment,
         "source_digest": source_digest,
@@ -2155,7 +2156,7 @@ mod tests {
     }
 
     #[test]
-    fn stable_trace_refuses_externs_without_exact_paths() {
+    fn stable_trace_refuses_externs_without_exact_paths() -> Result<(), Box<dyn std::error::Error>> {
         let arguments = vec!["--extern".to_string(), "dependency".to_string()];
         assert!(matches!(
             extern_arguments(&arguments),
@@ -2174,9 +2175,10 @@ mod tests {
             )])
         );
         let sysroot = vec!["--extern".to_string(), "proc_macro".to_string()];
-        let captured = extern_arguments(&sysroot).expect("verified proc_macro sysroot extern should be retained");
+        let captured = extern_arguments(&sysroot)?;
         assert!(captured.paths.is_empty());
         assert_eq!(captured.sysroot, ["proc_macro"]);
+        Ok(())
     }
 
     #[test]

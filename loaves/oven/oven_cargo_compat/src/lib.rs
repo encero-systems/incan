@@ -3085,7 +3085,7 @@ fn compiler_suite_foundation_lock(
     root.insert("dependencies".to_string(), toml::Value::Array(root_dependencies));
     packages.push(toml::Value::Table(root));
     prune_lock_to_package(&mut document, "oven-compiler-foundation", "0.0.0", None)?;
-    toml::to_string_pretty(&document)
+    oven_model::digest::canonical_toml_string_pretty(&document)
         .map(String::into_bytes)
         .map_err(|error| OvenLegacyCargoError::InvalidInput {
             field: "compiler Cargo.lock",

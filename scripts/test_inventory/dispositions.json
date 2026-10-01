@@ -9269,6 +9269,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_model/src/digest.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_model/src/loaf_registry.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",

@@ -1882,7 +1882,7 @@ pub fn legacy_cargo_build_script_closure_digest(
     records.sort_by(|left, right| {
         (&left.consumer, &left.build_unit, &left.package).cmp(&(&right.consumer, &right.build_unit, &right.package))
     });
-    let bytes = serde_json::to_vec(&("incan.oven.legacy-cargo-build-script-closure/2", records))
+    let bytes = oven_model::digest::canonical_json_bytes(&("incan.oven.legacy-cargo-build-script-closure/2", records))
         .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
     Ok(oven_rustc::rustc::selected_graph_sha256(&bytes))
 }

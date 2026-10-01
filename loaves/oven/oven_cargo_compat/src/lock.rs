@@ -290,7 +290,7 @@ pub fn locked_generated_project_with_registry_policy(
     });
     packages.push(root.value);
     prune_lock_to_package(&mut lock, &root.name, &root.version, None)?;
-    toml::to_string_pretty(&lock)
+    oven_model::digest::canonical_toml_string_pretty(&lock)
         .map(String::into_bytes)
         .map_err(|error| OvenLegacyCargoError::InvalidInput {
             field: "generated Loaf Cargo.lock",
