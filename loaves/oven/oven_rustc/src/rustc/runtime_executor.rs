@@ -684,6 +684,38 @@ fn rebuild_unit_command(
     if unit.compiler_arguments.is_empty() {
         apply_oven_profile(&mut command, &selection.intent.profile);
     }
+    append_rebuild_unit_environment(&mut command, unit, source, plan, private_out_dir)?;
+    append_rebuild_unit_inputs(
+        &mut command,
+        closure,
+        unit,
+        source,
+        plan,
+        search_paths,
+        externs,
+        artifact,
+        private_out_dir,
+    )?;
+    let working_relative = Path::new(&unit.compiler_paths.working_directory)
+        .strip_prefix(&unit.compiler_paths.source_root)
+        .map_err(|_| {
+            runtime_executor_invalid(
+                "runtime executor working directory",
+                "captured working directory is outside the selected source root",
+            )
+        })?;
+    command.current_dir(source.source_root.join(working_relative));
+    Ok(command)
+}
+
+/// Apply the captured compile environment and fallback cfgs before replaying ordered compiler arguments.
+fn append_rebuild_unit_environment(
+    command: &mut Command,
+    unit: &OvenSelectedRustFacetUnit,
+    source: &super::OvenMaterializedRustFacetUnit,
+    plan: &super::OvenRustcArtifactPlan,
+    private_out_dir: Option<&Path>,
+) -> Result<(), OvenRustcError> {
     for (name, value) in &plan.compile_environment {
         command.env(name, value);
     }
@@ -721,6 +753,22 @@ fn rebuild_unit_command(
             command.arg("--cfg").arg(cfg);
         }
     }
+    Ok(())
+}
+
+/// Replay captured search, extern, remap, linker, sysroot, and native-link inputs in Cargo's order.
+#[allow(clippy::too_many_arguments)]
+fn append_rebuild_unit_inputs(
+    command: &mut Command,
+    closure: &OvenRuntimeCompilerClosure,
+    unit: &OvenSelectedRustFacetUnit,
+    source: &super::OvenMaterializedRustFacetUnit,
+    plan: &super::OvenRustcArtifactPlan,
+    search_paths: &BTreeSet<PathBuf>,
+    externs: &[(String, PathBuf, String)],
+    artifact: &Path,
+    private_out_dir: Option<&Path>,
+) -> Result<(), OvenRustcError> {
     let proc_macro_search_paths;
     let proc_macro_externs;
     let replay_search_paths = if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
@@ -758,7 +806,7 @@ fn rebuild_unit_command(
     };
     if unit.compiler_arguments.is_empty() {
         append_runtime_search_paths(
-            &mut command,
+            command,
             plan,
             replay_search_paths,
             unit.crate_kind != OvenSelectedRustFacetCrateKind::ProcMacro,
@@ -768,7 +816,7 @@ fn rebuild_unit_command(
         }
     } else {
         append_captured_compiler_arguments(
-            &mut command,
+            command,
             &unit.compiler_arguments,
             plan,
             replay_search_paths,
@@ -777,7 +825,7 @@ fn rebuild_unit_command(
         )?;
     }
     append_runtime_path_remaps(
-        &mut command,
+        command,
         closure,
         unit,
         source,
@@ -785,24 +833,15 @@ fn rebuild_unit_command(
         artifact,
         private_out_dir,
     )?;
-    append_captured_linker_arguments(&mut command, &unit.compiler_arguments);
-    append_materialized_sysroot_extern_arguments(&mut command, &source.sysroot_externs);
-    append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
+    append_captured_linker_arguments(command, &unit.compiler_arguments);
+    append_materialized_sysroot_extern_arguments(command, &source.sysroot_externs);
+    append_materialized_link_arguments(command, &source.linked_libraries)?;
     if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
         // The Cargo capture boundary clears this undeclared host input before linking the corresponding dylib.
         // Replaying an inherited SDK path would perturb Apple ld's UUID and the derived ad-hoc signature.
         command.env_remove("SDKROOT");
     }
-    let working_relative = Path::new(&unit.compiler_paths.working_directory)
-        .strip_prefix(&unit.compiler_paths.source_root)
-        .map_err(|_| {
-            runtime_executor_invalid(
-                "runtime executor working directory",
-                "captured working directory is outside the selected source root",
-            )
-        })?;
-    command.current_dir(source.source_root.join(working_relative));
-    Ok(command)
+    Ok(())
 }
 
 /// Append the publisher's injected path remaps after Cargo's own compiler arguments.

@@ -27,7 +27,7 @@ use oven_cargo_compat::{
 };
 use oven_model::digest::digest_bytes;
 use oven_model::loaf_registry::{LoafRegistry, checkout_head_commit};
-use oven_model::manifest::{ProjectManifest, RustFactArgument};
+use oven_model::manifest::{ProjectManifest, RustFactArgument, RustFactLink, RustFactTool};
 use oven_rustc::loaf::{
     OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
     OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf, OvenLoafPreparation, OvenReleaseRuntimeClosureMember,
@@ -213,89 +213,30 @@ fn execute_adopted_publisher_work(
             ))
         })?;
         for link in &adoption.record.link {
-            let consuming_identity = selected_identity_for_coordinates(graph.graph(), unit)?;
-            let owner_paths = std::iter::once(link.executable.path.as_str())
-                .chain(link.objects.iter().flat_map(|object| {
-                    object.arguments.iter().filter_map(|argument| match argument {
-                        RustFactArgument::Owner { owner } => Some(owner.as_str()),
-                        _ => None,
-                    })
-                }))
-                .collect::<Vec<_>>();
-            let executable_owner = resolve_publisher_owner_root(
-                &adoption.package,
-                &link.name,
-                &link.executable.owner,
-                &owner_paths,
-                supplied_owner_roots,
-            )?;
-            let product_root = publisher_product_root(product_parent, capture_index, "link", &link.name)?;
-            let product = bake_publisher_link(&OvenPublisherLinkBakeRequest {
+            let (next_graph, owner) = execute_adopted_publisher_link(
+                graph,
+                adoption,
                 link,
-                selected_target: &graph.graph().selection.intent.target,
-                archive_format: publisher_archive_format(&graph.graph().selection.intent.target),
-                toolchain: &graph.graph().selection.intent.toolchain,
-                consuming_unit_identity: &consuming_identity,
-                executable_owner_root: &executable_owner,
-                source_owner_root: &adoption.manifest_root,
-                output_root: &product_root,
-                limits: publisher_process_limits(),
-            })
-            .map_err(oven_error)?;
-            graph = finalize_publisher_native_link(graph, &consuming_identity, &product)?;
-            generated.push(PublisherGeneratedOwnerRoot {
-                identity: product.receipt.identity.clone(),
-                root: product.product_root.clone(),
-                binding: publisher_binding(adoption, link.name.as_str()),
-                unit_identity: consuming_identity,
-                attestation_reference: product.receipt.identity.clone(),
+                unit,
+                supplied_owner_roots,
+                product_parent,
                 capture_index,
-            });
+            )?;
+            graph = next_graph;
+            generated.push(owner);
         }
         for tool in &adoption.record.tool {
-            let consuming_identity = selected_identity_for_coordinates(graph.graph(), unit)?;
-            let owner_paths = std::iter::once(tool.executable.path.as_str())
-                .chain(tool.arguments.iter().filter_map(|argument| match argument {
-                    RustFactArgument::Owner { owner } => Some(owner.as_str()),
-                    _ => None,
-                }))
-                .collect::<Vec<_>>();
-            let executable_owner = resolve_publisher_owner_root(
-                &adoption.package,
-                &tool.name,
-                &tool.executable.owner,
-                &owner_paths,
-                supplied_owner_roots,
-            )?;
-            let product_root = publisher_product_root(product_parent, capture_index, "tool", &tool.name)?;
-            let consuming_units = [consuming_identity.as_str()];
-            let receipt = execute_publisher_tool(&OvenPublisherToolRequest {
-                mode: OvenPublisherExecutionMode::Publisher,
+            let (next_graph, owner) = execute_adopted_publisher_tool(
+                graph,
+                adoption,
                 tool,
-                fact_owner: OvenPublisherToolOwner {
-                    identity: adoption.manifest_digest.clone(),
-                    root: &adoption.manifest_root,
-                },
-                executable_owner: OvenPublisherToolOwner {
-                    identity: tool.executable.owner.clone(),
-                    root: &executable_owner,
-                },
-                host: &graph.graph().selection.host,
-                target: &graph.graph().selection.intent.target,
-                consuming_units: &consuming_units,
-                product_root: &product_root,
-            })
-            .map_err(|error| CliError::failure(error.to_string()))?;
-            write_publisher_tool_receipt(&receipt, &product_root)?;
-            graph = finalize_publisher_tool_product(graph, &receipt).map_err(oven_error)?;
-            generated.push(PublisherGeneratedOwnerRoot {
-                identity: receipt.identity.clone(),
-                root: product_root,
-                binding: publisher_binding(adoption, tool.name.as_str()),
-                unit_identity: consuming_identity,
-                attestation_reference: receipt.identity,
+                unit,
+                supplied_owner_roots,
+                product_parent,
                 capture_index,
-            });
+            )?;
+            graph = next_graph;
+            generated.push(owner);
         }
     }
     for owner in &mut generated {
@@ -312,6 +253,115 @@ fn execute_adopted_publisher_work(
         .collect::<CliResult<_>>()?;
     finalized.graph = graph;
     Ok(generated)
+}
+
+/// Execute one adopted native-link record and return the graph rekeyed by its receipt.
+#[allow(clippy::too_many_arguments)]
+fn execute_adopted_publisher_link(
+    graph: ValidatedOvenSelectedRustFacetGraph,
+    adoption: &oven_cargo_compat::LoafRegistryAdoption,
+    link: &RustFactLink,
+    unit: &PublisherUnitCoordinates,
+    supplied_owner_roots: &[PathBuf],
+    product_parent: &Path,
+    capture_index: usize,
+) -> CliResult<(ValidatedOvenSelectedRustFacetGraph, PublisherGeneratedOwnerRoot)> {
+    let consuming_identity = selected_identity_for_coordinates(graph.graph(), unit)?;
+    let owner_paths = std::iter::once(link.executable.path.as_str())
+        .chain(link.objects.iter().flat_map(|object| {
+            object.arguments.iter().filter_map(|argument| match argument {
+                RustFactArgument::Owner { owner } => Some(owner.as_str()),
+                _ => None,
+            })
+        }))
+        .collect::<Vec<_>>();
+    let executable_owner = resolve_publisher_owner_root(
+        &adoption.package,
+        &link.name,
+        &link.executable.owner,
+        &owner_paths,
+        supplied_owner_roots,
+    )?;
+    let product_root = publisher_product_root(product_parent, capture_index, "link", &link.name)?;
+    let product = bake_publisher_link(&OvenPublisherLinkBakeRequest {
+        link,
+        selected_target: &graph.graph().selection.intent.target,
+        archive_format: publisher_archive_format(&graph.graph().selection.intent.target),
+        toolchain: &graph.graph().selection.intent.toolchain,
+        consuming_unit_identity: &consuming_identity,
+        executable_owner_root: &executable_owner,
+        source_owner_root: &adoption.manifest_root,
+        output_root: &product_root,
+        limits: publisher_process_limits(),
+    })
+    .map_err(oven_error)?;
+    let owner = PublisherGeneratedOwnerRoot {
+        identity: product.receipt.identity.clone(),
+        root: product.product_root.clone(),
+        binding: publisher_binding(adoption, link.name.as_str()),
+        unit_identity: consuming_identity.clone(),
+        attestation_reference: product.receipt.identity.clone(),
+        capture_index,
+    };
+    let graph = finalize_publisher_native_link(graph, &consuming_identity, &product)?;
+    Ok((graph, owner))
+}
+
+/// Execute one adopted publisher-tool record and return the graph rekeyed by its receipt.
+#[allow(clippy::too_many_arguments)]
+fn execute_adopted_publisher_tool(
+    graph: ValidatedOvenSelectedRustFacetGraph,
+    adoption: &oven_cargo_compat::LoafRegistryAdoption,
+    tool: &RustFactTool,
+    unit: &PublisherUnitCoordinates,
+    supplied_owner_roots: &[PathBuf],
+    product_parent: &Path,
+    capture_index: usize,
+) -> CliResult<(ValidatedOvenSelectedRustFacetGraph, PublisherGeneratedOwnerRoot)> {
+    let consuming_identity = selected_identity_for_coordinates(graph.graph(), unit)?;
+    let owner_paths = std::iter::once(tool.executable.path.as_str())
+        .chain(tool.arguments.iter().filter_map(|argument| match argument {
+            RustFactArgument::Owner { owner } => Some(owner.as_str()),
+            _ => None,
+        }))
+        .collect::<Vec<_>>();
+    let executable_owner = resolve_publisher_owner_root(
+        &adoption.package,
+        &tool.name,
+        &tool.executable.owner,
+        &owner_paths,
+        supplied_owner_roots,
+    )?;
+    let product_root = publisher_product_root(product_parent, capture_index, "tool", &tool.name)?;
+    let consuming_units = [consuming_identity.as_str()];
+    let receipt = execute_publisher_tool(&OvenPublisherToolRequest {
+        mode: OvenPublisherExecutionMode::Publisher,
+        tool,
+        fact_owner: OvenPublisherToolOwner {
+            identity: adoption.manifest_digest.clone(),
+            root: &adoption.manifest_root,
+        },
+        executable_owner: OvenPublisherToolOwner {
+            identity: tool.executable.owner.clone(),
+            root: &executable_owner,
+        },
+        host: &graph.graph().selection.host,
+        target: &graph.graph().selection.intent.target,
+        consuming_units: &consuming_units,
+        product_root: &product_root,
+    })
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    write_publisher_tool_receipt(&receipt, &product_root)?;
+    let owner = PublisherGeneratedOwnerRoot {
+        identity: receipt.identity.clone(),
+        root: product_root,
+        binding: publisher_binding(adoption, tool.name.as_str()),
+        unit_identity: consuming_identity,
+        attestation_reference: receipt.identity.clone(),
+        capture_index,
+    };
+    let graph = finalize_publisher_tool_product(graph, &receipt).map_err(oven_error)?;
+    Ok((graph, owner))
 }
 
 /// Spell one native/tool fact binding independently of publisher-local paths.

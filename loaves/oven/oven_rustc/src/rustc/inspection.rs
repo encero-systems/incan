@@ -813,6 +813,12 @@ mod selected_rust_facet_graph_tests {
                 unit: identity.to_string(),
             }]
         });
+        let compiler_arguments = dependency_identity.map_or_else(Vec::new, |_| {
+            vec![OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "renamed_dep".to_string(),
+                metadata: false,
+            }]
+        });
         let owner = project_owner_identity(bytes);
         let mut unit = OvenSelectedRustFacetUnit {
             identity: String::new(),
@@ -835,7 +841,7 @@ mod selected_rust_facet_graph_tests {
             cfg: vec!["feature=\"root-feature\"".to_string()],
             compiler_crate_type: "lib".to_string(),
             compiler_paths: crate::rustc::fixture_compiler_paths(),
-            compiler_arguments: Vec::new(),
+            compiler_arguments,
             sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
