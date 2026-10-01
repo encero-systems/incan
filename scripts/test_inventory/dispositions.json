@@ -3684,7 +3684,7 @@
       "split_target": "",
       "tests": {
         "accepted_numeric_widenings_build": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/numeric_widening_reaches_every_destination.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/numeric_widening_reaches_every_destination.incn",
           "notes": "Compiles every accepted lossless widening with rustc; the named fixture runs one program through each destination, a yielded item, match arms and loop break values of two integer types, each probe and a mixed comparison (RFC 009)."
         },
         "bitwise_operators_keep_the_integer_type_build": {
@@ -3745,7 +3745,7 @@
       "tests": {
         "prefix_operator_over_a_power_emits_over_the_whole_power_issue1786": {
           "notes": "Asserts `-x ** 2` emits the negation over the grouped power and `(-x) ** 2` raises the negated base; the fixture prints both values.",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/operator_precedence_follows_the_parser_ladder.incn"
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/operator_precedence_follows_the_parser_ladder.incn"
         }
       },
       "twin": ""
@@ -3784,7 +3784,7 @@
       "split_target": "",
       "tests": {
         "record_patterns_over_a_generic_model_and_class_compile": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/record_patterns_over_generic_models_and_classes.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/record_patterns_over_generic_models_and_classes.incn",
           "notes": "Asserts that generated Rust compiles; the behavior, each arm selected by the instantiated fields and payloads, is carried by the named fixture."
         }
       },
@@ -5751,7 +5751,7 @@
       "split_target": "",
       "tests": {
         "first_match_tests_read_places_and_split_over_temporaries_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts generated Rust text (a guarded alternation over a local `Result` binds no position and reads the scrutinee through a shared view; a whole alternation binding names is split over a temporary); retires with the Rust-source backend. The behavior is carried by the named fixture's `ok_after_match`, `sign_of` and `sign_of_parts` functions (#1739)."
         },
         "generic_value_clones_in_match_arms_when_used_after_match": {
@@ -5767,7 +5767,7 @@
           "notes": "twinned by the same program whose guard reads a list before the arm returns it; the `(value.clone(),)` spelling dies."
         },
         "guarded_alternations_print_first_match_and_membership_tests_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts generated Rust text (the first-match test ahead of the guard, one membership match per nested alternation with the body printed once, and `\"a\" | _` split into a literal arm and a binding arm); retires with the Rust-source backend. The behavior is carried by the named fixture's `first_alternative_decides`, `describe_tag` and `long_word` functions (#1739)."
         },
         "guarded_match_arm_returns_move_once_the_guard_admits_the_arm": {
@@ -5775,7 +5775,7 @@
           "notes": "twinned by the same program returning from a guarded arm and its fallback (#1489); the ownership assertions die."
         },
         "or_pattern_with_nested_str_literals_prints_one_guarded_arm_per_alternative_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts generated Rust text (one guarded arm per alternative, no `str` literal pattern token, the shared guard cloning the value it reads in each copy); retires with the Rust-source backend. The behavior, the issue's program and a guarded or-pattern selecting their arms, is carried by the named fixture (#1739)."
         },
         "partial_pattern_leaving_a_private_field_unnamed_prints_a_rest_marker_issue1740": {
@@ -7980,7 +7980,7 @@
       "split_target": "",
       "tests": {
         "list_count_forms_lower_by_argument_count_issue1776": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/list_count_and_index_forms.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/list_count_and_index_forms.incn",
           "notes": "Asserts the legacy IR shape of the two `count` forms on a list (`count()` as the iterator terminal over the list's iterator, `count(value)` as the list method); retires with `incan_ir`. The behavior, `count()` printing 4 and `count(9)` printing 2 for `[4, 9, 2, 9]`, is carried by the named fixture (#1776)."
         }
       },
@@ -8086,59 +8086,59 @@
       "split_target": "",
       "tests": {
         "alternations_that_need_no_guard_of_their_own_stay_one_arm_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an alternation of plain values beside a nested literal, a nested alternation of str literals and a top-level alternation of str literals each stay in one arm); retires with `incan_ir`. The behavior, those arms selecting what they match, is carried by the named fixture's `low` and `word` functions (#1739)."
         },
         "alternatives_binding_a_name_at_different_positions_each_bind_it_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (alternatives binding `x` at different positions become one arm each, binding it where that alternative does); retires with `incan_ir`. The behavior is carried by the named fixture's `either_side` function (#1739)."
         },
         "first_match_reads_through_a_whole_binding_alternation_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a later alternative holding a whole alternation that binds names tests the scrutinee, or is split over a temporary, so its first-match test is never skipped); retires with `incan_ir`. The behavior is carried by the named fixture's `sign_of` and `sign_of_parts` functions (#1739)."
         },
         "guard_after_a_whole_alternation_never_consumes_what_it_reads_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded read access on the legacy IR (the guard after `1 | 2` reads a str parameter without consuming it); retires with `incan_ir`. The behavior is carried by the named fixture's `small_or_other` function (#1739)."
         },
         "guard_shared_by_split_arms_never_consumes_what_it_reads_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded read access on the legacy IR (the guard copied onto each split arm reads a str parameter without consuming it); retires with `incan_ir`. The behavior, a guarded or-pattern whose guard is the only reader of a str selecting its arm, is carried by the named fixture's `confirm` function (#1739)."
         },
         "guarded_alternation_leaves_a_result_scrutinee_whole_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a guarded alternation over a local `Result` binds no position and tests the scrutinee through a shared view); retires with `incan_ir`. The behavior, the `Result` still matching after the guarded `match`, is carried by the named fixture's `ok_after_match` function (#1739)."
         },
         "if_let_or_pattern_with_nested_str_literals_lowers_one_arm_per_alternative_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an if-let or-pattern with nested str literals becomes one guarded arm per alternative ahead of the fallback); retires with `incan_ir`. The behavior is carried by the named fixture's `check` function (#1739)."
         },
         "nested_nameless_alternation_becomes_one_membership_test_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a nested alternation that binds no names becomes a wildcard whose membership match reads the scrutinee ahead of the arm's guard); retires with `incan_ir`. The behavior is carried by the named fixture's `describe_tag` function (#1739)."
         },
         "nested_nameless_alternation_over_a_temporary_binds_its_position_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (over a tuple built in the match, a nested alternation that binds no names becomes a position binding tested by a membership match); retires with `incan_ir`. The behavior is carried by the named fixture's `describe_tag_parts` function (#1739)."
         },
         "nested_nameless_alternations_never_multiply_the_arm_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (four nested alternations that bind no names stay one arm with four membership tests on the scrutinee); retires with `incan_ir`. The behavior is carried by the named fixture's `count_set` function (#1739)."
         },
         "nested_str_literal_over_a_place_leaves_the_place_whole_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (over a `Result` local or field, a nested str literal is a wildcard tested through a shared view of the place, and no arm binds a hoisted literal or a position); retires with `incan_ir`. The behavior, the `Result` matched again after the guarded `match`, is carried by the named fixture's `retry_after` function (#1739)."
         },
         "or_pattern_with_nested_str_literals_lowers_one_arm_per_alternative_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a top-level or-pattern of tuples with nested str literals becomes one arm per alternative, in order, sharing the body, each testing its own literal on the scrutinee); retires with `incan_ir`. The behavior, the issue's program printing `known`, is carried by the named fixture (#1739)."
         },
         "overlapping_alternatives_over_a_temporary_test_bound_positions_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded guard shape on the legacy IR (over a tuple built in the match, the later overlapping alternative's first-match test reads the position it binds); retires with `incan_ir`. The behavior is carried by the named fixture's `first_alternative_decides_parts` function and its guard counter (#1739)."
         },
         "overlapping_alternatives_under_a_guard_take_the_first_match_only_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded guard shape on the legacy IR (a later overlapping alternative's arm tests on the scrutinee that the earlier one did not match, ahead of the arm's guard); retires with `incan_ir`. The behavior, the guard running once for the first matching alternative, is carried by the named fixture's `first_alternative_decides` function and its guard counter (#1739)."
         },
         "partial_pattern_leaving_a_private_field_unnamed_ends_in_a_rest_marker_issue1740": {
@@ -8146,11 +8146,11 @@
           "notes": "Asserts the recorded pattern fact on the legacy IR (a partial pattern whose unnamed fields include a private one spells only its named fields and carries a rest marker; a rest of public fields stays spelled as wildcards); retires with `incan_ir`. The behavior, a partial pattern over another module's model with a private field selecting its arm, is carried by the named module fixture (#1740)."
         },
         "top_level_alternation_of_a_str_literal_and_a_wildcard_splits_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (`\"a\" | _` over a `str` value becomes a literal arm and a wildcard arm; under a guard the wildcard's arm tests on the scrutinee that the literal did not match); retires with `incan_ir`. The behavior is carried by the named fixture's `any_word` and `long_word` functions (#1739)."
         },
         "while_let_plans_its_pattern_like_a_match_arm_issue1739": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/or_pattern_with_nested_str_literals.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/or_pattern_with_nested_str_literals.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a `while let` pattern with a nested str literal becomes a guarded binding ahead of the loop's end) and that the parser refuses an alternation there; retires with `incan_ir`. The behavior is carried by the named fixture's `count_stages` function (#1739)."
         }
       },
@@ -8335,14 +8335,14 @@
       "tests": {
         "prefix_operator_over_a_power_lowers_a_grouped_power_issue1786": {
           "notes": "Asserts the legacy IR hands `-x ** 2` and `~x ** 2` to the emitter as a prefix operator over one grouped power; the fixture prints `-4` and `-5`.",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/operator_precedence_follows_the_parser_ladder.incn"
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/operator_precedence_follows_the_parser_ladder.incn"
         },
         "prefix_operator_over_an_atomic_operand_stays_ungrouped_issue1763": {
           "twin": "dies",
           "dies": "legacy source-rendering optimization only: adding or omitting parentheses around a name, call, membership test or nested prefix expression preserves the program's value and evaluation order, so no Incan program can observe this IR shape."
         },
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/negation_keeps_its_operand_grouping.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/negation_keeps_its_operand_grouping.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
         }
       },
@@ -11500,6 +11500,12 @@
       "owner": 1561,
       "pattern": "<name>.incn or <name>/"
     },
+    "loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns": {
+      "disposition": "re-point",
+      "notes": "behavior fixtures about boolean logic, comparisons, operator precedence, and conditions expressed through value and record patterns, twinning retire-class lowering, emission and CLI tests whose observable is a program's output. Run by behavior_cli_tests.rs; a fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
+      "owner": 1561,
+      "pattern": "<name>.incn or <name>/"
+    },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations": {
       "disposition": "re-point",
       "notes": "behavior fixtures about modules, facades and imports across files, models, methods, traits and their defaults, generics, decorators and web types, twinning retire-class lowering, emission and CLI tests whose observable is a program's output. Run by behavior_cli_tests.rs; a fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
@@ -11526,7 +11532,7 @@
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls": {
       "disposition": "re-point",
-      "notes": "behavior fixtures about literals, collections, assignments, patterns, numerics, mut parameters and the task handles, channel senders and locks a loop passes on, twinning retire-class lowering, emission and CLI tests whose observable is a program's output. Run by behavior_cli_tests.rs; a fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
+      "notes": "behavior fixtures about literals, collections, assignments, numerics, mut parameters and the task handles, channel senders and locks a loop passes on, twinning retire-class lowering, emission and CLI tests whose observable is a program's output. Run by behavior_cli_tests.rs; a fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
       "pattern": "<name>.incn or <name>/"
     },
