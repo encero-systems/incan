@@ -89,3 +89,20 @@ def main() -> None:
     assert_eq!(output, "[2, 3]\n[5, 6]\n[2, 3]\n2\n3\n");
     Ok(())
 }
+
+/// A last-use generic list parameter is consumed by its comprehension, so the generated Rust needs no `T: Clone`
+/// bound and the unbounded function builds and runs (#1983).
+#[test]
+fn generic_list_comprehension_consumes_its_parameter_issue1983() -> TestResult {
+    let output = program_output(
+        r#"
+def copy_all[T](items: list[T]) -> list[T]:
+    return [item for item in items]
+
+def main() -> None:
+    println(len(copy_all([1, 2, 3])))
+"#,
+    )?;
+    assert_eq!(output, "3\n");
+    Ok(())
+}

@@ -1603,16 +1603,13 @@ pub fn plan_owned_iterator_source(expr: &IrExpr) -> OwnedIteratorSourcePlan {
     }
 }
 
-/// Plan how a comprehension consumes a source that is not an Incan collection, or `None` when it is one.
+/// Plan a comprehension source that can yield owned items directly, or `None` when it must use a borrowed-item plan.
 ///
-/// A `for` statement hands such a value (a Rust iterator such as `std::env::Args`, a generator, an opaque value the
-/// checker could not see into) straight to Rust's `IntoIterator`; the comprehension paths instead borrowed it with
-/// `.iter()`, which a by-value iterator does not have (#1490). Sources the comprehension planner already understands
-/// (collections, ranges, text) return `None` and keep their borrowed item plans. A borrowed opaque value is consumed
-/// through the reference exactly as the loop consumes it, so it is never cloned; an owned one follows the same
-/// move-or-clone materialization as every other adapter-owned source, except a runtime generator, which moves as
-/// the `Iterator` trait's iterator (#1464).
-pub fn plan_opaque_comprehension_source(expr: &IrExpr) -> Option<OwnedIteratorSourcePlan> {
+/// A last-use list yields its elements by moving the collection, which keeps generic elements free of an undeclared
+/// `Clone` requirement (#1983). A Rust iterator, generator, or opaque value follows the same `IntoIterator` path as a
+/// `for` statement (#1490); borrowed collection values and reused locals return `None` and retain their existing
+/// borrowed-item plan. A runtime generator moves as the `Iterator` trait's iterator (#1464).
+pub fn plan_direct_comprehension_source(expr: &IrExpr) -> Option<OwnedIteratorSourcePlan> {
     match &expr.ty {
         IrType::Ref(inner) | IrType::RefMut(inner) => {
             comprehension_source_is_opaque(inner).then_some(OwnedIteratorSourcePlan::Move)
@@ -1620,6 +1617,7 @@ pub fn plan_opaque_comprehension_source(expr: &IrExpr) -> Option<OwnedIteratorSo
         // A generator is consumed by the comprehension as a `for` statement consumes it; it is never cloned (the
         // wrapper is not `Clone`), and the chain must reach the trait's adapters rather than the wrapper's own.
         ty if is_runtime_generator_type(ty) => Some(OwnedIteratorSourcePlan::MoveThroughIteratorTrait),
+        IrType::List(_) if expr_can_move_into_owned_iterator(expr) => Some(OwnedIteratorSourcePlan::Move),
         ty => comprehension_source_is_opaque(ty).then(|| plan_owned_iterator_source(expr)),
     }
 }
@@ -2329,6 +2327,39 @@ mod tests {
         assert_eq!(plan_owned_iterator_source(&expr), OwnedIteratorSourcePlan::Move);
     }
 
+    /// A last-use generic list parameter is an owned source whose items move into the comprehension result.
+    #[test]
+    fn direct_comprehension_source_consumes_last_use_generic_list() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "items".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::List(Box::new(IrType::Generic("T".to_string()))),
+        );
+
+        assert_eq!(
+            plan_direct_comprehension_source(&expr),
+            Some(OwnedIteratorSourcePlan::Move)
+        );
+    }
+
+    /// A generic list used again after a comprehension keeps the borrowed-item plan that preserves the list.
+    #[test]
+    fn direct_comprehension_source_borrows_reused_generic_list() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "items".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::List(Box::new(IrType::Generic("T".to_string()))),
+        );
+
+        assert_eq!(plan_direct_comprehension_source(&expr), None);
+    }
+
     /// `list(source)` collects what a loop over the source yields: owned collections are consumed, borrowed and
     /// immutable ones lend clones, a dict lends its keys, and text takes the loop's character adapter (#1464).
     #[test]
@@ -2412,7 +2443,7 @@ mod tests {
             generator,
         );
         assert_eq!(
-            plan_opaque_comprehension_source(&reused_source),
+            plan_direct_comprehension_source(&reused_source),
             Some(OwnedIteratorSourcePlan::MoveThroughIteratorTrait)
         );
         assert_eq!(
@@ -2445,7 +2476,7 @@ mod tests {
             rust_iterator.clone(),
         );
         assert_eq!(
-            plan_opaque_comprehension_source(&call),
+            plan_direct_comprehension_source(&call),
             Some(OwnedIteratorSourcePlan::Move)
         );
 
@@ -2460,23 +2491,23 @@ mod tests {
             )
         };
         assert_eq!(
-            plan_opaque_comprehension_source(&reused_var(IrType::RefMut(Box::new(rust_iterator.clone())))),
+            plan_direct_comprehension_source(&reused_var(IrType::RefMut(Box::new(rust_iterator.clone())))),
             Some(OwnedIteratorSourcePlan::Move)
         );
         // A generator is never cloned (the wrapper is not `Clone`); it moves as the trait's iterator (#1464).
         assert_eq!(
-            plan_opaque_comprehension_source(&reused_var(IrType::NamedGeneric(
+            plan_direct_comprehension_source(&reused_var(IrType::NamedGeneric(
                 collections::as_str(CollectionTypeId::Generator).to_string(),
                 vec![IrType::Int]
             ))),
             Some(OwnedIteratorSourcePlan::MoveThroughIteratorTrait)
         );
         assert_eq!(
-            plan_opaque_comprehension_source(&reused_var(IrType::List(Box::new(IrType::Int)))),
+            plan_direct_comprehension_source(&reused_var(IrType::List(Box::new(IrType::Int)))),
             None
         );
         assert_eq!(
-            plan_opaque_comprehension_source(&reused_var(IrType::NamedGeneric(
+            plan_direct_comprehension_source(&reused_var(IrType::NamedGeneric(
                 collections::as_str(CollectionTypeId::Option).to_string(),
                 vec![IrType::Int]
             ))),
