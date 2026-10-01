@@ -13,6 +13,7 @@ use crate::ast::{
 use crate::decorator_resolution;
 use crate::diagnostics::{CompileError, errors};
 use crate::module::canonicalize_source_module_segments;
+use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{
     BindingRegistration, CallableParam, ClassInfo, FieldInfo, FunctionInfo, ImplementationTypeParamInfo, MethodInfo,
     ModelInfo, NewtypeInfo, PropertyInfo, ResolvedType, SymbolKind, TraitInfo, TypeBoundInfo, TypeInfo,
@@ -1416,6 +1417,7 @@ fn checked_type_alias_export(alias: &TypeAliasDecl, checker: &TypeChecker) -> Ch
 fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<CheckedModelExport> {
     let symbol = checker.lookup_symbol(model.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Model(ModelInfo {
+        type_params: owner_type_params,
         traits,
         trait_adoptions,
         derives,
@@ -1444,7 +1446,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         name: model.name.clone(),
         type_params: checked_type_params(&model.type_params, checker),
         traits: sorted_vec(traits.to_vec()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(trait_adoptions, owner_type_params, checker),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields, field_order, &defaults, None, None, &[], checker)?,
         properties: map_public_properties(properties, checker),
@@ -1456,6 +1458,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
 fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<CheckedClassExport> {
     let symbol = checker.lookup_symbol(class.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Class(ClassInfo {
+        type_params: owner_type_params,
         extends,
         traits,
         trait_adoptions,
@@ -1483,7 +1486,7 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         type_params: checked_type_params(&class.type_params, checker),
         extends: extends.clone(),
         traits: sorted_vec(traits.to_vec()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(trait_adoptions, owner_type_params, checker),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(
             fields,
@@ -1565,7 +1568,7 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
         name: enum_decl.name.clone(),
         type_params: checked_type_params(&enum_decl.type_params, checker),
         traits: sorted_vec(enum_info.traits.clone()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(&enum_info.trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(&enum_info.trait_adoptions, &enum_info.type_params, checker),
         value_type: enum_info.value_enum.as_ref().map(|value_enum| value_enum.value_type),
         variants,
         variant_aliases: enum_decl
@@ -1603,7 +1606,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         name: newtype_decl.name.clone(),
         type_params: checked_type_params(&newtype_decl.type_params, checker),
         traits: sorted_vec(traits.clone()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(trait_adoptions, &info.type_params, checker),
         derives: sorted_vec(derives.clone()),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
@@ -1690,6 +1693,83 @@ fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
             inferred: bound.inferred,
         })
         .collect()
+}
+
+/// Publish direct trait adoptions together with the transitive supertraits they semantically adopt.
+///
+/// A bare generic adoption uses the owner's type parameters positionally, matching typechecking and lowering. The
+/// manifest must carry that instantiated shape because implementation-bound inference may attach requirements to an
+/// implied supertrait rather than to the directly written subtrait.
+fn checked_trait_adoption_closure(
+    adoptions: &[TypeBoundInfo],
+    owner_type_params: &[String],
+    checker: &TypeChecker,
+) -> Vec<CheckedTypeBound> {
+    let owner_args = owner_type_params
+        .iter()
+        .cloned()
+        .map(ResolvedType::TypeVar)
+        .collect::<Vec<_>>();
+    let mut checked = Vec::new();
+
+    for adoption in adoptions {
+        let mut direct = map_type_bound_infos(std::slice::from_ref(adoption));
+        if let Some(bound) = direct.first_mut() {
+            bound.module_path = canonical_trait_adoption_module_path(bound.module_path.take());
+        }
+        let Some(trait_info) = checker.lookup_trait_adoption_info(adoption) else {
+            checked.extend(direct);
+            continue;
+        };
+        let direct_args = if adoption.type_args.is_empty() {
+            owner_args.iter().take(trait_info.type_params.len()).cloned().collect()
+        } else {
+            adoption.type_args.clone()
+        };
+        if let Some(bound) = direct.first_mut() {
+            bound.type_args = direct_args.clone();
+        }
+        checked.extend(direct);
+
+        if direct_args.len() != trait_info.type_params.len() {
+            continue;
+        }
+        let substitutions = type_param_subst_map(&trait_info.type_params, &direct_args);
+        for (name, type_args) in checker.semantic_supertrait_closure(&adoption.name) {
+            let source_name = checker.trait_bound_source_name(&name);
+            let implied = CheckedTypeBound {
+                module_path: canonical_trait_adoption_module_path(checker.trait_bound_module_path(&name)),
+                source_name,
+                type_args: type_args
+                    .iter()
+                    .map(|arg| substitute_resolved_type(arg, &substitutions))
+                    .collect(),
+                name,
+                implementation_type_params: Vec::new(),
+                inferred: false,
+            };
+            if !checked.iter().any(|bound| {
+                bound.name == implied.name
+                    && bound.module_path == implied.module_path
+                    && bound.type_args == implied.type_args
+            }) {
+                checked.push(implied);
+            }
+        }
+    }
+
+    sorted_type_bounds(checked)
+}
+
+/// Canonicalize the source library entrypoint to the module identity used by published implementation metadata.
+///
+/// Module collection checks `src/lib.incn` under the internal path `main`, while a compiled library's declaration
+/// identities expose that root as `lib`. Nested module paths already agree and pass through unchanged.
+fn canonical_trait_adoption_module_path(module_path: Option<Vec<String>>) -> Option<Vec<String>> {
+    match module_path.as_deref() {
+        Some([root]) if root == "main" => Some(vec!["lib".to_string()]),
+        _ => module_path,
+    }
 }
 
 /// Sort generic trait adoptions deterministically for stable library manifests.

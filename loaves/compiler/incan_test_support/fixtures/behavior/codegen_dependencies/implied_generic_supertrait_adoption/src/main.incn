@@ -1,0 +1,19 @@
+# behavior: a dependency publishes the generic supertrait implied by a bare generic subtrait adoption, so consumers can use both contracts
+# expect-stdout:
+#   7
+#   9
+
+from pub::catalogs import Catalog, OrderedCatalog, Parcel
+
+
+def first(catalog: Catalog[int]) -> int:
+    return catalog.item()
+
+
+def ordered(catalog: OrderedCatalog[int]) -> OrderedCatalog[int]:
+    return catalog.ordered()
+
+
+def main() -> None:
+    println(first(Parcel(value=7)))
+    println(ordered(Parcel(value=9)).item())
