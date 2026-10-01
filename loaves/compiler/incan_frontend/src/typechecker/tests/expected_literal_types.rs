@@ -70,6 +70,25 @@ fn list(element: ResolvedType) -> ResolvedType {
     collection(CollectionTypeId::List, vec![element])
 }
 
+/// A bare generic constructor in a generic method takes its type arguments from the method's expected return type, so
+/// an empty list field is typed with the method parameter rather than the enclosing class parameter.
+#[test]
+fn constructor_field_literal_takes_expected_generic_result_argument() -> Result<(), String> {
+    let source = r#"
+class Cursor[T with Clone]:
+    items: list[T]
+
+    def select[U with Clone](self) -> Cursor[U]:
+        return Cursor(items=[])
+"#;
+    let checker = checked(source)?;
+    assert_eq!(
+        recorded_type(&checker, source, "return Cursor", "[]")?,
+        &list(ResolvedType::Named("U".to_string()))
+    );
+    Ok(())
+}
+
 /// #1847: the elements of an annotated tuple literal are checked against the annotation's element types, so the
 /// literal's type carries `Option[str]` for `None` and `Result[int, int]` for `Ok(1)`, down through a nested tuple.
 #[test]

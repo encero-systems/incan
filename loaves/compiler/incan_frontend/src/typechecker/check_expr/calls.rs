@@ -440,7 +440,9 @@ impl TypeChecker {
                                 span,
                             );
                         }
-                        let explicit_constructor_ty = explicit_constructor_context.as_ref().map(|(ty, _)| ty.clone());
+                        let constructor_context = explicit_constructor_context
+                            .or_else(|| self.expected_constructor_type_context(name, &type_info, expected_return_ty));
+                        let contextual_constructor_ty = constructor_context.as_ref().map(|(ty, _)| ty.clone());
                         if let TypeInfo::Model(model) = &type_info
                             && model
                                 .derives
@@ -460,7 +462,7 @@ impl TypeChecker {
                                 .ident_kinds
                                 .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                             let constructor_ty = self.check_constructor(name, args, span);
-                            return explicit_constructor_ty.unwrap_or(constructor_ty);
+                            return contextual_constructor_ty.unwrap_or(constructor_ty);
                         }
                         let ctor_fields = match &type_info {
                             TypeInfo::Model(info) => Some(info.fields.clone()),
@@ -471,7 +473,7 @@ impl TypeChecker {
                             return ResolvedType::Unknown;
                         };
                         self.record_direct_callee_identity(name, callee.span);
-                        if let Some((_, type_bindings)) = &explicit_constructor_context {
+                        if let Some((_, type_bindings)) = &constructor_context {
                             for field in fields.values_mut() {
                                 field.ty = substitute_resolved_type(&field.ty, type_bindings);
                             }
@@ -483,7 +485,7 @@ impl TypeChecker {
                             .expressions
                             .ident_kinds
                             .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
-                        return explicit_constructor_ty.unwrap_or(constructor_ty);
+                        return contextual_constructor_ty.unwrap_or(constructor_ty);
                     }
                     SymbolKind::Function(func_info) => {
                         if let Some(target) =
