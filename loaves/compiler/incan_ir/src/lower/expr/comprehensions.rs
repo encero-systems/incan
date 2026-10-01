@@ -1,7 +1,7 @@
 //! Comprehension and generator-expression lowering.
 
 use super::super::super::TypedExpr;
-use super::super::super::expr::{IrExprKind, IrGeneratorClause};
+use super::super::super::expr::{IrExprKind, IrGeneratorClause, VarAccess};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
@@ -56,7 +56,9 @@ impl AstLowering {
         comp: &ast::ListComp,
         span: ast::Span,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
-        let iter_expr = owned_frozen_iteration_source(self.lower_expr_spanned(&comp.iter)?);
+        let mut iter_expr = self.lower_expr_spanned(&comp.iter)?;
+        self.apply_checked_comprehension_source_consumption(comp.iter.span, &mut iter_expr);
+        let iter_expr = owned_frozen_iteration_source(iter_expr);
         let pattern = self.lower_pattern(&comp.pattern.node);
 
         // Build the filter predicate if present
@@ -93,7 +95,9 @@ impl AstLowering {
         &mut self,
         comp: &ast::DictComp,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
-        let iter_expr = owned_frozen_iteration_source(self.lower_expr_spanned(&comp.iter)?);
+        let mut iter_expr = self.lower_expr_spanned(&comp.iter)?;
+        self.apply_checked_comprehension_source_consumption(comp.iter.span, &mut iter_expr);
+        let iter_expr = owned_frozen_iteration_source(iter_expr);
         let pattern = self.lower_pattern(&comp.pattern.node);
 
         self.non_linear_context_depth += 1;
@@ -123,5 +127,23 @@ impl AstLowering {
             },
             IrType::Dict(Box::new(key_ty), Box::new(value_ty)),
         ))
+    }
+
+    /// Apply the frontend's source-consumption fact to a direct comprehension iterable (#1983).
+    ///
+    /// The checker has already used this exact decision to require `Clone` when the source stays live. Overriding the
+    /// general identifier access here prevents lowering from independently re-running its last-use heuristic and
+    /// makes the emitter's owned-versus-borrowed item plan agree with the diagnostic by construction.
+    fn apply_checked_comprehension_source_consumption(&self, span: ast::Span, iterable: &mut TypedExpr) {
+        let Some(consumed) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.comprehension_source_is_consumed(span))
+        else {
+            return;
+        };
+        if let IrExprKind::Var { access, .. } = &mut iterable.kind {
+            *access = if consumed { VarAccess::Move } else { VarAccess::Read };
+        }
     }
 }

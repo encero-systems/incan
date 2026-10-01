@@ -1582,6 +1582,14 @@ pub struct ProtocolArtifacts {
     /// assignment that no branch, `break` or `continue` can skip gives the binding a new list, a closure that captured
     /// the list before the loop, and a repeat of the loop that would reach the emptied list.
     pub item_taking_iterations: HashSet<(usize, usize)>,
+    /// Comprehension collection sources whose direct identifier read is consumed, keyed by iterable expression span
+    /// (#1983).
+    ///
+    /// Both outcomes are recorded: `true` makes lowering move the collection and iterate its owned elements, while
+    /// `false` keeps the collection and requires the borrowed-item iteration plan. Recording the negative outcome is
+    /// essential because it prevents lowering from running a second last-use heuristic that could disagree with the
+    /// checker about whether cloning an element is required.
+    pub comprehension_source_consumption: HashMap<(usize, usize), bool>,
     /// Scrutinee spans of the `match`, `if let` and `while let` forms whose pattern binds a view into a caller-visible
     /// `mut` parameter that an arm changes (#1561).
     ///
@@ -2969,6 +2977,21 @@ impl TypeCheckInfo {
         self.protocols
             .item_taking_iterations
             .contains(&(iter_span.start, iter_span.end))
+    }
+
+    /// Record whether a checked comprehension consumes its direct collection source (#1983).
+    pub fn record_comprehension_source_consumption(&mut self, iter_span: Span, consumed: bool) {
+        self.protocols
+            .comprehension_source_consumption
+            .insert((iter_span.start, iter_span.end), consumed);
+    }
+
+    /// Return the checker's collection-source consumption decision for a comprehension, when one applies (#1983).
+    pub fn comprehension_source_is_consumed(&self, iter_span: Span) -> Option<bool> {
+        self.protocols
+            .comprehension_source_consumption
+            .get(&(iter_span.start, iter_span.end))
+            .copied()
     }
 
     /// Record that an arm of the `match`, `if let` or `while let` over the scrutinee at `span` changes a caller-visible

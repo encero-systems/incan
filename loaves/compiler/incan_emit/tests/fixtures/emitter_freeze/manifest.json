@@ -54,8 +54,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
-      "sha256": "82a0b2698857c3afcae3ec9fa7514c610d8df91e09952663a1fe5549e77d6128",
-      "lines": 957
+      "sha256": "48fd2f2e5f277f863a6f139d92ee71357b57fa13d4b91a567a136c7ff1a06b12",
+      "lines": 959
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/format.rs",
@@ -729,6 +729,21 @@
       "behavior_evidence": "merge of bugfix/1561-condition-struct-literals and bugfix/1561-followup-suite-fallout",
       "semantic_owner": "the merged entries' owners",
       "retirement_condition": "the Rust-source backend is deleted (#654)"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1983",
+      "behavior_evidence": "generic_list_comprehension_consumes_parameter behavior fixture and direct_comprehension_source ownership tests",
+      "semantic_owner": "incan_emit::ownership::plan_direct_comprehension_source over lowered VarAccess",
+      "retirement_condition": "delete with the Rust-source backend in #654"
     }
   ]
 }

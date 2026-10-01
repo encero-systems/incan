@@ -6109,6 +6109,7 @@ impl TypeChecker {
         // Check body
         let previous_function = (self.receiver_plan_inputs.current_function).replace((decl_span.start, decl_span.end));
         self.check_statement_block(&func.body);
+        self.finalize_comprehension_collection_sources();
         self.receiver_plan_inputs.current_function = previous_function;
 
         self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
@@ -6645,6 +6646,7 @@ impl TypeChecker {
             let previous_c_abi_span_bindings = std::mem::take(&mut self.c_abi_span_bindings);
             let previous_consumed_c_abi_span_bindings = std::mem::take(&mut self.consumed_c_abi_span_bindings);
             self.check_statement_block(body);
+            self.finalize_comprehension_collection_sources();
             self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
             self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
             self.exit_for_item_taking_scope(previous_for_item_taking);

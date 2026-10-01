@@ -95,6 +95,7 @@ impl TypeChecker {
     /// Type-check a list comprehension and return `List[T]`.
     pub(in crate::typechecker::check_expr) fn check_list_comp(&mut self, comp: &ListComp, _span: Span) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
+        self.plan_comprehension_collection_source(&comp.iter, &iter_ty);
         let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
         // The iterated place is resolved before the clause's bindings shadow it.
         let item_views = self.read_only_comprehension_item_views(&comp.iter, &comp.pattern.node);
@@ -121,6 +122,7 @@ impl TypeChecker {
     /// Type-check a dict comprehension and return `Dict[K, V]`, refusing a key type without `Eq` and `Hash` (#1758).
     pub(in crate::typechecker::check_expr) fn check_dict_comp(&mut self, comp: &DictComp, _span: Span) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
+        self.plan_comprehension_collection_source(&comp.iter, &iter_ty);
         let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
         // A dict comprehension reads the items it changes in place, as a list comprehension does (#1561).
         let item_views = self.read_only_comprehension_item_views(&comp.iter, &comp.pattern.node);

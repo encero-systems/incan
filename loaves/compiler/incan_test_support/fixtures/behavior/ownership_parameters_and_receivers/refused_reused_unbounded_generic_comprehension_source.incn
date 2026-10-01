@@ -1,0 +1,7 @@
+# behavior: a comprehension refuses to copy an unbounded generic element when its list source is reused
+# expect-diagnostic: INCAN-T0001
+
+def copy_and_keep[T](items: list[T]) -> list[T]:
+    copied = [item for item in items]
+    println(len(copied))
+    return items
