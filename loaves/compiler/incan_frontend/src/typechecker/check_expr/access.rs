@@ -190,8 +190,9 @@ impl TypeChecker {
     /// Resolve the type of one field on a value typed by a Rust path, as the field is written in Incan source.
     ///
     /// The path is the value's own `RustPath` spelling; the metadata lookup normalizes the `rust::` prefix and any
-    /// type arguments, exactly as a field read does. Field access and field assignment resolve through this one
-    /// lookup, so a field that can be read can also be assigned.
+    /// type arguments, exactly as a field read does. A fast cache entry can carry only nominal metadata, so a missing
+    /// field upgrades to complete semantic metadata before the checker rejects it. Field access and field assignment
+    /// resolve through this one lookup, so a field that can be read can also be assigned.
     pub(in crate::typechecker) fn rust_path_field_type(&self, path: &str, field: &str) -> Option<ResolvedType> {
         // Field reads pass the value's path straight to the metadata lookup, which owns the `rust::` and generic
         // normalization; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
@@ -199,8 +200,17 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let rust_field = Self::rust_field_for_source_name(&info.fields, field)?;
-        Some(self.resolved_rust_field_type(path, rust_field))
+        let rust_field = match Self::rust_field_for_source_name(&info.fields, field) {
+            Some(rust_field) => rust_field.clone(),
+            None => {
+                let complete = self.rust_item_metadata_for_complete_type(path)?;
+                let RustItemKind::Type(complete_info) = &complete.kind else {
+                    return None;
+                };
+                Self::rust_field_for_source_name(&complete_info.fields, field)?.clone()
+            }
+        };
+        Some(self.resolved_rust_field_type(path, &rust_field))
     }
 
     /// Resolve a Rust field type from its display string against the owning Rust type.
