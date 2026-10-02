@@ -125,6 +125,7 @@ pub(super) fn bake_compiler_vocab_support(
         compiler_root: context.compiler_root,
         cargo: context.cargo,
         rustc: context.rustc,
+        auxiliary_target_rustc: context.auxiliary_target_rustc,
         cargo_target: context.compiler_support_target,
         capacity_roots: &context.capacity_roots,
         transient_limit: context.transient_limit,
@@ -146,6 +147,7 @@ pub fn bake_source_compiler_vocab_support(
         compiler_root,
         cargo,
         rustc,
+        auxiliary_target_rustc,
         cargo_target,
         capacity_roots,
         transient_limit,
@@ -237,10 +239,12 @@ pub fn bake_source_compiler_vocab_support(
         wasm_command.arg("--release");
     }
     clear_inherited_cargo_environment_for_cargo(&mut wasm_command);
-    // Rustc folds its executable coordinate into crate metadata for multi-file crates. The auxiliary target must use
-    // the same retained compiler as the host closure or its target units can name host crate hashes that the sealed
-    // native closure does not contain.
-    wasm_command.env("RUSTC", rustc).env("CARGO_NET_OFFLINE", "true");
+    // This invocation retains both the target units and their host-side compiler plugins as one isolated cohort, so
+    // it can use the caller's compiler that actually carries the auxiliary target without mixing in the staged
+    // compiler's independently built host closure.
+    wasm_command
+        .env("RUSTC", auxiliary_target_rustc)
+        .env("CARGO_NET_OFFLINE", "true");
     if plan.intent.profile == "debug" {
         wasm_command.env("CARGO_PROFILE_DEV_DEBUG", "0");
     }

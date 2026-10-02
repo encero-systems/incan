@@ -21,13 +21,15 @@ impl OvenRustcArtifactManifest {
     /// Prove that every root extern in every compiler-owned auxiliary target can load through its sealed closure.
     ///
     /// This is a publisher gate, not a normal consumer operation. It first verifies all manifest bytes, then asks the
-    /// supplied retained compiler to load each extern independently for its declared target. Compiling each root on
-    /// its own catches a stale target unit whose metadata names a host proc macro or build product that a later
-    /// publisher rebuild replaced with byte-valid but crate-hash-incompatible bytes.
+    /// supplied retained host compiler or auxiliary-target compiler to load each extern independently for its
+    /// declared target. Compiling each root on its own catches a stale target unit whose metadata names a host proc
+    /// macro or build product that a later publisher rebuild replaced with byte-valid but crate-hash-incompatible
+    /// bytes.
     pub fn verify_vocab_auxiliary_targets_with_direct_rustc(
         &self,
         artifact_root: &Path,
-        rustc: &Path,
+        host_rustc: &Path,
+        auxiliary_target_rustc: &Path,
         scratch_root: &Path,
     ) -> Result<(), OvenRustcError> {
         let _ = self.materialize(artifact_root, &self.intent)?;
@@ -43,6 +45,11 @@ impl OvenRustcArtifactManifest {
                 source,
             })?;
         for (target_index, auxiliary) in self.vocab_auxiliary_targets.iter().enumerate() {
+            let rustc = if auxiliary.target == self.intent.target {
+                host_rustc
+            } else {
+                auxiliary_target_rustc
+            };
             let materialized = self
                 .materialize_trusted_vocab_auxiliary_target(artifact_root, &auxiliary.target)?
                 .ok_or_else(|| OvenRustcError::InvalidInput {
@@ -77,12 +84,19 @@ impl OvenRustcArtifactManifest {
                     source: source_error,
                 })?;
                 if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr).trim().to_string();
+                    if stderr.contains("target may not be installed") {
+                        return Err(OvenRustcError::TargetNotInstalled {
+                            target: auxiliary.target.clone(),
+                            compiler: rustc.to_path_buf(),
+                            stderr,
+                        });
+                    }
                     return Err(OvenRustcError::InvalidInput {
                         field: "vocab auxiliary closure",
                         message: format!(
                             "target `{}` unit `{crate_name}` cannot load the dependent units sealed beside it:\n{}",
-                            auxiliary.target,
-                            String::from_utf8_lossy(&result.stderr).trim()
+                            auxiliary.target, stderr
                         ),
                     });
                 }

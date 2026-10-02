@@ -487,6 +487,13 @@ pub enum OvenRustcError {
     /// A request field is blank or does not obey the narrow Alpha spelling contract.
     #[error("invalid Oven direct-rustc {field}: {message}")]
     InvalidInput { field: &'static str, message: String },
+    /// A publisher probe selected a compiler that does not carry the auxiliary Rust target being verified.
+    #[error("Rust target `{target}` is not installed for compiler `{compiler}`:\n{stderr}")]
+    TargetNotInstalled {
+        target: String,
+        compiler: PathBuf,
+        stderr: String,
+    },
     /// A declared artifact path escapes the immutable artifact root or is not a regular file/directory.
     #[error("invalid Oven direct-rustc {kind} path {path}: {message}")]
     InvalidArtifactPath {

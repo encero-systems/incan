@@ -1370,7 +1370,7 @@ fn publisher_vocab_probe_refuses_a_target_unit_with_a_stale_host_dependency() ->
             digest: digest_bytes(&fs::read(&dependency)?),
         }],
     };
-    manifest.verify_vocab_auxiliary_targets_with_direct_rustc(&artifact_root, &rustc, root.path())?;
+    manifest.verify_vocab_auxiliary_targets_with_direct_rustc(&artifact_root, &rustc, &rustc, root.path())?;
 
     compile_vocab_closure_fixture(
         &rustc,
@@ -1387,7 +1387,7 @@ fn publisher_vocab_probe_refuses_a_target_unit_with_a_stale_host_dependency() ->
     dependency_artifact.digest = digest_bytes(&fs::read(&dependency)?);
 
     let error = manifest
-        .verify_vocab_auxiliary_targets_with_direct_rustc(&artifact_root, &rustc, root.path())
+        .verify_vocab_auxiliary_targets_with_direct_rustc(&artifact_root, &rustc, &rustc, root.path())
         .err()
         .ok_or("stale auxiliary dependency unexpectedly loaded")?;
     let message = error.to_string();

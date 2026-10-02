@@ -1392,6 +1392,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 capacity_roots: [&options.output, scratch.path()],
                 transient_limit: max_physical_bytes,
                 cargo: &options.cargo,
+                auxiliary_target_rustc: &options.rustc,
                 rustc: &bake_rustc,
                 cc: &options.cc,
                 cxx: &options.cxx,
@@ -1407,7 +1408,13 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         )
         .map_err(oven_error)?;
         if envelope == OvenLoafEnvelope::Release {
-            verify_prepared_loaf_vocab_closures(&staged_root, &prepared.preparation, &bake_rustc, scratch.path())?;
+            verify_prepared_loaf_vocab_closures(
+                &staged_root,
+                &prepared.preparation,
+                &bake_rustc,
+                &options.rustc,
+                scratch.path(),
+            )?;
         }
         // The harvest reads the gate's own capture for every entry that binds registry sources (both stdlib
         // profiles): no second Cargo run stands in for the observation, and the retained OUT_DIR members come from
@@ -1775,12 +1782,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         pending[final_entry_index].result =
             bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &foundation.artifacts)?;
         loaf.plan
-            .verify_vocab_auxiliary_targets_with_direct_rustc(&loaf_root, &bake_rustc, scratch.path())
-            .map_err(|error| {
-                CliError::failure(format!(
-                    "rebuilt release Loaf has an inconsistent vocabulary auxiliary closure: {error}"
-                ))
-            })?;
+            .verify_vocab_auxiliary_targets_with_direct_rustc(&loaf_root, &bake_rustc, &options.rustc, scratch.path())
+            .map_err(|error| vocab_closure_probe_error("rebuilt release Loaf", error))?;
         let final_result = pending[final_entry_index].result.clone();
         let committed = committed_release_runtime_members(&options.output).map_err(oven_error)?;
         let reusable = if let Some((foundation_member, closure_member)) = committed {
@@ -2136,7 +2139,7 @@ fn bind_staged_loaf_to_runtime_foundation(
     loaf: &mut OvenLoaf,
     artifacts: &OvenRustcArtifactManifest,
 ) -> CliResult<OvenLoafPreparation> {
-    loaf.plan = artifacts.clone();
+    loaf.plan = runtime_foundation_plan_with_sealed_auxiliary_closures(&loaf.plan, artifacts);
     loaf.registry_leaves = loaf.plan.registry_leaves.clone();
     let plan_identity = digest_bytes(
         &serde_json::to_vec(&loaf.plan)
@@ -2183,11 +2186,52 @@ fn bind_staged_loaf_to_runtime_foundation(
     })
 }
 
+/// Rebind the host runtime foundation without replacing any independently compiled auxiliary-target cohort.
+fn runtime_foundation_plan_with_sealed_auxiliary_closures(
+    compiled: &OvenRustcArtifactManifest,
+    rebuilt: &OvenRustcArtifactManifest,
+) -> OvenRustcArtifactManifest {
+    let auxiliary_search_paths = compiled
+        .vocab_auxiliary_targets
+        .iter()
+        .flat_map(|auxiliary| auxiliary.dependency_search_paths.iter())
+        .collect::<BTreeSet<_>>();
+    let retained = compiled
+        .supporting_artifacts
+        .iter()
+        .filter(|artifact| {
+            auxiliary_search_paths
+                .iter()
+                .any(|search_path| artifact_path_is_below(&artifact.relative_path, search_path))
+        })
+        .map(|artifact| (artifact.relative_path.clone(), artifact.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut rebound = rebuilt.clone();
+    rebound.vocab_auxiliary_targets = compiled.vocab_auxiliary_targets.clone();
+    rebound
+        .supporting_artifacts
+        .retain(|artifact| !retained.contains_key(&artifact.relative_path));
+    rebound.supporting_artifacts.extend(retained.into_values());
+    rebound
+        .supporting_artifacts
+        .sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    rebound
+}
+
+/// Return whether one normalized artifact path belongs to a normalized publisher search directory.
+fn artifact_path_is_below(path: &str, directory: &str) -> bool {
+    path == directory
+        || path
+            .strip_prefix(directory)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 /// Load one staged Loaf and refuse publication unless every vocabulary auxiliary extern loads through its closure.
 fn verify_prepared_loaf_vocab_closures(
     staged_root: &Path,
     prepared: &OvenLoafPreparation,
-    rustc: &Path,
+    host_rustc: &Path,
+    auxiliary_target_rustc: &Path,
     scratch_root: &Path,
 ) -> CliResult<()> {
     let identity = prepared
@@ -2201,12 +2245,18 @@ fn verify_prepared_loaf_vocab_closures(
     )
     .map_err(|error| CliError::failure(format!("staged release Loaf is invalid: {error}")))?;
     loaf.plan
-        .verify_vocab_auxiliary_targets_with_direct_rustc(&loaf_root, rustc, scratch_root)
-        .map_err(|error| {
-            CliError::failure(format!(
-                "release Loaf has an inconsistent vocabulary auxiliary closure: {error}"
-            ))
-        })
+        .verify_vocab_auxiliary_targets_with_direct_rustc(&loaf_root, host_rustc, auxiliary_target_rustc, scratch_root)
+        .map_err(|error| vocab_closure_probe_error("release Loaf", error))
+}
+
+/// Preserve a target-installation failure as such while classifying every other probe refusal as closure drift.
+fn vocab_closure_probe_error(context: &str, error: oven_rustc::rustc::OvenRustcError) -> CliError {
+    if matches!(error, oven_rustc::rustc::OvenRustcError::TargetNotInstalled { .. }) {
+        return CliError::failure(error.to_string());
+    }
+    CliError::failure(format!(
+        "{context} has an inconsistent vocabulary auxiliary closure: {error}"
+    ))
 }
 
 /// Validate and copy the exact release policy ProjectOutput into the private generation store.
@@ -2914,11 +2964,11 @@ mod publisher_tests {
 
     /// A produced release envelope binds the reissued compiled Loaf to the runtime foundation's exact manifest.
     #[test]
-    fn publisher_rebuilt_foundation_reissues_and_validates_its_compiled_loaf() -> TestResult {
+    fn publisher_rebuilt_foundation_reissues_the_loaf_without_rebinding_auxiliary_plugins() -> TestResult {
         let root = tempfile::tempdir()?;
         let mut loaf_root = root.path().join("staged/original.loaf");
         fs::create_dir_all(&loaf_root)?;
-        let original_plan: OvenRustcArtifactManifest = serde_json::from_value(serde_json::json!({
+        let mut original_plan: OvenRustcArtifactManifest = serde_json::from_value(serde_json::json!({
             "schema_version": oven_rustc::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
             "intent": {
                 "target": "fixture-target",
@@ -2927,10 +2977,29 @@ mod publisher_tests {
                 "features": []
             }
         }))?;
+        original_plan.vocab_auxiliary_targets = vec![oven_rustc::rustc::OvenRustcAuxiliaryTarget {
+            target: "fixture-auxiliary-target".to_string(),
+            dependency_search_paths: vec![
+                "compiler-support/fixture-auxiliary-target/host/deps".to_string(),
+                "compiler-support/fixture-auxiliary-target/target/deps".to_string(),
+            ],
+            externs: vec![oven_rustc::rustc::OvenRustcArtifactExtern {
+                crate_name: "fixture_vocab".to_string(),
+                relative_path: "compiler-support/fixture-auxiliary-target/target/deps/libfixture_vocab.rlib"
+                    .to_string(),
+                digest: "sha256:fixture-vocab".to_string(),
+            }],
+        }];
+        original_plan.supporting_artifacts = vec![oven_rustc::rustc::OvenRustcSupportingArtifact {
+            relative_path: "compiler-support/fixture-auxiliary-target/host/deps/libfixture_derive.dylib".to_string(),
+            digest: "sha256:fixture-derive-original".to_string(),
+        }];
         let mut rebuilt_plan = original_plan.clone();
         rebuilt_plan
             .compile_environment
             .insert("FIXTURE_REBUILT".to_string(), "1".to_string());
+        rebuilt_plan.vocab_auxiliary_targets[0].dependency_search_paths = vec!["compiler-support/deps".to_string()];
+        rebuilt_plan.supporting_artifacts[0].digest = "sha256:fixture-derive-rebuilt".to_string();
         let mut loaf = OvenLoaf {
             schema_version: oven_rustc::loaf::OVEN_LOAF_SCHEMA_VERSION,
             build_unit_identity: digest_bytes(b"compiled-unit"),
@@ -2938,16 +3007,24 @@ mod publisher_tests {
             accounting: Default::default(),
             compatibility: Default::default(),
             registry_leaves: Vec::new(),
-            plan: original_plan,
+            plan: original_plan.clone(),
         };
         fs::write(loaf_root.join("loaf.json"), serde_json::to_vec_pretty(&loaf)?)?;
 
         let prepared = bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &rebuilt_plan)?;
         let rebound: OvenLoaf = serde_json::from_slice(&fs::read(loaf_root.join("loaf.json"))?)?;
-        assert_eq!(rebound.plan, rebuilt_plan);
+        assert_eq!(
+            rebound.plan.vocab_auxiliary_targets,
+            original_plan.vocab_auxiliary_targets
+        );
+        assert_eq!(rebound.plan.supporting_artifacts, original_plan.supporting_artifacts);
+        let mut expected_rebound_plan = rebuilt_plan.clone();
+        expected_rebound_plan.vocab_auxiliary_targets = original_plan.vocab_auxiliary_targets.clone();
+        expected_rebound_plan.supporting_artifacts = original_plan.supporting_artifacts.clone();
+        assert_eq!(rebound.plan, expected_rebound_plan);
         assert_eq!(
             prepared.plan_identity,
-            digest_bytes(&serde_json::to_vec(&rebuilt_plan)?)
+            digest_bytes(&serde_json::to_vec(&expected_rebound_plan)?)
         );
         assert_eq!(
             prepared.loaf_identity,
@@ -3000,6 +3077,21 @@ mod publisher_tests {
         };
         oven_rustc::loaf::validate_release_runtime_foundation_member(&manifest, &foundation_member)?;
         Ok(())
+    }
+
+    /// A missing target is an installation failure for the selected compiler, not evidence of closure drift.
+    #[test]
+    fn publisher_vocab_probe_reports_a_target_missing_from_its_compiler_exactly() {
+        let error = oven_rustc::rustc::OvenRustcError::TargetNotInstalled {
+            target: "fixture-target".to_string(),
+            compiler: PathBuf::from("fixture-rustc"),
+            stderr: "target may not be installed".to_string(),
+        };
+        let expected = error.to_string();
+        let reported = vocab_closure_probe_error("release Loaf", error);
+
+        assert_eq!(reported.message, expected);
+        assert!(!reported.message.contains("inconsistent vocabulary auxiliary closure"));
     }
 
     #[test]
