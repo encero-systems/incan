@@ -50,7 +50,7 @@ pub model BareBox[T with Clone] with OrderedCatalog:
             model.trait_adoptions.iter().any(|adoption| {
                 adoption.name == "Catalog"
                     && adoption.type_args == [ResolvedType::TypeVar("T".to_string())]
-                    && adoption.module_path.as_deref() == Some(&["lib".to_string()])
+                    && adoption.module_path.as_deref() == Some(&["main".to_string()])
             }),
             "expected {model_name} to publish its implied Catalog[T] adoption: {:?}",
             model.trait_adoptions
@@ -59,7 +59,7 @@ pub model BareBox[T with Clone] with OrderedCatalog:
             model.trait_adoptions.iter().any(|adoption| {
                 adoption.name == "OrderedCatalog"
                     && adoption.type_args == [ResolvedType::TypeVar("T".to_string())]
-                    && adoption.module_path.as_deref() == Some(&["lib".to_string()])
+                    && adoption.module_path.as_deref() == Some(&["main".to_string()])
             }),
             "expected {model_name} to publish its direct OrderedCatalog[T] adoption: {:?}",
             model.trait_adoptions

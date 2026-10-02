@@ -1714,9 +1714,6 @@ fn checked_trait_adoption_closure(
 
     for adoption in adoptions {
         let mut direct = map_type_bound_infos(std::slice::from_ref(adoption));
-        if let Some(bound) = direct.first_mut() {
-            bound.module_path = canonical_trait_adoption_module_path(bound.module_path.take());
-        }
         let Some(trait_info) = checker.lookup_trait_adoption_info(adoption) else {
             checked.extend(direct);
             continue;
@@ -1738,7 +1735,7 @@ fn checked_trait_adoption_closure(
         for (name, type_args) in checker.semantic_supertrait_closure(&adoption.name) {
             let source_name = checker.trait_bound_source_name(&name);
             let implied = CheckedTypeBound {
-                module_path: canonical_trait_adoption_module_path(checker.trait_bound_module_path(&name)),
+                module_path: checker.trait_bound_module_path(&name),
                 source_name,
                 type_args: type_args
                     .iter()
@@ -1759,17 +1756,6 @@ fn checked_trait_adoption_closure(
     }
 
     sorted_type_bounds(checked)
-}
-
-/// Canonicalize the source library entrypoint to the module identity used by published implementation metadata.
-///
-/// Module collection checks `src/lib.incn` under the internal path `main`, while a compiled library's declaration
-/// identities expose that root as `lib`. Nested module paths already agree and pass through unchanged.
-fn canonical_trait_adoption_module_path(module_path: Option<Vec<String>>) -> Option<Vec<String>> {
-    match module_path.as_deref() {
-        Some([root]) if root == "main" => Some(vec!["lib".to_string()]),
-        _ => module_path,
-    }
 }
 
 /// Sort generic trait adoptions deterministically for stable library manifests.
