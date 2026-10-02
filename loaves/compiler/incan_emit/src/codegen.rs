@@ -45,6 +45,8 @@ use incan_frontend::module::canonicalize_source_module_segments;
 use incan_frontend::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
+#[cfg(test)]
+use incan_lang::lang::traits;
 use incan_lang::lang::{rust_keywords, stdlib, trait_bounds};
 use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 
@@ -3458,12 +3460,13 @@ pub model BatchIterator[T, Source with Iterator[T]] with Iterator[list[T]]:
         let mut codegen = IrCodegen::new();
         codegen.set_standard_library_source(true);
         let mut type_info = checker.type_info().clone();
+        let iterator = traits::as_str(traits::TraitId::Iterator).to_string();
         type_info.declarations.resolved_import_identities.insert(
-            "Iterator".to_string(),
+            iterator.clone(),
             incan_semantics_core::CanonicalSymbolId {
                 namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
                 origin: incan_semantics_core::SymbolOrigin::Module(module_path.clone()),
-                declaration_name: "Iterator".to_string(),
+                declaration_name: iterator,
                 kind: incan_semantics_core::SemanticSourceTargetKind::Trait,
                 scope_discriminant: None,
                 declaration_span: incan_semantics_core::HirSourceSpan::new(0, 0),
