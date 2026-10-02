@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3548 | 245 | 8 |
 | re-point | 522 | 86 | 1051 |
 | retire | 1495 | 153 | 0 |
-| unaffected | 1600 | 156 | 5 |
+| unaffected | 1601 | 156 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7165** | **640** | **1064** |
+| **Total** | **7166** | **640** | **1064** |
 
 - Retire-class tests: 1495, of which twinned 1020, dies 294, open 181 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -3036,7 +3036,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1307 tests in 112 files)"
+??? note "Unaffected crates (1308 tests in 112 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3092,7 +3092,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_cargo_compat/src/cargo_process.rs` | 4 | 306 | 169 | unaffected | - | - | - | #1561 | run 2 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/compiler_suite_foundation.rs` | 7 | 1546 | 982 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/harvest/native/argv.rs` | 6 | 265 | 102 | unaffected | - | - | - | #1561 | - | Oven ring; declarative native-argument classification, no compiler-crate dependency (scripts/check_oven_ring.py). |
-    | `loaves/oven/oven_cargo_compat/src/harvest/tests.rs` | 35 | 1936 | 1936 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/harvest/tests.rs` | 35 | 1961 | 1961 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/lib.rs` | 69 | 9726 | 4915 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/loaf_bake.rs` | 11 | 1661 | 805 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/loaf_bake/vocab_support.rs` | 3 | 1023 | 290 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -3112,7 +3112,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/oven/oven_model/src/digest.rs` | 2 | 818 | 49 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_model/src/digest.rs` | 2 | 836 | 57 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/loaf_registry.rs` | 7 | 840 | 301 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/lock.rs` | 24 | 1894 | 994 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/manifest.rs` | 70 | 5084 | 1696 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -3197,7 +3197,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/stdlib/data/rust/src/collections.rs` | 1 | 144 | 17 | unaffected | - | - | - | #1561 | - | stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level. |
-    | `loaves/stdlib/data/rust/src/json.rs` | 7 | 708 | 108 | unaffected | - | - | - | #1561 | - | stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/stdlib/data/rust/src/json.rs` | 7 | 719 | 112 | unaffected | - | - | - | #1561 | - | stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level. |
 
     #### `loaves/stdlib/derive` (8 tests in 2 files: unaffected 8)
 
@@ -3224,11 +3224,11 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/third_party/ra_ap_proc_macro_api/src/legacy_protocol/msg.rs` | 2 | 430 | 244 | unaffected | - | - | - | #1561 | - | vendored crate. Reviewed at crate level. |
 
-    #### `loaves/toolchain/incan-ci-tools` (13 tests in 2 files: unaffected 13)
+    #### `loaves/toolchain/incan-ci-tools` (14 tests in 2 files: unaffected 14)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/toolchain/incan-ci-tools/src/manifest_inventory.rs` | 4 | 1142 | 60 | unaffected | - | - | - | #1965 | - | Cargo manifest retirement inventory and reproducibility checks; no compiler semantics. |
+    | `loaves/toolchain/incan-ci-tools/src/manifest_inventory.rs` | 5 | 1429 | 116 | unaffected | - | - | - | #1965 | - | Cargo manifest retirement inventory and reproducibility checks; no compiler semantics. |
     | `loaves/toolchain/incan-ci-tools/src/tool_outputs.rs` | 9 | 1420 | 191 | unaffected | - | - | - | #1965 | - | CI bootstrap input evidence and output transport; no compiler semantics. |
 
     #### `loaves/toolchain/oven-cli` (115 tests in 11 files: unaffected 115)

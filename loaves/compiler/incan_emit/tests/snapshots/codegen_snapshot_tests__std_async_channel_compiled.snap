@@ -27,6 +27,10 @@ use ::incan_std_async::channel::receiver_try_recv as rust_receiver_try_recv;
 use ::incan_std_async::channel::receiver_close as rust_receiver_close;
 use ::incan_std_async::channel::oneshot_sender_send as rust_oneshot_sender_send;
 use ::incan_std_async::channel::oneshot_receiver_recv as rust_oneshot_receiver_recv;
+fn _no_message() {
+    let _ = "The unit value a reservation error carries: a reservation sends no message, so none can be returned.";
+    return;
+}
 /// Error returned when a send operation fails.
 ///
 /// Preserves the unsent value so callers can recover it or retry. This is used for closed-channel sends and for bounded
@@ -241,13 +245,11 @@ impl<T> Sender<T> {
             Ok(permit) => {
                 return Ok::<SenderPermit<T>, SendError<()>>(SenderPermit(permit));
             }
-            Err(err) => {
+            Err(_err) => {
                 return Err::<
                     SenderPermit<T>,
                     SendError<()>,
-                >(SendError {
-                    value: err.into_value(),
-                });
+                >(SendError { value: _no_message() });
             }
         };
     }

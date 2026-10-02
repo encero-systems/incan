@@ -3217,7 +3217,7 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.split_whitespace().collect::<String>();
     assert!(
-        compact.contains("letmut__incan_list=Vec::new();forvaluein(values).iter().copied(){__incan_list.push(parse_value(value)?);}__incan_list"),
+        compact.contains("letmut__incan_list=Vec::new();forvaluein((values).into_iter()){__incan_list.push(parse_value(value)?);}__incan_list"),
         "expected issue633 comprehension to lower to an outer-function loop, got:\n{rust_code}"
     );
     assert!(
@@ -3812,15 +3812,15 @@ fn test_issue241_field_backed_method_arg_clone_codegen() {
     assert_codegen_snapshot!("issue241_field_backed_method_arg_clone", rust_code);
 }
 
-/// Issue #364: filtered list comprehensions over non-Copy values must not destructure `&item` in `filter(...)`.
+/// Issue #364: filtered list comprehensions over owned non-Copy values consume the source without borrowing items.
 #[test]
 fn test_issue364_filtered_list_comp_borrow_codegen() {
     let source = load_test_file("issue364_filtered_list_comp_borrow");
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains(".iter().filter_map(|stored|{letstored=(*stored).clone();ifstored.store_id_raw==store_id{Some(stored.node)}else{None}})"),
-        "expected filtered list comprehension to clone inside filter_map for non-Copy items; generated:\n{rust_code}"
+        compact.contains("((stored_nodes).into_iter()).filter_map(|stored|{ifstored.store_id_raw==store_id{Some(stored.node)}else{None}})"),
+        "expected the last-use filtered list source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
         !compact.contains(".filter(|&stored|"),
@@ -3898,7 +3898,7 @@ fn test_issue366_clone_self_string_field_codegen() {
     assert_codegen_snapshot!("issue366_clone_self_string_field", rust_code);
 }
 
-/// Filtered dict comprehensions over borrowed iterables must own the item before evaluating the predicate.
+/// Filtered dict comprehensions over last-use owned iterables evaluate their predicate on the moved item.
 #[test]
 fn test_filtered_dict_comp_predicate_codegen() {
     let source = load_test_file("filtered_dict_comp_predicate");
@@ -3906,9 +3906,9 @@ fn test_filtered_dict_comp_predicate_codegen() {
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
         compact.contains(
-            ".iter().filter_map(|x|{letx=*x;ifincan_std_core::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"
+            "((xs).into_iter()).filter_map(|x|{ifincan_std_core::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"
         ),
-        "expected filtered dict comprehension over Copy items to copy inside filter_map before evaluating the predicate; generated:\n{rust_code}"
+        "expected the last-use filtered dict source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
         !compact.contains(".filter(|x|incan_std_core::num::py_mod_i64(x,2)==0)"),
@@ -3921,23 +3921,23 @@ fn test_filtered_dict_comp_predicate_codegen() {
     assert_codegen_snapshot!("filtered_dict_comp_predicate", rust_code);
 }
 
-/// Issue #602: comprehensions over Copy item types should use copied values rather than `.clone()` hot paths.
+/// Issue #602: comprehensions over last-use owned sources consume them without copy or clone adapters.
 #[test]
 fn test_issue602_comprehension_copy_hotpaths_codegen() {
     let source = load_test_file("issue602_comprehension_copy_hotpaths");
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("(xs).iter().copied().map(|x|x*x).collect::<Vec<_>>()"),
-        "expected unfiltered Copy list comprehension to use copied(), generated:\n{rust_code}"
+        compact.contains("((xs).into_iter()).map(|x|x*x).collect::<Vec<_>>()"),
+        "expected the last-use unfiltered list source to move into map, generated:\n{rust_code}"
     );
     assert!(
-        compact.contains(".iter().filter_map(|x|{letx=*x;ifx>0{Some(x*x)}else{None}})"),
-        "expected filtered Copy list comprehension to copy the borrowed item without clone; generated:\n{rust_code}"
+        compact.contains("((xs).into_iter()).filter_map(|x|{ifx>0{Some(x*x)}else{None}})"),
+        "expected the last-use filtered list source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains(".iter().filter_map(|x|{letx=*x;ifx>0{Some((x,x*x))}else{None}})"),
-        "expected filtered Copy dict comprehension to copy the borrowed item without clone; generated:\n{rust_code}"
+        compact.contains("((xs).into_iter()).filter_map(|x|{ifx>0{Some((x,x*x))}else{None}})"),
+        "expected the last-use filtered dict source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
         !compact.contains("(*x).clone()") && !compact.contains(".iter().cloned().map(|x|x*x)"),
