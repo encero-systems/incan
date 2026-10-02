@@ -475,6 +475,21 @@ impl NormalizedRegistryPackageIdentity {
             &source.source.checksum,
         )
     }
+
+    /// Render the exact identity compactly enough for an ambiguity diagnostic.
+    fn diagnostic_summary(&self) -> String {
+        let checksum = self
+            .checksum
+            .strip_prefix("sha256:")
+            .unwrap_or(&self.checksum)
+            .chars()
+            .take(12)
+            .collect::<String>();
+        format!(
+            "{} {} registry+{} checksum {checksum}",
+            self.package, self.version, self.registry_index
+        )
+    }
 }
 
 /// Read the exact registry package set selected by one or more project Cargo lock projections.
@@ -584,7 +599,12 @@ fn publisher_registry_identity(
     Ok(Some(exact))
 }
 
-/// Select exactly one feature-compatible catalog record using available root and lock authorities.
+/// Select a compatible catalog record, consulting exact authorities only to break a tie.
+///
+/// Requirement and feature compatibility define the candidate set. A singular candidate preserves the historical
+/// selection behavior and cannot be removed by a stale lock; publisher evidence is still checked for consistency.
+/// Exact publisher, project-lock, and SDK/base-lock identities are consulted in that order only when multiple
+/// candidates remain.
 fn project_inspection_catalog_source<'a>(
     alias: &str,
     package: &str,
@@ -594,7 +614,24 @@ fn project_inspection_catalog_source<'a>(
     project_locked: &[ProjectLockedRegistryPackage],
     owner_locked: &[ProjectLockedRegistryPackage],
 ) -> CliResult<&'a OvenRustcRegistrySourcePackage> {
+    if catalog_matches.is_empty() {
+        return Err(CliError::failure(format!(
+            "project inspection dependency `{alias}` has 0 feature-compatible exact records in the selected immutable source catalog; compatible candidates: none"
+        )));
+    }
     let publisher = publisher_registry_identity(alias, package, requirement, publisher_roots)?;
+    if let [source] = catalog_matches {
+        if let Some(publisher) = publisher {
+            let candidate = NormalizedRegistryPackageIdentity::from_catalog(source)?;
+            if candidate != publisher {
+                return Err(CliError::failure(format!(
+                    "project inspection dependency `{alias}` differs from its exact publisher root edge"
+                )));
+            }
+        }
+        return Ok(*source);
+    }
+
     let project = matching_locked_identities(package, requirement, project_locked)?;
     if publisher
         .as_ref()
@@ -604,26 +641,44 @@ fn project_inspection_catalog_source<'a>(
             "project inspection dependency `{alias}` has conflicting publisher and project lock identities"
         )));
     }
-    let owner = matching_locked_identities(package, requirement, owner_locked)?;
-    let authority = match publisher {
-        Some(publisher) => BTreeSet::from([publisher]),
-        None if !project.is_empty() => project,
-        None => owner,
+    let (authority_name, authority) = match publisher {
+        Some(publisher) => ("publisher payload root edge", BTreeSet::from([publisher])),
+        None if !project.is_empty() => ("project lock", project),
+        None => (
+            "SDK/base lock",
+            matching_locked_identities(package, requirement, owner_locked)?,
+        ),
     };
-    let selected = catalog_matches
+    let candidates = catalog_matches
         .iter()
         .map(|source| NormalizedRegistryPackageIdentity::from_catalog(source).map(|identity| (identity, *source)))
-        .collect::<CliResult<Vec<_>>>()?
-        .into_iter()
-        .filter(|(identity, _)| authority.is_empty() || authority.contains(identity))
+        .collect::<CliResult<Vec<_>>>()?;
+    let selected = candidates
+        .iter()
+        .filter(|(identity, _)| authority.contains(identity))
+        .map(|(_, source)| *source)
         .collect::<Vec<_>>();
-    let [(_, source)] = selected.as_slice() else {
-        return Err(CliError::failure(format!(
-            "project inspection dependency `{alias}` has {} feature-compatible exact records in the selected immutable source catalog",
-            selected.len()
-        )));
+    if let [source] = selected.as_slice() {
+        return Ok(*source);
+    }
+    let authority_records = if authority.is_empty() {
+        "none".to_string()
+    } else {
+        authority
+            .into_iter()
+            .map(|identity| identity.diagnostic_summary())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    Ok(*source)
+    let candidate_records = candidates
+        .iter()
+        .map(|(identity, _)| identity.diagnostic_summary())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(CliError::failure(format!(
+        "project inspection dependency `{alias}` has {} feature-compatible exact records in the selected immutable source catalog; {authority_name} named [{authority_records}]; compatible candidates: [{candidate_records}]",
+        catalog_matches.len()
+    )))
 }
 
 /// Publish one singular, project-level Rust inspection authority from the preferred debug plan.
@@ -1099,6 +1154,43 @@ checksum = "{}"
     }
 
     #[test]
+    fn project_inspection_roots_ignore_a_stale_lock_when_the_catalog_has_one_candidate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = [inspection_source(
+            "fictional-runtime-codec",
+            "2.4.1",
+            "fictional-runtime-codec-2.4.1-checksum",
+        )];
+        let dependency = DependencySpec {
+            crate_name: "runtime_codec".to_string(),
+            version: Some("2".to_string()),
+            features: vec!["portable".to_string()],
+            default_features: false,
+            source: DependencySource::Registry,
+            optional: false,
+            package: Some("fictional-runtime-codec".to_string()),
+        };
+        let stale_project_lock = [ProjectLockedRegistryPackage {
+            package: "fictional-runtime-codec".to_string(),
+            version: "2.5.0".to_string(),
+            registry: "registry+https://example.invalid/index".to_string(),
+            checksum: cargo_lock_checksum("fictional-runtime-codec-2.5.0-checksum"),
+        }];
+
+        let selected = project_inspection_root_dependencies(
+            std::slice::from_ref(&dependency),
+            &catalog,
+            None,
+            &stale_project_lock,
+            &[],
+        )?;
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].version, "2.4.1");
+        Ok(())
+    }
+
+    #[test]
     fn project_inspection_roots_select_a_single_sdk_owned_catalog_record_without_a_project_lock()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut catalog = vec![inspection_source(
@@ -1179,6 +1271,12 @@ checksum = "{}"
                 .to_string()
                 .contains("2 feature-compatible exact records")
         );
+        let ambiguous_message = ambiguous_error.to_string();
+        assert!(ambiguous_message.contains("SDK/base lock named [none]"));
+        assert!(ambiguous_message.contains("fictional-runtime-codec 2.4.1"));
+        assert!(ambiguous_message.contains("fictional-runtime-codec 2.5.0"));
+        assert!(ambiguous_message.contains("registry+https://example.invalid/index"));
+        assert!(ambiguous_message.contains("checksum"));
 
         let sdk_locked = [ProjectLockedRegistryPackage {
             package: "fictional-runtime-codec".to_string(),
