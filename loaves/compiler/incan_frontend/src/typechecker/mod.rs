@@ -102,7 +102,8 @@ use crate::diagnostics::{CompileError, ErrorKind, errors};
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest_index::LibraryManifestIndex;
 use crate::module::{
-    ExportedSymbol, canonicalize_source_module_segments, exported_symbols, logical_source_import_candidates,
+    ExportedSymbol, canonicalize_library_declaration_module_path, canonicalize_source_module_segments,
+    exported_symbols, logical_source_import_candidates,
 };
 use crate::provider::ProviderPlan;
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
@@ -9372,21 +9373,27 @@ fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -
     numeric_type_losslessly_widens_to(actual_id, expected_id)
 }
 
+/// Whether an adoption a compiled package's type recorded names the package trait declared in `module_path` as `name`.
+///
+/// The caller has already proved that the bound and adopting type come from the same package. Compare their declaring
+/// module and declaration name after normalizing the library entrypoint spelling used on each side of the manifest.
+fn adoption_names_declaration(adoption: &TypeBoundInfo, module_path: &[String], name: &str) -> bool {
+    let trait_name = adoption
+        .source_name
+        .as_deref()
+        .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
+    adoption.module_path.as_deref().is_some_and(|adoption_module| {
+        canonicalize_library_declaration_module_path(adoption_module)
+            == canonicalize_library_declaration_module_path(module_path)
+    }) && trait_name == name
+}
+
 /// Whether a trait adoption that records its trait's module names the trait a bound resolved to.
 ///
 /// `bound` is the bound's `(module path, trait name)` in the checking module. The adoption's trait name is its source
 /// name when it has one (`Serialize` for an adoption the declaring module spelled `json.Serialize`), so the comparison
 /// does not depend on which names the checking module has imported. An adoption without a recorded module, or a bound
 /// that does not resolve, answers `false` and is left to the name comparisons.
-/// Whether an adoption a compiled package's type recorded names the package trait declared in `module_path` as `name`.
-fn adoption_names_declaration(adoption: &TypeBoundInfo, module_path: &[String], name: &str) -> bool {
-    let trait_name = adoption
-        .source_name
-        .as_deref()
-        .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
-    adoption.module_path.as_deref() == Some(module_path) && trait_name == name
-}
-
 fn adoption_names_bound_identity(adoption: &TypeBoundInfo, bound: Option<&(Vec<String>, String)>) -> bool {
     let (Some(module_path), Some((bound_module, bound_trait))) = (adoption.module_path.as_ref(), bound) else {
         return false;

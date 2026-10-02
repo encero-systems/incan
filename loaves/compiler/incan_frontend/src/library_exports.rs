@@ -12,7 +12,7 @@ use crate::ast::{
 };
 use crate::decorator_resolution;
 use crate::diagnostics::{CompileError, errors};
-use crate::module::canonicalize_source_module_segments;
+use crate::module::{canonicalize_library_declaration_module_path, canonicalize_source_module_segments};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{
     BindingRegistration, CallableParam, ClassInfo, FieldInfo, FunctionInfo, ImplementationTypeParamInfo, MethodInfo,
@@ -1714,6 +1714,12 @@ fn checked_trait_adoption_closure(
 
     for adoption in adoptions {
         let mut direct = map_type_bound_infos(std::slice::from_ref(adoption));
+        if let Some(bound) = direct.first_mut() {
+            bound.module_path = bound
+                .module_path
+                .take()
+                .map(|path| canonicalize_library_declaration_module_path(&path));
+        }
         let Some(trait_info) = checker.lookup_trait_adoption_info(adoption) else {
             checked.extend(direct);
             continue;
@@ -1735,7 +1741,9 @@ fn checked_trait_adoption_closure(
         for (name, type_args) in checker.semantic_supertrait_closure(&adoption.name) {
             let source_name = checker.trait_bound_source_name(&name);
             let implied = CheckedTypeBound {
-                module_path: checker.trait_bound_module_path(&name),
+                module_path: checker
+                    .trait_bound_module_path(&name)
+                    .map(|path| canonicalize_library_declaration_module_path(&path)),
                 source_name,
                 type_args: type_args
                     .iter()
