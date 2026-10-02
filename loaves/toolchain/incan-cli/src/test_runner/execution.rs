@@ -33,7 +33,7 @@ use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
 use oven_cargo_compat::direct_rustc_compile_environment;
 use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::DependencySpec;
+use oven_model::manifest::{DependencySpec, ProjectManifest};
 use oven_rustc::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD};
 use oven_rustc::native_test::{OvenNativeTestRequest, run_native_test_batch};
 use oven_rustc::rustc::{
@@ -1150,6 +1150,24 @@ fn merge_test_runner_dependencies(
         dev_dependencies: dev_dependencies.to_vec(),
     })
     .map_err(|error| error.message)
+}
+
+/// Return the Rust dependencies the project manifest declares itself, normal and dev, in crate-name order.
+///
+/// Workspace-inherited entries count as declared. Crates that only standard-library modules or providers require do
+/// not appear here.
+fn manifest_declared_rust_dependencies(manifest: Option<&ProjectManifest>) -> Vec<DependencySpec> {
+    let Some(manifest) = manifest else {
+        return Vec::new();
+    };
+    let mut declared = manifest
+        .rust_dependencies()
+        .values()
+        .chain(manifest.rust_dev_dependencies().values())
+        .cloned()
+        .collect::<Vec<_>>();
+    declared.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    declared
 }
 
 /// Rebind a generated test root to the selected compiler runtime and its registry cohort.
@@ -2346,6 +2364,10 @@ fn run_file_tests_batch_oven(
                 );
             }
         };
+    // The authored registry surface is what the project manifest declares. `resolved` also carries the crates that
+    // standard-library modules import, and later the provider and standard-library requirements, so it cannot say
+    // which packages are caller-owned when the generated root is rebound to its runtime cohort.
+    let caller_declared_dependencies = manifest_declared_rust_dependencies(manifest.as_ref());
     let provider_plan = match session.provider_plan_for_modules(&dependency_modules) {
         Ok(plan) => plan,
         Err(error) => return failure(error.message),
@@ -2797,7 +2819,7 @@ fn run_file_tests_batch_oven(
         &mut artifact_plan,
         &provider_compiler_runtime_libraries,
         provider_closure_runtime_registry_authority.as_ref(),
-        &inspection_registry_dependencies,
+        &caller_declared_dependencies,
     ) {
         return failure(error.message);
     }
@@ -3285,6 +3307,36 @@ def captured_resource() -> int:
         };
         assert!(error.contains("tokio"));
         assert!(error.contains("conflicts"));
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_declared_rust_dependencies_are_the_manifest_tables_only_issue2005()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = ProjectManifest::from_str(
+            r#"[project]
+name = "declared_surface"
+version = "0.1.0"
+
+[rust-dependencies]
+terminal_unit = "1"
+
+[rust-dev-dependencies]
+assert_unit = "1"
+"#,
+            Path::new("loaf.toml"),
+        )?;
+
+        let declared = manifest_declared_rust_dependencies(Some(&manifest));
+
+        assert_eq!(
+            declared
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            ["assert_unit", "terminal_unit"]
+        );
+        assert!(manifest_declared_rust_dependencies(None).is_empty());
         Ok(())
     }
 
