@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::build::output_paths::{
     bake_generated_out_dir_units, project_inspection_root_dependencies, project_inspection_test_dependency_roots,
-    project_relative_entrypoint, validated_project_output_relative_path,
+    project_locked_registry_packages, project_relative_entrypoint, validated_project_output_relative_path,
 };
 use crate::build::output_selection::baked_project_owner_identity;
 use crate::build::{
@@ -447,17 +447,24 @@ pub(crate) fn publish_project_inspection_authority(
         .cloned()
         .collect::<Vec<_>>();
     let publisher_roots = (!publisher_roots.is_empty()).then_some(publisher_roots.as_slice());
+    let owner_locked_registry_packages = if source_catalog.is_empty() {
+        Vec::new()
+    } else {
+        project_locked_registry_packages([lock_path.as_path()])?
+    };
     let registry_source_dependencies = project_inspection_root_dependencies(
         dependency_authority.registry_dependencies,
         &source_catalog,
         publisher_roots,
         dependency_authority.locked_registry_packages,
+        &owner_locked_registry_packages,
     )?;
     let dev_registry_source_dependencies = project_inspection_root_dependencies(
         dependency_authority.dev_registry_dependencies,
         &source_catalog,
         publisher_roots,
         dependency_authority.locked_registry_packages,
+        &owner_locked_registry_packages,
     )?;
     let test_dependency_envelope = test_dependency_constituent_index
         .map(|constituent_index| {
