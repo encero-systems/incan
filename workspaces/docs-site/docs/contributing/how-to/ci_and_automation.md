@@ -72,7 +72,7 @@ make gate-incql \
   INCQL_EQUIVALENCE_REPORT=/path/to/incql-equivalence.json
 ```
 
-The checkout must be clean and match the revision and root-lock digest in `scripts/incql_gate_pin.json`. The equivalence report is the output named by `OVEN_EQUIV_ATTESTATION` when running `make test-oven-artifact-equivalence`. A passing gate requires the complete attested registry closure and runs the Oven quickstart with Cargo and publisher-only native/tool commands unavailable. See the [`make gate-incql` contract](../../tooling/reference/cli_reference.md#make-gate-incql) for the accepted evidence and refusal conditions.
+The checkout must be clean and match the revision and committed root `oven.lock` digest in `scripts/incql_gate_pin.json`. The gate removes derived `.incan` and `target` outputs but preserves every committed lock. The equivalence report is the output named by `OVEN_EQUIV_ATTESTATION` when running `make test-oven-artifact-equivalence`. A passing gate requires the complete attested registry closure and runs the Oven quickstart with Cargo and publisher-only native/tool commands unavailable. See the [`make gate-incql` contract](../../tooling/reference/cli_reference.md#make-gate-incql) for the accepted evidence and refusal conditions.
 
 ## Build a toolchain release archive
 
