@@ -9,6 +9,8 @@ mod compiled_unit;
 mod diagnostics;
 mod inspection;
 mod manifest_cohort;
+#[cfg(test)]
+pub(crate) use manifest_cohort::select_generated_root_registry_externs;
 mod manifest_materialize;
 mod manifest_source_roles;
 // `inspection_toolchain` is deliberately absent. It is the compiler/sysroot-closure-under-lease surface, and the

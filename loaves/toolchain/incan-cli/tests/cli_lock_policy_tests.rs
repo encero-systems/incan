@@ -10,6 +10,54 @@ include!("support/cli_workspace_and_lock_tests_root.rs");
 use std::process::Output;
 
 #[test]
+fn transitive_project_registry_unit_does_not_shadow_the_prebaked_stdlib_extern_issue2005()
+-> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    fs::create_dir_all(project.path().join("src"))?;
+    fs::create_dir_all(project.path().join("tests"))?;
+    fs::write(
+        project.path().join("loaf.toml"),
+        r#"[project]
+name = "transitive_registry_stdlib_extern"
+version = "0.1.0"
+
+[rust-dependencies]
+serde_json = "=1.0.149"
+"#,
+    )?;
+    fs::write(project.path().join("src/main.incn"), "def main() -> None:\n  pass\n")?;
+    fs::write(
+        project.path().join("tests/test_json.incn"),
+        r#"from std.serde import json
+from std.testing import assert_eq
+
+
+@derive(json)
+model Event:
+  id: int
+
+
+def test_std_json_uses_the_prebaked_release_cohort() -> None:
+  assert_eq(Event(id=7).to_json(), "{\"id\":7}")
+"#,
+    )?;
+
+    let bake = run_explicit_oven_bake(project.path())?;
+    assert_success(
+        &bake,
+        "project bake with a registry dependency that transitively uses the stdlib cohort",
+    );
+    let tests = run_incan(project.path(), &["test", "tests"])?;
+    assert_success(&tests, "tests serializing a standard-library JSON value");
+    assert!(
+        String::from_utf8_lossy(&tests.stdout).contains("1 passed"),
+        "the JSON regression test must execute:\n{}",
+        String::from_utf8_lossy(&tests.stdout)
+    );
+    Ok(())
+}
+
+#[test]
 fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_lock_project", "")?;

@@ -15,6 +15,69 @@ fn release_profile_optimizes_because_rustc_optimizes_nothing_by_default() {
         .collect::<Vec<_>>();
     assert_eq!(arguments, vec!["-C", "opt-level=3"]);
 }
+
+#[test]
+fn generated_root_registry_externs_follow_the_release_unless_directly_declared()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let build_intent = intent(root.path())?.intent;
+    let registry_source = OvenRustcRegistrySource {
+        registry: "registry+https://example.invalid/index".to_string(),
+        checksum: "fictional-checksum".to_string(),
+        relative_root: "registry-sources/fictional-shared-codec".to_string(),
+        digest: "sha256:fictional-source".to_string(),
+    };
+    let release_artifact = OvenRustcArtifactExtern {
+        crate_name: "shared_codec".to_string(),
+        relative_path: "release/deps/libshared_codec.rlib".to_string(),
+        digest: "sha256:release-codec".to_string(),
+    };
+    let extension_artifact = OvenRustcArtifactExtern {
+        crate_name: "shared_codec".to_string(),
+        relative_path: "extension/deps/libshared_codec.rlib".to_string(),
+        digest: "sha256:extension-codec".to_string(),
+    };
+    let manifest = |artifact: OvenRustcArtifactExtern| OvenRustcArtifactManifest {
+        schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+        intent: build_intent.clone(),
+        dependency_search_paths: Vec::new(),
+        native_search_paths: Vec::new(),
+        externs: vec![artifact.clone()],
+        entrypoint_dependency_search_paths: Default::default(),
+        entrypoint_externs: BTreeMap::from([("generated-root".to_string(), vec![artifact.crate_name.clone()])]),
+        registry_leaves: vec![OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: Some(format!("{}-unit", artifact.digest)),
+            package: "fictional-shared-codec".to_string(),
+            version: "1.0.0".to_string(),
+            crate_name: artifact.crate_name.clone(),
+            features: Vec::new(),
+            source: registry_source.clone(),
+            artifact,
+        }],
+        registry_sources: Vec::new(),
+        compile_environment: BTreeMap::new(),
+        vocab_auxiliary_targets: Vec::new(),
+        supporting_artifacts: Vec::new(),
+    };
+    let base = manifest(release_artifact.clone());
+    let project = manifest(extension_artifact.clone());
+
+    let mut transitive = project.clone();
+    crate::rustc::select_generated_root_registry_externs(&mut transitive, &base, &BTreeSet::new())?;
+    assert_eq!(transitive.externs.first(), Some(&release_artifact));
+    assert_eq!(transitive.registry_leaves[0].artifact, extension_artifact);
+
+    let mut direct = project;
+    crate::rustc::select_generated_root_registry_externs(
+        &mut direct,
+        &base,
+        &BTreeSet::from(["fictional_shared_codec".to_string()]),
+    )?;
+    assert_eq!(direct.externs, [extension_artifact]);
+    Ok(())
+}
 #[test]
 fn artifact_manifest_rejects_an_escaping_path() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
