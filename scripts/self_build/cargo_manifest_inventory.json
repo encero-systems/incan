@@ -7063,9 +7063,7 @@
       "origin": "registry",
       "workspace_inherited": true,
       "version_req": "1.0",
-      "features": [
-       "preserve_order"
-      ],
+      "features": [],
       "default_features": true,
       "optional": false
      },
@@ -7105,9 +7103,7 @@
       "origin": "registry",
       "workspace_inherited": false,
       "version_req": "0.9",
-      "features": [
-       "preserve_order"
-      ],
+      "features": [],
       "default_features": true,
       "optional": false
      }
