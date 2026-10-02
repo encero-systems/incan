@@ -1392,7 +1392,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 capacity_roots: [&options.output, scratch.path()],
                 transient_limit: max_physical_bytes,
                 cargo: &options.cargo,
-                auxiliary_target_rustc: &options.rustc,
                 rustc: &bake_rustc,
                 cc: &options.cc,
                 cxx: &options.cxx,
@@ -1407,6 +1406,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &generated_project,
         )
         .map_err(oven_error)?;
+        if envelope == OvenLoafEnvelope::Release {
+            verify_prepared_loaf_vocab_closures(&staged_root, &prepared.preparation, &bake_rustc, scratch.path())?;
+        }
         // The harvest reads the gate's own capture for every entry that binds registry sources (both stdlib
         // profiles): no second Cargo run stands in for the observation, and the retained OUT_DIR members come from
         // the provisional Loaf the publisher just staged.
@@ -1772,6 +1774,13 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 .map_err(oven_error)?;
         pending[final_entry_index].result =
             bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &foundation.artifacts)?;
+        loaf.plan
+            .verify_vocab_auxiliary_targets_with_direct_rustc(&loaf_root, &bake_rustc, scratch.path())
+            .map_err(|error| {
+                CliError::failure(format!(
+                    "rebuilt release Loaf has an inconsistent vocabulary auxiliary closure: {error}"
+                ))
+            })?;
         let final_result = pending[final_entry_index].result.clone();
         let committed = committed_release_runtime_members(&options.output).map_err(oven_error)?;
         let reusable = if let Some((foundation_member, closure_member)) = committed {
@@ -2172,6 +2181,32 @@ fn bind_staged_loaf_to_runtime_foundation(
         physical_bytes,
         transient_peak_physical_bytes: 0,
     })
+}
+
+/// Load one staged Loaf and refuse publication unless every vocabulary auxiliary extern loads through its closure.
+fn verify_prepared_loaf_vocab_closures(
+    staged_root: &Path,
+    prepared: &OvenLoafPreparation,
+    rustc: &Path,
+    scratch_root: &Path,
+) -> CliResult<()> {
+    let identity = prepared
+        .loaf_identity
+        .strip_prefix("sha256:")
+        .unwrap_or(&prepared.loaf_identity);
+    let loaf_root = staged_root.join(format!("{identity}.loaf"));
+    let loaf: OvenLoaf = serde_json::from_slice(
+        &fs::read(loaf_root.join("loaf.json"))
+            .map_err(|error| CliError::failure(format!("could not read staged release Loaf: {error}")))?,
+    )
+    .map_err(|error| CliError::failure(format!("staged release Loaf is invalid: {error}")))?;
+    loaf.plan
+        .verify_vocab_auxiliary_targets_with_direct_rustc(&loaf_root, rustc, scratch_root)
+        .map_err(|error| {
+            CliError::failure(format!(
+                "release Loaf has an inconsistent vocabulary auxiliary closure: {error}"
+            ))
+        })
 }
 
 /// Validate and copy the exact release policy ProjectOutput into the private generation store.

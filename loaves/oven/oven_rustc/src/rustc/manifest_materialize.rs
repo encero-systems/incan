@@ -5,6 +5,7 @@
 //! base cohort with an extension's own closure.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
@@ -12,11 +13,84 @@ use super::{
     OvenRustcArtifactPlan, OvenRustcAuxiliaryTargetPlan, OvenRustcError, OvenRustcMaterializedArtifact,
     OvenTrustedRustcArtifactRoot, OvenTrustedRustcSearchRoot, TrustedShape, admitted_search_inventory,
     artifact_is_below_search_path, canonical_directory, expected_artifacts, materialize_search_paths,
-    normalized_relative_path, trusted_file, trusted_materialize_search_paths, validate_publisher_search_paths,
-    validate_rust_identifier, validated_compile_environment, verified_file,
+    normalized_relative_path, rustc_probe_command, trusted_file, trusted_materialize_search_paths,
+    validate_publisher_search_paths, validate_rust_identifier, validated_compile_environment, verified_file,
 };
 
 impl OvenRustcArtifactManifest {
+    /// Prove that every root extern in every compiler-owned auxiliary target can load through its sealed closure.
+    ///
+    /// This is a publisher gate, not a normal consumer operation. It first verifies all manifest bytes, then asks the
+    /// supplied retained compiler to load each extern independently for its declared target. Compiling each root on
+    /// its own catches a stale target unit whose metadata names a host proc macro or build product that a later
+    /// publisher rebuild replaced with byte-valid but crate-hash-incompatible bytes.
+    pub fn verify_vocab_auxiliary_targets_with_direct_rustc(
+        &self,
+        artifact_root: &Path,
+        rustc: &Path,
+        scratch_root: &Path,
+    ) -> Result<(), OvenRustcError> {
+        let _ = self.materialize(artifact_root, &self.intent)?;
+        fs::create_dir_all(scratch_root).map_err(|source| OvenRustcError::Io {
+            path: scratch_root.to_path_buf(),
+            source,
+        })?;
+        let scratch = tempfile::Builder::new()
+            .prefix(".oven-vocab-closure-probe-")
+            .tempdir_in(scratch_root)
+            .map_err(|source| OvenRustcError::Io {
+                path: scratch_root.to_path_buf(),
+                source,
+            })?;
+        for (target_index, auxiliary) in self.vocab_auxiliary_targets.iter().enumerate() {
+            let materialized = self
+                .materialize_trusted_vocab_auxiliary_target(artifact_root, &auxiliary.target)?
+                .ok_or_else(|| OvenRustcError::InvalidInput {
+                    field: "vocab auxiliary closure",
+                    message: format!("target `{}` disappeared during materialization", auxiliary.target),
+                })?;
+            for (extern_index, (crate_name, artifact)) in materialized.externs.iter().enumerate() {
+                let source = scratch.path().join(format!("{target_index}-{extern_index}.rs"));
+                let output = scratch.path().join(format!("{target_index}-{extern_index}.rmeta"));
+                fs::write(&source, format!("extern crate {crate_name};\n")).map_err(|source_error| {
+                    OvenRustcError::Io {
+                        path: source.clone(),
+                        source: source_error,
+                    }
+                })?;
+                let mut command = rustc_probe_command(rustc);
+                command
+                    .arg(&source)
+                    .args(["--crate-name", "oven_vocab_closure_probe", "--crate-type", "lib"])
+                    .args(["--edition", "2024", "--emit", "metadata"])
+                    .arg("--target")
+                    .arg(&auxiliary.target)
+                    .arg("--extern")
+                    .arg(format!("{crate_name}={}", artifact.display()))
+                    .arg("-o")
+                    .arg(&output);
+                for search_path in &materialized.dependency_search_paths {
+                    command.arg("-L").arg(format!("dependency={}", search_path.display()));
+                }
+                let result = command.output().map_err(|source_error| OvenRustcError::Io {
+                    path: rustc.to_path_buf(),
+                    source: source_error,
+                })?;
+                if !result.status.success() {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "vocab auxiliary closure",
+                        message: format!(
+                            "target `{}` unit `{crate_name}` cannot load the dependent units sealed beside it:\n{}",
+                            auxiliary.target,
+                            String::from_utf8_lossy(&result.stderr).trim()
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Verify and materialize exact compiler inputs without scanning Cargo output or resolving dependencies.
     pub fn materialize(
         &self,

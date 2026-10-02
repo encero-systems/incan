@@ -1706,8 +1706,6 @@ pub struct OvenSourceCompilerVocabSupportRequest<'a> {
     pub cargo: &'a Path,
     /// Rust compiler whose host target and executable path must match the sealed plan.
     pub rustc: &'a Path,
-    /// Compiler with the auxiliary Wasm target installed for the publisher-only companion build.
-    pub auxiliary_target_rustc: &'a Path,
     /// Private Cargo target root for the helper's native and Wasm builds.
     pub cargo_target: &'a Path,
     /// Publisher-private directories included in transient-capacity enforcement.

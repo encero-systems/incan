@@ -46,8 +46,6 @@ pub struct OvenLoafBakerContext<'a> {
     pub capacity_roots: [&'a Path; 2],
     pub transient_limit: u64,
     pub cargo: &'a Path,
-    /// Compiler used only for publisher-owned auxiliary targets that are not members of the retained host closure.
-    pub auxiliary_target_rustc: &'a Path,
     /// Retained compiler path used for the host Cargo capture and every direct-rustc replay.
     pub rustc: &'a Path,
     /// Explicit real C compiler traced for native-link adoption.

@@ -1507,7 +1507,6 @@ pub fn prepare_direct_rustc_plan(
             compiler_root: &compiler_root,
             cargo: &request.cargo,
             rustc: &request.rustc,
-            auxiliary_target_rustc: &request.rustc,
             cargo_target: &compiler_support_target,
             capacity_roots: &[&staging],
             transient_limit,
