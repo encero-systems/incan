@@ -476,6 +476,79 @@ pub(crate) fn project_locked_registry_packages<'a>(
     Ok(locked.into_iter().collect())
 }
 
+/// Select the unique exact package identity that both publisher evidence and project locks authorize.
+///
+/// The publisher root edge is optional for callers that have only a generated Cargo lock projection, but whenever
+/// both authorities are present they must identify the same package, version, registry, and checksum. No catalog
+/// ordering or newest-compatible fallback is allowed at this boundary.
+fn project_inspection_locked_identity(
+    alias: &str,
+    package: &str,
+    requirement: &semver::VersionReq,
+    publisher_roots: Option<&[OvenProjectRegistrySourceDependency]>,
+    project_locked: &[ProjectLockedRegistryPackage],
+) -> CliResult<ProjectLockedRegistryPackage> {
+    let publisher_locked = if let Some(publisher_roots) = publisher_roots {
+        let mut matches = publisher_roots.iter().filter(|root| root.alias == alias);
+        let Some(exact) = matches.next() else {
+            return Err(CliError::failure(format!(
+                "project inspection dependency `{alias}` has no exact root-edge record in the publisher payload"
+            )));
+        };
+        if matches.any(|candidate| candidate != exact) {
+            return Err(CliError::failure(format!(
+                "project inspection dependency `{alias}` has conflicting exact root-edge records in the publisher payload"
+            )));
+        }
+        if exact.package != package
+            || !semver::Version::parse(&exact.version).is_ok_and(|version| requirement.matches(&version))
+        {
+            return Err(CliError::failure(format!(
+                "project inspection dependency `{alias}` differs from its exact publisher root edge"
+            )));
+        }
+        Some(exact)
+    } else {
+        None
+    };
+    let project_matches = project_locked
+        .iter()
+        .filter(|locked| {
+            locked.package == package
+                && semver::Version::parse(&locked.version).is_ok_and(|version| requirement.matches(&version))
+        })
+        .collect::<Vec<_>>();
+    match publisher_locked {
+        Some(publisher) => {
+            if !project_matches.iter().any(|project| {
+                project.package == publisher.package
+                    && project.version == publisher.version
+                    && project.registry == publisher.registry
+                    && project.checksum == publisher.checksum
+            }) {
+                return Err(CliError::failure(format!(
+                    "project inspection dependency `{alias}` has conflicting publisher and project lock identities"
+                )));
+            }
+            Ok(ProjectLockedRegistryPackage {
+                package: publisher.package.clone(),
+                version: publisher.version.clone(),
+                registry: publisher.registry.clone(),
+                checksum: publisher.checksum.clone(),
+            })
+        }
+        None => {
+            let [project] = project_matches.as_slice() else {
+                return Err(CliError::failure(format!(
+                    "project inspection dependency `{alias}` has {} compatible exact records in the project lock",
+                    project_matches.len()
+                )));
+            };
+            Ok((*project).clone())
+        }
+    }
+}
+
 /// Publish one singular, project-level Rust inspection authority from the preferred debug plan.
 ///
 /// A current project extension already splits every source tree between its exact release Loaf and its bounded
@@ -507,65 +580,7 @@ pub(crate) fn project_inspection_root_dependencies(
         let mut requested_features = dependency.features.clone();
         requested_features.sort();
         requested_features.dedup();
-        let publisher_locked = if let Some(publisher_roots) = publisher_roots {
-            let mut matches = publisher_roots.iter().filter(|root| root.alias == alias);
-            let Some(exact) = matches.next() else {
-                return Err(CliError::failure(format!(
-                    "project inspection dependency `{alias}` has no exact root-edge record in the publisher payload"
-                )));
-            };
-            if matches.any(|candidate| candidate != exact) {
-                return Err(CliError::failure(format!(
-                    "project inspection dependency `{alias}` has conflicting exact root-edge records in the publisher payload"
-                )));
-            }
-            if exact.package != package
-                || !semver::Version::parse(&exact.version).is_ok_and(|version| requirement.matches(&version))
-            {
-                return Err(CliError::failure(format!(
-                    "project inspection dependency `{alias}` differs from its exact publisher root edge"
-                )));
-            }
-            Some(exact)
-        } else {
-            None
-        };
-        let project_matches = project_locked
-            .iter()
-            .filter(|locked| {
-                locked.package == package
-                    && semver::Version::parse(&locked.version).is_ok_and(|version| requirement.matches(&version))
-            })
-            .collect::<Vec<_>>();
-        let exact = match publisher_locked {
-            Some(publisher) => {
-                if !project_matches.iter().any(|project| {
-                    project.package == publisher.package
-                        && project.version == publisher.version
-                        && project.registry == publisher.registry
-                        && project.checksum == publisher.checksum
-                }) {
-                    return Err(CliError::failure(format!(
-                        "project inspection dependency `{alias}` has conflicting publisher and project lock identities"
-                    )));
-                }
-                ProjectLockedRegistryPackage {
-                    package: publisher.package.clone(),
-                    version: publisher.version.clone(),
-                    registry: publisher.registry.clone(),
-                    checksum: publisher.checksum.clone(),
-                }
-            }
-            None => {
-                let [project] = project_matches.as_slice() else {
-                    return Err(CliError::failure(format!(
-                        "project inspection dependency `{alias}` has {} compatible exact records in the project lock",
-                        project_matches.len()
-                    )));
-                };
-                (*project).clone()
-            }
-        };
+        let exact = project_inspection_locked_identity(&alias, package, &requirement, publisher_roots, project_locked)?;
         let matches = catalog
             .iter()
             .filter(|source| {
