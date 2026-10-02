@@ -25,13 +25,19 @@ pub fn digest_bytes(content: &[u8]) -> String {
 ///
 /// The `serde_json/preserve_order` Cargo feature changes the backing object map. Identity bytes must remain the same
 /// when a larger build graph enables that feature, while arrays and scalar spellings retain normal Serde semantics.
-pub fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+pub fn canonical_json_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
     let value = serde_json::to_value(value)?;
     serde_json::to_vec(&canonical_json_value(value))
 }
 
+/// Serialize JSON identity input as pretty text with recursively sorted object keys.
+pub fn canonical_json_bytes_pretty<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    let value = serde_json::to_value(value)?;
+    serde_json::to_vec_pretty(&canonical_json_value(value))
+}
+
 /// Serialize JSON identity input as canonical text with recursively sorted object keys.
-pub fn canonical_json_string<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
+pub fn canonical_json_string<T: Serialize + ?Sized>(value: &T) -> Result<String, serde_json::Error> {
     let value = serde_json::to_value(value)?;
     serde_json::to_string(&canonical_json_value(value))
 }

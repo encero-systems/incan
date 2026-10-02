@@ -1736,8 +1736,14 @@ fn a_fact_carries_exactly_the_record_keys_and_safe_unique_outputs() -> TestResul
         .ok_or("fact must be an object")?
         .keys()
         .cloned()
-        .collect::<Vec<_>>();
-    assert_eq!(keys, ["cfg", "features", "out", "profile", "target", "toolchain"]);
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        ["cfg", "features", "out", "profile", "target", "toolchain"]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect()
+    );
     assert_eq!(json["rust"]["facts"][0]["out"][0]["path"], "out/private.rs");
 
     let escaping = capture_with_members(vec![OvenLegacyCargoInspectionSourceMember {
@@ -1846,8 +1852,27 @@ fn the_written_report_is_canonical_and_idempotent() -> TestResult {
         .ok_or("proposal must be an object")?
         .keys()
         .cloned()
-        .collect::<Vec<_>>();
-    assert_eq!(keys, ["evidence", "project", "rust", "source"], "keys are sorted");
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        ["evidence", "project", "rust", "source"]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+        "the proposal carries exactly the admitted top-level fields"
+    );
+    let evidence_position = proposal_text
+        .find("\"evidence\"")
+        .ok_or("proposal has no evidence field")?;
+    let project_position = proposal_text
+        .find("\"project\"")
+        .ok_or("proposal has no project field")?;
+    let rust_position = proposal_text.find("\"rust\"").ok_or("proposal has no rust field")?;
+    let source_position = proposal_text.find("\"source\"").ok_or("proposal has no source field")?;
+    assert!(
+        evidence_position < project_position && project_position < rust_position && rust_position < source_position,
+        "canonical proposal fields are sorted in the written bytes"
+    );
     assert!(proposal_text.ends_with('\n'));
     assert_eq!(proposal["rust"]["facts"].as_array().map(Vec::len), Some(1));
     assert_eq!(

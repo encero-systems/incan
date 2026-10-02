@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use oven_model::digest::canonical_json_bytes_pretty;
 use serde::Serialize;
 
 use super::super::{OvenLegacyCargoError, OvenLegacyCargoSelectedUnitCapture, digest_bytes, regular_file_bytes};
@@ -21,8 +22,8 @@ pub fn harvest_refusals_file_name(profile: &str) -> String {
 
 /// Canonical bytes of one proposal: sorted keys, two-space indentation, trailing newline.
 ///
-/// `serde_json`'s object map is ordered, so a round trip through `Value` sorts the keys; the result is the same
-/// bytes for the same facts on every machine, which is what makes a rewrite comparable to what is on disk.
+/// The model-owned canonical encoder sorts every object explicitly, so the result is independent of the JSON map
+/// implementation selected elsewhere in the workspace and comparable byte-for-byte with what is on disk.
 pub fn canonical_proposal_bytes(proposal: &HarvestProposal) -> Result<Vec<u8>, OvenLegacyCargoError> {
     canonical_json_bytes(proposal)
 }
@@ -34,9 +35,7 @@ pub fn canonical_refusals_bytes(refusals: &[HarvestRefusal]) -> Result<Vec<u8>, 
 
 /// Sorted-key pretty JSON with a trailing newline.
 fn canonical_json_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, OvenLegacyCargoError> {
-    let value = serde_json::to_value(value)
-        .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode harvest report: {error}")))?;
-    let mut bytes = serde_json::to_vec_pretty(&value)
+    let mut bytes = canonical_json_bytes_pretty(value)
         .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode harvest report: {error}")))?;
     bytes.push(b'\n');
     Ok(bytes)
