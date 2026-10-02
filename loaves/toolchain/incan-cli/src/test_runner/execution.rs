@@ -37,9 +37,10 @@ use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD};
 use oven_rustc::native_test::{OvenNativeTestRequest, run_native_test_batch};
 use oven_rustc::rustc::{
-    OvenRegistryLeafAuthority, OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries,
-    bake_trusted_direct_rustc_test, materialize_declared_rust_libraries_with_selected_path_authority,
-    resolve_active_rustc, rustc_host_target, rustc_identity,
+    OvenCallerOwnedRustcLibrary, OvenRegistryLeafAuthority, OvenRustcArtifactPlan, OvenTrustedDirectRustcTargetRequest,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_test,
+    materialize_declared_rust_libraries_with_selected_path_authority, resolve_active_rustc, rustc_host_target,
+    rustc_identity,
 };
 use oven_store::{OvenGeneratedProjectRequest, default_receipt_path, receipt_generated_project, write_receipt};
 use sha2::{Digest, Sha256};
@@ -1149,6 +1150,24 @@ fn merge_test_runner_dependencies(
         dev_dependencies: dev_dependencies.to_vec(),
     })
     .map_err(|error| error.message)
+}
+
+/// Rebind a generated test root to the selected compiler runtime and its registry cohort.
+///
+/// `caller_declared_dependencies` is the authored project/workspace surface. Compiler/provider requirements needed
+/// to generate the harness do not make their registry packages caller-owned.
+fn replace_test_batch_runtime_libraries(
+    artifact_plan: &mut OvenRustcArtifactPlan,
+    runtime_libraries: &[OvenCallerOwnedRustcLibrary],
+    runtime_registry_authority: Option<&OvenRegistryLeafAuthority>,
+    caller_declared_dependencies: &[DependencySpec],
+) -> crate::CliResult<()> {
+    incan_driver::build::plan_authority::replace_selected_compiler_runtime_libraries(
+        artifact_plan,
+        runtime_libraries,
+        runtime_registry_authority,
+        caller_declared_dependencies,
+    )
 }
 
 /// Build a stable generated-crate suffix for one worker batch, which may contain multiple source files.
@@ -2774,11 +2793,11 @@ fn run_file_tests_batch_oven(
         Ok(plan) => plan,
         Err(error) => return failure(error.to_string()),
     };
-    if let Err(error) = incan_driver::build::plan_authority::replace_selected_compiler_runtime_libraries(
+    if let Err(error) = replace_test_batch_runtime_libraries(
         &mut artifact_plan,
         &provider_compiler_runtime_libraries,
         provider_closure_runtime_registry_authority.as_ref(),
-        &test_dependency_surface,
+        &inspection_registry_dependencies,
     ) {
         return failure(error.message);
     }
@@ -3266,6 +3285,99 @@ def captured_resource() -> int:
         };
         assert!(error.contains("tokio"));
         assert!(error.contains("conflicts"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_batch_runtime_registry_uses_caller_declarations_not_generated_provider_roots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use oven_model::manifest::DependencySource;
+        use oven_rustc::rustc::{OvenRustcArtifactExtern, OvenRustcRegistryLeaf, OvenRustcRegistrySource};
+
+        let release = tempfile::tempdir()?;
+        let release_deps = release.path().join("target/debug/deps");
+        fs::create_dir_all(&release_deps)?;
+        let release_bytes = b"selected runtime registry unit";
+        let release_artifact = release_deps.join("libruntime_registry.rlib");
+        fs::write(&release_artifact, release_bytes)?;
+        let authority = OvenRegistryLeafAuthority::new(
+            release.path().to_path_buf(),
+            vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: Some("sha256:selected-runtime-registry-unit".to_string()),
+                package: "runtime-registry".to_string(),
+                version: "1.0.0".to_string(),
+                crate_name: "runtime_registry".to_string(),
+                features: vec!["derive".to_string()],
+                source: OvenRustcRegistrySource {
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "selected-runtime-registry-checksum".to_string(),
+                    relative_root: "registry-sources/runtime-registry".to_string(),
+                    digest: "sha256:selected-runtime-registry-source".to_string(),
+                },
+                artifact: OvenRustcArtifactExtern {
+                    crate_name: "runtime_registry".to_string(),
+                    relative_path: "target/debug/deps/libruntime_registry.rlib".to_string(),
+                    digest: oven_store::digest_bytes(release_bytes),
+                },
+            }],
+        );
+        let caller_dependency = DependencySpec {
+            crate_name: "caller_terminal".to_string(),
+            version: Some("1".to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let generated_provider_dependency = DependencySpec {
+            crate_name: "runtime_registry".to_string(),
+            version: Some("1".to_string()),
+            features: vec!["derive".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: Some("runtime-registry".to_string()),
+        };
+        let caller_declared_dependencies =
+            merge_test_runner_dependencies(std::slice::from_ref(&caller_dependency), &[])
+                .map_err(std::io::Error::other)?;
+        let test_dependency_surface = merge_test_runner_dependencies(
+            &caller_declared_dependencies,
+            std::slice::from_ref(&generated_provider_dependency),
+        )
+        .map_err(std::io::Error::other)?;
+        let extension_artifact = PathBuf::from("extension/target/debug/deps/libruntime_registry.rlib");
+        let mut artifact_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: vec![
+                (
+                    "caller_terminal".to_string(),
+                    PathBuf::from("extension/libcaller_terminal.rlib"),
+                ),
+                (
+                    "incan_std_models".to_string(),
+                    PathBuf::from("selected/libincan_std_models.rlib"),
+                ),
+                ("runtime_registry".to_string(), extension_artifact.clone()),
+            ],
+            compile_environment: BTreeMap::new(),
+            caller_owned_library_digests: BTreeMap::new(),
+        };
+
+        replace_test_batch_runtime_libraries(&mut artifact_plan, &[], Some(&authority), &caller_declared_dependencies)?;
+
+        assert!(test_dependency_surface.contains(&generated_provider_dependency));
+        assert_eq!(
+            artifact_plan.externs[0].1,
+            PathBuf::from("extension/libcaller_terminal.rlib")
+        );
+        assert_eq!(artifact_plan.externs[2].1, fs::canonicalize(release_artifact)?);
+        assert_ne!(artifact_plan.externs[2].1, extension_artifact);
         Ok(())
     }
 

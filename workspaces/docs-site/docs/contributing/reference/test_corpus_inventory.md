@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3555 | 245 | 8 |
+| keep | 3556 | 245 | 8 |
 | re-point | 524 | 86 | 1055 |
 | retire | 1501 | 153 | 0 |
 | unaffected | 1640 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7220** | **642** | **1068** |
+| **Total** | **7221** | **642** | **1068** |
 
 - Retire-class tests: 1501, of which twinned 1023, dies 294, open 184 (neither yet).
 - Retire-class files with open rows: 33 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2616,7 +2616,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/toolchain/incan-cli` (664 tests in 80 files: keep 118, re-point 387, retire 34, unaffected 125)
+### `loaves/toolchain/incan-cli` (665 tests in 80 files: keep 119, re-point 387, retire 34, unaffected 125)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2630,7 +2630,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/src/commands/tools_boundary_tests.rs` | 1 | 116 | 116 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/workspace.rs` | 1 | 428 | 45 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/lib.rs` | 37 | 3480 | 1105 | unaffected | - | - | - | #1561 | codegen 1, replacement 9 | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 21 | 3579 | 618 | keep (keep 10, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
+| `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 22 | 3691 | 711 | keep (keep 11, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
 | `loaves/toolchain/incan-cli/src/test_runner/mod.rs` | 15 | 2148 | 492 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs` | 1 | 22 | 22 | re-point | - | - | - | #1561 | - | runs every behavior fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs` | 6 | 56 | 56 | re-point | - | - | - | #1561 | - | runs every behavior fixture of the cli area as a program and compares its observables; the route changes under it, the fixtures do not. |
