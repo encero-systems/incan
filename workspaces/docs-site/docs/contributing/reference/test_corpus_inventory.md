@@ -13,11 +13,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
 | keep | 3555 | 245 | 8 |
-| re-point | 523 | 86 | 1055 |
+| re-point | 524 | 86 | 1055 |
 | retire | 1501 | 153 | 0 |
-| unaffected | 1639 | 158 | 5 |
+| unaffected | 1640 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7218** | **642** | **1068** |
+| **Total** | **7220** | **642** | **1068** |
 
 - Retire-class tests: 1501, of which twinned 1023, dies 294, open 184 (neither yet).
 - Retire-class files with open rows: 33 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -122,7 +122,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (762 tests in 107 files: keep 371, re-point 137, retire 103, unaffected 151)
+### `loaves/compiler/incan_driver` (763 tests in 107 files: keep 371, re-point 137, retire 103, unaffected 152)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -152,7 +152,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/output_selection.rs` | 1 | 1091 | 358 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/oven_project.rs` | 7 | 1357 | 160 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/package_loafs.rs` | 2 | 1015 | 436 | unaffected | - | - | - | #1561 | text 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/plan_authority.rs` | 4 | 1255 | 191 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/plan_authority.rs` | 5 | 1353 | 265 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/plan_selection.rs` | 7 | 1195 | 554 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/prepare_project.rs` | 1 | 497 | 74 | retire | 0/1 | 1 | - | #1561 | codegen 1, run 1, checker 1 | prunes the generated project's Cargo dependencies; generated Cargo project shape; dies with the generated-project route |
 | `loaves/compiler/incan_driver/src/build/provider_compilation.rs` | 7 | 1044 | 546 | unaffected | - | - | - | #1561 | checker 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -2616,7 +2616,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/toolchain/incan-cli` (663 tests in 80 files: keep 118, re-point 386, retire 34, unaffected 125)
+### `loaves/toolchain/incan-cli` (664 tests in 80 files: keep 118, re-point 387, retire 34, unaffected 125)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2630,7 +2630,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/src/commands/tools_boundary_tests.rs` | 1 | 116 | 116 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/workspace.rs` | 1 | 428 | 45 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/lib.rs` | 37 | 3480 | 1105 | unaffected | - | - | - | #1561 | codegen 1, replacement 9 | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 21 | 3570 | 618 | keep (keep 10, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
+| `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 21 | 3579 | 618 | keep (keep 10, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
 | `loaves/toolchain/incan-cli/src/test_runner/mod.rs` | 15 | 2148 | 492 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs` | 1 | 22 | 22 | re-point | - | - | - | #1561 | - | runs every behavior fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs` | 6 | 56 | 56 | re-point | - | - | - | #1561 | - | runs every behavior fixture of the cli area as a program and compares its observables; the route changes under it, the fixtures do not. |
@@ -2681,7 +2681,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/tests/integration_sdk_interop_tests.rs` | 2 | 168 | 168 | re-point | - | - | - | #1561 | run 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/integration_test_runner_basics_tests.rs` | 12 | 722 | 722 | re-point | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/integration_test_runner_fixtures_tests.rs` | 13 | 1089 | 1089 | re-point (re-point 12, retire 1) | 1/1 | 0 | - | #1561 | text 1, run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
-| `loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs` | 9 | 1031 | 1031 | re-point | - | - | - | #1561 | run 4 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
+| `loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs` | 10 | 1161 | 1161 | re-point | - | - | - | #1561 | run 5 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/integration_tests.rs` | 14 | 371 | 371 | re-point (keep 13, re-point 1) | - | - | - | #1561 | run 1, checker 3, parser 10 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/layering_guard.rs` | 9 | 359 | 359 | unaffected | - | - | - | #1561 | - | crate and stdlib layering guards. |
 | `loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs` | 10 | 871 | 871 | re-point (re-point 10) | - | - | - | #1561 | run 10, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |

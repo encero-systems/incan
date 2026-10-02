@@ -37,9 +37,9 @@ use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD};
 use oven_rustc::native_test::{OvenNativeTestRequest, run_native_test_batch};
 use oven_rustc::rustc::{
-    OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_test,
-    materialize_declared_rust_libraries_with_selected_path_authority, resolve_active_rustc, rustc_host_target,
-    rustc_identity,
+    OvenRegistryLeafAuthority, OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries,
+    bake_trusted_direct_rustc_test, materialize_declared_rust_libraries_with_selected_path_authority,
+    resolve_active_rustc, rustc_host_target, rustc_identity,
 };
 use oven_store::{OvenGeneratedProjectRequest, default_receipt_path, receipt_generated_project, write_receipt};
 use sha2::{Digest, Sha256};
@@ -2690,6 +2690,7 @@ fn run_file_tests_batch_oven(
 
     let mut registry_authority = plan_selection.registry_leaf_authority();
     let mut provider_compiler_runtime_libraries = Vec::new();
+    let mut provider_closure_runtime_registry_authority = None;
     let selected_path_authority =
         incan_driver::build::plan_authority::compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
 
@@ -2710,6 +2711,12 @@ fn run_file_tests_batch_oven(
             .flatten()
             .cloned()
             .collect();
+        provider_closure_runtime_registry_authority =
+            (!provider_closure.compiler_runtime_registry_authorities.is_empty()).then(|| {
+                OvenRegistryLeafAuthority::aggregate(
+                    provider_closure.compiler_runtime_registry_authorities.values().cloned(),
+                )
+            });
         let provider_dependency_search_paths = provider_closure.dependency_search_paths.clone();
         registry_authority = provider_closure.merged_authority(registry_authority);
         let re_materialized =
@@ -2770,6 +2777,8 @@ fn run_file_tests_batch_oven(
     if let Err(error) = incan_driver::build::plan_authority::replace_selected_compiler_runtime_libraries(
         &mut artifact_plan,
         &provider_compiler_runtime_libraries,
+        provider_closure_runtime_registry_authority.as_ref(),
+        &test_dependency_surface,
     ) {
         return failure(error.message);
     }

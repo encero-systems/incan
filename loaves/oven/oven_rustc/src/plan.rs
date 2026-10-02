@@ -10,6 +10,7 @@
 pub mod composition;
 pub mod selection;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::loaf::OvenToolchainLoaf;
@@ -225,7 +226,11 @@ impl OvenDirectRustcPlanSelection {
         &self,
     ) -> Result<Option<OvenRegistryLeafAuthority>, OvenRustcError> {
         match self {
-            Self::ToolchainLoaf(native) => Ok(Some(native.registry_leaf_authority())),
+            Self::ToolchainLoaf(native) => Ok(compiler_runtime_registry_leaf_authority(
+                &native.artifacts,
+                &native.artifact_root,
+                &native.artifact_plan,
+            )),
             Self::ProjectExtension(extension) => {
                 let runtime_names = extension.base.artifacts.compiler_runtime_crate_names()?;
                 let selected_runtime_externs = extension
@@ -245,11 +250,53 @@ impl OvenDirectRustcPlanSelection {
                         .iter()
                         .any(|(base_name, base_path)| base_name == crate_name && base_path == selected_path)
                 });
-                Ok(uses_release_base.then(|| extension.base.registry_leaf_authority()))
+                Ok(uses_release_base
+                    .then(|| {
+                        compiler_runtime_registry_leaf_authority(
+                            &extension.base.artifacts,
+                            &extension.base.artifact_root,
+                            &extension.base.artifact_plan,
+                        )
+                    })
+                    .flatten())
             }
             Self::Stored(_) | Self::PackagedProvider(_) => Ok(None),
         }
     }
+}
+
+/// Restrict release registry authority to crates exposed to generated standard-library roots.
+fn compiler_runtime_registry_leaf_authority(
+    artifacts: &OvenRustcArtifactManifest,
+    artifact_root: &Path,
+    artifact_plan: &OvenRustcArtifactPlan,
+) -> Option<OvenRegistryLeafAuthority> {
+    let generated_root_externs = artifacts
+        .entrypoint_externs
+        .get("generated-root")
+        .cloned()
+        .unwrap_or_else(|| {
+            artifacts
+                .externs
+                .iter()
+                .map(|artifact| artifact.crate_name.clone())
+                .collect()
+        })
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let leaves = artifacts
+        .registry_leaves
+        .iter()
+        .filter(|leaf| generated_root_externs.contains(&leaf.crate_name))
+        .cloned()
+        .collect::<Vec<_>>();
+    (!leaves.is_empty()).then(|| {
+        OvenRegistryLeafAuthority::new_with_trusted_dependency_search_paths(
+            artifact_root.to_path_buf(),
+            leaves,
+            artifact_plan.dependency_search_paths.clone(),
+        )
+    })
 }
 
 /// Receipt-validated stored direct-Rustc inputs held under a caller-owned lease.

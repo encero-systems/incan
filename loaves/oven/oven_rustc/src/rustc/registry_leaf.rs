@@ -141,6 +141,53 @@ impl OvenRegistryLeafAuthority {
             .any(|entry| participates_in_target_link_collision(&entry.leaf) && entry.leaf.package == package)
     }
 
+    /// Rebind overlapping transitive root externs to this target cohort while preserving direct declarations.
+    ///
+    /// Generated source that links a compiler runtime must use the registry units recorded by that runtime's
+    /// selected Loaf. A project or workspace declaration remains authoritative, so its Cargo package is excluded
+    /// even when this cohort carries a same-named unit. Only names already exposed by `plan` are replaced; this does
+    /// not broaden the generated root's direct dependency surface.
+    pub fn rebind_transitive_target_externs(
+        &self,
+        plan: &mut OvenRustcArtifactPlan,
+        directly_declared_packages: &BTreeSet<String>,
+    ) -> Result<(), OvenRustcError> {
+        for entry in &self.entries {
+            if !participates_in_target_link_collision(&entry.leaf)
+                || directly_declared_packages.contains(&entry.leaf.package.replace('-', "_"))
+            {
+                continue;
+            }
+            let Some((_, selected_path)) = plan
+                .externs
+                .iter_mut()
+                .find(|(crate_name, _)| crate_name == &entry.leaf.crate_name)
+            else {
+                continue;
+            };
+            let artifact = safe_artifact_path(
+                &entry.artifact_root,
+                &entry.leaf.artifact.relative_path,
+                "compiler runtime registry leaf",
+            )?;
+            let bytes = fs::read(&artifact).map_err(|source| OvenRustcError::Io {
+                path: artifact.clone(),
+                source,
+            })?;
+            if digest_bytes(&bytes) != entry.leaf.artifact.digest {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "compiler runtime registry leaf",
+                    message: format!(
+                        "sealed registry leaf at {} failed digest verification",
+                        artifact.display()
+                    ),
+                });
+            }
+            *selected_path = artifact;
+        }
+        Ok(())
+    }
+
     /// Return the first package name this authority's own registry leaves would silently link as a second,
     /// incompatible compiled instance of a crate `plan` already links explicitly.
     ///
