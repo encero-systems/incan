@@ -7,77 +7,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactExtern, OvenRustcArtifactManifest,
-    OvenRustcArtifactPartition, OvenRustcAuxiliaryTarget, OvenRustcError, OvenRustcRegistryLeaf,
-    OvenRustcSupportingArtifact, Path, artifact_is_below_search_path, canonicalize_release_registry_sources,
-    compiler_runtime_artifacts_by_name, compiler_runtime_name_from_artifact_path, compiler_runtime_sidecars_by_name,
-    discard_orphaned_metadata_sidecars, expected_artifacts, metadata_sidecar_pair_path, normalized_package_name,
-    registry_leaf_substitution_is_safe, replace_compiler_runtime_extern, replace_compiler_runtime_supporting_artifact,
-    replace_declared_release_artifact, rerooted_extension_artifact_path, same_registry_leaf_semantics,
-    validate_release_registry_cohort,
+    OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactManifest, OvenRustcArtifactPartition,
+    OvenRustcAuxiliaryTarget, OvenRustcError, OvenRustcRegistryLeaf, OvenRustcSupportingArtifact, Path,
+    artifact_is_below_search_path, canonicalize_release_registry_sources, compiler_runtime_artifacts_by_name,
+    compiler_runtime_name_from_artifact_path, compiler_runtime_sidecars_by_name, discard_orphaned_metadata_sidecars,
+    expected_artifacts, metadata_sidecar_pair_path, normalized_package_name, registry_leaf_substitution_is_safe,
+    replace_compiler_runtime_extern, replace_compiler_runtime_supporting_artifact, replace_declared_release_artifact,
+    rerooted_extension_artifact_path, same_registry_leaf_semantics, validate_release_registry_cohort,
 };
-
-/// Bind generated-root registry externs to the selected release units unless the project declared that package.
-///
-/// A transitive project unit remains in the registry leaf closure and dependency search path for the project crates
-/// compiled against it. It must not shadow the same extern name used by generated standard-library code, whose
-/// prebuilt crates record the release unit's identity. A direct project registry declaration remains authoritative.
-pub(crate) fn select_generated_root_registry_externs(
-    composed: &mut OvenRustcArtifactManifest,
-    base: &OvenRustcArtifactManifest,
-    root_registry_packages: &BTreeSet<String>,
-) -> Result<(), OvenRustcError> {
-    let generated_externs = composed
-        .entrypoint_externs
-        .get("generated-root")
-        .into_iter()
-        .flatten()
-        .collect::<BTreeSet<_>>();
-    for release_leaf in &base.registry_leaves {
-        if !generated_externs.contains(&release_leaf.crate_name)
-            || root_registry_packages.contains(&normalized_package_name(&release_leaf.package))
-        {
-            continue;
-        }
-        let candidates = composed
-            .externs
-            .iter()
-            .enumerate()
-            .filter(|(_, artifact)| artifact.crate_name == release_leaf.crate_name)
-            .map(|(index, artifact)| (index, artifact.clone()))
-            .collect::<Vec<_>>();
-        let [(index, selected)] = candidates.as_slice() else {
-            let names = candidates
-                .iter()
-                .map(|(_, artifact)| format!("{} ({})", artifact.relative_path, artifact.digest))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(OvenRustcError::InvalidInput {
-                field: "project extension generated-root extern",
-                message: format!(
-                    "extern `{}` requires the selected release candidate {} ({}) but resolves to [{}]",
-                    release_leaf.crate_name, release_leaf.artifact.relative_path, release_leaf.artifact.digest, names
-                ),
-            });
-        };
-        if selected == &release_leaf.artifact {
-            continue;
-        }
-        let release_artifact = OvenRustcSupportingArtifact {
-            relative_path: release_leaf.artifact.relative_path.clone(),
-            digest: release_leaf.artifact.digest.clone(),
-        };
-        composed
-            .supporting_artifacts
-            .retain(|artifact| artifact != &release_artifact);
-        composed.externs[*index] = OvenRustcArtifactExtern {
-            crate_name: release_leaf.crate_name.clone(),
-            relative_path: release_leaf.artifact.relative_path.clone(),
-            digest: release_leaf.artifact.digest.clone(),
-        };
-    }
-    Ok(())
-}
 
 impl OvenRustcArtifactManifest {
     /// Replace a generated project's release-owned dependency cohort with the exact selected release-base family.
@@ -545,7 +482,6 @@ impl OvenRustcArtifactManifest {
                 }
             }
         }
-        select_generated_root_registry_externs(&mut composed, base, &root_registry_packages)?;
         composed
             .dependency_search_paths
             .extend(base.dependency_search_paths.iter().cloned());
