@@ -212,19 +212,20 @@ pub const DEFAULT_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/receipt.json";
 
 /// Default aggregate physical allocation retained by an everyday Alpha Oven store.
 ///
-/// A project bake retains independent debug and release plans. A measured IncQL/DataFusion provider retains about
-/// 4.23 GiB while its consumer's compatibility publisher transiently needs about 3.80 GiB, and a Bevy-scale
-/// debug-plus-release pair retains about 3 GiB. Twelve GiB lets two such projects share one home and still leaves
-/// the publisher's staging floor free, so switching between them reuses rather than re-bakes (#1230); the
-/// publisher's private target stays bounded by that floor and the store prunes to this cap, so it is a ceiling on
-/// what is kept, never a reservation.
+/// A project bake retains independent debug and release plans. A measured IncQL/DataFusion release cohort, its two
+/// project extensions, and the complete project publication reach 9,654,812,672 physical bytes, while a Bevy-scale
+/// debug-plus-release pair retains about 3 GiB. Twelve GiB admits that DataFusion-scale project with practical
+/// headroom and lets smaller projects share one home, so switching between them reuses rather than re-bakes (#1230);
+/// the publisher's private target stays bounded by its staging floor and the store prunes to this cap, so it is a
+/// ceiling on what is kept, never a reservation.
 pub const DEFAULT_OVEN_MAX_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// Default physical allocation cap for one compatibility domain.
 ///
-/// Every project baked by one Incan release shares one compatibility domain, so for the ordinary single-release home
-/// this cap is the aggregate cap under another name; it equals the aggregate so it cannot starve a second project of
-/// staging before the aggregate would. A superseded release's entries are reclaimed at reservation time, which is
-/// what keeps an upgraded home from hoarding; callers may still choose a stricter explicit limit.
+/// Every project baked by one Incan release shares one compatibility domain, including the release-cohort Loafs a
+/// project extension uses as its base. The measured IncQL/DataFusion cohort, project extensions, and complete project
+/// publication reach 9,654,812,672 physical bytes. This cap equals the aggregate so it cannot starve a project before
+/// the aggregate would. A superseded release's entries are reclaimed at reservation time, which keeps an upgraded
+/// home from hoarding; callers may still choose a stricter explicit limit.
 pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// Transient staging the explicit compatibility baker reserves before it runs, reclaiming inactive store entries
 /// oldest-first to reach it.
@@ -236,13 +237,13 @@ pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 pub const DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Default logical artifact-byte cap for one compatibility domain.
 ///
-/// One explicit bake of a project whose closure is not loadable as independently compiled parts retains two extensions
-/// of a compiler Loaf: the library's delta and the test-dependency envelope's, each carrying the unified closure, its
-/// re-rooted copies of shared units, and the extension's own runtime. Measured for IncQL/DataFusion on Linux, each is
-/// 1.5 GiB, so a single debug-profile bake retains 3.0 GiB before its outputs and authority. Six GiB, half the physical
-/// allowance, admits that bake with the release profile or a second project beside it; callers may still choose a
-/// stricter explicit limit.
-pub const DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+/// The domain total includes the active release-cohort Loafs that a project extension names as its bases, not only
+/// the project's delta. A fresh IncQL/DataFusion bake measured those two bases at 3,263,191,117 and 3,034,969,392
+/// logical bytes. Its debug and release extensions added 91,344,058 and 90,877,386 bytes, then the complete project
+/// publication needed another 3,154,797,618 bytes. Manifests and every materialized file contribute to the
+/// 9,635,179,571-byte total. Ten GiB admits it with bounded headroom; callers may still choose a stricter explicit
+/// limit.
+pub const DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 /// Aggregate physical allowance for the complete compiler-suite Loaf and repository-test closure.
 pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 /// Physical allowance for the compiler-suite compatibility domain.
@@ -1756,6 +1757,28 @@ mod tests {
     #[derive(Debug, thiserror::Error)]
     #[error("the compiler could not read the manifest")]
     struct CompilerSideFailure;
+
+    /// The default policy admits the measured DataFusion-scale project publication beside both active release Loafs.
+    #[test]
+    fn default_store_budget_admits_a_datafusion_scale_project_beside_release_loafs() {
+        const RELEASE_COHORT_LOGICAL_BYTES: u64 = 3_263_191_117 + 3_034_969_392;
+        const PROJECT_LOGICAL_BYTES: u64 = 91_344_058 + 90_877_386 + 3_154_797_618;
+        const RELEASE_COHORT_PHYSICAL_BYTES: u64 = 3_314_520_064 + 3_091_181_568;
+        const PROJECT_PHYSICAL_BYTES: u64 = 96_194_560 + 95_723_520 + 3_057_192_960;
+
+        assert!(
+            super::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES
+                >= RELEASE_COHORT_LOGICAL_BYTES.saturating_add(PROJECT_LOGICAL_BYTES)
+        );
+        assert!(
+            super::DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES
+                >= RELEASE_COHORT_PHYSICAL_BYTES.saturating_add(PROJECT_PHYSICAL_BYTES)
+        );
+        assert!(
+            super::DEFAULT_OVEN_MAX_PHYSICAL_BYTES
+                >= RELEASE_COHORT_PHYSICAL_BYTES.saturating_add(PROJECT_PHYSICAL_BYTES)
+        );
+    }
 
     impl super::OvenProviderHooks for FailingProviderHooks {
         fn sdk_provider_root(&self, _explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
