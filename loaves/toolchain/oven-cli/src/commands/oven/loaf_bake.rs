@@ -1776,11 +1776,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 .map_err(|error| CliError::failure(format!("could not read final release Loaf: {error}")))?,
         )
         .map_err(|error| CliError::failure(format!("final release Loaf is invalid: {error}")))?;
-        let foundation =
+        let mut foundation =
             runtime_foundation_for_publisher_rebuild(finalized, &loaf, &toolchain.compiler_closure_identity)
                 .map_err(oven_error)?;
         pending[final_entry_index].result =
-            bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &foundation.artifacts)?;
+            bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &mut foundation.artifacts)?;
         loaf.plan
             .verify_vocab_auxiliary_targets_with_direct_rustc(&loaf_root, &bake_rustc, &options.rustc, scratch.path())
             .map_err(|error| vocab_closure_probe_error("rebuilt release Loaf", error))?;
@@ -2133,13 +2133,15 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
 ///
 /// The release envelope binds the compiled Loaf and runtime foundation by both content identities. The publisher
 /// foundation deliberately removes Cargo artifacts and replaces them with direct-`rustc` rebuild inputs, so that
-/// rebuilt manifest must become the compiled Loaf's final plan before either identity is recorded.
+/// rebuilt manifest must become the compiled Loaf's final plan and the foundation's own artifact description before
+/// either identity is recorded.
 fn bind_staged_loaf_to_runtime_foundation(
     loaf_root: &mut PathBuf,
     loaf: &mut OvenLoaf,
-    artifacts: &OvenRustcArtifactManifest,
+    artifacts: &mut OvenRustcArtifactManifest,
 ) -> CliResult<OvenLoafPreparation> {
     loaf.plan = runtime_foundation_plan_with_sealed_auxiliary_closures(&loaf.plan, artifacts);
+    *artifacts = loaf.plan.clone();
     loaf.registry_leaves = loaf.plan.registry_leaves.clone();
     let plan_identity = digest_bytes(
         &serde_json::to_vec(&loaf.plan)
@@ -2964,7 +2966,8 @@ mod publisher_tests {
 
     /// A produced release envelope binds the reissued compiled Loaf to the runtime foundation's exact manifest.
     #[test]
-    fn publisher_rebuilt_foundation_reissues_the_loaf_without_rebinding_auxiliary_plugins() -> TestResult {
+    fn publisher_runtime_foundation_binding_round_trips_preserved_auxiliary_closure_through_consumer_validation()
+    -> TestResult {
         let root = tempfile::tempdir()?;
         let mut loaf_root = root.path().join("staged/original.loaf");
         fs::create_dir_all(&loaf_root)?;
@@ -3011,7 +3014,7 @@ mod publisher_tests {
         };
         fs::write(loaf_root.join("loaf.json"), serde_json::to_vec_pretty(&loaf)?)?;
 
-        let prepared = bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &rebuilt_plan)?;
+        let prepared = bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &mut rebuilt_plan)?;
         let rebound: OvenLoaf = serde_json::from_slice(&fs::read(loaf_root.join("loaf.json"))?)?;
         assert_eq!(
             rebound.plan.vocab_auxiliary_targets,
@@ -3030,7 +3033,13 @@ mod publisher_tests {
             prepared.loaf_identity,
             digest_bytes(&serde_json::to_vec_pretty(&rebound)?)
         );
-        let reused = bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &rebuilt_plan)?;
+        oven_rustc::loaf::validate_runtime_foundation_bound_compiled_loaf(
+            &rebuilt_plan,
+            &loaf_root.join("loaf.json"),
+            &prepared.loaf_identity,
+            &prepared.plan_identity,
+        )?;
+        let reused = bind_staged_loaf_to_runtime_foundation(&mut loaf_root, &mut loaf, &mut rebuilt_plan)?;
         assert_eq!(reused, prepared);
 
         let rustc_digest = digest_bytes(b"rustc");

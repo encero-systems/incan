@@ -715,21 +715,42 @@ pub fn prove_release_runtime_foundation_member(
             message: "runtime-foundation compiled Loaf binding disappeared".to_string(),
         })?;
     let compiled_path = loaf_root.join(&compiled.path);
-    let loaf = read_loaf(&compiled_path)?;
-    if loaf_file_identity(&compiled_path)? != member.compiled_loaf_identity
-        || digest_bytes(
-            &serde_json::to_vec(&loaf.plan).map_err(|error| OvenLoafError::Preparation {
-                message: error.to_string(),
-            })?,
-        ) != member.compiled_plan_identity
-        || materialized.foundation().artifacts() != &loaf.plan
+    validate_runtime_foundation_bound_compiled_loaf(
+        materialized.foundation().artifacts(),
+        &compiled_path,
+        &member.compiled_loaf_identity,
+        &member.compiled_plan_identity,
+    )?;
+    Ok(materialized)
+}
+
+/// Validate that one runtime-foundation artifact manifest exactly describes its identity-bound compiled Loaf.
+///
+/// This is the shared publisher/consumer round-trip boundary. Artifact order remains part of the serialized manifest
+/// contract: a publisher must place any preserved auxiliary closure into both authorities identically rather than
+/// teaching consumers to ignore a difference between them.
+pub fn validate_runtime_foundation_bound_compiled_loaf(
+    foundation_artifacts: &OvenRustcArtifactManifest,
+    compiled_path: &Path,
+    expected_loaf_identity: &str,
+    expected_plan_identity: &str,
+) -> Result<(), OvenLoafError> {
+    let loaf = read_loaf(compiled_path)?;
+    let plan_identity = digest_bytes(
+        &serde_json::to_vec(&loaf.plan).map_err(|error| OvenLoafError::Preparation {
+            message: error.to_string(),
+        })?,
+    );
+    if loaf_file_identity(compiled_path)? != expected_loaf_identity
+        || plan_identity != expected_plan_identity
+        || foundation_artifacts != &loaf.plan
     {
         return Err(OvenLoafError::InvalidLoaf {
-            path: compiled_path,
+            path: compiled_path.to_path_buf(),
             message: "runtime foundation does not describe its bound compiled Loaf artifact manifest".to_string(),
         });
     }
-    Ok(materialized)
+    Ok(())
 }
 
 /// Enumerate one retained member tree without following links or admitting special files.
@@ -4010,6 +4031,21 @@ mod tests {
         )?;
         assert!(super::acquire_committed_release_runtime_foundation(root.path(), "rust-policy-foundation")?.is_none());
         assert!(super::committed_release_runtime_members(root.path())?.is_none());
+        Ok(())
+    }
+
+    /// A publisher-supplied release family must pass the same fail-closed validation used by normal consumers.
+    #[test]
+    fn published_release_family_passes_consumer_runtime_foundation_validation() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let Some(root) = std::env::var_os("INCAN_TEST_RELEASE_LOAF_FAMILY_ROOT") else {
+            return Ok(());
+        };
+        let acquired = super::acquire_committed_release_runtime_foundation(
+            Path::new(&root),
+            super::OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL,
+        )?;
+        assert!(acquired.is_some(), "published release family has no runtime foundation");
         Ok(())
     }
 
