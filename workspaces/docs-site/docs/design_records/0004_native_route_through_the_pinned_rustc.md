@@ -77,6 +77,11 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 - Models and enums are Rust ADTs with RFC 121's representation.
 - Every linker-visible symbol for an Incan declaration is recoverable to its canonical identity (RFC 120).
 
+**Bodies enter as MIR, and rustc elaborates drops.**
+
+- Bodies are supplied as MIR, not THIR. THIR names variables by `HirId`, and rustc schedules their drops through a scope tree computed from the HIR body, which for an Incan function is a placeholder. Supplying THIR would require first mirroring every body into AST, which is generated Rust under another name.
+- The lowering emits a drop for every owned value at each scope exit and a cleanup block on every call that can unwind, as rustc's own MIR building does. rustc's drop elaboration removes the drops of values that were moved, so the lowering never tracks which paths moved a value. The spike shows each value dropped exactly once on normal and unwinding paths.
+
 **Closure expressions declare their captures.**
 
 - Each closure expression enters as a closure inside its enclosing function's declaration, naming the variables it captures.
@@ -125,7 +130,7 @@ So code generation and linking dominate a small unit. rustc does not reuse analy
 
 **The lowering is the largest piece of work.**
 
-- It turns structured Body IR into a control-flow graph and must drop owned values on every path, including unwinding. The spike does not yet build unwind paths.
+- It turns structured Body IR into a control-flow graph and emits drops and cleanup blocks; rustc's drop elaboration handles which drops actually run.
 - When the lowering is wrong, the failure is an internal compiler error rather than a readable diagnostic. So lowering defects are harder to diagnose than emitted-Rust defects were.
 
 **The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both.
@@ -133,7 +138,6 @@ So code generation and linking dominate a small unit. rustc does not reuse analy
 **Open, to settle before this record is accepted:**
 
 - **How the Incan lowering reaches rustc.** The lowering is Incan by decision. A narrow Rust layer owns every rustc type and presents a plain builder of blocks, places, calls and drops addressed by index. The lowering drives that builder and is compiled first by the previous compiler. On the native route this works: the spike's Incan unit calls that layer as an ordinary call in one crate graph, and the executable embedding it runs rustc. Still untested is the real checker typing that layer's API through Rust inspection, which reads the layer's source while that source names rustc's internal crates.
-- **MIR or THIR.** Bodies could enter rustc one stage earlier, as THIR, so that rustc builds drop paths, unwind paths and pattern code itself. The cost is constructing typed expression trees that must agree with rustc's type-check results. The spike tested MIR only.
 - **Generic bodies of published Loaves.** How do they reach a native consumer: through the rustc metadata of the Loaf's compiled unit, through RFC 123's executable representation, or both?
 - **Async.** How do Incan `async` bodies lower: as MIR coroutines the front end builds, or by another route?
 
