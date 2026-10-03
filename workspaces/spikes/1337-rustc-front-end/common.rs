@@ -132,15 +132,37 @@ pub fn closure_skeleton(params_list: &[(&str, TySpec)], ret: TySpec, captures: &
 
 /// A function whose placeholder body holds closure skeletons ahead of its diverging `loop {}`.
 pub fn function_with_closures(name: &str, generics: ast::Generics, params_list: &[(&str, TySpec)], ret: TySpec, closures: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Item> {
-    let inputs = params(params_list, span);
+    item(ast::ItemKind::Fn(fn_decl(name, generics, params(params_list, span), ret, closures, span)), span)
+}
+
+/// The function itself, shared by free functions and methods: signature plus placeholder body.
+fn fn_decl(name: &str, generics: ast::Generics, inputs: ThinVec<ast::Param>, ret: TySpec, closures: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Fn> {
     let body = placeholder(closures, span);
     // `()` is the unit return type, spelled by omitting the return type as Rust does.
     let output = if ret.0 == "()" { ast::FnRetTy::Default(span) } else { ast::FnRetTy::Ty(ty(&ret, span)) };
     let sig = ast::FnSig { header: ast::FnHeader::default(), decl: Box::new(ast::FnDecl { inputs, output }), span };
-    item(ast::ItemKind::Fn(Box::new(ast::Fn {
+    Box::new(ast::Fn {
         defaultness: ast::Defaultness::Implicit, ident: ident(name, span), generics, sig,
         contract: None, define_opaque: None, body: Some(body), eii_impls: ThinVec::new(),
-    })), span)
+    })
+}
+
+/// `pub fn <name>(&self | &mut self, <params>) -> <ret>`: an Incan method, whose `self` is a borrow of the model
+/// (`mut self` a mutable one), as the emitted route spells it.
+pub fn method(name: &str, mutable_self: bool, params_list: &[(&str, TySpec)], ret: TySpec, span: Span) -> Box<ast::AssocItem> {
+    let mutability = if mutable_self { ast::Mutability::Mut } else { ast::Mutability::Not };
+    let receiver = ast::Param::from_self(ThinVec::new(), rustc_span::Spanned { node: ast::SelfKind::Region(None, mutability), span }, ident("self", span));
+    let mut inputs = thin_vec![receiver];
+    inputs.extend(params(params_list, span));
+    let kind = ast::AssocItemKind::Fn(fn_decl(name, ast::Generics::default(), inputs, ret, ThinVec::new(), span));
+    let vis = ast::Visibility { kind: ast::VisibilityKind::Public, span, tokens: None };
+    Box::new(ast::Item { attrs: ThinVec::new(), id: ast::DUMMY_NODE_ID, span, vis, kind, tokens: None })
+}
+
+/// `impl <owner> { <methods> }`, inherent.
+pub fn impl_block(owner: &str, methods: ThinVec<Box<ast::AssocItem>>, span: Span) -> Box<ast::Item> {
+    let block = ast::Impl { generics: ast::Generics::default(), constness: ast::Const::No, of_trait: None, self_ty: ty(&t(owner), span), items: methods };
+    item(ast::ItemKind::Impl(block), span)
 }
 
 /// Makes an item `pub`, and a model's fields with it, as an Incan `pub` export is.

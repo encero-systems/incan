@@ -62,7 +62,7 @@ fn is_unit_model(name: &str) -> bool {
 // Front end: the real Incan checker and Body IR builder, in-process
 // ============================================================================
 
-fn check_and_build(source: &str) -> Result<bir::BodyIrModule, String> {
+fn check_and_build(source: &str) -> Result<(bir::BodyIrModule, Vec<String>), String> {
     let tokens = lexer::lex(source).map_err(|errors| format!("lexing failed: {errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("parsing failed: {errors:?}"))?;
     let mut checker = TypeChecker::new();
@@ -80,21 +80,80 @@ fn check_and_build(source: &str) -> Result<bir::BodyIrModule, String> {
             return Err(format!("native lowering of `{}` does not support decorated functions (such as `@rust.extern`) yet", function.name));
         }
     }
+    // A `mut` parameter writes through to the caller (RFC 129), but Body IR passes its argument as a copy (#2022).
+    // Lowering that copy would compile a program that silently mutates a throwaway value, so refuse it by name.
+    let mut_parameter = |params: &[incan_frontend::ast::Spanned<incan_frontend::ast::Param>]| params.iter().any(|param| param.node.is_mut);
+    for declaration in &program.declarations {
+        let offending = match &declaration.node {
+            incan_frontend::ast::Declaration::Function(function) if mut_parameter(&function.params) => Some(function.name.clone()),
+            incan_frontend::ast::Declaration::Model(model_decl) => model_decl.methods.iter().find(|m| mut_parameter(&m.node.params)).map(|m| m.node.name.clone()),
+            _ => None,
+        };
+        if let Some(name) = offending {
+            return Err(format!("native lowering of `{name}` does not support `mut` parameters yet (#2022)"));
+        }
+    }
+    // A model's decorators (`@derive`), adopted traits, aliases, partials and properties all change what the model
+    // means natively, and none of them is in Body IR's nominal declarations yet.
+    let mut fieldless_models = Vec::new();
+    for declaration in &program.declarations {
+        if let incan_frontend::ast::Declaration::Model(model_decl) = &declaration.node {
+            let extras = !model_decl.decorators.is_empty() || !model_decl.traits.is_empty() || !model_decl.method_aliases.is_empty()
+                || !model_decl.method_partials.is_empty() || !model_decl.properties.is_empty() || !model_decl.type_params.is_empty();
+            if extras {
+                return Err(format!("native lowering of `{}` does not support model decorators, traits, aliases, partials, properties or type parameters yet", model_decl.name));
+            }
+            if model_decl.fields.is_empty() {
+                fieldless_models.push(model_decl.name.to_string());
+            }
+        }
+    }
     let module = build_body_ir_module_v0(&program, &module_path, checker.type_info());
     let mut names = std::collections::BTreeSet::new();
     for body in &module.bodies {
-        if !names.insert(body.name.as_str()) {
+        if !names.insert((receiver_owner(body), body.name.as_str())) {
             return Err(format!("native lowering of `{}` does not support overloaded functions yet", body.name));
         }
-        if body.locals.iter().any(|local| matches!(local.origin, bir::LocalOrigin::Receiver { .. })) {
-            return Err(format!("native lowering of `{}` does not support methods yet", body.name));
-        }
     }
-    Ok(module)
+    // Body IR declares only the models its first consumer could run; a field-less model with methods is not among
+    // them. Its Rust struct needs nothing Body IR would supply, so the driver declares it from the source.
+    fieldless_models.retain(|name| !module.nominal_declarations.iter().any(|declared| &declared.name == name));
+    Ok((module, fieldless_models))
 }
 
-/// The rustc spelling of an Incan type this lowering supports.
-fn type_name(ty: &IncanType) -> Option<String> {
+/// The model a method belongs to: its receiver's type. `None` for a free function.
+fn receiver_owner(body: &bir::Body) -> Option<&str> {
+    body.locals.iter().find_map(|local| match (&local.origin, &local.ty) {
+        (bir::LocalOrigin::Receiver { .. }, IncanType::Named(owner)) => Some(owner.as_str()),
+        _ => None,
+    })
+}
+
+/// Whether a method's receiver is `mut self`.
+fn receiver_is_mutable(body: &bir::Body) -> bool {
+    body.locals.iter().any(|local| matches!(local.origin, bir::LocalOrigin::Receiver { mutable: true }))
+}
+
+/// A short, stable label for an Incan type in a refusal, so refusals group by kind of type.
+fn type_label(ty: &IncanType) -> String {
+    match ty {
+        IncanType::Generic { base, .. } => format!("{base}[..]"),
+        IncanType::Named(name) if is_unit_model(name) => name.clone(),
+        IncanType::Named(_) => "a class, enum, newtype or imported type".to_string(),
+        IncanType::Primitive(primitive) => format!("{primitive:?}"),
+        other => format!("{other:?}").split(['(', ' ', '{']).next().unwrap_or("?").to_string(),
+    }
+}
+
+/// The rustc spelling of an Incan type this lowering supports, as the declarations the driver injects name it.
+fn type_spec(ty: &IncanType) -> Option<common::TySpec> {
+    // `List[T]` is `Vec<T>` (RFC 121).
+    if let IncanType::Generic { base, args } = ty
+        && base == "List"
+        && let [element] = args.as_slice()
+    {
+        return Some(common::TySpec("Vec".to_string(), vec![type_spec(element)?]));
+    }
     let name = match ty {
         IncanType::Primitive(IncanPrimitiveType::Int) => "i64",
         IncanType::Primitive(IncanPrimitiveType::Bool) => "bool",
@@ -105,7 +164,7 @@ fn type_name(ty: &IncanType) -> Option<String> {
         IncanType::Named(name) if is_unit_model(name) => name.as_str(),
         _ => return None,
     };
-    Some(name.to_string())
+    Some(t(name))
 }
 
 fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
@@ -116,8 +175,23 @@ fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
         IncanType::Primitive(IncanPrimitiveType::Unit) => Some(tcx.types.unit),
         IncanType::Primitive(IncanPrimitiveType::Str) => Some(string_ty(tcx)),
         IncanType::Named(name) if is_unit_model(name) => Some(tcx.type_of(local_item(tcx, name)).instantiate_identity().skip_normalization()),
+        IncanType::Generic { base, args } if base == "List" => match args.as_slice() {
+            [element] => Some(vec_ty(tcx, mir_ty(tcx, element)?)),
+            _ => None,
+        },
         _ => None,
     }
+}
+
+/// The `Vec` item.
+fn vec_def(tcx: TyCtxt<'_>) -> rustc_hir::def_id::DefId {
+    tcx.get_diagnostic_item(rustc_span::Symbol::intern("Vec")).unwrap_or_else(|| tcx.dcx().fatal("this sysroot does not name `Vec`"))
+}
+
+/// `Vec<element>` with its default allocator: the type `Vec::<element>::new()` returns.
+fn vec_ty<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>) -> Ty<'tcx> {
+    let new = common::inherent_method(tcx, vec_def(tcx), "new");
+    tcx.fn_sig(new).instantiate(tcx, &[element.into()]).skip_normalization().skip_binder().output()
 }
 
 /// Incan's `str` is Rust's `String`, the representation RFC 121 gives it.
@@ -141,6 +215,8 @@ struct Lowering<'a, 'tcx> {
     /// `(continue target, break target)` for each enclosing `loop`, innermost last.
     loops: Vec<(BasicBlock, BasicBlock)>,
     exit: BasicBlock,
+    /// Body IR locals that hold a borrow of a list a `for` loop polls; natively each is a `core::slice::Iter`.
+    list_iters: std::collections::HashSet<u32>,
 }
 
 impl<'a, 'tcx> Lowering<'a, 'tcx> {
@@ -164,6 +240,7 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             self.places.insert(param.0, self.cfg.arg(index as u32));
         }
         self.plan_ranges();
+        self.plan_list_iterators();
         for local in &self.body.locals {
             if self.places.contains_key(&local.id.0) {
                 continue;
@@ -200,6 +277,66 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         self.places.extend(shared);
     }
 
+    /// A `for` loop over a list polls a borrow of the list. Natively that borrow is the `core::slice::Iter<T>` that
+    /// `IntoIterator::into_iter(&list)` returns, the iterator Rust's own `for item in &list` uses. Only lists of `int`,
+    /// `float` and `bool` are iterated for now: their items are copied out of the `&T` each poll yields.
+    fn plan_list_iterators(&mut self) {
+        let mut polled = std::collections::HashSet::new();
+        visit_statements(&self.body.block, &mut |stmt| {
+            if let bir::StatementKind::IterNext { iterator: bir::Operand::Place(source), .. } = &stmt.kind {
+                polled.extend(local_of(&source.place));
+            }
+        });
+        let mut iterators = Vec::new();
+        visit_statements(&self.body.block, &mut |stmt| {
+            if let bir::StatementKind::Assign { place, rvalue: bir::Rvalue::Use(bir::Operand::Place(source)) } = &stmt.kind
+                && source.fact == bir::OwnershipFact::Borrow
+                && let (Some(iterator), Some(list)) = (local_of(place), local_of(&source.place))
+                && polled.contains(&iterator)
+            {
+                iterators.push((iterator, list));
+            }
+        });
+        let tcx = self.tcx;
+        for (iterator, list) in iterators {
+            // Body IR types a `range(..)` value as `List[int]` too; ranges and their borrows are already planned.
+            let is_range = |place: Option<&Place<'tcx>>| place.is_some_and(|p| matches!(p.ty(&self.cfg.locals, tcx).ty.kind(), ty::Adt(adt, _) if Some(adt.did()) == tcx.lang_items().range_struct()));
+            if is_range(self.places.get(&iterator)) || is_range(self.places.get(&list)) {
+                continue;
+            }
+            let element = self.body.locals.iter().find(|l| l.id.0 == list).and_then(|l| match &l.ty {
+                IncanType::Generic { base, args } if base == "List" => args.first(),
+                _ => None,
+            });
+            let Some(element) = element else { continue };
+            if !matches!(element, IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)) {
+                self.refuse("iterating a list of non-scalar items");
+            }
+            let Some(element) = mir_ty(tcx, element) else { continue };
+            let Some(slice_iter) = tcx.get_diagnostic_item(rustc_span::Symbol::intern("SliceIter")) else { self.refuse("list iteration without `core::slice::Iter`") };
+            let iter_ty = Ty::new_adt(tcx, tcx.adt_def(slice_iter), tcx.mk_args(&[tcx.lifetimes.re_erased.into(), element.into()]));
+            let place = self.cfg.temp(iter_ty);
+            self.places.insert(iterator, place);
+            self.list_iters.insert(iterator);
+        }
+    }
+
+    /// `iterator = IntoIterator::into_iter(&list)`.
+    fn lower_list_iterator(&mut self, list: &bir::Place, dest: Place<'tcx>, span: Span) {
+        let tcx = self.tcx;
+        let mut list = self.place(list);
+        while let ty::Ref(..) = list.ty(&self.cfg.locals, tcx).ty.kind() {
+            list = tcx.mk_place_deref(list);
+        }
+        let list_ty = list.ty(&self.cfg.locals, tcx).ty;
+        let erased = tcx.lifetimes.re_erased;
+        let list_ref_ty = Ty::new_imm_ref(tcx, erased, list_ty);
+        let list_ref = self.cfg.temp(list_ref_ty);
+        self.cfg.assign(self.current, list_ref, Rvalue::Ref(erased, BorrowKind::Shared, list), span);
+        let Some(into_iter) = tcx.lang_items().into_iter_fn() else { self.refuse("iteration without `IntoIterator::into_iter`") };
+        self.call(into_iter, &[list_ref_ty.into()], vec![Operand::Move(list_ref)], dest, span);
+    }
+
     fn alias_target(&self, local: u32) -> Option<Place<'tcx>> {
         if let Some(place) = self.places.get(&local) {
             return Some(*place);
@@ -220,20 +357,66 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         Ty::new_adt(self.tcx, self.tcx.adt_def(range), self.tcx.mk_args(&[self.tcx.types.i64.into()]))
     }
 
-    fn place(&self, place: &bir::Place) -> Place<'tcx> {
+    /// A place to read.
+    fn place(&mut self, place: &bir::Place) -> Place<'tcx> {
+        self.place_for(place, false)
+    }
+
+    /// A place to write: an index projection then goes through `list_get_mut`.
+    fn place_to_write(&mut self, place: &bir::Place) -> Place<'tcx> {
+        self.place_for(place, true)
+    }
+
+    fn place_for(&mut self, place: &bir::Place, write: bool) -> Place<'tcx> {
         let bir::PlaceRoot::Local(root) = &place.root else { self.refuse("global places") };
         let mut current = self.places.get(&root.0).copied().unwrap_or_else(|| self.refuse("an unplanned local"));
         for elem in &place.projection {
             match elem {
                 bir::PlaceElem::Field { name, .. } => current = self.field_place(current, name),
-                _ => self.refuse("index or slice projections"),
+                bir::PlaceElem::Index(index) => current = self.list_element(current, index, write),
+                bir::PlaceElem::Slice { .. } => self.refuse("slices"),
             }
         }
         current
     }
 
+    /// `list[index]`: `*incan_std_core::collections::list_get(list.as_slice(), index)`, or `list_get_mut` on
+    /// `as_mut_slice()` to write, as the emitted route indexes, with its Python-style negative indices and bounds panic.
+    fn list_element(&mut self, list: Place<'tcx>, index: &bir::Operand, write: bool) -> Place<'tcx> {
+        let tcx = self.tcx;
+        let span = self.cfg.span;
+        let mut list = list;
+        while let ty::Ref(..) = list.ty(&self.cfg.locals, tcx).ty.kind() {
+            list = tcx.mk_place_deref(list);
+        }
+        let list_ty = list.ty(&self.cfg.locals, tcx).ty;
+        let ty::Adt(adt, vec_args) = list_ty.kind() else { self.refuse("indexing a non-list value") };
+        if adt.did() != vec_def(tcx) {
+            self.refuse(&format!("indexing a `{list_ty}`"));
+        }
+        let element = vec_args.type_at(0);
+        let index = self.operand(index);
+        let erased = tcx.lifetimes.re_erased;
+        let (mutability, borrow_kind) = if write { (Mutability::Mut, BorrowKind::Mut { kind: MutBorrowKind::Default }) } else { (Mutability::Not, BorrowKind::Shared) };
+        let (as_slice, get) = if write { ("as_mut_slice", "list_get_mut") } else { ("as_slice", "list_get") };
+        let list_ref = self.cfg.temp(Ty::new_ref(tcx, erased, list_ty, mutability));
+        self.cfg.assign(self.current, list_ref, Rvalue::Ref(erased, borrow_kind, list), span);
+        let slice = self.cfg.temp(Ty::new_ref(tcx, erased, Ty::new_slice(tcx, element), mutability));
+        let as_slice = common::inherent_method(tcx, vec_def(tcx), as_slice);
+        self.call(as_slice, vec_args.as_slice(), vec![Operand::Move(list_ref)], slice, span);
+        let element_ref = self.cfg.temp(Ty::new_ref(tcx, erased, element, mutability));
+        let get = extern_item(tcx, &["incan_std_core", "collections", get]);
+        self.call(get, &[element.into()], vec![Operand::Move(slice), index], element_ref, span);
+        tcx.mk_place_deref(element_ref)
+    }
+
     /// `base.name`, by the field's position in the model's Rust struct, which keeps the declared field order.
     fn field_place(&self, base: Place<'tcx>, name: &str) -> Place<'tcx> {
+        // A method's receiver is a reference to the model; its fields are read through it.
+        let mut base = base;
+        while let ty::Ref(..) = base.ty(&self.cfg.locals, self.tcx).ty.kind() {
+            base = self.tcx.mk_place_deref(base);
+        }
         let ty::Adt(adt, args) = base.ty(&self.cfg.locals, self.tcx).ty.kind() else { self.refuse("a field of a non-model value") };
         let Some((index, field)) = adt.non_enum_variant().fields.iter_enumerated().find(|(_, f)| f.name.as_str() == name) else {
             self.refuse(&format!("the field `{name}`"));
@@ -241,6 +424,54 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         // Incan field types name no associated types, so there is nothing to normalize.
         let field_ty = field.ty(self.tcx, args).skip_normalization();
         self.tcx.mk_place_field(base, index, field_ty)
+    }
+
+    /// A shared or mutable borrow of `place`, in a fresh temporary. A place that already holds a reference, such as a
+    /// method's receiver, is reborrowed rather than borrowed twice.
+    fn borrow(&mut self, place: &bir::Place, mutability: Mutability, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
+        let mut target = self.place_for(place, mutability == Mutability::Mut);
+        if let ty::Ref(..) = target.ty(&self.cfg.locals, tcx).ty.kind() {
+            target = tcx.mk_place_deref(target);
+        }
+        let target_ty = target.ty(&self.cfg.locals, tcx).ty;
+        let erased = tcx.lifetimes.re_erased;
+        let (reference_ty, kind) = match mutability {
+            Mutability::Not => (Ty::new_imm_ref(tcx, erased, target_ty), BorrowKind::Shared),
+            Mutability::Mut => (Ty::new_mut_ref(tcx, erased, target_ty), BorrowKind::Mut { kind: MutBorrowKind::Default }),
+        };
+        let reference = self.cfg.temp(reference_ty);
+        self.cfg.assign(self.current, reference, Rvalue::Ref(erased, kind, target), span);
+        reference
+    }
+
+    /// `Clone::clone(&place)`: Body IR's copy of a non-`Copy` value, such as a list passed where it is read again later.
+    fn clone_of(&mut self, place: &bir::Place, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
+        let source = self.place(place);
+        let source_ty = source.ty(&self.cfg.locals, tcx).ty;
+        let Some(clone_trait) = tcx.lang_items().clone_trait() else { self.refuse("copies without the `Clone` lang item") };
+        let Some(clone) = tcx.associated_item_def_ids(clone_trait).iter().copied().find(|d| tcx.item_name(*d).as_str() == "clone") else {
+            self.refuse("copies without `Clone::clone`");
+        };
+        let erased = tcx.lifetimes.re_erased;
+        let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, source_ty));
+        self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, source), span);
+        let copy = self.cfg.temp(source_ty);
+        self.call(clone, &[source_ty.into()], vec![Operand::Move(borrowed)], copy, span);
+        copy
+    }
+
+    /// An operand where a value of `expected` type is wanted. Body IR keeps an `int` literal the checker accepted as a
+    /// `float` (`f = 1`, `half(5)`) as an integer constant, so it is lowered as the float the checker meant.
+    fn operand_expecting(&mut self, operand: &bir::Operand, expected: Ty<'tcx>) -> Operand<'tcx> {
+        if let bir::Operand::Constant(bir::Constant::Int(value)) = operand
+            && expected.is_floating_point()
+        {
+            let double = <rustc_apfloat::ieee::Double as rustc_apfloat::Float>::from_bits(u128::from((*value as f64).to_bits()));
+            return Operand::const_from_scalar(self.tcx, self.tcx.types.f64, Scalar::from_f64(double), self.cfg.span);
+        }
+        self.operand(operand)
     }
 
     fn operand(&mut self, operand: &bir::Operand) -> Operand<'tcx> {
@@ -263,6 +494,9 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             bir::Operand::Place(source) => match source.fact {
                 bir::OwnershipFact::Copy => Operand::Copy(self.place(&source.place)),
                 bir::OwnershipFact::Move => Operand::Move(self.place(&source.place)),
+                bir::OwnershipFact::Borrow => Operand::Move(self.borrow(&source.place, Mutability::Not, span)),
+                bir::OwnershipFact::MutBorrow => Operand::Move(self.borrow(&source.place, Mutability::Mut, span)),
+                bir::OwnershipFact::Clone => Operand::Move(self.clone_of(&source.place, span)),
                 other => self.refuse(&format!("a `{other:?}` operand")),
             },
             bir::Operand::Constant(other) => self.refuse(&format!("the constant `{other:?}`")),
@@ -300,16 +534,20 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     }
 
     fn lower_assign(&mut self, place: &bir::Place, rvalue: &bir::Rvalue, span: Span) {
-        let dest = self.place(place);
+        let dest = self.place_to_write(place);
         match rvalue {
             bir::Rvalue::Use(bir::Operand::Place(source)) if source.fact == bir::OwnershipFact::Borrow => {
+                if local_of(place).is_some_and(|iterator| self.list_iters.contains(&iterator)) {
+                    self.lower_list_iterator(&source.place, dest, span);
+                    return;
+                }
                 // A borrow of a range aliases it (see `plan_ranges`); nothing to emit.
                 if self.place(&source.place) != dest {
                     self.refuse("borrows other than of a range");
                 }
             }
             bir::Rvalue::Use(operand) => {
-                let value = self.operand(operand);
+                let value = self.operand_expecting(operand, dest.ty(&self.cfg.locals, self.tcx).ty);
                 self.cfg.assign(self.current, dest, Rvalue::Use(value, WithRetag::Yes), span);
             }
             bir::Rvalue::UnaryOp(bir::UnOp::Not, operand) => {
@@ -319,12 +557,32 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             bir::Rvalue::BinaryOp(op, lhs, rhs) => self.lower_binary(*op, lhs, rhs, dest, span),
             bir::Rvalue::Format(parts) => self.lower_format(parts, dest, span),
             bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), args) => self.lower_construction(target, args, dest, span),
+            bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => self.lower_list(elements, dest, span),
             other => self.refuse(&format!("the rvalue `{}`", rvalue_name(other))),
         }
     }
 
     fn lower_binary(&mut self, op: bir::BinOp, lhs: &bir::Operand, rhs: &bir::Operand, dest: Place<'tcx>, span: Span) {
-        let (a, b) = (self.operand(lhs), self.operand(rhs));
+        // An `int` literal beside a `float` operand is the float the checker accepted it as.
+        let (a, b) = if matches!(lhs, bir::Operand::Constant(bir::Constant::Int(_))) {
+            let b = self.operand(rhs);
+            let a = self.operand_expecting(lhs, b.ty(&self.cfg.locals, self.tcx));
+            (a, b)
+        } else {
+            let a = self.operand(lhs);
+            let b = self.operand_expecting(rhs, a.ty(&self.cfg.locals, self.tcx));
+            (a, b)
+        };
+        // MIR's comparison operators take scalars only. `==` and `!=` on anything else, such as two lists, are
+        // `PartialEq::eq(&a, &b)`, as Rust lowers them.
+        let a_ty = a.ty(&self.cfg.locals, self.tcx);
+        if !a_ty.is_scalar() {
+            if !matches!(op, bir::BinOp::Eq | bir::BinOp::Ne) {
+                self.refuse(&format!("the operator `{op:?}` on a `{a_ty}`"));
+            }
+            self.lower_partial_eq(a, b, op == bir::BinOp::Ne, dest, span);
+            return;
+        }
         let compare = |op| Rvalue::BinaryOp(op, Box::new((a.clone(), b.clone())));
         // `float` arithmetic is IEEE arithmetic with no overflow check, as in Rust; `int` arithmetic is checked.
         if a.ty(&self.cfg.locals, self.tcx).is_floating_point() {
@@ -353,6 +611,37 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             bir::BinOp::Gt => self.cfg.assign(self.current, dest, compare(BinOp::Gt), span),
             bir::BinOp::Ge => self.cfg.assign(self.current, dest, compare(BinOp::Ge), span),
             other => self.refuse(&format!("the operator `{other:?}`")),
+        }
+    }
+
+    /// `PartialEq::eq(&a, &b)` into `dest`, negated for `!=`. Both operands are held in temporaries, then dropped.
+    fn lower_partial_eq(&mut self, a: Operand<'tcx>, b: Operand<'tcx>, negate: bool, dest: Place<'tcx>, span: Span) {
+        let tcx = self.tcx;
+        let Some(eq_trait) = tcx.lang_items().eq_trait() else { self.refuse("`==` without the `PartialEq` lang item") };
+        let Some(eq) = tcx.associated_item_def_ids(eq_trait).iter().copied().find(|d| tcx.item_name(*d).as_str() == "eq") else {
+            self.refuse("`==` without `PartialEq::eq`");
+        };
+        let erased = tcx.lifetimes.re_erased;
+        let mut held = Vec::new();
+        let mut references = Vec::new();
+        for value in [a, b] {
+            let value_ty = value.ty(&self.cfg.locals, tcx);
+            let place = self.cfg.temp(value_ty);
+            self.cfg.assign(self.current, place, Rvalue::Use(value, WithRetag::Yes), span);
+            let reference = self.cfg.temp(Ty::new_imm_ref(tcx, erased, value_ty));
+            self.cfg.assign(self.current, reference, Rvalue::Ref(erased, BorrowKind::Shared, place), span);
+            held.push((place, value_ty));
+            references.push(Operand::Move(reference));
+        }
+        let generic_args = [held[0].1.into(), held[1].1.into()];
+        let equal = self.cfg.temp(tcx.types.bool);
+        self.call(eq, &generic_args, references, equal, span);
+        let result = if negate { Rvalue::UnaryOp(UnOp::Not, Operand::Move(equal)) } else { Rvalue::Use(Operand::Move(equal), WithRetag::Yes) };
+        self.cfg.assign(self.current, dest, result, span);
+        for (place, _) in held {
+            let next = self.cfg.block();
+            self.cfg.terminate(self.current, TerminatorKind::Drop { place, target: next, unwind: UnwindAction::Continue, replace: false, drop: None }, span);
+            self.current = next;
         }
     }
 
@@ -401,12 +690,49 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     }
 
     fn lower_call(&mut self, destination: Option<&bir::Place>, callee: &bir::Callee, args: &[bir::ArgumentElement], span: Span) {
+        if let bir::Callee::Method(target) = callee
+            && let Some(bir::ArgumentElement::One(bir::Operand::Place(receiver))) = args.first()
+            && self.is_list_place(&receiver.place)
+        {
+            return self.lower_list_method(&target.name, &receiver.place, &args[1..], destination, span);
+        }
+        // Arguments to one of this unit's free functions take that function's parameter types, so an `int` literal
+        // passed to a `float` parameter is lowered as a float.
+        let parameter_tys: Vec<Ty<'tcx>> = match callee {
+            bir::Callee::Function(bir::CallableTarget::Named(target))
+                if target.builtin.is_none()
+                    && MODULE.get().is_some_and(|module| module.bodies.iter().any(|body| body.name == target.name && receiver_owner(body).is_none())) =>
+            {
+                let sig = self.tcx.fn_sig(local_item(self.tcx, &target.name)).instantiate_identity().skip_normalization().skip_binder();
+                sig.inputs().to_vec()
+            }
+            _ => Vec::new(),
+        };
         let mut operands: Vec<Operand<'tcx>> = Vec::with_capacity(args.len());
-        for arg in args {
+        for (index, arg) in args.iter().enumerate() {
             let bir::ArgumentElement::One(operand) = arg else { self.refuse("named or spread arguments") };
-            operands.push(self.operand(operand));
+            let lowered = match parameter_tys.get(index) {
+                Some(expected) => self.operand_expecting(operand, *expected),
+                None => self.operand(operand),
+            };
+            operands.push(lowered);
         }
         let Some(dest) = destination.map(|d| self.place(d)) else { self.refuse("calls without a destination") };
+        if let bir::Callee::Method(target) = callee {
+            // `receiver.m(args)` is `Model::m(receiver, args)`; the model is the receiver's type behind its borrow.
+            let Some(receiver) = operands.first() else { self.refuse("a method call without a receiver") };
+            let mut owner_ty = receiver.ty(&self.cfg.locals, self.tcx);
+            while let ty::Ref(_, inner, _) = owner_ty.kind() {
+                owner_ty = *inner;
+            }
+            let ty::Adt(adt, _) = owner_ty.kind() else { self.refuse(&format!("the method `.{}()` on a non-model value", target.name)) };
+            if !adt.did().is_local() {
+                self.refuse(&format!("the method `.{}()` on a library type", target.name));
+            }
+            let callee = common::inherent_method(self.tcx, adt.did(), &target.name);
+            self.call(callee, &[], operands, dest, span);
+            return;
+        }
         let bir::Callee::Function(bir::CallableTarget::Named(target)) = callee else { self.refuse("calls other than to named functions") };
         if target.builtin == Some(BuiltinFnId::Range) {
             // `range(a, b)` is `core::ops::Range { start: a, end: b }`.
@@ -441,6 +767,28 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             self.call(extern_item(self.tcx, &["incan_native_rt", "println"]), &[], vec![text], dest, span);
             return;
         }
+        if target.builtin == Some(BuiltinFnId::Len) {
+            // `len(list)` is `list.len() as i64`. Body IR hands `len` its own copy of the list, which is dropped after.
+            let tcx = self.tcx;
+            let Ok([value]) = <[Operand<'tcx>; 1]>::try_from(operands) else { self.refuse("`len` with other than one argument") };
+            let value_ty = value.ty(&self.cfg.locals, tcx);
+            let ty::Adt(adt, vec_args) = value_ty.kind() else { self.refuse(&format!("`len` of a `{value_ty}`")) };
+            if adt.did() != vec_def(tcx) {
+                self.refuse(&format!("`len` of a `{value_ty}`"));
+            }
+            let held = self.cfg.temp(value_ty);
+            self.cfg.assign(self.current, held, Rvalue::Use(value, WithRetag::Yes), span);
+            let erased = tcx.lifetimes.re_erased;
+            let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, value_ty));
+            self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, held), span);
+            let length = self.cfg.temp(tcx.types.usize);
+            self.call(common::inherent_method(tcx, vec_def(tcx), "len"), vec_args.as_slice(), vec![Operand::Move(borrowed)], length, span);
+            self.cfg.assign(self.current, dest, Rvalue::Cast(CastKind::IntToInt, Operand::Move(length), tcx.types.i64), span);
+            let next = self.cfg.block();
+            self.cfg.terminate(self.current, TerminatorKind::Drop { place: held, target: next, unwind: UnwindAction::Continue, replace: false, drop: None }, span);
+            self.current = next;
+            return;
+        }
         if target.builtin.is_some() {
             self.refuse(&format!("the builtin `{}`", target.name));
         }
@@ -456,14 +804,66 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     /// `Model(field=value, ..)`: Body IR binds the arguments to the model's declared field order, which is the order of
     /// the Rust struct the driver declared, so they become its fields positionally.
     fn lower_construction(&mut self, target: &bir::ConstructorTarget, args: &[bir::ArgumentElement], dest: Place<'tcx>, span: Span) {
-        let mut fields = Vec::with_capacity(args.len());
-        for arg in args {
-            let bir::ArgumentElement::One(operand) = arg else { self.refuse("named or spread constructor arguments") };
-            fields.push(self.operand(operand));
-        }
         let model = local_item(self.tcx, &target.name);
+        let field_tys: Vec<Ty<'tcx>> = self.tcx.adt_def(model).non_enum_variant().fields.iter().map(|f| self.tcx.type_of(f.did).instantiate_identity().skip_normalization()).collect();
+        let mut fields = Vec::with_capacity(args.len());
+        for (arg, field_ty) in args.iter().zip(field_tys) {
+            let bir::ArgumentElement::One(operand) = arg else { self.refuse("named or spread constructor arguments") };
+            fields.push(self.operand_expecting(operand, field_ty));
+        }
         let kind = AggregateKind::Adt(model, VariantIdx::from_u32(0), self.tcx.mk_args(&[]), None, None);
         self.cfg.assign(self.current, dest, Rvalue::Aggregate(Box::new(kind), IndexVec::from_raw(fields)), span);
+    }
+
+    /// Whether `place` is a whole `List` local, as Body IR types it.
+    fn is_list_place(&self, place: &bir::Place) -> bool {
+        let Some(local) = local_of(place) else { return false };
+        self.body.locals.iter().any(|l| l.id.0 == local && matches!(&l.ty, IncanType::Generic { base, .. } if base == "List"))
+    }
+
+    /// A method on a list. Body IR passes the receiver of a mutating method such as `append` as a shared borrow, so
+    /// the receiver is borrowed mutably here, as the emitted route's `list.push(x)` does.
+    fn lower_list_method(&mut self, name: &str, receiver: &bir::Place, args: &[bir::ArgumentElement], destination: Option<&bir::Place>, span: Span) {
+        let tcx = self.tcx;
+        let rust_name = match name {
+            "append" => "push",
+            other => self.refuse(&format!("the list method `.{other}()`")),
+        };
+        let mut list = self.place_to_write(receiver);
+        while let ty::Ref(..) = list.ty(&self.cfg.locals, tcx).ty.kind() {
+            list = tcx.mk_place_deref(list);
+        }
+        let list_ty = list.ty(&self.cfg.locals, tcx).ty;
+        let ty::Adt(_, vec_args) = list_ty.kind() else { self.refuse("a list method on a non-list value") };
+        let erased = tcx.lifetimes.re_erased;
+        let list_ref = self.cfg.temp(Ty::new_mut_ref(tcx, erased, list_ty));
+        self.cfg.assign(self.current, list_ref, Rvalue::Ref(erased, BorrowKind::Mut { kind: MutBorrowKind::Default }, list), span);
+        let mut operands = vec![Operand::Move(list_ref)];
+        for arg in args {
+            let bir::ArgumentElement::One(value) = arg else { self.refuse("named or spread arguments") };
+            operands.push(self.operand(value));
+        }
+        let Some(dest) = destination.map(|d| self.place_to_write(d)) else { self.refuse("calls without a destination") };
+        self.call(common::inherent_method(tcx, vec_def(tcx), rust_name), vec_args.as_slice(), operands, dest, span);
+    }
+
+    /// `[a, b, ..]`: `Vec::new()`, then `push` for each element in order, which is what `vec![a, b, ..]` does.
+    fn lower_list(&mut self, elements: &[bir::ArgumentElement], dest: Place<'tcx>, span: Span) {
+        let tcx = self.tcx;
+        let list_ty = dest.ty(&self.cfg.locals, tcx).ty;
+        let ty::Adt(_, vec_args) = list_ty.kind() else { self.refuse("a list literal of a non-list type") };
+        let element = vec_args.type_at(0);
+        self.call(common::inherent_method(tcx, vec_def(tcx), "new"), &[element.into()], vec![], dest, span);
+        let push = common::inherent_method(tcx, vec_def(tcx), "push");
+        for element_arg in elements {
+            let bir::ArgumentElement::One(value) = element_arg else { self.refuse("a spread in a list literal") };
+            let value = self.operand_expecting(value, element);
+            let erased = tcx.lifetimes.re_erased;
+            let list = self.cfg.temp(Ty::new_mut_ref(tcx, erased, list_ty));
+            self.cfg.assign(self.current, list, Rvalue::Ref(erased, BorrowKind::Mut { kind: MutBorrowKind::Default }, dest), span);
+            let unit = self.cfg.temp(tcx.types.unit);
+            self.call(push, vec_args.as_slice(), vec![Operand::Move(list), value], unit, span);
+        }
     }
 
     fn lower_format(&mut self, format: &[bir::FormatPart], dest: Place<'tcx>, span: Span) {
@@ -496,36 +896,49 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         self.current = next;
     }
 
-    /// `ToString::to_string(&value)` into a fresh `String`.
+    /// The text of a displayed f-string or `println` value, as a fresh `String`. A borrowed place, such as
+    /// `borrow(user.name)`, is displayed where it is, without a copy.
     fn display_string(&mut self, value: &bir::Operand, span: Span) -> Place<'tcx> {
-        // A borrowed place, such as `borrow(user.name)`, is displayed where it is, without a copy.
         if let bir::Operand::Place(source) = value
             && source.fact == bir::OwnershipFact::Borrow
         {
-            let tcx = self.tcx;
             let place = self.place(&source.place);
-            let place_ty = place.ty(&self.cfg.locals, tcx).ty;
-            self.require_displayable(place_ty);
-            let erased = tcx.lifetimes.re_erased;
-            let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, place_ty));
-            self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, place), span);
-            return self.to_string_of(Operand::Move(borrowed), place_ty, span);
+            return self.display_place(place, span);
         }
         let value = self.operand(value);
         self.string_of_value(value, span)
     }
 
-    /// Display an owned value: hold it in a temporary and call `ToString::to_string` on a borrow of it.
+    /// Display an already-lowered value: hold it in a temporary, then display that place.
     fn string_of_value(&mut self, value: Operand<'tcx>, span: Span) -> Place<'tcx> {
-        let tcx = self.tcx;
-        let value_ty = value.ty(&self.cfg.locals, tcx);
-        self.require_displayable(value_ty);
-        let held = self.cfg.temp(value_ty);
+        let held = self.cfg.temp(value.ty(&self.cfg.locals, self.tcx));
         self.cfg.assign(self.current, held, Rvalue::Use(value, WithRetag::Yes), span);
+        self.display_place(held, span)
+    }
+
+    /// Display the value in `place`, behind any references. `float` is spelled the way the stdlib spells it for the
+    /// emitted route, `incan_std_core::strings::float_to_string`, so `100.0` stays visibly a float; `int`, `bool` and
+    /// `str` display through `ToString`, which is `Display`.
+    fn display_place(&mut self, place: Place<'tcx>, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
+        let mut place = place;
+        while let ty::Ref(..) = place.ty(&self.cfg.locals, tcx).ty.kind() {
+            place = tcx.mk_place_deref(place);
+        }
+        let place_ty = place.ty(&self.cfg.locals, tcx).ty;
+        if place_ty.is_floating_point() {
+            let text = self.cfg.temp(string_ty(tcx));
+            let float_to_string = extern_item(tcx, &["incan_std_core", "strings", "float_to_string"]);
+            self.call(float_to_string, &[place_ty.into()], vec![Operand::Copy(place)], text, span);
+            return text;
+        }
+        if !(place_ty.is_integral() || place_ty.is_bool() || place_ty == string_ty(tcx) || place_ty.is_str()) {
+            self.refuse(&format!("displaying a value of type `{place_ty}`"));
+        }
         let erased = tcx.lifetimes.re_erased;
-        let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, value_ty));
-        self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, held), span);
-        self.to_string_of(Operand::Move(borrowed), value_ty, span)
+        let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, place_ty));
+        self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, place), span);
+        self.to_string_of(Operand::Move(borrowed), place_ty, span)
     }
 
     /// `ToString::to_string(reference)` for a reference to a `self_ty`, into a fresh `String`.
@@ -535,14 +948,6 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         let text = self.cfg.temp(string_ty(tcx));
         self.call(to_string, &[self_ty.into()], vec![reference], text, span);
         text
-    }
-
-    /// `int` and `str` display through `Display`. `float` needs the stdlib's Python-style spelling, so it is refused
-    /// until that helper is wired in.
-    fn require_displayable(&self, ty: Ty<'tcx>) {
-        if !(ty.is_integral() || ty == string_ty(self.tcx)) {
-            self.refuse(&format!("displaying a value of type `{ty}`"));
-        }
     }
 
     /// `&[elements]` as a `&[T]` slice: an array temporary, borrowed, then unsized as Rust coerces `&[T; N]`.
@@ -599,7 +1004,8 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
 
     fn lower_return(&mut self, value: Option<&bir::Operand>, span: Span) {
         let Some(value) = value else { self.refuse("`return` without a value") };
-        let value = self.operand(value);
+        let return_ty = Place::return_place().ty(&self.cfg.locals, self.tcx).ty;
+        let value = self.operand_expecting(value, return_ty);
         self.cfg.assign(self.current, Place::return_place(), Rvalue::Use(value, WithRetag::Yes), span);
         self.cfg.terminate(self.current, TerminatorKind::Goto { target: self.exit }, span);
         self.current = self.cfg.block();
@@ -610,15 +1016,23 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     fn lower_iter_next(&mut self, destination: &bir::Place, iterator: &bir::Operand, span: Span) {
         let tcx = self.tcx;
         let bir::Operand::Place(source) = iterator else { self.refuse("polling a non-place iterator") };
-        let range = self.place(&source.place);
-        let range_ty = self.range_ty();
+        let iterator = self.place(&source.place);
+        let iterator_ty = iterator.ty(&self.cfg.locals, tcx).ty;
         let erased = tcx.lifetimes.re_erased;
+        // A range yields `i64`; a list's `slice::Iter<T>` yields `&T`.
+        let item_ty = match iterator_ty.kind() {
+            ty::Adt(adt, args) if Some(adt.did()) == tcx.lang_items().range_struct() => args.type_at(0),
+            ty::Adt(adt, args) if Some(adt.did()) == tcx.get_diagnostic_item(rustc_span::Symbol::intern("SliceIter")) => {
+                Ty::new_imm_ref(tcx, erased, args.type_at(1))
+            }
+            _ => self.refuse(&format!("polling a `{iterator_ty}`")),
+        };
         let (Some(next_fn), Some(option)) = (tcx.lang_items().next_fn(), tcx.lang_items().option_type()) else { self.refuse("iteration without the `Iterator` and `Option` lang items") };
-        let option_ty = Ty::new_adt(tcx, tcx.adt_def(option), tcx.mk_args(&[tcx.types.i64.into()]));
-        let borrowed = self.cfg.temp(Ty::new_mut_ref(tcx, erased, range_ty));
-        self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Mut { kind: MutBorrowKind::Default }, range), span);
+        let option_ty = Ty::new_adt(tcx, tcx.adt_def(option), tcx.mk_args(&[item_ty.into()]));
+        let borrowed = self.cfg.temp(Ty::new_mut_ref(tcx, erased, iterator_ty));
+        self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Mut { kind: MutBorrowKind::Default }, iterator), span);
         let polled = self.cfg.temp(option_ty);
-        self.call(next_fn, &[range_ty.into()], vec![Operand::Move(borrowed)], polled, span);
+        self.call(next_fn, &[iterator_ty.into()], vec![Operand::Move(borrowed)], polled, span);
 
         let discr = self.cfg.temp(option_ty.discriminant_ty(tcx));
         self.cfg.assign(self.current, discr, Rvalue::Discriminant(polled), span);
@@ -627,8 +1041,11 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         self.cfg.terminate(self.current, TerminatorKind::SwitchInt { discr: Operand::Move(discr), targets: SwitchTargets::static_if(0, exit, produced) }, span);
         self.current = produced;
         let some = tcx.mk_place_downcast(polled, tcx.adt_def(option), VariantIdx::from_u32(1));
-        let item = tcx.mk_place_field(some, FieldIdx::from_u32(0), tcx.types.i64);
-        let dest = self.place(destination);
+        let mut item = tcx.mk_place_field(some, FieldIdx::from_u32(0), item_ty);
+        if item_ty.is_ref() {
+            item = tcx.mk_place_deref(item);
+        }
+        let dest = self.place_to_write(destination);
         self.cfg.assign(self.current, dest, Rvalue::Use(Operand::Copy(item), WithRetag::Yes), span);
     }
 }
@@ -686,7 +1103,7 @@ fn lower_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, body: &bir::Body) -> Bod
     let mut cfg = Cfg::new(tcx, def);
     let exit = cfg.block();
     cfg.terminate(exit, TerminatorKind::Return, cfg.span);
-    let mut lowering = Lowering { tcx, body, cfg, places: HashMap::new(), current: BasicBlock::from_u32(0), loops: Vec::new(), exit };
+    let mut lowering = Lowering { tcx, body, cfg, places: HashMap::new(), current: BasicBlock::from_u32(0), loops: Vec::new(), exit, list_iters: std::collections::HashSet::new() };
     lowering.plan_locals();
     lowering.lower_block(&body.block);
     // A `None`-returning function returns `()` when it falls off its end. For a function that returns a value, falling
@@ -702,10 +1119,25 @@ fn lower_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, body: &bir::Body) -> Bod
     lowering.cfg.finish()
 }
 
+/// The Body IR body rustc's item `def` stands for: a method by its `impl`'s self type and its name, a free function by
+/// its name and the absence of a receiver.
+fn body_for(tcx: TyCtxt<'_>, def: LocalDefId) -> Option<&'static bir::Body> {
+    let module = MODULE.get()?;
+    let name = tcx.opt_item_name(def.to_def_id())?.to_string();
+    let owner = match tcx.def_kind(def) {
+        rustc_hir::def::DefKind::AssocFn => {
+            let impl_ty = tcx.type_of(tcx.parent(def.to_def_id())).instantiate_identity().skip_normalization();
+            let ty::Adt(adt, _) = impl_ty.kind() else { return None };
+            Some(tcx.item_name(adt.did()).to_string())
+        }
+        rustc_hir::def::DefKind::Fn => None,
+        _ => return None,
+    };
+    module.bodies.iter().find(|body| body.name == name && receiver_owner(body).map(str::to_string) == owner)
+}
+
 fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>> {
-    let name = tcx.opt_item_name(def.to_def_id()).map(|n| n.to_string());
-    let body = MODULE.get().and_then(|module| module.bodies.iter().find(|b| Some(&b.name) == name.as_ref()));
-    match body {
+    match body_for(tcx, def) {
         Some(body) => tcx.alloc_steal_mir(lower_body(tcx, def, body)),
         None => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
     }
@@ -730,34 +1162,56 @@ impl rustc_driver::Callbacks for Callbacks {
         let file = compiler.sess.source_map().load_file(&self.source)
             .unwrap_or_else(|e| dcx.fatal(format!("cannot load Incan source {}: {e}", self.source.display())));
         let Some(text) = file.src.as_deref() else { dcx.fatal("the loaded Incan source has no text") };
-        let module = check_and_build(text).unwrap_or_else(|e| dcx.fatal(e));
+        let (module, fieldless_models) = check_and_build(text).unwrap_or_else(|e| dcx.fatal(e));
         let _ = SOURCE_START.set(file.start_pos);
         let span = krate.spans.inner_span;
         krate.items.push(extern_crate("incan_std_core", span));
         if module.bodies.iter().any(calls_println) {
             krate.items.push(extern_crate("incan_native_rt", span));
         }
-        let _ = MODELS.set(module.nominal_declarations.iter().map(|model_decl| model_decl.name.clone()).collect());
+        let _ = MODELS.set(module.nominal_declarations.iter().map(|model_decl| model_decl.name.clone()).chain(fieldless_models.iter().cloned()).collect());
+        for name in &fieldless_models {
+            krate.items.push(public(model(name, ast::Generics::default(), &[], span)));
+        }
         // Each model is a Rust struct with its fields in declared order, the order constructions bind to.
         for model_decl in &module.nominal_declarations {
             if model_decl.type_parameter_count > 0 {
                 dcx.fatal(format!("native lowering does not support the generic model `{}` yet", model_decl.name));
             }
             let fields: Option<Vec<(&str, common::TySpec)>> = model_decl.fields.iter().zip(&model_decl.field_types)
-                .map(|(field, ty)| type_name(ty).map(|ty| (field.as_str(), t(&ty))))
+                .map(|(field, ty)| type_spec(ty).map(|ty| (field.as_str(), ty)))
                 .collect();
             let Some(fields) = fields else { dcx.fatal(format!("native lowering does not support a field type of `{}` yet", model_decl.name)) };
             krate.items.push(public(model(&model_decl.name, ast::Generics::default(), &fields, span)));
         }
+        // Free functions become crate-root items; each model's methods become one inherent `impl` block.
+        let mut methods: std::collections::BTreeMap<&str, thin_vec::ThinVec<Box<ast::AssocItem>>> = std::collections::BTreeMap::new();
         for body in &module.bodies {
-            let ty_of = |local: &bir::LocalId| body.locals.iter().find(|l| l.id == *local).and_then(|l| type_name(&l.ty));
+            let receiver = body.locals.iter().find(|l| matches!(l.origin, bir::LocalOrigin::Receiver { .. })).map(|l| l.id);
+            let ty_of = |local: &bir::LocalId| body.locals.iter().find(|l| l.id == *local).and_then(|l| type_spec(&l.ty));
             let params: Option<Vec<(&str, common::TySpec)>> = body.param_locals.iter().zip(&body.params)
-                .map(|(local, param)| ty_of(local).map(|ty| (param.name.as_str(), t(&ty))))
+                .filter(|(local, _)| Some(**local) != receiver)
+                .map(|(local, param)| ty_of(local).map(|ty| (param.name.as_str(), ty)))
                 .collect();
-            let (Some(params), Some(ret)) = (params, type_name(&body.return_type)) else {
-                dcx.fatal(format!("native lowering does not support the signature of `{}` yet", body.name));
+            let (Some(params), Some(ret)) = (params, type_spec(&body.return_type)) else {
+                let unsupported = body.param_locals.iter()
+                    .filter(|local| Some(**local) != receiver)
+                    .filter_map(|local| body.locals.iter().find(|l| l.id == *local))
+                    .map(|l| &l.ty)
+                    .chain(std::iter::once(&body.return_type))
+                    .find(|ty| type_spec(ty).is_none());
+                dcx.fatal(format!("native lowering of `{}` does not support a signature type `{}` yet", body.name, unsupported.map(type_label).unwrap_or_default()));
             };
-            krate.items.push(public(function(&body.name, ast::Generics::default(), &params, t(&ret), span)));
+            match receiver_owner(body) {
+                Some(owner) if is_unit_model(owner) => {
+                    methods.entry(owner).or_default().push(common::method(&body.name, receiver_is_mutable(body), &params, ret, span));
+                }
+                Some(owner) => dcx.fatal(format!("native lowering of `{}` does not support methods of `{owner}`, which is not a model, yet", body.name)),
+                None => krate.items.push(public(function(&body.name, ast::Generics::default(), &params, ret, span))),
+            }
+        }
+        for (owner, items) in methods {
+            krate.items.push(common::impl_block(owner, items, span));
         }
         let _ = MODULE.set(module);
         rustc_driver::Compilation::Continue

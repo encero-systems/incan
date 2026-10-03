@@ -57,6 +57,7 @@ The step-3 driver compiles and links `step3_program.rs` to a native binary in ab
 - **Incan can read Body IR's enums.** `probes/rust_enum_match/` matches a Rust enum with Body IR's three variant shapes from Incan through a `rusttype`: struct variants with named field patterns, tuple variants and unit variants, binding typed payloads. An Incan-written lowering can therefore consume Body IR directly. Taking `incan_semantics_core` itself as a `[rust-dependencies]` path crate is refused because its `Cargo.toml` inherits workspace declarations, so the driver Loaf needs an explicit Oven-native closure for it.
 - **Builtins the emitter expands as macros need callable runtime functions.** The emitted route turns `println` into Rust's `println!`, which no MIR can call. Natively it is a call to a runtime function that invokes the macro itself, so output capture under a test harness behaves the same. `step12_runtime.rs` stands in for that function; the product version belongs in the stdlib's Rust facet.
 - **Body IR passes an argument to a `mut` parameter as a copy.** The emitted route writes through, as RFC 129 requires, so programs that mutate through a `mut` parameter, such as the `quicksort` and `mergesort` benchmarks, wait on #2022.
+- **Body IR leaves some checked facts implicit.** An `int` literal the checker accepted as a `float` stays an integer constant, so the lowering converts it wherever it sees a `float` destination. The receiver of a mutating list method such as `append` is passed as a shared borrow, so the lowering borrows it mutably. A `range(..)` value is typed `List[int]`. Each is compensated for here, and each is a fact the checked representation should carry, as are parameter modes (#2022) and extern delegation (#2023).
 - **Spans are free once the file is in the source map.** `SourceMap::load_file` registers the `.incn` file. Spans built from its `start_pos` flow into panic locations, debuginfo and backtraces with no further work.
 - **rustc's internal API moves between releases.** This spike hit five differences against older documentation (`Terminator::attributes`, `Spanned`'s path, `Defaultness::Implicit`, `Rvalue::Use` taking a `WithRetag`, and field types returned as `Unnormalized`). Each rustc upgrade is a front-end upgrade; the toolchain already pins one rustc, which bounds that cost. The `rustc-dev` component installs rustc's sources under `lib/rustlib/rustc-src`, which is the reference for each upgrade.
 
@@ -86,17 +87,29 @@ On the 873 behavior fixtures the first run found:
 - **one miscompile.** A `@rust.extern` function's `...` placeholder body ran as an empty function, because Body IR records no sign of the delegation. The lowering now refuses decorated functions by name.
 - **failures that were refusals in disguise.** Methods, overloads, classes and imported names crashed instead of refusing; they now refuse by name.
 
+Since then the lowering has gained methods (inherent `impl` blocks with `&self` or `&mut self` receivers), lists (`Vec<T>` with literals, `append`, indexing through the stdlib's `list_get` and `list_get_mut`, `len`, and `for` over lists of scalars), `Clone::clone` for Body IR's copies, `PartialEq::eq` for `==` and `!=` on non-scalars, and `float` display through the stdlib's `float_to_string`. Three crashes it found on the way were fixed rather than refused:
+
+- `int` literals the checker accepted as `float`;
+- `==` between lists;
+- a range borrow mistaken for a list borrow.
+
 The current run:
 
 | outcome | fixtures |
 |---|---|
-| pass | 8 |
-| refused, by name | 455 |
+| pass | 22 |
+| refused, by name | 441 |
 | unchecked | 2 |
 | failed | 0 |
+| wrong | 0 |
 | out of scope | 408 |
 
-The largest refusal is methods, at 118 fixtures.
+The largest refusals are:
+
+- model decorators, traits and type parameters: 104 fixtures;
+- classes, enums, newtypes and imported types in signatures: 31;
+- `Result`: 29;
+- `mut` parameters, held back by #2022: 29.
 
 ## Not yet tested
 
