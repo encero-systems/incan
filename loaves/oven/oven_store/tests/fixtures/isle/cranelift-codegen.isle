@@ -1,0 +1,2 @@
+(type Value (enum I32 I64))
+(decl lower (Value) Value)

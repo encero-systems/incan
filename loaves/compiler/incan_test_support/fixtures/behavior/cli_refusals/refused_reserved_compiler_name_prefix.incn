@@ -1,0 +1,18 @@
+# behavior: a declaration spelled with the compiler's reserved __incan_ prefix is refused at check time
+# expect-diagnostic: INCAN-T0111
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+
+@preserve()
+pub def target() -> int:
+    return 40
+
+
+pub def __incan_original_target() -> int:
+    return 2
+
+
+def main() -> None:
+    println(target() + __incan_original_target())

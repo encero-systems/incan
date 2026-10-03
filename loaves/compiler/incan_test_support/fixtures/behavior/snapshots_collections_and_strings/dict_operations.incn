@@ -1,0 +1,13 @@
+# behavior: a mutable dict accepts inserts through indexing and lists its keys
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_dict_operations_codegen
+# expect-stdout-contains:
+#   one
+#   two
+
+def main() -> None:
+    mut data: Dict[str, int] = {}
+    data["one"] = 1
+    data["two"] = 2
+
+    for key in data.keys():
+        println(key)

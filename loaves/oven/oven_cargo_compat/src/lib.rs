@@ -1,9 +1,20 @@
 //! Hidden `legacy_cargo` Loaf baker for Oven Alpha compatibility preparation.
 //!
-//! This is deliberately not an execution backend. It may be invoked only through the named `legacy_cargo` command
-//! while direct closure materialization is being completed for #1005/#975. It bakes typed `.loaf/` envelopes and
-//! publishes receipt-bound compiler-suite plans into the bounded Oven store, then removes every private Cargo target
-//! before returning. Normal Oven build, run, and test code neither calls this module nor receives a Cargo target path.
+//! This is deliberately not an execution backend. It may be invoked only through the named `legacy_cargo` command.
+//! It bakes typed `.loaf/` envelopes and publishes receipt-bound compiler-suite plans into the bounded Oven store,
+//! then removes every private Cargo target before returning. Normal Oven build, run, and test code neither calls this
+//! module nor receives a Cargo target path; the suite's `cargo-guard` refuses any Cargo a normal command reaches.
+//!
+//! TODO(#1561): transitional. Cargo runs here for one reason — to *observe* a package closure the registry does not yet
+//! describe: the unit graph, each build script's cfg and `OUT_DIR` output, the feature selection. Those observations
+//! are what a harvest proposes to incan.pub as records, and a bake whose every registry unit a record governs
+//! settles from records alone (`loaf_registry_authority`). When the corpus is governed, the capture in this crate
+//! (`run_legacy_cargo_invocation`, the `rustc_trace` wrapper, the unit-graph query, the metadata and lock
+//! normalization that feed `prepare_direct_rustc_plan`) retires together with the publisher toolchain pin in the
+//! Makefile. What stays: the harvest's proposal and refusal wire contract, the registry authority and its pin, the
+//! Rust policy engine that settles a graph, and the receipt-bound direct-rustc plan a bake publishes. The
+//! compiler-suite foundation's own Cargo build (`compiler_suite_foundation`, `build_compiler_suite_foundation`)
+//! retires on a different trigger: the suite family baking through the Loaf-native route like the release family.
 
 mod cargo_json;
 pub mod cargo_process;
@@ -14,19 +25,38 @@ pub mod loaf_bake;
 use cargo_json::*;
 
 mod compiler_suite_catalog;
+mod compiler_suite_foundation;
 mod compiler_suite_targets;
+mod harvest;
 mod inspection_sources;
+mod loaf_registry_authority;
 mod lock;
+mod native_trace;
 mod registry_sources;
+mod rustc_trace;
 mod sdk_staging;
+mod selected_graph_projection;
+mod selected_unit_capture;
 mod workspace_authority;
 
 pub use compiler_suite_catalog::*;
+pub use compiler_suite_foundation::{OvenCompilerSuiteFoundationKey, OvenLegacyCargoFoundationSelection};
+use compiler_suite_foundation::{
+    OvenCompilerSuiteFoundationKeyInputs, SelectedCompilerSuiteFoundationFamily,
+    compiler_suite_foundation_artifact_records, rehydrate_compiler_suite_foundation,
+    select_or_import_compiler_suite_foundation_family, selected_partition_materialized_files,
+};
 pub use compiler_suite_targets::*;
+pub use harvest::*;
 pub use inspection_sources::*;
+pub use loaf_registry_authority::*;
 pub use lock::*;
+pub use native_trace::*;
 pub use registry_sources::*;
+pub use rustc_trace::*;
 pub use sdk_staging::*;
+pub use selected_graph_projection::*;
+pub use selected_unit_capture::*;
 pub use workspace_authority::*;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,27 +78,30 @@ pub use oven_rustc::native_contract::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
     OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION, OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION,
-    OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationPayload,
+    OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationArtifactRecord,
+    OvenCompilerTestSuiteFoundationFamily, OvenCompilerTestSuiteFoundationPayload,
     OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
     OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget, OvenCompilerTestSuiteTargetKey,
     OvenCompilerTestSuiteToolchainDataPayload, OvenCompilerTestSuiteToolchainDataReference,
     OvenCompilerTestSuiteToolchainLoafGenerationReference, OvenCompilerWorkspaceLibrary,
     OvenCompilerWorkspaceLibraryKey, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInspectionSource,
-    OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
+    OvenLegacyCargoInspectionSourceMember, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
 };
 
 use serde::Serialize;
 
 use oven_rustc::rustc::{
     OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
-    OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-    OvenRustcSupportingArtifact, clear_inherited_cargo_environment, rerooted_artifact_staging_source,
+    OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind,
+    OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
+    clear_inherited_cargo_environment_for_cargo, rerooted_artifact_staging_source, rustc_host_and_target_cfg_snapshots,
     rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
     validate_project_extension_payload_against_base,
 };
 use oven_store::process::{isolate_process_group, terminate_process_group};
 use oven_store::store::{
-    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError,
+    OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
+    OvenStore, OvenStoreError,
 };
 use oven_store::{DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES, digest_bytes, digest_source_tree};
 use oven_store::{
@@ -318,6 +351,12 @@ pub struct OvenLegacyCargoPrepareRequest<'a> {
     pub cargo: PathBuf,
     /// Explicit Rust compiler used by Cargo and later direct-rustc execution.
     pub rustc: PathBuf,
+    /// Explicit C compiler traced for native-link adoption when supplied.
+    pub cc: Option<PathBuf>,
+    /// Explicit C++ compiler traced for native-link adoption when supplied.
+    pub cxx: Option<PathBuf>,
+    /// Explicit C sysroot paired with `cc`; never discovered from the host.
+    pub c_sysroot: Option<PathBuf>,
     /// Exact prebuilt SDK inventory supplied by the Loaf baker for compiler-suite publication.
     ///
     /// Standalone transitional callers may omit this and use the installed-toolchain discovery contract. Normal
@@ -358,6 +397,11 @@ pub struct OvenLegacyCargoPrepareRequest<'a> {
     /// semantics remain unchanged. It prevents compiler-shipped sealed Loaf data from consuming policy capacity with
     /// linker-irrelevant debug sections.
     pub compact_debug_info: bool,
+    /// Whether this release-family bake retains Cargo's raw compiler products for byte-equivalence evidence.
+    ///
+    /// Ordinary project extensions must leave this false: capture evidence is not a direct-Rustc input and must not
+    /// enter the artifact set partitioned against an installed base Loaf.
+    pub retain_equivalence_artifacts: bool,
     /// Whether this explicit source-built project publication must seal the compiler-owned vocabulary helper.
     ///
     /// This is admitted only by the source-built compiler's explicit Oven bake. The normal build, run, and test
@@ -404,6 +448,8 @@ pub struct OvenLegacyCargoPrepareResult {
     /// The Loaf exporter seals this small catalog beside the copied direct-Rustc closure. It is never a
     /// normal-command Cargo resolution result.
     pub registry_leaves: Vec<OvenRustcRegistryLeaf>,
+    /// Physical Cargo-selected units captured at this publisher boundary; absent only for exact store reuse.
+    pub selected_units: Option<OvenLegacyCargoSelectedUnitCapture>,
     /// Conservative transient publisher allocation high-water mark; this directory is removed before success returns.
     pub transient_reservation_bytes: u64,
     /// Inactive store entries evicted, oldest first, so this bake could reserve its staging floor (#1230). Empty when
@@ -430,10 +476,16 @@ struct OvenCompilerTestSuiteToolchainDataPlan {
 /// receive only these exact foundations at execution time; they never recover a Cargo target or a copied composite
 /// directory. Partitions retain their parent suite's one compatibility domain, so the store refuses the complete
 /// closure when its aggregate exceeds the configured allowance rather than treating each label as a separate cache.
+///
+/// Every partition carries the same family record — the foundation key, the complete closure's search paths and the
+/// portable artifact index — with its own partition coordinates, so a later publication can select the family by key
+/// and prove it complete (#1564).
 fn compiler_suite_foundation_plans(
     closure: &OvenCompilerTestSuiteArtifactClosure,
     materialized_files: &[OvenArtifactMaterializedFile],
     max_domain_logical_bytes: u64,
+    key: &OvenCompilerSuiteFoundationKey,
+    artifact_index: Vec<OvenCompilerTestSuiteFoundationArtifactRecord>,
 ) -> Result<Vec<OvenCompilerTestSuiteFoundationPlan>, OvenLegacyCargoError> {
     let content_limit = max_domain_logical_bytes
         .checked_sub(COMPILER_TEST_SUITE_FOUNDATION_METADATA_HEADROOM_BYTES)
@@ -498,6 +550,7 @@ fn compiler_suite_foundation_plans(
                         closure,
                         std::mem::take(&mut current_artifacts),
                     ),
+                    family: None,
                 },
                 materialized_files: std::mem::take(&mut current_files),
             });
@@ -528,10 +581,42 @@ fn compiler_suite_foundation_plans(
             schema_version: OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION,
             label: format!("foundation-{:04}", foundations.len()),
             artifact_closure: compiler_suite_foundation_closure(closure, current_artifacts),
+            family: None,
         },
         materialized_files: current_files,
     });
+
+    // ---- The family record every partition carries ----
+    let partition_count = u32::try_from(foundations.len()).map_err(|_| {
+        OvenLegacyCargoError::Plan("compiler foundation closure splits into too many partitions".to_string())
+    })?;
+    let closure_digest = compiler_suite_foundation_closure_digest(closure);
+    for (partition_index, foundation) in (0_u32..).zip(foundations.iter_mut()) {
+        foundation.payload.family = Some(OvenCompilerTestSuiteFoundationFamily {
+            key: key.as_str().to_string(),
+            closure_digest: closure_digest.clone(),
+            partition_index,
+            partition_count,
+            dependency_search_paths: closure.dependency_search_paths.clone(),
+            native_search_paths: closure.native_search_paths.clone(),
+            artifact_index: artifact_index.clone(),
+        });
+    }
     Ok(foundations)
+}
+
+/// The digest one build's family stamps on every partition: the complete closure's files by path and content.
+///
+/// Paths are sorted so the value does not depend on the order Cargo listed the artifacts in, and the search paths
+/// are left out because the family record already compares them field by field.
+fn compiler_suite_foundation_closure_digest(closure: &OvenCompilerTestSuiteArtifactClosure) -> String {
+    let mut lines = closure
+        .supporting_artifacts
+        .iter()
+        .map(|artifact| format!("{}\0{}\n", artifact.relative_path, artifact.digest))
+        .collect::<Vec<_>>();
+    lines.sort();
+    digest_bytes(lines.concat().as_bytes())
 }
 
 /// Split installed compiler-Loaf directories into deterministic schema-13 suite inputs.
@@ -866,8 +951,35 @@ pub struct OvenLegacyCargoCompilerSuiteResult {
     /// Conservative transient publisher allocation high-water mark; the Cargo target is removed before success
     /// returns.
     pub transient_reservation_bytes: u64,
+    /// How the third-party foundation was obtained: by its own key from the store or a mirror, or built by Cargo.
+    pub foundation: OvenLegacyCargoFoundationReport,
     /// Product-owned phase timing for the compiler-suite publisher.
     pub timing: OvenLegacyCargoCompilerSuiteTiming,
+}
+
+/// The third-party foundation stage of one compiler-suite completion, as the timing report shows it (#1564).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OvenLegacyCargoFoundationReport {
+    /// The foundation key derived from the foundation's inputs; `None` when an existing suite made it unnecessary.
+    pub key: Option<OvenCompilerSuiteFoundationKey>,
+    /// Where the foundation came from.
+    pub selection: OvenLegacyCargoFoundationSelection,
+    /// Whether Cargo was started to compile the foundation. `false` on every reuse.
+    pub cargo_process_started: bool,
+    /// Number of foundation partitions the suite index references.
+    pub entries: usize,
+}
+
+impl OvenLegacyCargoFoundationReport {
+    /// The report for a completion that selected an existing suite and never reached the foundation stage.
+    fn existing_suite() -> Self {
+        Self {
+            key: None,
+            selection: OvenLegacyCargoFoundationSelection::ExistingSuite,
+            cargo_process_started: false,
+            entries: 0,
+        }
+    }
 }
 
 /// Attribution for the explicit compiler-suite publisher after its enclosing Loaf family is available.
@@ -877,7 +989,12 @@ pub struct OvenLegacyCargoCompilerSuiteTiming {
     pub preflight_and_sdk_elapsed_ms: u128,
     /// Locked Cargo unit-graph discovery only; Cargo does not compile roots in this phase.
     pub unit_graph_elapsed_ms: u128,
-    /// The one permitted third-party foundation compilation.
+    /// Foundation dependency selection, private manifest staging, key derivation, and the store and mirror lookup by
+    /// that key.
+    #[serde(default)]
+    pub foundation_selection_elapsed_ms: u128,
+    /// The one permitted third-party foundation compilation and the scan of what it produced; zero when the
+    /// foundation was reused by key.
     pub foundation_build_elapsed_ms: u128,
     /// Direct-Rustc root planning, foundation partitioning, and immutable request construction.
     pub direct_plan_elapsed_ms: u128,
@@ -991,6 +1108,7 @@ fn reused_direct_rustc_plan_result(plan_identity: String) -> OvenLegacyCargoPrep
         cargo_manifest_digest: "not-run-existing-plan".to_string(),
         cargo_lock_digest: "not-run-existing-plan".to_string(),
         registry_leaves: Vec::new(),
+        selected_units: None,
         transient_reservation_bytes: 0,
         reclaimed_store_entries: Vec::new(),
     }
@@ -1047,6 +1165,12 @@ fn source_compiler_vocab_support_paths_are_available(root: &Path, executable: &P
 pub fn prepare_direct_rustc_plan(
     request: &OvenLegacyCargoPrepareRequest<'_>,
 ) -> Result<OvenLegacyCargoPrepareResult, OvenLegacyCargoError> {
+    if request.cc.is_some() != request.cxx.is_some() || request.cc.is_some() != request.c_sysroot.is_some() {
+        return Err(OvenLegacyCargoError::InvalidInput {
+            field: "native compiler capture",
+            message: "--cc, --cxx and --c-sysroot must be supplied together".to_string(),
+        });
+    }
     request
         .receipt
         .verify_identity()
@@ -1144,7 +1268,11 @@ pub fn prepare_direct_rustc_plan(
     let target = staging.join("target");
     let transient_limit = publisher_reservation.transient_limit_bytes;
     let reclaimed_store_entries = publisher_reservation.prune_report.removed_entries;
-    let cargo_outputs = run_legacy_cargo(
+    // Normal release publication uses stable Cargo. `--unit-graph` is an unstable Cargo interface and remains
+    // confined to the separately provisioned compiler-suite producer. The stable publisher instead joins Cargo's
+    // artifact/build-script messages to exact successful rustc invocations, retaining physical unit edges without
+    // adding a nightly requirement to installed release tooling.
+    let cargo_outputs = run_legacy_cargo_with_native(
         &request.cargo,
         &request.rustc,
         &cargo_manifest,
@@ -1156,6 +1284,9 @@ pub fn prepare_direct_rustc_plan(
         request.publication_kind,
         request.compact_debug_info,
         request.base_loaf.is_some(),
+        request.cc.as_deref(),
+        request.cxx.as_deref(),
+        request.c_sysroot.as_deref(),
     )?;
     let cargo_lock = generated_project.join("Cargo.lock");
     let cargo_lock_bytes = regular_file_bytes(&cargo_lock)?;
@@ -1198,7 +1329,39 @@ pub fn prepare_direct_rustc_plan(
         Some(metadata) => metadata,
         None => read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?,
     };
+    let mut selected_units = if outputs_have_rustc_trace(&cargo_outputs) {
+        let mut capture =
+            capture_legacy_cargo_selected_units_from_trace(&metadata, &cargo_outputs, &request.rustc, &rustc_host)?;
+        if let (Some(cc), Some(cxx), Some(c_sysroot)) = (
+            request.cc.as_deref(),
+            request.cxx.as_deref(),
+            request.c_sysroot.as_deref(),
+        ) {
+            harvest::attach_native_link_records(&mut capture, &cargo_outputs, cc, cxx, c_sysroot)?;
+        }
+        let (host_cfg, target_cfg) =
+            rustc_host_and_target_cfg_snapshots(&request.rustc, &request.receipt.intent.target)
+                .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
+        capture.compiler = Some(OvenLegacyCargoSelectedCompilerContext {
+            host: rustc_host.clone(),
+            target: request.receipt.intent.target.clone(),
+            toolchain: request.receipt.intent.toolchain.clone(),
+            rustc_identity: rustc_identity.clone(),
+            host_cfg,
+            target_cfg,
+        });
+        Some(capture)
+    } else {
+        None
+    };
     let resolved_direct_dependencies = resolve_direct_dependency_packages(&metadata, &direct_dependencies)?;
+    // Host libraries a host procedural macro depends on are compiled units of the linked closure, so their
+    // artifacts are retained beside the target closure; a host library only a build script needs is not.
+    let linked_host_artifacts = selected_units
+        .as_ref()
+        .map(linked_host_library_artifacts)
+        .transpose()?
+        .unwrap_or_default();
     let reported_artifact_files = publisher_output_artifact_paths(&cargo_outputs, &request.receipt.intent.profile)?;
     let (dependency_search_paths, externs, mut supporting_artifacts) = if reported_artifact_files.is_empty() {
         // Cargo's JSON protocol is the normal authority for an explicit bake. Retain the directory reader only as
@@ -1218,8 +1381,33 @@ pub fn prepare_direct_rustc_plan(
             &resolved_direct_dependencies,
             request.publication_kind == OvenLegacyCargoPublicationKind::LibraryTests,
             &cargo_outputs,
+            &linked_host_artifacts,
         )?
     };
+    let mut materialized_directories = Vec::new();
+    if let Some(selected_units) = selected_units.as_mut() {
+        if request.retain_equivalence_artifacts {
+            supporting_artifacts.extend(retain_legacy_cargo_selected_artifacts(selected_units, &staging)?);
+        }
+        supporting_artifacts.extend(retain_legacy_cargo_selected_generated_outputs(
+            selected_units,
+            &staging,
+        )?);
+        materialized_directories = retained_empty_generated_output_directories(
+            &staging,
+            selected_units.units.iter().flat_map(|unit| {
+                // Facts are retained per unit and per consumer edge; an edge-scoped empty output is a directory too.
+                unit.build_script
+                    .iter()
+                    .chain(
+                        unit.dependencies
+                            .iter()
+                            .filter_map(|dependency| dependency.build_script.as_ref()),
+                    )
+                    .filter_map(|build_script| build_script.output.as_ref())
+            }),
+        );
+    }
     let provider_entrypoints = provider_compilation_externs(
         request.provider_compilations,
         &consumer_direct_dependencies,
@@ -1233,9 +1421,9 @@ pub fn prepare_direct_rustc_plan(
             cargo_lock: &cargo_lock_bytes,
             staging: &staging,
             intent: &request.receipt.intent,
-            rustc_host: &rustc_host,
             externs: &externs,
             supporting_artifacts: &supporting_artifacts,
+            selected_units: selected_units.as_ref(),
             inspection_packages: request.inspection_packages.as_deref(),
         })?;
     supporting_artifacts.extend(registry_source_artifacts);
@@ -1319,6 +1507,7 @@ pub fn prepare_direct_rustc_plan(
             compiler_root: &compiler_root,
             cargo: &request.cargo,
             rustc: &request.rustc,
+            auxiliary_target_rustc: &request.rustc,
             cargo_target: &compiler_support_target,
             capacity_roots: &[&staging],
             transient_limit,
@@ -1477,6 +1666,7 @@ pub fn prepare_direct_rustc_plan(
         kind,
         payload,
         materialized_files,
+        materialized_directories,
     };
     let transient_reservation_bytes = conservative_directory_reservation(&staging)?;
     request
@@ -1491,9 +1681,31 @@ pub fn prepare_direct_rustc_plan(
         cargo_manifest_digest: digest_bytes(&cargo_manifest_bytes),
         cargo_lock_digest: digest_bytes(&cargo_lock_bytes),
         registry_leaves,
+        selected_units,
         transient_reservation_bytes,
         reclaimed_store_entries,
     })
+}
+
+/// Describe selected generated-output roots that are intentionally empty for immutable store publication.
+///
+/// Nonempty generated roots are already represented by their retained members. An empty root still changes the
+/// direct-rustc closure, so this returns its canonical root path for store staging and identity admission.
+fn retained_empty_generated_output_directories<'a>(
+    staging: &Path,
+    outputs: impl IntoIterator<Item = &'a OvenLegacyCargoSelectedGeneratedOutput>,
+) -> Vec<OvenArtifactMaterializedDirectory> {
+    let mut directories = outputs
+        .into_iter()
+        .filter(|output| output.members.is_empty())
+        .map(|output| OvenArtifactMaterializedDirectory {
+            source_path: staging.join(&output.relative_root),
+            relative_path: output.relative_root.clone(),
+        })
+        .collect::<Vec<_>>();
+    directories.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    directories.dedup_by(|left, right| left.relative_path == right.relative_path);
+    directories
 }
 
 /// Return a reusable project extension only when its exact project receipt and selected standard-library base match.
@@ -1610,6 +1822,7 @@ pub fn prepare_compiler_test_suite(
             cargo_manifest_digest: "not-run-existing-suite".to_string(),
             cargo_lock_digest: "not-run-existing-suite".to_string(),
             transient_reservation_bytes: 0,
+            foundation: OvenLegacyCargoFoundationReport::existing_suite(),
             timing: OvenLegacyCargoCompilerSuiteTiming {
                 preflight_and_sdk_elapsed_ms: suite_started.elapsed().as_millis(),
                 ..OvenLegacyCargoCompilerSuiteTiming::default()
@@ -1696,7 +1909,9 @@ pub fn prepare_compiler_test_suite(
     // planning evidence only; it is never compiled through Cargo as the ordinary test substrate.
     validate_compiler_suite_unit_graph(&generated_project, &unit_graph)?;
     let metadata = read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?;
-    let foundation_build_started = Instant::now();
+
+    // ---- Foundation identity: the third-party closure's own inputs, nothing of the compiler's source ----
+    let foundation_selection_started = Instant::now();
     let foundation_dependencies = compiler_suite_foundation_dependencies(&generated_project, &unit_graph, &metadata)?;
     let foundation_manifest = compiler_suite_foundation_manifest(&foundation_dependencies)?;
     let third_party_foundation_manifest = stage_compiler_suite_foundation_manifest(
@@ -1706,46 +1921,45 @@ pub fn prepare_compiler_test_suite(
         &foundation_dependencies,
     )?;
     reclaim_unmaterialized_compiler_suite_target_files(&unit_graph_target, &[])?;
+    let foundation_lock = staged_foundation_lock_path(&third_party_foundation_manifest)?;
+    let rustc_host = rustc_host_target(&request.rustc)
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("cannot identify publisher Rust host target: {error}")))?;
+    let foundation_key = OvenCompilerSuiteFoundationKey::derive(&OvenCompilerSuiteFoundationKeyInputs {
+        compiler_root: &generated_project,
+        dependencies: &foundation_dependencies,
+        lock: &regular_file_bytes(&foundation_lock)?,
+        target: &request.receipt.intent.target,
+        host: &rustc_host,
+        profile: &request.receipt.intent.profile,
+        toolchain: &request.receipt.intent.toolchain,
+        cargo_version: &cargo_version,
+    })?;
 
-    // The only compilation Cargo is authorized to perform is this sealed third-party foundation. Its copied lock
-    // file preserves the compiler workspace's exact registry resolution, while its private root has no path
-    // dependency on the compiler workspace. Every compiler library, proc macro, CLI and test root below is then
-    // rebuilt from receipt-authorized source by the direct-Rustc scheduler.
-    let foundation_target = staging.join("third-party-foundation-target");
-    let foundation_output = run_legacy_cargo_invocation(
-        &request.cargo,
-        &request.rustc,
-        &third_party_foundation_manifest,
-        &foundation_target,
-        &staging,
-        &request.receipt.intent.target,
-        &request.receipt.intent.profile,
-        &[],
-        publisher_transient_limit,
-        "build",
-        &OvenLegacyCargoInvocationTarget::PackageLibrary,
-        false,
-        false,
-        false,
-    )?;
-    // This phase is the one explicitly permitted Cargo compilation.  Keep the manifest preparation and the child
-    // process under one clock: reporting only the setup above would misleadingly classify Cargo's actual foundation
-    // work as unaccounted suite time.
-    let foundation_build_elapsed_ms = foundation_build_started.elapsed().as_millis();
-    let profile_directory = cargo_profile_directory(&request.receipt.intent.profile)?;
-    let target_deps = foundation_target
-        .join(&request.receipt.intent.target)
-        .join(profile_directory)
-        .join("deps");
-    let host_deps = foundation_target.join(profile_directory).join("deps");
-    let dependency_directories = compiler_suite_dependency_directories(target_deps, host_deps);
-    // The private foundation root itself may be the only Cargo-reported direct-Rustc artifact on a compatible
-    // host/profile layout. Keep every exact compiler-artifact path that Cargo reported, rather than relying on
-    // the conventional `deps/` directories to exist. The catalog still rejects paths outside publisher staging.
-    let foundation_direct_artifact_files = compiler_suite_output_artifact_paths(&foundation_output)?;
-    let foundation_catalog =
-        compiler_suite_artifact_catalog(&staging, &dependency_directories, &foundation_direct_artifact_files)?;
-    let foundation_artifact_index = compiler_suite_artifact_index(&foundation_output, &request.receipt.intent.target)?;
+    // ---- Foundation selection by key: the local store, then mirrors, before Cargo builds anything ----
+    let mirrors = oven_store::store_mirror::configured_mirrors(|name| std::env::var_os(name));
+    let selected_foundation =
+        select_or_import_compiler_suite_foundation_family(request.store, &request.receipt, &foundation_key, &mirrors)?;
+    let foundation_selection_elapsed_ms = foundation_selection_started.elapsed().as_millis();
+    let foundation = match selected_foundation {
+        Some(family) => reused_compiler_suite_foundation(family, &metadata, &generated_project)?,
+        None => build_compiler_suite_foundation(
+            request,
+            &staging,
+            &third_party_foundation_manifest,
+            &metadata,
+            &generated_project,
+            publisher_transient_limit,
+            &foundation_key,
+        )?,
+    };
+    let PreparedCompilerSuiteFoundation {
+        catalog: foundation_catalog,
+        artifact_index: foundation_artifact_index,
+        plans: foundation_plans,
+        selection: foundation_selection,
+        build_elapsed_ms: foundation_build_elapsed_ms,
+        _leases: foundation_leases,
+    } = foundation;
     let mut root_indices = Vec::new();
     for root_index in &unit_graph.roots {
         let root = unit_graph.units.get(*root_index).ok_or_else(|| {
@@ -1769,11 +1983,7 @@ pub fn prepare_compiler_test_suite(
     let mut foundation_references = Vec::new();
     let mut foundation_requests = Vec::new();
     let mut shard_requests = Vec::new();
-    for foundation in compiler_suite_foundation_plans(
-        &foundation_catalog.closure,
-        &foundation_catalog.materialized_files,
-        request.store.limits().max_domain_logical_bytes,
-    )? {
+    for foundation in foundation_plans {
         let foundation_payload =
             serde_json::to_vec(&foundation.payload).map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
         let foundation_request = OvenArtifactPublishRequest {
@@ -1782,6 +1992,7 @@ pub fn prepare_compiler_test_suite(
             kind: OvenArtifactKind::CompilerTestSuiteFoundation,
             payload: foundation_payload,
             materialized_files: foundation.materialized_files,
+            materialized_directories: Vec::new(),
         };
         let manifest = request.store.manifest_for_publication(&foundation_request)?;
         foundation_references.push(OvenCompilerTestSuiteFoundationReference {
@@ -1792,6 +2003,12 @@ pub fn prepare_compiler_test_suite(
     }
     foundation_references.sort();
     foundation_references.dedup();
+    let foundation_report = OvenLegacyCargoFoundationReport {
+        key: Some(foundation_key),
+        selection: foundation_selection,
+        cargo_process_started: foundation_selection == OvenLegacyCargoFoundationSelection::Built,
+        entries: foundation_references.len(),
+    };
     for root_index in root_indices {
         let (mut shard, _materialized_files) = compiler_suite_direct_target_shard_from_catalog(
             &generated_project,
@@ -1809,6 +2026,7 @@ pub fn prepare_compiler_test_suite(
             kind: OvenArtifactKind::CompilerTestSuiteShard,
             payload,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         };
         let manifest = request.store.manifest_for_publication(&shard_request)?;
         shard_references.push(OvenCompilerTestSuiteShardReference {
@@ -1918,6 +2136,7 @@ pub fn prepare_compiler_test_suite(
         kind: OvenArtifactKind::CompilerTestSuite,
         payload: payload_bytes,
         materialized_files: index_materialized_files,
+        materialized_directories: Vec::new(),
     };
     let mut batch = Vec::with_capacity(
         foundation_requests
@@ -1943,6 +2162,9 @@ pub fn prepare_compiler_test_suite(
             OvenLegacyCargoError::Plan("compiler-suite batch publication returned no index manifest".to_string())
         })?;
     let store_publication_elapsed_ms = store_publication_started.elapsed().as_millis();
+    // A reused family's partitions stayed leased while the batch adopted their files; the new entries are visible
+    // now, so the leases can go with the staging and the publisher lock.
+    drop(foundation_leases);
     drop(cleanup);
     drop(publisher_lock);
     Ok(OvenLegacyCargoCompilerSuiteResult {
@@ -1951,14 +2173,151 @@ pub fn prepare_compiler_test_suite(
         cargo_manifest_digest: digest_bytes(&cargo_manifest_bytes),
         cargo_lock_digest: digest_bytes(&cargo_lock_bytes),
         transient_reservation_bytes,
+        foundation: foundation_report,
         timing: OvenLegacyCargoCompilerSuiteTiming {
             preflight_and_sdk_elapsed_ms: unit_graph_started.duration_since(suite_started).as_millis(),
             unit_graph_elapsed_ms,
+            foundation_selection_elapsed_ms,
             foundation_build_elapsed_ms,
             direct_plan_elapsed_ms,
             store_publication_elapsed_ms,
         },
     })
+}
+
+/// The shard planner's foundation inputs, however the completion obtained them.
+///
+/// A built foundation's files live in publisher staging; a reused one's live below admitted store entries, held
+/// under lease until the batch that adopts them has been published. Either way the catalog, index and publication
+/// plans are what the rest of the completion consumes.
+struct PreparedCompilerSuiteFoundation {
+    /// The complete closure, every file located.
+    catalog: CompilerSuiteArtifactCatalog,
+    /// Cargo's artifact index against the current unit graph.
+    artifact_index: BTreeMap<CargoUnitArtifactKey, Vec<PathBuf>>,
+    /// The partition payloads and files to publish in the suite batch.
+    plans: Vec<OvenCompilerTestSuiteFoundationPlan>,
+    /// How the foundation was obtained.
+    selection: OvenLegacyCargoFoundationSelection,
+    /// Cargo compilation time, zero on reuse.
+    build_elapsed_ms: u128,
+    /// Execution leases on reused partitions, dropped after publication.
+    _leases: Vec<oven_store::store::OvenStoreExecutionPayload>,
+}
+
+/// Stand a selected family in for a Cargo build: rehydrate the planner inputs and plan the same partitions for
+/// re-publication under this receipt.
+///
+/// The partition payloads are published as decoded and re-encoded, so their family record travels unchanged; every
+/// materialized file is sourced from the admitted entry's artifact root, which the store adopts by hard link after
+/// reading and re-digesting it. The scheduler later selects these new entries by the running receipt's build unit
+/// and intent exactly as it selects built ones.
+fn reused_compiler_suite_foundation(
+    family: SelectedCompilerSuiteFoundationFamily,
+    metadata: &CargoMetadata,
+    compiler_root: &Path,
+) -> Result<PreparedCompilerSuiteFoundation, OvenLegacyCargoError> {
+    let rehydrated = rehydrate_compiler_suite_foundation(&family, metadata, compiler_root)?;
+    let selection = family.selection;
+    let mut plans = Vec::with_capacity(family.partitions.len());
+    let mut leases = Vec::with_capacity(family.partitions.len());
+    for partition in family.partitions {
+        plans.push(OvenCompilerTestSuiteFoundationPlan {
+            payload: partition.payload.clone(),
+            materialized_files: selected_partition_materialized_files(&partition),
+        });
+        leases.push(partition.stored);
+    }
+    Ok(PreparedCompilerSuiteFoundation {
+        catalog: rehydrated.catalog,
+        artifact_index: rehydrated.artifact_index,
+        plans,
+        selection,
+        build_elapsed_ms: 0,
+        _leases: leases,
+    })
+}
+
+/// Compile the third-party foundation through the one permitted Cargo build and catalog what it produced.
+///
+/// TODO(#1561): transitional. This is the compiler-suite family's Cargo build; it retires when that family bakes
+/// through the Loaf-native route the release family already uses, not with the harvest capture (the crate header
+/// keeps the two triggers apart). Until then #1564's key makes a hit cost no Cargo and a miss cost exactly this.
+///
+/// The staged manifest's copied lock file preserves the compiler workspace's exact registry resolution, while its
+/// private root has no path dependency on the compiler workspace. Every compiler library, proc macro, CLI and test
+/// root is then rebuilt from receipt-authorized source by the direct-Rustc scheduler, never by Cargo. The resulting
+/// partitions carry `key` and the portable index so the next completion can select them without this build.
+fn build_compiler_suite_foundation(
+    request: &OvenLegacyCargoPrepareRequest<'_>,
+    staging: &Path,
+    third_party_foundation_manifest: &Path,
+    metadata: &CargoMetadata,
+    compiler_root: &Path,
+    publisher_transient_limit: u64,
+    key: &OvenCompilerSuiteFoundationKey,
+) -> Result<PreparedCompilerSuiteFoundation, OvenLegacyCargoError> {
+    let foundation_build_started = Instant::now();
+    let foundation_target = staging.join("third-party-foundation-target");
+    let foundation_output = run_legacy_cargo_invocation(
+        &request.cargo,
+        &request.rustc,
+        third_party_foundation_manifest,
+        &foundation_target,
+        staging,
+        &request.receipt.intent.target,
+        &request.receipt.intent.profile,
+        &[],
+        publisher_transient_limit,
+        "build",
+        &OvenLegacyCargoInvocationTarget::PackageLibrary,
+        false,
+        false,
+        false,
+    )?;
+    let profile_directory = cargo_profile_directory(&request.receipt.intent.profile)?;
+    let target_deps = foundation_target
+        .join(&request.receipt.intent.target)
+        .join(profile_directory)
+        .join("deps");
+    let host_deps = foundation_target.join(profile_directory).join("deps");
+    let dependency_directories = compiler_suite_dependency_directories(target_deps, host_deps);
+    // The private foundation root itself may be the only Cargo-reported direct-Rustc artifact on a compatible
+    // host/profile layout. Keep every exact compiler-artifact path that Cargo reported, rather than relying on
+    // the conventional `deps/` directories to exist. The catalog still rejects paths outside publisher staging.
+    let foundation_direct_artifact_files = compiler_suite_output_artifact_paths(&foundation_output)?;
+    let catalog = compiler_suite_artifact_catalog(staging, &dependency_directories, &foundation_direct_artifact_files)?;
+    let artifact_index = compiler_suite_artifact_index(&foundation_output, &request.receipt.intent.target)?;
+    // This phase is the one explicitly permitted Cargo compilation. Keep the child process and the scan of its
+    // output under one clock, so Cargo's actual foundation work is never classified as unaccounted suite time.
+    let build_elapsed_ms = foundation_build_started.elapsed().as_millis();
+    let records = compiler_suite_foundation_artifact_records(&artifact_index, metadata, compiler_root, staging)?;
+    let plans = compiler_suite_foundation_plans(
+        &catalog.closure,
+        &catalog.materialized_files,
+        request.store.limits().max_domain_logical_bytes,
+        key,
+        records,
+    )?;
+    Ok(PreparedCompilerSuiteFoundation {
+        catalog,
+        artifact_index,
+        plans,
+        selection: OvenLegacyCargoFoundationSelection::Built,
+        build_elapsed_ms,
+        _leases: Vec::new(),
+    })
+}
+
+/// The lock file staged beside the private foundation manifest.
+fn staged_foundation_lock_path(manifest: &Path) -> Result<PathBuf, OvenLegacyCargoError> {
+    manifest
+        .parent()
+        .map(|root| root.join("Cargo.lock"))
+        .ok_or_else(|| OvenLegacyCargoError::InvalidInput {
+            field: "third-party foundation manifest",
+            message: format!("{} has no package directory", manifest.display()),
+        })
 }
 
 /// Map the explicit publisher's supported receipt profiles to Cargo's output directory names.
@@ -2179,6 +2538,7 @@ pub const OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV: &str = "INCAN_OVEN_LEGACY_
 
 /// Registry leaf evidence collected before its immutable source tree is staged.
 struct PendingRegistryLeaf {
+    selected_unit_identity: Option<String>,
     package: String,
     version: String,
     crate_name: String,
@@ -2187,7 +2547,8 @@ struct PendingRegistryLeaf {
     registry: String,
     checksum: String,
     source_root: PathBuf,
-    target_artifact: bool,
+    domain: OvenRustcRegistryLeafDomain,
+    crate_kind: OvenRustcRegistryLeafKind,
 }
 
 /// One external package selected by the frozen compiler unit graph for a sealed foundation publication.
@@ -2253,7 +2614,7 @@ impl Drop for PublisherLock {
 
 /// Run the explicit Cargo compiler while bounding transient output by the compatibility-domain allowance.
 #[allow(clippy::too_many_arguments)]
-fn run_legacy_cargo(
+fn run_legacy_cargo_with_native(
     cargo: &Path,
     rustc: &Path,
     cargo_manifest: &Path,
@@ -2265,8 +2626,11 @@ fn run_legacy_cargo(
     publication_kind: OvenLegacyCargoPublicationKind,
     compact_debug_info: bool,
     distinct_extension_identities: bool,
+    cc: Option<&Path>,
+    cxx: Option<&Path>,
+    c_sysroot: Option<&Path>,
 ) -> Result<Vec<CargoInvocationOutput>, OvenLegacyCargoError> {
-    let first = run_legacy_cargo_invocation(
+    let first = run_legacy_cargo_invocation_with_native(
         cargo,
         rustc,
         cargo_manifest,
@@ -2294,12 +2658,17 @@ fn run_legacy_cargo(
         false,
         compact_debug_info,
         distinct_extension_identities,
+        cc,
+        cxx,
+        c_sysroot,
     )?;
     let mut outputs = vec![first];
     if publication_kind == OvenLegacyCargoPublicationKind::LibraryTests {
-        // The same explicit publisher also materializes the compiler CLI and its own library so normal test setup can
-        // bake it through direct rustc. No normal test command receives this Cargo authority or target path.
-        outputs.push(run_legacy_cargo_invocation(
+        // The same explicit publisher also materializes the compiler CLI and its own library in the first call's
+        // target. Cargo can report the already-built closure as fresh here; the capture accepts those records only
+        // because the earlier output in this returned transaction retains their exact traced invocations. No normal
+        // test command receives this Cargo authority or target path.
+        outputs.push(run_legacy_cargo_invocation_with_native(
             cargo,
             rustc,
             cargo_manifest,
@@ -2314,14 +2683,62 @@ fn run_legacy_cargo(
             false,
             compact_debug_info,
             distinct_extension_identities,
+            cc,
+            cxx,
+            c_sysroot,
         )?);
     }
     Ok(outputs)
 }
 
+/// Run Cargo without native compiler capture for compatibility callers that do not adopt link records.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn run_legacy_cargo(
+    cargo: &Path,
+    rustc: &Path,
+    cargo_manifest: &Path,
+    target: &Path,
+    target_triple: &str,
+    profile: &str,
+    features: &[String],
+    transient_limit: u64,
+    publication_kind: OvenLegacyCargoPublicationKind,
+    compact_debug_info: bool,
+    distinct_extension_identities: bool,
+) -> Result<Vec<CargoInvocationOutput>, OvenLegacyCargoError> {
+    run_legacy_cargo_with_native(
+        cargo,
+        rustc,
+        cargo_manifest,
+        target,
+        target_triple,
+        profile,
+        features,
+        transient_limit,
+        publication_kind,
+        compact_debug_info,
+        distinct_extension_identities,
+        None,
+        None,
+        None,
+    )
+}
+
 /// Captured output from one explicitly named Cargo publisher invocation.
 pub struct CargoInvocationOutput {
     stdout: Vec<u8>,
+}
+
+impl CargoInvocationOutput {
+    /// Decode physical selected-unit facts from this publisher's structured JSON stream.
+    pub fn selected_unit_facts(
+        &self,
+        graph: &CargoUnitGraph,
+        metadata: &CargoMetadata,
+    ) -> Result<OvenLegacyCargoSelectedUnitCapture, OvenLegacyCargoError> {
+        capture_legacy_cargo_selected_units(graph, metadata, std::slice::from_ref(self))
+    }
 }
 
 /// One publisher-only Cargo target selection used to bake a bounded compiler-suite build unit.
@@ -2677,7 +3094,7 @@ fn compiler_suite_foundation_lock(
     root.insert("dependencies".to_string(), toml::Value::Array(root_dependencies));
     packages.push(toml::Value::Table(root));
     prune_lock_to_package(&mut document, "oven-compiler-foundation", "0.0.0", None)?;
-    toml::to_string_pretty(&document)
+    oven_model::digest::canonical_toml_string_pretty(&document)
         .map(String::into_bytes)
         .map_err(|error| OvenLegacyCargoError::InvalidInput {
             field: "compiler Cargo.lock",
@@ -2719,7 +3136,7 @@ pub fn stage_locked_loaf_fixture(
         .arg("--manifest-path")
         .arg(&manifest_path)
         .args(["--offline", "--format-version", "1"]);
-    clear_inherited_cargo_environment(&mut command);
+    clear_inherited_cargo_environment_for_cargo(&mut command);
     let output = command
         .output()
         .map_err(|source| OvenLegacyCargoError::Io { path: cargo, source })?;
@@ -2761,9 +3178,71 @@ fn stage_release_cohort_project_lock(
     Ok(metadata)
 }
 
+/// Derive stable rustc path remaps for package sources outside the generated publisher package.
+///
+/// Cargo metadata is the authority for the registry or local roots Cargo actually selected. Registry and Git caches
+/// share one virtual Cargo home; path-backed roots are keyed by manifest bytes. Both forms let the direct rebuild
+/// reproduce Cargo's embedded paths after the source is retained under a different physical root.
+fn package_source_remap_flags(
+    metadata: &CargoMetadata,
+    package_root: &Path,
+) -> Result<Vec<String>, OvenLegacyCargoError> {
+    let mut remaps = BTreeMap::new();
+    for package in &metadata.packages {
+        let manifest = verified_regular_file(&package.manifest_path, "local package manifest")?;
+        let package_source_root = manifest
+            .parent()
+            .ok_or_else(|| OvenLegacyCargoError::InvalidInput {
+                field: "local package manifest",
+                message: format!("{} has no package directory", manifest.display()),
+            })?
+            .to_path_buf();
+        if package_source_root == package_root {
+            continue;
+        }
+        let cache_root = manifest
+            .ancestors()
+            .find(|ancestor| {
+                ancestor
+                    .file_name()
+                    .is_some_and(|name| name == "registry" || name == "git")
+            })
+            .and_then(Path::parent);
+        let (root, destination) = if package.source.is_some()
+            && let Some(cache_root) = cache_root
+        {
+            (cache_root.to_path_buf(), "/incan/cargo-home".to_string())
+        } else {
+            let identity = digest_bytes(&regular_file_bytes(&manifest)?);
+            let identity = identity.strip_prefix("sha256:").unwrap_or(&identity);
+            (package_source_root, format!("/incan/path/{identity}"))
+        };
+        if let Some(previous) = remaps.insert(root.clone(), destination.clone())
+            && previous != destination
+        {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "package source root {} has conflicting stable path identities",
+                root.display()
+            )));
+        }
+    }
+    let mut remaps = remaps.into_iter().collect::<Vec<_>>();
+    remaps.sort_by(|(left_path, left_destination), (right_path, right_destination)| {
+        right_path
+            .components()
+            .count()
+            .cmp(&left_path.components().count())
+            .then_with(|| left_destination.cmp(right_destination))
+    });
+    Ok(remaps
+        .into_iter()
+        .map(|(root, destination)| format!("--remap-path-prefix={}={destination}", root.display()))
+        .collect())
+}
+
 /// Run one named Cargo publisher invocation while continuously enforcing its enclosing transient allocation allowance.
 #[allow(clippy::too_many_arguments)]
-fn run_legacy_cargo_invocation(
+fn run_legacy_cargo_invocation_with_native(
     cargo: &Path,
     rustc: &Path,
     cargo_manifest: &Path,
@@ -2778,6 +3257,9 @@ fn run_legacy_cargo_invocation(
     unit_graph: bool,
     compact_debug_info: bool,
     distinct_extension_identities: bool,
+    cc: Option<&Path>,
+    cxx: Option<&Path>,
+    c_sysroot: Option<&Path>,
 ) -> Result<CargoInvocationOutput, OvenLegacyCargoError> {
     let cargo = canonical_tool_file(cargo, "cargo")?;
     let rustc = canonical_tool_file(rustc, "rustc")?;
@@ -2787,6 +3269,7 @@ fn run_legacy_cargo_invocation(
             field: "Cargo manifest",
             message: format!("{} has no package directory", cargo_manifest.display()),
         })?;
+    let metadata = read_legacy_cargo_metadata_with_lock_policy(&cargo, cargo_manifest, features, false)?;
     let mut command = Command::new(&cargo);
     command
         .current_dir(package_root)
@@ -2853,6 +3336,44 @@ fn run_legacy_cargo_invocation(
     let capture_stem = format!(".oven-cargo-{}-{}", std::process::id(), command_name);
     let stdout_path = target.join(format!("{capture_stem}.stdout"));
     let stderr_path = target.join(format!("{capture_stem}.stderr"));
+    let rustc_trace_path = target.join(format!("{capture_stem}.rustc.jsonl"));
+    let native_trace_path = target.join(format!("{capture_stem}.native.jsonl"));
+    // A unit-graph query describes compilation without executing rustc. Only the later compilation invocation
+    // can supply the physical trace; requiring one here rejects the compiler-suite publisher before it builds.
+    let rustc_wrapper = if unit_graph {
+        None
+    } else {
+        current_rustc_trace_wrapper()?
+    };
+    let native_wrapper = if unit_graph || cc.is_none() || cxx.is_none() || c_sysroot.is_none() {
+        None
+    } else {
+        native_trace::current_native_trace_wrapper()?
+    };
+    if rustc_wrapper.is_some() {
+        match fs::remove_file(&rustc_trace_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(OvenLegacyCargoError::Io {
+                    path: rustc_trace_path.clone(),
+                    source,
+                });
+            }
+        }
+    }
+    if native_wrapper.is_some() {
+        match fs::remove_file(&native_trace_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(OvenLegacyCargoError::Io {
+                    path: native_trace_path.clone(),
+                    source,
+                });
+            }
+        }
+    }
     let stdout = File::create(&stdout_path).map_err(|source| OvenLegacyCargoError::Io {
         path: stdout_path.clone(),
         source,
@@ -2861,7 +3382,7 @@ fn run_legacy_cargo_invocation(
         path: stderr_path.clone(),
         source,
     })?;
-    clear_inherited_cargo_environment(&mut command);
+    clear_inherited_cargo_environment_for_cargo(&mut command);
     // ---- Deterministic path remapping for reproducible unit bytes ----
     // Cargo's `-<hash>` extra-filename and rustc's StableCrateId summarize declared unit inputs, so the same locked
     // unit compiles to the same identity on every machine — but the strict version hash also reflects absolute
@@ -2869,18 +3390,11 @@ fn run_legacy_cargo_invocation(
     // unmapped, a release base baked on one machine and an extension baked on another publish the same identity
     // with different bytes, and rustc refuses to load both halves of that split in one crate graph (colliding
     // StableCrateId values). Remapping every machine-variant root to a stable virtual prefix makes identical units
-    // byte-identical everywhere, so shared leaves reconcile by digest instead. RUSTFLAGS do not enter the
-    // extra-filename hash, so these per-machine flag strings never fork unit identities.
-    let cargo_home = std::env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")));
+    // byte-identical everywhere, so shared leaves reconcile by digest instead. The trace wrapper injects these
+    // arguments after Cargo has selected each host or target unit, so the same flags reach both domains without
+    // machine-local strings entering Cargo's extra-filename hash.
     let mut remap_flags: Vec<String> = Vec::new();
-    if let Some(cargo_home) = &cargo_home {
-        remap_flags.push(format!(
-            "--remap-path-prefix={}=/incan/cargo-home",
-            cargo_home.display()
-        ));
-    }
+    remap_flags.extend(package_source_remap_flags(&metadata, package_root)?);
     remap_flags.push(format!("--remap-path-prefix={}=/incan/package", package_root.display()));
     remap_flags.push(format!("--remap-path-prefix={}=/incan/target", target.display()));
     // Standard-library spans leak through inlined core/alloc generics. A toolchain with the `rust-src` component
@@ -2908,11 +3422,91 @@ fn run_legacy_cargo_invocation(
         remap_flags.push("-C".to_string());
         remap_flags.push("metadata=incan-extension".to_string());
     }
-    command.env("CARGO_ENCODED_RUSTFLAGS", remap_flags.join("\u{1f}"));
+    let traced_rustc_arguments = serde_json::to_string(&remap_flags)
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("cannot encode publisher rustc arguments: {error}")))?;
     command
         .env("RUSTC", &rustc)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    if let Some(rustc_wrapper) = rustc_wrapper.as_ref() {
+        command
+            .env("RUSTC_WRAPPER", rustc_wrapper)
+            .env(OVEN_RUSTC_TRACE_WRAPPER_ENV, "1")
+            .env(OVEN_RUSTC_TRACE_PATH_ENV, &rustc_trace_path)
+            .env(OVEN_RUSTC_TRACE_EXTRA_ARGUMENTS_ENV, traced_rustc_arguments);
+    }
+    if let (Some(native_wrapper), Some(cc), Some(cxx), Some(c_sysroot)) = (native_wrapper.as_ref(), cc, cxx, c_sysroot)
+    {
+        let cc = canonical_tool_file(cc, "C compiler")?;
+        let cxx = canonical_tool_file(cxx, "C++ compiler")?;
+        let ar_candidate = cc
+            .parent()
+            .ok_or_else(|| OvenLegacyCargoError::InvalidInput {
+                field: "C compiler",
+                message: format!("{} has no tool directory", cc.display()),
+            })?
+            .join("ar");
+        let ar = canonical_tool_file(&ar_candidate, "C archiver")?;
+        let target_cc = format!("CC_{target_triple}");
+        let target_cxx = format!("CXX_{target_triple}");
+        let target_ar = format!("AR_{target_triple}");
+        let normalized_target = target_triple.replace('-', "_");
+        let normalized_target_cc = format!("CC_{normalized_target}");
+        let normalized_target_cxx = format!("CXX_{normalized_target}");
+        let normalized_target_ar = format!("AR_{normalized_target}");
+        let cc_wrapper = target.join(format!("{capture_stem}.native-cc-trace"));
+        let cxx_wrapper = target.join(format!("{capture_stem}.native-cxx-trace"));
+        let ar_wrapper = target.join(format!("{capture_stem}.native-ar-trace"));
+        #[cfg(unix)]
+        {
+            for wrapper in [&cc_wrapper, &cxx_wrapper, &ar_wrapper] {
+                match fs::remove_file(wrapper) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(source) => {
+                        return Err(OvenLegacyCargoError::Io {
+                            path: wrapper.to_path_buf(),
+                            source,
+                        });
+                    }
+                }
+            }
+            std::os::unix::fs::symlink(native_wrapper, &cc_wrapper).map_err(|source| OvenLegacyCargoError::Io {
+                path: cc_wrapper.clone(),
+                source,
+            })?;
+            std::os::unix::fs::symlink(native_wrapper, &cxx_wrapper).map_err(|source| OvenLegacyCargoError::Io {
+                path: cxx_wrapper.clone(),
+                source,
+            })?;
+            std::os::unix::fs::symlink(native_wrapper, &ar_wrapper).map_err(|source| OvenLegacyCargoError::Io {
+                path: ar_wrapper.clone(),
+                source,
+            })?;
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(OvenLegacyCargoError::Plan(
+                "native trace wrappers require Unix executable aliases".to_string(),
+            ));
+        }
+        command
+            .env("CC", &cc_wrapper)
+            .env("CXX", &cxx_wrapper)
+            .env(&target_cc, &cc_wrapper)
+            .env(&target_cxx, &cxx_wrapper)
+            .env(&normalized_target_cc, &cc_wrapper)
+            .env(&normalized_target_cxx, &cxx_wrapper)
+            .env("AR", &ar_wrapper)
+            .env(&target_ar, &ar_wrapper)
+            .env(&normalized_target_ar, &ar_wrapper)
+            .env("SDKROOT", c_sysroot)
+            .env(native_trace::OVEN_NATIVE_TRACE_PATH_ENV, &native_trace_path)
+            .env(native_trace::OVEN_NATIVE_TRACE_WRAPPER_ENV, "1")
+            .env(native_trace::OVEN_NATIVE_TRACE_EXECUTABLE_ENV, &cc)
+            .env(native_trace::OVEN_NATIVE_TRACE_CXX_EXECUTABLE_ENV, &cxx)
+            .env("INCAN_OVEN_NATIVE_ARCHIVER", &ar);
+    }
     if compact_debug_info && profile == "debug" {
         command.env("CARGO_PROFILE_DEV_DEBUG", "0");
     }
@@ -2954,7 +3548,7 @@ fn run_legacy_cargo_invocation(
             }
         }
     };
-    let stdout = fs::read(&stdout_path).map_err(|source| OvenLegacyCargoError::Io {
+    let mut stdout = fs::read(&stdout_path).map_err(|source| OvenLegacyCargoError::Io {
         path: stdout_path.clone(),
         source,
     })?;
@@ -2971,6 +3565,14 @@ fn run_legacy_cargo_invocation(
             output: format!("{stdout}\n{stderr}").trim().to_string(),
         });
     }
+    if rustc_wrapper.is_some() {
+        append_rustc_trace(&mut stdout, &rustc_trace_path)?;
+        let _ = fs::remove_file(&rustc_trace_path);
+    }
+    if native_wrapper.is_some() {
+        native_trace::append_native_trace(&mut stdout, &native_trace_path)?;
+        let _ = fs::remove_file(&native_trace_path);
+    }
     let reservation = conservative_directory_reservation(capacity_root)?;
     if reservation > transient_limit {
         return Err(OvenLegacyCargoError::TransientCapacityExceeded {
@@ -2980,6 +3582,45 @@ fn run_legacy_cargo_invocation(
         });
     }
     Ok(CargoInvocationOutput { stdout })
+}
+
+/// Run one Cargo invocation without tracing native build-script tools.
+#[allow(clippy::too_many_arguments)]
+fn run_legacy_cargo_invocation(
+    cargo: &Path,
+    rustc: &Path,
+    cargo_manifest: &Path,
+    target: &Path,
+    capacity_root: &Path,
+    target_triple: &str,
+    profile: &str,
+    features: &[String],
+    transient_limit: u64,
+    command_name: &'static str,
+    target_selection: &OvenLegacyCargoInvocationTarget,
+    unit_graph: bool,
+    compact_debug_info: bool,
+    distinct_extension_identities: bool,
+) -> Result<CargoInvocationOutput, OvenLegacyCargoError> {
+    run_legacy_cargo_invocation_with_native(
+        cargo,
+        rustc,
+        cargo_manifest,
+        target,
+        capacity_root,
+        target_triple,
+        profile,
+        features,
+        transient_limit,
+        command_name,
+        target_selection,
+        unit_graph,
+        compact_debug_info,
+        distinct_extension_identities,
+        None,
+        None,
+        None,
+    )
 }
 
 type PublisherArtifactClosure = (
@@ -3083,13 +3724,44 @@ fn artifact_closure(
     Ok((dependency_search_paths, externs, supporting_artifacts))
 }
 
+/// Canonical artifact paths of every host library the linked closure reaches without crossing a build script.
+///
+/// From the captured roots, follow dependency edges but stop at run-custom-build units: what lies beyond them is a
+/// script's own input. A host-domain library unit met on the way (a procedural macro's dependency compiled for the
+/// build host) contributes its traced outputs.
+fn linked_host_library_artifacts(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+) -> Result<BTreeSet<PathBuf>, OvenLegacyCargoError> {
+    let mut visited = BTreeSet::new();
+    let mut pending = capture.roots.clone();
+    let mut artifacts = BTreeSet::new();
+    while let Some(index) = pending.pop() {
+        if !visited.insert(index) {
+            continue;
+        }
+        let unit = capture
+            .units
+            .get(index)
+            .ok_or_else(|| OvenLegacyCargoError::Plan("physical capture names an absent unit".to_string()))?;
+        if unit.mode == "run-custom-build" {
+            continue;
+        }
+        if unit.target_is_explicit == Some(false) && !unit.crate_types.iter().any(|kind| kind == "proc-macro") {
+            for path in &unit.artifact_paths {
+                if let Ok(canonical) = fs::canonicalize(path) {
+                    artifacts.insert(canonical);
+                }
+            }
+        }
+        pending.extend(unit.dependencies.iter().map(|dependency| dependency.unit_index));
+    }
+    Ok(artifacts)
+}
+
 /// Derive one direct-rustc closure from the exact compiler artifacts the explicit Cargo invocation reported.
 ///
-/// Cargo's target layout is an implementation detail: recent Cargo versions can place a dependency library below
-/// `target/<triple>/<profile>/build/<package>/<identity>/out`, while older versions use `deps/`. The JSON message
-/// stream is the stable publisher authority in both cases. Every path remains confined to private staging, must be
-/// a regular non-symlink file, and must have Cargo's crate-and-identity-shaped build-output form before it enters a
-/// Loaf.
+/// Cargo's JSON stream is the publisher authority. Every reported path remains confined to private staging and
+/// must be a regular non-symlink compiler artifact before it enters a Loaf.
 fn artifact_closure_from_reported_paths(
     staging: &Path,
     target_triple: &str,
@@ -3097,6 +3769,7 @@ fn artifact_closure_from_reported_paths(
     direct_dependencies: &BTreeMap<String, ResolvedDirectDependency>,
     permit_absent_declared_dependencies: bool,
     outputs: &[CargoInvocationOutput],
+    linked_host_artifacts: &BTreeSet<PathBuf>,
 ) -> Result<PublisherArtifactClosure, OvenLegacyCargoError> {
     let canonical_staging = canonical_directory(staging, "publisher staging")?;
     let mut target_artifacts = Vec::new();
@@ -3143,9 +3816,12 @@ fn artifact_closure_from_reported_paths(
                     });
                 }
                 let target_artifact = compiler_artifact_platform(&source_path, target_triple).is_some();
-                if !target_artifact && !is_dynamic_rustc_artifact(file_name) {
-                    // A cross-target direct-rustc plan must not accidentally retain a host `.rlib`. Host dynamic
-                    // artifacts are the only supported host-side inputs because procedural macros execute there.
+                if !target_artifact
+                    && !is_dynamic_rustc_artifact(file_name)
+                    && !linked_host_artifacts.contains(&source_path)
+                {
+                    // A host `.rlib` is retained only when the capture proves the linked closure reaches it, as a
+                    // procedural macro's dependency; anything else host-side is a script input or cross-target noise.
                     continue;
                 }
                 let parent = source_path.parent().ok_or_else(|| OvenLegacyCargoError::InvalidInput {
@@ -4201,9 +4877,106 @@ fn round_physical(bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use crate::{OvenLegacyCargoSelectedGeneratedOutput, retained_empty_generated_output_directories};
     use std::sync::Arc;
 
     use oven_model::compiler_identity::CompilerIdentity;
+
+    /// The ordinary compatibility publisher must retain an explicitly observed empty OUT_DIR through Store
+    /// publication, mirror import and acquisition. This is a production-boundary regression: the generated root uses
+    /// the same owner-relative spelling as stable capture, while the publication path is the one used before the
+    /// runtime-foundation asset is assembled.
+    #[test]
+    fn empty_generated_output_survives_publish_mirror_and_acquire() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source = project.path().join("src/main.rs");
+        fs::create_dir_all(source.parent().ok_or("fixture source has no parent")?)?;
+        fs::write(
+            project.path().join("Cargo.toml"),
+            "[package]\nname = \"empty_generated_output\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(&source, "fn main() {}\n")?;
+        let request = OvenGeneratedProjectRequest::new(
+            project.path(),
+            "empty_generated_output",
+            "0.1.0",
+            "fixture-target",
+            "fixture-rustc",
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", &source);
+        let receipt = receipt_generated_project(&request)?;
+
+        let staging = tempfile::tempdir()?;
+        let empty_digest = oven_rustc::rustc::selected_graph_generated_input_digest(&[])?;
+        let relative_root = format!(
+            "generated-outputs/{}",
+            empty_digest.strip_prefix("sha256:").unwrap_or(&empty_digest)
+        );
+        fs::create_dir_all(staging.path().join("foundation").join(&relative_root))?;
+        fs::write(staging.path().join("foundation.json"), b"{}")?;
+        let materialized_files = materialized_files_from_directory(
+            staging.path(),
+            "foundation",
+            "empty generated output publication fixture",
+        )?;
+
+        let mirror_root = tempfile::tempdir()?;
+        let mirror = OvenStore::new(
+            mirror_root.path(),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let published = mirror.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "empty-generated-output".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: b"fixture plan".to_vec(),
+            materialized_files,
+            materialized_directories: retained_empty_generated_output_directories(
+                staging.path(),
+                [&OvenLegacyCargoSelectedGeneratedOutput {
+                    relative_root: format!("foundation/{relative_root}"),
+                    digest: empty_digest,
+                    members: Vec::new(),
+                }],
+            ),
+        })?;
+
+        let local_root = tempfile::tempdir()?;
+        let local = OvenStore::new(local_root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let imported = oven_store::store_mirror::import_matching_from_mirrors(
+            &local,
+            &[mirror_root.path().to_path_buf()],
+            Some(&receipt),
+            |manifest| manifest.identity == published.identity,
+        )?;
+        assert_eq!(imported.len(), 1);
+        let (acquired, _payload, _lease) = local.select_payload(&published.identity)?;
+        assert!(
+            acquired
+                .materialized_root()
+                .join("foundation")
+                .join(&relative_root)
+                .is_dir(),
+            "the admitted empty generated-output root must survive cold publication, mirror import and acquisition"
+        );
+        let acquired_empty_root = acquired.materialized_root().join("foundation").join(&relative_root);
+        let unexpected = acquired_empty_root.join("unexpected.txt");
+        fs::write(&unexpected, b"tampered")?;
+        assert!(
+            local.select_payload(&published.identity).is_err(),
+            "adding content beneath a declared empty generated-output root must invalidate the admitted entry"
+        );
+        fs::remove_file(unexpected)?;
+        local.select_payload(&published.identity)?;
+        fs::remove_dir(acquired_empty_root)?;
+        assert!(
+            local.select_payload(&published.identity).is_err(),
+            "removing a declared empty generated-output root must invalidate the admitted entry"
+        );
+        Ok(())
+    }
 
     /// One registry unit resolved twice contributes its staged tree once, keeping every feature either asked for.
     ///
@@ -4220,6 +4993,7 @@ mod tests {
             features: features.iter().map(|feature| (*feature).to_string()).collect(),
             source_root: std::path::PathBuf::from("registry-sources/serde"),
             source_digest: "sha256:serde-tree".to_string(),
+            members: Vec::new(),
         };
         let mut other = source(&["std"]);
         other.package = "itoa".to_string();
@@ -4254,14 +5028,16 @@ mod tests {
         CargoInvocationOutput, CargoMetadata, CargoMetadataPackage, CargoMetadataResolve,
         CargoMetadataResolveDependency, CargoMetadataResolveNode, CargoUnitGraph, CargoUnitGraphDependency,
         CargoUnitGraphTarget, CargoUnitGraphUnit, CompilerSuiteArtifactCatalog, InspectionPackageScope,
-        OVEN_COMPILER_TEST_PROFILE, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
-        OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION,
-        OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,
-        OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget,
+        OVEN_COMPILER_TEST_PROFILE, OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION,
+        OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION,
+        OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenCompilerSuiteFoundationKey,
+        OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationArtifactRecord,
+        OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
+        OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget,
         OvenCompilerTestSuiteToolchainLoafGenerationReference, OvenLegacyCargoBaseLoaf,
-        OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInvocationTarget,
-        OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, OvenProjectExtensionPayload,
-        ResolvedDirectDependency, artifact_closure, artifact_closure_from_reported_paths,
+        OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoFoundationSelection, OvenLegacyCargoInspectionPackage,
+        OvenLegacyCargoInvocationTarget, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
+        OvenProjectExtensionPayload, ResolvedDirectDependency, artifact_closure, artifact_closure_from_reported_paths,
         canonicalize_supporting_artifacts, compiler_suite_artifact_catalog, compiler_suite_artifact_index,
         compiler_suite_cargo_build_output, compiler_suite_cli_target_from_artifact_index,
         compiler_suite_dependency_artifact, compiler_suite_dependency_directories, compiler_suite_direct_cli_plan,
@@ -4282,7 +5058,7 @@ mod tests {
         reclaim_unmaterialized_compiler_suite_target_files, release_cohort_generated_project_lock,
         resolve_direct_dependency_packages, run_legacy_cargo, run_legacy_cargo_invocation,
         select_compiler_test_suite_identity, select_existing_project_extension_identity,
-        source_compiler_vocab_support_paths_are_available, stage_compiler_suite_shard_files,
+        source_compiler_vocab_support_paths_are_available, stage_compiler_suite_shard_files, stage_registry_source,
         stage_registry_source_directory, stage_self_contained_sdk_provider_tree, validate_compiler_suite_unit_graph,
         validate_generated_registry_lock, validate_release_cohort_registry_lock,
     };
@@ -4292,8 +5068,9 @@ mod tests {
     };
     use oven_rustc::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
-        OvenRustcArtifactManifest, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-        OvenRustcSupportingArtifact, rustc_host_target, rustc_identity,
+        OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind,
+        OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, rustc_host_target,
+        rustc_identity,
     };
     use oven_store::store::{
         OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits,
@@ -4586,6 +5363,9 @@ mod tests {
                     .to_string(),
                 evidence: BTreeMap::new(),
                 loafs: members,
+                release_store_member: None,
+                runtime_foundation: None,
+                runtime_closure: None,
             })?,
         )?;
         Ok(())
@@ -4746,6 +5526,165 @@ mod tests {
                 .iter()
                 .any(|artifact| artifact.relative_path.ends_with("/Cargo.toml"))
         );
+        Ok(())
+    }
+
+    /// A registry package compiled for the target and again for the build host seals one source record.
+    ///
+    /// A workspace member whose procedural macro or build script depends on a registry package the target code also
+    /// uses makes Cargo compile that package twice, once per domain, over one source tree. The catalog must declare
+    /// that tree once, carrying every leaf's features, or the plan it seals refuses itself; the complete-graph
+    /// catalog keeps the compiled leaves' features for that record rather than the resolved graph's.
+    #[test]
+    fn publisher_catalog_seals_one_source_for_a_package_compiled_for_target_and_host()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let staging = fixture.path().join("staging");
+        fs::create_dir_all(&staging)?;
+        let registry = "registry+https://github.com/rust-lang/crates.io-index";
+        let package_root = fixture.path().join("segmentation-1.12.0");
+        fs::create_dir_all(package_root.join("src"))?;
+        fs::write(
+            package_root.join("Cargo.toml"),
+            "[package]\nname = \"segmentation\"\nversion = \"1.12.0\"\n",
+        )?;
+        fs::write(package_root.join("src/lib.rs"), "pub fn graphemes() {}\n")?;
+        let mut source_artifacts = Vec::new();
+        let source = stage_registry_source(
+            &staging,
+            "segmentation",
+            "1.12.0",
+            registry,
+            "segmentation-checksum",
+            &package_root,
+            &mut source_artifacts,
+        )?;
+        let leaf = |domain, features: &[&str], relative_path: &str| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
+            domain,
+            crate_kind: OvenRustcRegistryLeafKind::Rlib,
+            package: "segmentation".to_string(),
+            version: "1.12.0".to_string(),
+            crate_name: "segmentation".to_string(),
+            features: features.iter().map(|feature| (*feature).to_string()).collect(),
+            source: source.clone(),
+            artifact: OvenRustcArtifactExtern {
+                crate_name: "segmentation".to_string(),
+                relative_path: relative_path.to_string(),
+                digest: digest_bytes(relative_path.as_bytes()),
+            },
+        };
+        let target_path = "target/aarch64-apple-darwin/debug/deps/libsegmentation-target.rlib";
+        let host_path = "target/debug/deps/libsegmentation-host.rlib";
+        let sealed_plan = |leaves: Vec<OvenRustcRegistryLeaf>,
+                           registry_sources: Vec<OvenRustcRegistrySourcePackage>|
+         -> Result<OvenRustcArtifactManifest, Box<dyn std::error::Error>> {
+            let mut supporting_artifacts = source_artifacts.clone();
+            supporting_artifacts.extend(leaves.iter().map(|leaf| OvenRustcSupportingArtifact {
+                relative_path: leaf.artifact.relative_path.clone(),
+                digest: leaf.artifact.digest.clone(),
+            }));
+            let plan = OvenRustcArtifactManifest {
+                schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                intent: OvenBuildIntent {
+                    target: "aarch64-apple-darwin".to_string(),
+                    toolchain: "rustc".to_string(),
+                    profile: "debug".to_string(),
+                    features: Vec::new(),
+                },
+                dependency_search_paths: Vec::new(),
+                native_search_paths: Vec::new(),
+                externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
+                entrypoint_externs: BTreeMap::new(),
+                registry_leaves: leaves,
+                registry_sources,
+                compile_environment: BTreeMap::new(),
+                vocab_auxiliary_targets: Vec::new(),
+                supporting_artifacts,
+            };
+            plan.validate_shape(&plan.intent)?;
+            Ok(plan)
+        };
+
+        // ---- Leaf-derived catalog: no resolved graph to consult ----
+        let no_metadata = CargoMetadata {
+            packages: Vec::new(),
+            resolve: None,
+        };
+        let identical_leaves = vec![
+            leaf(OvenRustcRegistryLeafDomain::Target, &[], target_path),
+            leaf(OvenRustcRegistryLeafDomain::Host, &[], host_path),
+        ];
+        let (identical_sources, _) =
+            publisher_registry_source_catalog(&no_metadata, b"", &staging, None, &identical_leaves, false, None)?;
+        let identical = sealed_plan(identical_leaves, identical_sources)?;
+        assert_eq!(identical.registry_sources.len(), 1);
+        assert_eq!(identical.registry_sources[0].source, source);
+        assert!(identical.registry_sources[0].features.is_empty());
+
+        let divergent_leaves = vec![
+            leaf(OvenRustcRegistryLeafDomain::Target, &["std"], target_path),
+            leaf(OvenRustcRegistryLeafDomain::Host, &["alloc", "std"], host_path),
+        ];
+        let (divergent_sources, _) =
+            publisher_registry_source_catalog(&no_metadata, b"", &staging, None, &divergent_leaves, false, None)?;
+        let divergent = sealed_plan(divergent_leaves.clone(), divergent_sources)?;
+        assert_eq!(divergent.registry_sources.len(), 1);
+        assert_eq!(divergent.registry_sources[0].features, ["alloc", "std"]);
+
+        // ---- Complete-graph catalog: the resolved graph also names the compiled package ----
+        let metadata = CargoMetadata {
+            packages: vec![
+                CargoMetadataPackage {
+                    id: "root".to_string(),
+                    name: "fixture".to_string(),
+                    version: "0.1.0".to_string(),
+                    manifest_path: fixture.path().join("Cargo.toml"),
+                    source: None,
+                },
+                CargoMetadataPackage {
+                    id: "segmentation".to_string(),
+                    name: "segmentation".to_string(),
+                    version: "1.12.0".to_string(),
+                    manifest_path: package_root.join("Cargo.toml"),
+                    source: Some(registry.to_string()),
+                },
+            ],
+            resolve: Some(CargoMetadataResolve {
+                root: Some("root".to_string()),
+                nodes: vec![
+                    CargoMetadataResolveNode {
+                        id: "root".to_string(),
+                        features: Vec::new(),
+                        dependencies: vec!["segmentation".to_string()],
+                        deps: Vec::new(),
+                    },
+                    CargoMetadataResolveNode {
+                        id: "segmentation".to_string(),
+                        features: vec!["alloc".to_string(), "graphemes".to_string(), "std".to_string()],
+                        dependencies: Vec::new(),
+                        deps: Vec::new(),
+                    },
+                ],
+            }),
+        };
+        let lock = format!(
+            "version = 4\n\n[[package]]\nname = \"segmentation\"\nversion = \"1.12.0\"\nsource = \"{registry}\"\nchecksum = \"segmentation-checksum\"\n"
+        );
+        let (complete_sources, _) = publisher_registry_source_catalog(
+            &metadata,
+            lock.as_bytes(),
+            &staging,
+            None,
+            &divergent_leaves,
+            true,
+            None,
+        )?;
+        let complete = sealed_plan(divergent_leaves, complete_sources)?;
+        assert_eq!(complete.registry_sources.len(), 1);
+        assert_eq!(complete.registry_sources[0].source, source);
+        assert_eq!(complete.registry_sources[0].features, ["alloc", "std"]);
         Ok(())
     }
 
@@ -5005,6 +5944,7 @@ mod tests {
             &dependencies,
             false,
             &[output],
+            &std::collections::BTreeSet::new(),
         )?;
 
         assert_eq!(externs.len(), 1);
@@ -5045,6 +5985,7 @@ mod tests {
             &BTreeMap::new(),
             false,
             &[output],
+            &std::collections::BTreeSet::new(),
         )?;
 
         assert_eq!(
@@ -5273,12 +6214,17 @@ mod tests {
             "{\n  \"schema_version\": 2,\n  \"sdk_id\": \"fixture\",\n  \"sdk_version\": \"0.1.0\",\n  \"compiler_requirement\": \">=0.1.0\",\n  \"provider_codegen_revision\": 5,\n  \"components\": {},\n  \"profiles\": {\"default\": []}\n}\n",
         )?;
         fs::write(provider.path().join("components/core/provider.incnlib"), "provider")?;
+        fs::write(
+            provider.path().join("components.rs"),
+            "root file sorts before nested component",
+        )?;
 
         let files = materialized_files_from_directory(provider.path(), "providers", "SDK provider inventory")?;
         let relative_paths = files.into_iter().map(|file| file.relative_path).collect::<Vec<_>>();
         assert_eq!(
             relative_paths,
             vec![
+                "providers/components.rs".to_string(),
                 "providers/components/core/provider.incnlib".to_string(),
                 "providers/sdk-inventory.json".to_string(),
             ]
@@ -6615,6 +7561,19 @@ version = "1.0.0"
                 },
             ],
             100_000,
+            &OvenCompilerSuiteFoundationKey::fixture("sha256:partition-fixture"),
+            vec![OvenCompilerTestSuiteFoundationArtifactRecord {
+                package: "a".to_string(),
+                version: "1.0.0".to_string(),
+                source: Some("registry+https://example.invalid".to_string()),
+                package_relative_path: None,
+                target_name: "a".to_string(),
+                source_relative_path: "src/lib.rs".to_string(),
+                features: Vec::new(),
+                test_profile: false,
+                platform: Some("aarch64-apple-darwin".to_string()),
+                files: vec!["deps/a.rlib".to_string()],
+            }],
         )?;
 
         assert_eq!(plans.len(), 2);
@@ -6623,6 +7582,24 @@ version = "1.0.0"
         assert_eq!(plans[0].materialized_files[0].relative_path, "deps/a.rlib");
         assert_eq!(plans[1].materialized_files[0].relative_path, "deps/b.rlib");
         assert!(plans.iter().all(|plan| plan.materialized_files.len() == 1));
+        // Every partition carries the family record with its own coordinates and the complete closure's shape.
+        for (index, plan) in plans.iter().enumerate() {
+            assert_eq!(
+                plan.payload.schema_version,
+                OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION
+            );
+            let family = plan
+                .payload
+                .family
+                .as_ref()
+                .ok_or("partition without a family record")?;
+            assert_eq!(family.key, "sha256:partition-fixture");
+            assert_eq!(usize::try_from(family.partition_index)?, index);
+            assert_eq!(family.partition_count, 2);
+            assert_eq!(family.dependency_search_paths, ["deps"]);
+            assert_eq!(family.artifact_index.len(), 1);
+            assert_eq!(family.artifact_index[0].files, ["deps/a.rlib"]);
+        }
         Ok(())
     }
 
@@ -6664,7 +7641,7 @@ version = "1.0.0"
             "mutable cache output",
         )?;
 
-        let (staged, first_digest) = stage_registry_source_directory(
+        let (staged, first_digest, _) = stage_registry_source_directory(
             staging.path(),
             "fixture",
             "1.0.0",
@@ -6970,6 +7947,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&schema_eight)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(select_compiler_test_suite_identity(&store, &receipt)?, None);
 
@@ -7001,6 +7979,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&schema_nine)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(select_compiler_test_suite_identity(&store, &receipt)?, None);
 
@@ -7037,6 +8016,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&schema_fifteen)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_compiler_test_suite_identity(&store, &receipt)?,
@@ -7139,6 +8119,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&suite)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         fs::write(
             compiler_root.path().join("src/lib.rs"),
@@ -7174,6 +8155,9 @@ version = "1.0.0"
             generated_project: fixture.path().join("unused-generated-project"),
             cargo,
             rustc,
+            cc: None,
+            cxx: None,
+            c_sysroot: None,
             sdk_inventory: None,
             compiler_loaf_root: None,
             domain: "compiler-suite".to_string(),
@@ -7184,6 +8168,7 @@ version = "1.0.0"
             direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
             provider_compilations: &[],
             compact_debug_info: false,
+            retain_equivalence_artifacts: false,
             source_compiler_vocab_support: false,
             base_loaf: None,
         })?;
@@ -7194,11 +8179,20 @@ version = "1.0.0"
         assert_eq!(result.cargo_lock_digest, "not-run-existing-suite");
         assert_eq!(result.transient_reservation_bytes, 0);
         assert_eq!(result.timing.unit_graph_elapsed_ms, 0);
+        assert_eq!(result.timing.foundation_selection_elapsed_ms, 0);
         assert_eq!(result.timing.foundation_build_elapsed_ms, 0);
         assert_eq!(result.timing.direct_plan_elapsed_ms, 0);
         assert_eq!(result.timing.store_publication_elapsed_ms, 0);
+        assert_eq!(result.foundation.key, None);
+        assert_eq!(
+            result.foundation.selection,
+            OvenLegacyCargoFoundationSelection::ExistingSuite
+        );
+        assert!(!result.foundation.cargo_process_started);
         let timing = serde_json::to_value(&result)?;
         assert!(timing["timing"].get("preflight_and_sdk_elapsed_ms").is_some());
+        assert_eq!(timing["foundation"]["selection"], "existing-suite");
+        assert_eq!(timing["foundation"]["cargo_process_started"], false);
         assert!(
             !cargo_marker.exists(),
             "a compatible stored suite must return before invoking the supplied Cargo executable"
@@ -7298,6 +8292,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&stale_payload)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         assert_eq!(
@@ -7319,6 +8314,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&complete_plan_drift)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let mut extension_paths_drift = payload(OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION);
         let _ = extension_paths_drift.extension_paths.pop();
@@ -7328,6 +8324,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&extension_paths_drift)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_existing_project_extension_identity(&store, &receipt, &base)?,
@@ -7341,6 +8338,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&payload(OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_existing_project_extension_identity(&store, &receipt, &base)?,
@@ -7400,6 +8398,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let fixture = tempfile::tempdir()?;
         let cargo_marker = fixture.path().join("unexpected-cargo-invocation");
@@ -7421,6 +8420,9 @@ version = "1.0.0"
             generated_project: project.path().to_path_buf(),
             cargo,
             rustc,
+            cc: None,
+            cxx: None,
+            c_sysroot: None,
             sdk_inventory: None,
             compiler_loaf_root: None,
             domain: "incan-release-fixture".to_string(),
@@ -7431,6 +8433,7 @@ version = "1.0.0"
             direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
             provider_compilations: &[],
             compact_debug_info: false,
+            retain_equivalence_artifacts: false,
             source_compiler_vocab_support: false,
             base_loaf: None,
         })?;
@@ -7442,6 +8445,211 @@ version = "1.0.0"
             !cargo_marker.exists(),
             "a compatible stored project Loaf must return before invoking the supplied Cargo executable"
         );
+        Ok(())
+    }
+
+    /// Publish one capture-scope fixture with the same ordinary project policy used by the regression below.
+    #[cfg(unix)]
+    fn prepare_capture_scope_fixture(
+        store: &OvenStore,
+        project: &Path,
+        name: &str,
+        cargo: &Path,
+        rustc: &Path,
+        base_loaf: Option<OvenLegacyCargoBaseLoaf<'_>>,
+    ) -> Result<(oven_store::OvenReceipt, super::OvenLegacyCargoPrepareResult), Box<dyn std::error::Error>> {
+        let target = rustc_host_target(rustc)?;
+        let toolchain = rustc_identity(rustc)?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(project, name, "0.1.0", &target, &toolchain, "debug", Vec::new())
+                .with_generated_source("generated-root", project.join("src/main.rs")),
+        )?;
+        let result = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+            compiler: CompilerIdentity::new("0.0.0-test", 0),
+            provider_hooks: Arc::new(oven_store::NoProviderHooks),
+            store,
+            receipt: receipt.clone(),
+            generated_project: project.to_path_buf(),
+            cargo: cargo.to_path_buf(),
+            rustc: rustc.to_path_buf(),
+            cc: None,
+            cxx: None,
+            c_sysroot: None,
+            sdk_inventory: None,
+            compiler_loaf_root: None,
+            domain: "capture-scope-fixture".to_string(),
+            publication_kind: OvenLegacyCargoPublicationKind::Executable,
+            source_evidence_key: "generated-root".to_string(),
+            compile_environment: Default::default(),
+            inspection_packages: None,
+            direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
+            provider_compilations: &[],
+            compact_debug_info: true,
+            retain_equivalence_artifacts: false,
+            source_compiler_vocab_support: false,
+            base_loaf,
+        })?;
+        Ok((receipt, result))
+    }
+
+    /// A project extension reuses a dependency carried by its selected base without inheriting Cargo capture evidence.
+    #[cfg(unix)]
+    #[test]
+    fn explicit_project_bake_excludes_capture_evidence_shared_with_its_base() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = tempfile::tempdir()?;
+        let shared = fixture.path().join("shared");
+        let project_only = fixture.path().join("project-only");
+        let base_project = fixture.path().join("base-project");
+        let extension_project = fixture.path().join("extension-project");
+        for (root, name, body) in [
+            (&shared, "incan_std_core", "pub fn shared() -> u8 { 1 }\n"),
+            (&project_only, "project_only", "pub fn project_only() -> u8 { 2 }\n"),
+        ] {
+            fs::create_dir_all(root.join("src"))?;
+            fs::write(
+                root.join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+            )?;
+            fs::write(root.join("src/lib.rs"), body)?;
+        }
+        for root in [&base_project, &extension_project] {
+            fs::create_dir_all(root.join("src"))?;
+        }
+        fs::write(
+            base_project.join("Cargo.toml"),
+            "[package]\nname = \"base_project\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nincan_std_core = { path = \"../shared\" }\n",
+        )?;
+        fs::write(
+            base_project.join("src/main.rs"),
+            "fn main() { let _ = incan_std_core::shared(); }\n",
+        )?;
+        fs::write(
+            extension_project.join("Cargo.toml"),
+            "[package]\nname = \"extension_project\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nincan_std_core = { path = \"../shared\" }\nproject_only = { path = \"../project-only\" }\n",
+        )?;
+        fs::write(
+            extension_project.join("src/main.rs"),
+            "fn main() { let _ = (incan_std_core::shared(), project_only::project_only()); }\n",
+        )?;
+
+        let cargo = crate::cargo_process::resolved_cargo_executable()?;
+        let rustc_output = Command::new("rustup").args(["which", "rustc"]).output()?;
+        assert!(rustc_output.status.success(), "rustup which rustc failed");
+        let rustc = PathBuf::from(String::from_utf8(rustc_output.stdout)?.trim());
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            OvenStoreLimits::new(512 * 1024 * 1024, 512 * 1024 * 1024, 512 * 1024 * 1024),
+        );
+        let (base_receipt, base_result) =
+            prepare_capture_scope_fixture(&store, &base_project, "base_project", &cargo, &rustc, None)?;
+        let (_manifest, _artifact_root, payload, _lease) =
+            store.select_payload_for_execution(&base_result.plan_identity)?;
+        let mut base_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload)?;
+        assert!(
+            base_plan
+                .externs
+                .iter()
+                .any(|artifact| artifact.crate_name == "incan_std_core")
+        );
+        let base_root = tempfile::tempdir()?;
+        let lock_path = base_root.path().join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
+        fs::create_dir_all(lock_path.parent().ok_or("base lock parent missing")?)?;
+        let lock = fs::read(base_project.join("Cargo.lock"))?;
+        fs::write(&lock_path, &lock)?;
+        base_plan.supporting_artifacts.push(OvenRustcSupportingArtifact {
+            relative_path: OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH.to_string(),
+            digest: digest_bytes(&lock),
+        });
+        canonicalize_supporting_artifacts(&mut base_plan.supporting_artifacts)?;
+
+        let base = OvenLegacyCargoBaseLoaf {
+            loaf_identity: "sha256:capture-scope-base".to_string(),
+            build_unit_identity: base_receipt.build_unit_identity,
+            artifacts: &base_plan,
+            artifact_root: base_root.path(),
+        };
+        let (_extension_receipt, extension_result) = prepare_capture_scope_fixture(
+            &store,
+            &extension_project,
+            "extension_project",
+            &cargo,
+            &rustc,
+            Some(base),
+        )?;
+        let (manifest, _artifact_root, payload, _lease) =
+            store.select_payload_for_execution(&extension_result.plan_identity)?;
+        assert_eq!(manifest.kind, OvenArtifactKind::ProjectPayload);
+        let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&payload)?;
+        assert!(
+            payload
+                .complete_plan
+                .externs
+                .iter()
+                .any(|artifact| artifact.crate_name == "incan_std_core")
+        );
+        assert!(
+            payload
+                .complete_plan
+                .supporting_artifacts
+                .iter()
+                .all(|artifact| !artifact.relative_path.starts_with("cargo-capture-artifacts/"))
+        );
+        assert!(
+            manifest
+                .materialized_files
+                .iter()
+                .all(|artifact| !artifact.relative_path.starts_with("cargo-capture-artifacts/"))
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_release_cargo_invocation_omits_unit_graph_flags() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir()?;
+        let manifest = fixture.path().join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname='fixture'\nversion='0.1.0'\n")?;
+        let log = fixture.path().join("cargo-args");
+        let cargo = fixture.path().join("cargo");
+        fs::write(
+            &cargo,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{{\"reason\":\"incan-rustc-invocation\",\"rustc\":\"rustc\",\"arguments\":[\"--crate-name\",\"fixture\"],\"environment\":{{}}}}' > \"$INCAN_OVEN_RUSTC_TRACE_PATH\"\nprintf '%s\\n' '{{\"reason\":\"build-finished\",\"success\":true}}'\n",
+                log.display()
+            ),
+        )?;
+        fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
+        let rustc = fixture.path().join("rustc");
+        fs::write(&rustc, "#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))?;
+        let target = fixture.path().join("target");
+        let staging = fixture.path().join("staging");
+        fs::create_dir(&staging)?;
+
+        run_legacy_cargo_invocation(
+            &cargo,
+            &rustc,
+            &manifest,
+            &target,
+            &staging,
+            "aarch64-apple-darwin",
+            "debug",
+            &[],
+            u64::MAX,
+            "build",
+            &OvenLegacyCargoInvocationTarget::None,
+            false,
+            false,
+            false,
+        )?;
+
+        let arguments = fs::read_to_string(log)?;
+        assert!(!arguments.contains("-Z"));
+        assert!(!arguments.contains("--unit-graph"));
         Ok(())
     }
 
@@ -7560,7 +8768,7 @@ version = "1.0.0"
         fs::write(
             &cargo,
             format!(
-                "#!/bin/sh\npwd > \"{}\"\nprintf '%s' \"$CARGO_PROFILE_DEV_DEBUG\" > \"{}\"\nprintf '%s' \"$CARGO_INCREMENTAL\" > \"{}\"\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\npwd > \"{}\"\nprintf '%s' \"$CARGO_PROFILE_DEV_DEBUG\" > \"{}\"\nprintf '%s' \"$CARGO_INCREMENTAL\" > \"{}\"\nprintf '%s\\n' \"$@\" > \"{}\"\n",
                 observed_directory.display(),
                 observed_debug_setting.display(),
                 observed_incremental_setting.display(),
@@ -7732,7 +8940,7 @@ version = "1.0.0"
         fs::write(
             &cargo,
             format!(
-                "#!/bin/sh\nsleep 30 &\nprintf '%s\\n' \"$!\" > \"{}\"\ndd if=/dev/urandom of=\"{}\" bs=131072 count=1 2>/dev/null\nwait\n",
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nsleep 30 &\nprintf '%s\\n' \"$!\" > \"{}\"\ndd if=/dev/urandom of=\"{}\" bs=131072 count=1 2>/dev/null\nwait\n",
                 descendant_pid.display(),
                 retained_output.display(),
             ),
@@ -7810,7 +9018,10 @@ version = "1.0.0"
         let arguments = fixture.path().join("cargo-arguments");
         fs::write(
             &cargo,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\n", arguments.display()),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                arguments.display()
+            ),
         )?;
         fs::write(&rustc, "#!/bin/sh\nexit 0\n")?;
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
@@ -8706,7 +9917,10 @@ version = "1.0.0"
         let manifest = fixture.path().join("Cargo.toml");
         fs::write(
             &cargo,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"{}\"\n", arguments.display()),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+                arguments.display()
+            ),
         )?;
         fs::write(&rustc, "#!/bin/sh\nexit 0\n")?;
         fs::write(&manifest, "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n")?;

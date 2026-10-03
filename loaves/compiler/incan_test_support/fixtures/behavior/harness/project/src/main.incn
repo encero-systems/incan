@@ -1,0 +1,6 @@
+# behavior: a project fixture supplies its own manifest and is run as it is
+# expect-stdout:
+#   project fixture
+
+def main() -> None:
+    println("project fixture")

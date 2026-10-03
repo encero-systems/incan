@@ -4,17 +4,19 @@
 //! digests recorded, and the leaf catalog binds every registry artifact to the plan that sealed it. The publisher
 //! that calls them lives in `legacy_cargo.rs`.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
     CargoChecksumLock, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, InspectionPackageScope,
-    OvenBuildIntent, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage, OvenRustcArtifactExtern,
-    OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-    PendingRegistryLeaf, canonical_directory, compiler_artifact_platform, copy_regular_directory_tree, digest_bytes,
-    digest_source_tree, inspection_package_closure_ids, legacy_cargo_inspection_sources_from_metadata,
-    materialized_files_from_directory, regular_file_bytes, relative_path,
+    OvenBuildIntent, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInspectionSourceMember,
+    OvenRustcArtifactExtern, OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind,
+    OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, PendingRegistryLeaf,
+    canonical_directory, compiler_artifact_platform, copy_regular_directory_tree, digest_bytes, digest_source_tree,
+    inspection_package_closure_ids, legacy_cargo_inspection_sources_from_metadata, materialized_files_from_directory,
+    regular_file_bytes, relative_path,
 };
 
 /// Decode exact registry checksums from the lock consumed by the named publisher.
@@ -61,7 +63,7 @@ pub fn stage_registry_source(
     source_root: &Path,
     source_artifacts: &mut Vec<OvenRustcSupportingArtifact>,
 ) -> Result<OvenRustcRegistrySource, OvenLegacyCargoError> {
-    let (staged_root, digest) =
+    let (staged_root, digest, _) =
         stage_registry_source_directory(staging, package, version, registry, checksum, source_root)?;
     let relative_root = staged_root
         .strip_prefix(staging)
@@ -90,7 +92,7 @@ pub fn stage_registry_source_directory(
     registry: &str,
     checksum: &str,
     source_root: &Path,
-) -> Result<(PathBuf, String), OvenLegacyCargoError> {
+) -> Result<(PathBuf, String, Vec<OvenLegacyCargoInspectionSourceMember>), OvenLegacyCargoError> {
     let source_root = canonical_directory(source_root, "registry package source")?;
     let identity = digest_bytes(format!("{registry}\0{package}\0{version}\0{checksum}").as_bytes());
     let identity = identity.strip_prefix("sha256:").unwrap_or(&identity);
@@ -103,7 +105,27 @@ pub fn stage_registry_source_directory(
             "could not digest staged registry package `{package}` {version}: {error}"
         ))
     })?;
-    Ok((staged_root, digest))
+    let members = materialized_files_from_directory(&staged_root, "", "staged registry package source")?
+        .into_iter()
+        .map(|file| {
+            let path = file.relative_path.strip_prefix('/').ok_or_else(|| {
+                OvenLegacyCargoError::Plan("staged registry member path lost its package-relative prefix".to_string())
+            })?;
+            Ok(OvenLegacyCargoInspectionSourceMember {
+                path: path.to_string(),
+                digest: digest_bytes(&regular_file_bytes(&file.source_path)?),
+            })
+        })
+        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
+    if members.is_empty()
+        || members.windows(2).any(|pair| pair[0].path >= pair[1].path)
+        || !members.iter().any(|member| member.path == "Cargo.toml")
+    {
+        return Err(OvenLegacyCargoError::Plan(
+            "staged registry package source has no complete ordered Cargo.toml/member inventory".to_string(),
+        ));
+    }
+    Ok((staged_root, digest, members))
 }
 
 /// Copy registry package source while excluding mutable output that is not part of the package archive.
@@ -157,11 +179,53 @@ pub fn copy_registry_source_tree(source_root: &Path, destination_root: &Path) ->
     Ok(())
 }
 
+/// The complete identity of one sealed registry source record: package, version, registry, checksum, staged root and
+/// tree digest. Features are not part of it; they are what the record's compilations selected from that source.
+type RegistrySourceIdentity = (String, String, String, String, String, String);
+
+/// Collapse source records that name one exact registry source into a single record carrying all of their features.
+///
+/// One package version can compile more than once in a closure, for the target and again for the build host when a
+/// procedural macro or build script depends on it. Each compilation is its own registry leaf, but they share one
+/// source tree, and the manifest declares a package version's source once. Records for the same package version whose
+/// checksum, staged root or digest differ are different sources: they stay apart, and the manifest refuses them as a
+/// second source identity.
+fn collapse_registry_source_records(
+    records: impl IntoIterator<Item = OvenRustcRegistrySourcePackage>,
+) -> BTreeMap<RegistrySourceIdentity, OvenRustcRegistrySourcePackage> {
+    let mut collapsed = BTreeMap::<RegistrySourceIdentity, OvenRustcRegistrySourcePackage>::new();
+    for mut record in records {
+        let identity = (
+            record.package.clone(),
+            record.version.clone(),
+            record.source.registry.clone(),
+            record.source.checksum.clone(),
+            record.source.relative_root.clone(),
+            record.source.digest.clone(),
+        );
+        match collapsed.entry(identity) {
+            Entry::Occupied(mut existing) => existing.get_mut().features.append(&mut record.features),
+            Entry::Vacant(slot) => {
+                slot.insert(record);
+            }
+        }
+    }
+    for record in collapsed.values_mut() {
+        record.features.sort();
+        record.features.dedup();
+    }
+    collapsed
+}
+
 /// Build the plan's complete sealed source authority independently from its linkable registry leaves.
 ///
 /// A transitive procedural macro may be required by rust-analyzer's source graph without producing an `.rlib` that
 /// normal dependency selection can expose. Typed Loaf envelopes therefore retain the complete checked inspection
 /// closure here; the older broad transitional request continues to derive source authority from its compiled leaves.
+///
+/// The catalog holds one record per exact source. Leaves compiled from one source, such as a package's target and host
+/// compilations, share a record carrying the union of their features. A package the leaves compiled keeps their
+/// features when the resolved graph names it too; the resolved graph adds a record only for a source no leaf compiled.
 pub fn publisher_registry_source_catalog(
     metadata: &CargoMetadata,
     cargo_lock: &[u8],
@@ -171,15 +235,13 @@ pub fn publisher_registry_source_catalog(
     complete_resolved_source_catalog: bool,
     platform_applicable_metadata: Option<&CargoMetadata>,
 ) -> Result<(Vec<OvenRustcRegistrySourcePackage>, Vec<OvenRustcSupportingArtifact>), OvenLegacyCargoError> {
-    let mut sources = registry_leaves
-        .iter()
-        .map(|leaf| OvenRustcRegistrySourcePackage {
+    let mut sources =
+        collapse_registry_source_records(registry_leaves.iter().map(|leaf| OvenRustcRegistrySourcePackage {
             package: leaf.package.clone(),
             version: leaf.version.clone(),
             features: leaf.features.clone(),
             source: leaf.source.clone(),
-        })
-        .collect::<Vec<_>>();
+        }));
     let inspection_sources = match inspection_packages {
         Some(inspection_packages) => Some(legacy_cargo_inspection_sources_from_metadata(
             metadata,
@@ -202,10 +264,10 @@ pub fn publisher_registry_source_catalog(
         None => None,
     };
     let Some(inspection_sources) = inspection_sources else {
-        sources.sort_by(|left, right| (&left.package, &left.version).cmp(&(&right.package, &right.version)));
-        return Ok((sources, Vec::new()));
+        return Ok((sources.into_values().collect(), Vec::new()));
     };
     let mut source_artifacts = Vec::new();
+    let mut inspected = Vec::with_capacity(inspection_sources.len());
     for source in inspection_sources {
         let relative_root = source
             .source_root
@@ -221,7 +283,7 @@ pub fn publisher_registry_source_catalog(
                 digest: digest_bytes(&regular_file_bytes(&file.source_path)?),
             });
         }
-        sources.push(OvenRustcRegistrySourcePackage {
+        inspected.push(OvenRustcRegistrySourcePackage {
             package: source.package,
             version: source.version,
             features: source.features,
@@ -233,29 +295,12 @@ pub fn publisher_registry_source_catalog(
             },
         });
     }
-    sources.sort_by(|left, right| {
-        (
-            &left.package,
-            &left.version,
-            &left.source.registry,
-            &left.source.checksum,
-        )
-            .cmp(&(
-                &right.package,
-                &right.version,
-                &right.source.registry,
-                &right.source.checksum,
-            ))
-    });
-    sources.dedup_by(|left, right| {
-        left.package == right.package
-            && left.version == right.version
-            && left.source.registry == right.source.registry
-            && left.source.checksum == right.source.checksum
-    });
+    for (identity, record) in collapse_registry_source_records(inspected) {
+        sources.entry(identity).or_insert(record);
+    }
     source_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     source_artifacts.dedup_by(|left, right| left.relative_path == right.relative_path && left.digest == right.digest);
-    Ok((sources, source_artifacts))
+    Ok((sources.into_values().collect(), source_artifacts))
 }
 
 /// Retain exact registry leaves that the named publisher actually compiled into one Loaf.
@@ -269,9 +314,9 @@ pub struct PublisherRegistryLeafCatalogRequest<'a> {
     pub cargo_lock: &'a [u8],
     pub staging: &'a Path,
     pub intent: &'a OvenBuildIntent,
-    pub rustc_host: &'a str,
     pub externs: &'a [OvenRustcArtifactExtern],
     pub supporting_artifacts: &'a [OvenRustcSupportingArtifact],
+    pub selected_units: Option<&'a super::OvenLegacyCargoSelectedUnitCapture>,
     pub inspection_packages: Option<&'a [OvenLegacyCargoInspectionPackage]>,
 }
 
@@ -285,9 +330,9 @@ pub fn publisher_registry_leaf_catalog(
         cargo_lock,
         staging,
         intent,
-        rustc_host,
         externs,
         supporting_artifacts,
+        selected_units,
         inspection_packages,
     } = request;
     let mut retained = BTreeMap::<String, String>::new();
@@ -334,35 +379,66 @@ pub fn publisher_registry_leaf_catalog(
             else {
                 continue;
             };
+            let selected_unit_identity = selected_units
+                .map(|selected_units| {
+                    let selected = traced_units_for_registry_artifact(selected_units, &artifact);
+                    let [selected] = selected.as_slice() else {
+                        return Err(OvenLegacyCargoError::Plan(format!(
+                            "registry artifact `{}` {} does not bind exactly one traced rustc output",
+                            package.name, package.version
+                        )));
+                    };
+                    super::legacy_cargo_selected_unit_capture_identity(selected_units, *selected)
+                })
+                .transpose()?;
+            // A procedural macro is a host dynamic library rustc loads while compiling its consumer; every other
+            // registry unit is a Rust library archive, compiled for the target or, when a macro depends on it, for
+            // the build host. Each is sealed as its own leaf, labeled by domain and kind, so the catalog keeps a
+            // package's host and target compilations apart instead of dropping one.
+            let proc_macro = artifact.target.kind.iter().any(|kind| kind == "proc-macro");
+            let crate_kind = if proc_macro {
+                OvenRustcRegistryLeafKind::ProcMacro
+            } else {
+                OvenRustcRegistryLeafKind::Rlib
+            };
             let mut artifacts = artifact
                 .filenames
                 .into_iter()
-                .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("rlib"))
+                .filter(|path| {
+                    let extension = path.extension().and_then(|extension| extension.to_str());
+                    if proc_macro {
+                        matches!(extension, Some("dylib" | "so" | "dll"))
+                    } else {
+                        extension == Some("rlib")
+                    }
+                })
                 .filter_map(|path| {
                     let canonical = fs::canonicalize(&path).ok()?;
-                    let target_artifact =
-                        compiler_artifact_platform(&canonical, &intent.target) == Some(intent.target.clone());
-                    // Cargo's host rlibs are required to direct-compile a host proc macro. They are admissible only
-                    // when the receipt target is the compiler host: this catalog has no target dimension, so a
-                    // cross-target consumer must keep failing closed rather than accidentally selecting host code.
-                    (target_artifact || rustc_host == intent.target).then_some((canonical, target_artifact))
+                    let target_artifact = !proc_macro
+                        && compiler_artifact_platform(&canonical, &intent.target) == Some(intent.target.clone());
+                    let domain = if target_artifact {
+                        OvenRustcRegistryLeafDomain::Target
+                    } else {
+                        OvenRustcRegistryLeafDomain::Host
+                    };
+                    Some((canonical, domain))
                 })
-                .filter_map(|(path, target_artifact)| {
+                .filter_map(|(path, domain)| {
                     let relative = relative_path(staging, &path).ok()?;
                     retained
                         .get(&relative)
                         .cloned()
-                        .map(|digest| (relative, digest, target_artifact))
+                        .map(|digest| (relative, digest, domain))
                 })
                 .collect::<Vec<_>>();
             artifacts.sort();
             artifacts.dedup();
-            let Some((relative_path, digest, target_artifact)) = artifacts.as_slice().first().cloned() else {
+            let Some((relative_path, digest, domain)) = artifacts.as_slice().first().cloned() else {
                 continue;
             };
             if artifacts.len() != 1 {
                 return Err(OvenLegacyCargoError::Plan(format!(
-                    "named Loaf publisher emitted multiple target rlibs for registry package `{}` {}",
+                    "named Loaf publisher emitted multiple retained artifacts for registry package `{}` {}",
                     package.name, package.version
                 )));
             }
@@ -388,6 +464,7 @@ pub fn publisher_registry_leaf_catalog(
                 })?
                 .to_path_buf();
             let leaf = PendingRegistryLeaf {
+                selected_unit_identity,
                 package: package.name.clone(),
                 version: package.version.clone(),
                 crate_name: crate_name.clone(),
@@ -400,38 +477,46 @@ pub fn publisher_registry_leaf_catalog(
                 registry: registry.to_string(),
                 checksum,
                 source_root,
-                target_artifact,
+                domain,
+                crate_kind,
             };
             candidates.push(leaf);
         }
     }
-    let target_keys = candidates
-        .iter()
-        .filter(|leaf| leaf.target_artifact)
-        .map(|leaf| (leaf.package.clone(), leaf.version.clone(), leaf.crate_name.clone()))
-        .collect::<BTreeSet<_>>();
     candidates.sort_by(|left, right| {
         (
             left.package.as_str(),
             left.version.as_str(),
             left.crate_name.as_str(),
-            !left.target_artifact,
+            left.domain,
+            left.crate_kind,
             left.artifact.relative_path.as_str(),
         )
             .cmp(&(
                 right.package.as_str(),
                 right.version.as_str(),
                 right.crate_name.as_str(),
-                !right.target_artifact,
+                right.domain,
+                right.crate_kind,
                 right.artifact.relative_path.as_str(),
             ))
     });
-    let mut leaves = BTreeMap::<(String, String, String), PendingRegistryLeaf>::new();
+    type LeafKey = (
+        String,
+        String,
+        String,
+        OvenRustcRegistryLeafDomain,
+        OvenRustcRegistryLeafKind,
+    );
+    let mut leaves = BTreeMap::<LeafKey, PendingRegistryLeaf>::new();
     for leaf in candidates {
-        let key = (leaf.package.clone(), leaf.version.clone(), leaf.crate_name.clone());
-        if !leaf.target_artifact && target_keys.contains(&key) {
-            continue;
-        }
+        let key = (
+            leaf.package.clone(),
+            leaf.version.clone(),
+            leaf.crate_name.clone(),
+            leaf.domain,
+            leaf.crate_kind,
+        );
         match leaves.get(&key) {
             Some(existing)
                 if existing.artifact == leaf.artifact
@@ -463,6 +548,9 @@ pub fn publisher_registry_leaf_catalog(
             &mut source_artifacts,
         )?;
         sealed.push(OvenRustcRegistryLeaf {
+            selected_unit_identity: leaf.selected_unit_identity,
+            domain: leaf.domain,
+            crate_kind: leaf.crate_kind,
             package: leaf.package,
             version: leaf.version,
             crate_name: leaf.crate_name,
@@ -474,4 +562,166 @@ pub fn publisher_registry_leaf_catalog(
     source_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     source_artifacts.dedup_by(|left, right| left.relative_path == right.relative_path && left.digest == right.digest);
     Ok((sealed, source_artifacts))
+}
+
+/// Find physical units whose exact traced output set intersects one Cargo artifact record.
+fn traced_units_for_registry_artifact(
+    selected_units: &super::OvenLegacyCargoSelectedUnitCapture,
+    artifact: &CargoCompilerArtifact,
+) -> Vec<usize> {
+    let reported_paths = artifact
+        .filenames
+        .iter()
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .collect::<BTreeSet<_>>();
+    selected_units
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| {
+            unit.package_id == artifact.package_id
+                && unit.target_name == artifact.target.name
+                && unit.artifact_paths.iter().any(|path| {
+                    fs::canonicalize(path)
+                        .ok()
+                        .is_some_and(|path| reported_paths.contains(&path))
+                })
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::{
+        CargoCompilerArtifact, digest_bytes, stage_registry_source_directory, traced_units_for_registry_artifact,
+    };
+    use crate::{
+        CargoCompilerArtifactProfile, CargoCompilerArtifactTarget, OvenLegacyCargoSelectedUnit,
+        OvenLegacyCargoSelectedUnitCapture,
+    };
+
+    fn selected_unit(package_id: &str, output: PathBuf, platform: &str, cfg: &str) -> OvenLegacyCargoSelectedUnit {
+        OvenLegacyCargoSelectedUnit {
+            package_id: package_id.to_string(),
+            package: "fixture".to_string(),
+            package_version: "1.0.0".to_string(),
+            package_source: Some("registry+https://example.invalid/index".to_string()),
+            target_name: "fixture".to_string(),
+            target_kinds: vec!["lib".to_string()],
+            crate_types: vec!["lib".to_string()],
+            source_path: PathBuf::from("/sealed/fixture/src/lib.rs"),
+            artifact_paths: vec![output],
+            retained_artifacts: Vec::new(),
+            root_module: "src/lib.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "build".to_string(),
+            platform: Some(platform.to_string()),
+            target_is_explicit: Some(true),
+            cfg: vec![cfg.to_string()],
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: Default::default(),
+            effective_features: vec!["std".to_string()],
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: None,
+            registry_source: None,
+        }
+    }
+
+    #[test]
+    fn registry_artifact_joins_only_its_exact_traced_output() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let host_output = root.path().join("host/libfixture.rlib");
+        let target_output = root.path().join("target/libfixture.rlib");
+        fs::create_dir_all(host_output.parent().ok_or("host output has no parent")?)?;
+        fs::create_dir_all(target_output.parent().ok_or("target output has no parent")?)?;
+        fs::write(&host_output, b"host")?;
+        fs::write(&target_output, b"target")?;
+        let package_id = "registry+https://example.invalid/index#fixture@1.0.0";
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0, 1],
+            units: vec![
+                selected_unit(package_id, host_output.clone(), "aarch64-apple-darwin", "host"),
+                selected_unit(package_id, target_output.clone(), "wasm32-unknown-unknown", "target"),
+            ],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let artifact = |filenames| CargoCompilerArtifact {
+            reason: "compiler-artifact".to_string(),
+            package_id: package_id.to_string(),
+            target: CargoCompilerArtifactTarget {
+                name: "fixture".to_string(),
+                kind: vec!["lib".to_string()],
+                crate_types: vec!["lib".to_string()],
+                src_path: PathBuf::from("/sealed/fixture/src/lib.rs"),
+            },
+            features: vec!["std".to_string()],
+            filenames,
+            profile: CargoCompilerArtifactProfile::default(),
+        };
+
+        assert_eq!(
+            traced_units_for_registry_artifact(&capture, &artifact(vec![target_output])).len(),
+            1
+        );
+        assert!(
+            traced_units_for_registry_artifact(&capture, &artifact(vec![root.path().join("wrong.rlib")])).is_empty()
+        );
+        assert_eq!(
+            traced_units_for_registry_artifact(
+                &capture,
+                &artifact(vec![host_output, root.path().join("target/libfixture.rlib")])
+            )
+            .len(),
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn staged_registry_source_retains_sorted_cargo_toml_and_member_digests() -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let staging = tempfile::tempdir()?;
+        fs::create_dir_all(source.path().join("src"))?;
+        fs::write(
+            source.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
+        )?;
+        fs::write(source.path().join("src/lib.rs"), "pub fn marker() {}\n")?;
+        fs::write(
+            source.path().join("src.rs"),
+            "// file sorts before the src directory contents\n",
+        )?;
+
+        let (_, _, members) = stage_registry_source_directory(
+            staging.path(),
+            "fixture",
+            "1.0.0",
+            "registry+https://example.invalid/index",
+            "fixture-checksum",
+            source.path(),
+        )?;
+
+        assert_eq!(
+            members.iter().map(|member| member.path.as_str()).collect::<Vec<_>>(),
+            ["Cargo.toml", "src.rs", "src/lib.rs"],
+        );
+        assert_eq!(
+            members.iter().map(|member| member.digest.as_str()).collect::<Vec<_>>(),
+            [
+                digest_bytes(b"[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n"),
+                digest_bytes(b"// file sorts before the src directory contents\n"),
+                digest_bytes(b"pub fn marker() {}\n"),
+            ],
+        );
+        Ok(())
+    }
 }

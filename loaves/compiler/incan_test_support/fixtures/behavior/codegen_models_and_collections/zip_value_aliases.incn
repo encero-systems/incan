@@ -1,0 +1,31 @@
+# behavior: a zip value bound to a second name is traversable through both names in either order
+# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::source_accepted_zip_aliases_clone_before_either_loop_order
+# expect-stdout:
+#   66
+#   66
+
+pub def original_then_alias() -> int:
+    pairs = zip([1, 2], [10, 20])
+    alias = pairs
+    mut total = 0
+    for original_left, original_right in pairs:
+        total += original_left + original_right
+    for alias_left, alias_right in alias:
+        total += alias_left + alias_right
+    return total
+
+
+pub def alias_then_original() -> int:
+    pairs = zip([1, 2], [10, 20])
+    alias = pairs
+    mut total = 0
+    for alias_left, alias_right in alias:
+        total += alias_left + alias_right
+    for original_left, original_right in pairs:
+        total += original_left + original_right
+    return total
+
+
+def main() -> None:
+    println(original_then_alias())
+    println(alias_then_original())

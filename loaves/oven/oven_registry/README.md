@@ -12,4 +12,4 @@ Registry index access, source-Loaf and baked-asset acquisition, checksum and sig
 
 `oven_model`; `oven_store` once fetched artifacts are published into the store
 
-The largest new dependency in the 0.6 programme. The fetch decision is recorded on #1478: `oven_registry` fetches natively per RFC 125 (crates.io read-only, as a secondary source); no Cargo binary is borrowed for downloads.
+The largest new dependency in the 0.6 program. The fetch decision is recorded on #1478: `oven_registry` fetches natively per RFC 125 (crates.io read-only, as a secondary source); no Cargo binary is borrowed for downloads.

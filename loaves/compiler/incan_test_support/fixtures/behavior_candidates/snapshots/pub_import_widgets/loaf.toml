@@ -1,0 +1,9 @@
+[project]
+name = "pub_import_widgets"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+widgets = { path = "deps/widgets" }

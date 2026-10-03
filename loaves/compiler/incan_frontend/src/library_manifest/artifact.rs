@@ -7,21 +7,24 @@ use std::sync::{Mutex, OnceLock};
 
 use sha2::{Digest, Sha256};
 
-use oven_model::digest::hash_named_bytes;
 pub use oven_model::digest::{
     ProviderArtifactDigestError, digest_cargo_path_source_tree_with_cache, digest_toolchain_source_tree_with_cache,
 };
+use oven_model::digest::{canonical_json_bytes, canonical_toml_string, hash_named_bytes};
 
 use crate::library_manifest::wire::RawLibraryManifest;
 use crate::library_manifest::{
     LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyMetadata,
 };
 
-/// Hash every immutable manifest, generated source, and generated-project input in one provider artifact tree.
+/// Hash every declared manifest, generated source, native output, and generated-project input in one provider
+/// artifact tree.
 ///
 /// Compiler, VCS, and test-runner output directories are deliberately excluded because they are mutable caches
-/// rather than provider content. Generated providers normally use an external shared target directory, but these
-/// exclusions keep integrity stable if a backend tool creates conventional local output later.
+/// rather than provider content. The nested package Loaf store is excluded as a unit: `oven/package-loafs.json`
+/// declares the provider's exact immutable dependency closure, while the store below `oven/loafs` also contains
+/// access markers, leases, and accounting caches. Generated providers normally use an external shared target
+/// directory, but these exclusions keep integrity stable if a backend tool creates conventional local output later.
 pub fn digest_provider_artifact(root: &Path) -> Result<String, ProviderArtifactDigestError> {
     if !root.is_dir() {
         return Err(ProviderArtifactDigestError::InvalidRoot {
@@ -408,7 +411,7 @@ fn digest_provider_semantic_artifact_inner(
         // provider identity. The source digest plus normalized contract and Cargo requirements own that identity.
         normalized_manifest.rust_abi = None;
     }
-    let normalized_manifest_bytes = serde_json::to_vec(&RawLibraryManifest::from_semantic(&normalized_manifest))
+    let normalized_manifest_bytes = canonical_json_bytes(&RawLibraryManifest::from_semantic(&normalized_manifest))
         .map_err(|error| ProviderArtifactDigestError::Normalization {
             path: manifest_path.to_path_buf(),
             message: error.to_string(),
@@ -516,7 +519,7 @@ fn normalize_cargo_delivery_coordinates(
         })?;
     normalize_toml_paths(&mut cargo, delivery_coordinates);
     normalize_toolchain_dependency_paths(&mut cargo, cargo_toml_path, toolchain_dependencies);
-    toml::to_string(&cargo)
+    canonical_toml_string(&cargo)
         .map(String::into_bytes)
         .map_err(|error| ProviderArtifactDigestError::Normalization {
             path: cargo_toml_path.to_path_buf(),
@@ -719,12 +722,17 @@ fn artifact_directory_entries(
         })?;
         if file_type.is_dir() {
             let is_mutable_output = matches!(file_name, Some(".git" | ".incan" | ".ralph-cache" | "target"));
+            let is_package_loaf_store = relative == Path::new("oven/loafs");
             // v0.5 providers briefly placed the compiler-owned Rust-inspection Cargo target below the published
             // `oven/` directory. It is mutable preparation state, not provider content. Exclude the legacy location
             // so an existing generated provider remains loadable while current builders place it under `target/`.
             let is_legacy_rust_inspect_output = relative == Path::new("oven/rust-inspect");
             let is_nested_target = file_name == Some("target");
-            if is_mutable_output || is_legacy_rust_inspect_output || (exclude_nested_targets && is_nested_target) {
+            if is_mutable_output
+                || is_package_loaf_store
+                || is_legacy_rust_inspect_output
+                || (exclude_nested_targets && is_nested_target)
+            {
                 continue;
             }
         }
@@ -809,6 +817,39 @@ mod tests {
             fs::write(artifact.path().join(directory).join("mutable"), "not provider content")?;
         }
         assert_eq!(source_changed, digest_provider_artifact(artifact.path())?);
+        Ok(())
+    }
+
+    /// Store access and accounting mutations do not change a packaged provider's declared content identity.
+    #[test]
+    fn packaged_provider_digest_ignores_nested_store_bookkeeping_but_tracks_declared_closure_issue1979() -> TestResult {
+        let artifact = tempfile::tempdir()?;
+        fs::create_dir_all(artifact.path().join("src"))?;
+        fs::create_dir_all(artifact.path().join("oven/loafs/entries/sha256-fixture.loaf"))?;
+        fs::write(artifact.path().join("fixture_library.incnlib"), "manifest")?;
+        fs::write(artifact.path().join("src/lib.rs"), "pub fn value() -> i32 { 1 }")?;
+        fs::write(
+            artifact.path().join("oven/package-loafs.json"),
+            r#"{"profiles":{"debug":{"identity":"sha256:fixture-plan"}}}"#,
+        )?;
+        let entry = artifact.path().join("oven/loafs/entries/sha256-fixture.loaf");
+        fs::write(entry.join("loaf.json"), "immutable store manifest")?;
+        fs::write(entry.join("last-used"), "100")?;
+        fs::write(entry.join(".active.lock"), "first lease")?;
+        fs::write(entry.join(".physical-bytes-cache"), "10")?;
+        let initial = digest_provider_artifact(artifact.path())?;
+
+        fs::write(entry.join("last-used"), "200")?;
+        fs::write(entry.join(".active.lock"), "second lease")?;
+        fs::write(entry.join(".physical-bytes-cache"), "20")?;
+        fs::write(entry.join("receipt-written-at"), "2032-01-02T03:04:05Z")?;
+        assert_eq!(initial, digest_provider_artifact(artifact.path())?);
+
+        fs::write(
+            artifact.path().join("oven/package-loafs.json"),
+            r#"{"profiles":{"debug":{"identity":"sha256:changed-plan"}}}"#,
+        )?;
+        assert_ne!(initial, digest_provider_artifact(artifact.path())?);
         Ok(())
     }
 
@@ -989,6 +1030,42 @@ mod tests {
             "[package]\nname = \"provider\"\nversion = \"0.1.0\"\n\n[dependencies.user_path]\npath = \"../different-user-dependency\"\n",
         )?;
         assert_ne!(stable, semantic(second.path())?);
+        Ok(())
+    }
+
+    /// Semantically equal provider manifests must retain one identity even when their Cargo fields are authored in
+    /// different orders by the compiler-suite requester and the SDK publisher.
+    #[test]
+    fn debug_compiler_suite_requester_and_sdk_publisher_agree_on_provider_identity_issue1988() -> TestResult {
+        let publisher = tempfile::tempdir()?;
+        let requester = tempfile::tempdir()?;
+        for root in [publisher.path(), requester.path()] {
+            fs::create_dir_all(root.join("src"))?;
+            fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")?;
+        }
+        fs::write(
+            publisher.path().join("Cargo.toml"),
+            "[package]\nname = \"incan_stdlib_core\"\nversion = \"0.5.0\"\nedition = \"2021\"\n\n[lib]\nname = \"incan_stdlib_core\"\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(
+            requester.path().join("Cargo.toml"),
+            "[lib]\npath = \"src/lib.rs\"\nname = \"incan_stdlib_core\"\n\n[package]\nedition = \"2021\"\nversion = \"0.5.0\"\nname = \"incan_stdlib_core\"\n",
+        )?;
+        let mut manifest = LibraryManifest::new("incan_stdlib_core", "0.5.0");
+        manifest.contract_metadata.provider.semantic_source_digest = Some(format!("sha256:{}", "a".repeat(64)));
+        for root in [publisher.path(), requester.path()] {
+            manifest.write_to_path(&root.join("incan_stdlib_core.incnlib"))?;
+        }
+        let identity = |root: &Path| {
+            digest_provider_semantic_artifact(
+                root,
+                &root.join("incan_stdlib_core.incnlib"),
+                &root.join("Cargo.toml"),
+                &manifest,
+            )
+        };
+
+        assert_eq!(identity(publisher.path())?, identity(requester.path())?);
         Ok(())
     }
 

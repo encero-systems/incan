@@ -39,6 +39,7 @@ pub use lower::{AstLowering, LoweringError, LoweringErrors};
 pub use scanners::{check_for_this_import, collect_rust_crates, detect_serde_non_import_usage, detect_serde_usage};
 pub use stmt::{IrStmt, IrStmtKind};
 pub use types::{IrType, Mutability, Ownership};
+pub use visit::{Visitor, walk_expr};
 
 use incan_frontend::ast::Span;
 use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
@@ -579,9 +580,9 @@ impl IrCheckedCFunction {
 pub struct IrProgram {
     /// Top-level declarations
     pub declarations: Vec<IrDecl>,
-    /// Compiler-owned initialisation statements that run after this module's statics have been constructed.
+    /// Compiler-owned initialization statements that run after this module's statics have been constructed.
     ///
-    /// This is intentionally distinct from declaration initialisers: a statement here may mutate an already-created
+    /// This is intentionally distinct from declaration initializers: a statement here may mutate an already-created
     /// static through the same storage semantics that source method calls use.
     pub module_init: Vec<IrStmt>,
     /// Source module path for this program when known.
@@ -609,6 +610,13 @@ pub struct IrProgram {
     pub uses_scoped_c_string_views: bool,
     /// Whether this module finishes caller-owned checked byte buffers through the bounded compiler-private helper.
     pub uses_checked_c_span_buffers: bool,
+    /// The crate path (`crate::ids::EvidenceId`) of each nominal type another module of the crate declares and this
+    /// module does not bind, keyed by the name its checked types spell it with (#1561).
+    ///
+    /// Such a type reaches this module through another module's declarations, such as the element type of an imported
+    /// model's field, and the bare name resolves to nothing here, so it is spelled by this path wherever the generated
+    /// code names the type. Empty for a program that is not one module of a crate of several.
+    pub unbound_nominal_type_paths: std::collections::HashMap<String, String>,
 }
 
 impl IrProgram {
@@ -628,6 +636,7 @@ impl IrProgram {
             uses_checked_c_strings: false,
             uses_scoped_c_string_views: false,
             uses_checked_c_span_buffers: false,
+            unbound_nominal_type_paths: std::collections::HashMap::new(),
         }
     }
 }

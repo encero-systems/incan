@@ -13,8 +13,8 @@ use incan_frontend::ast::Span;
 use incan_frontend::diagnostics::CompileError;
 use incan_lang::lang::stdlib::{self, StdlibExtraCrateSource};
 use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::validate_cargo_version_req;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use oven_model::manifest::{rust_version_requirements_match, validate_cargo_version_req};
 
 #[derive(Debug, Clone)]
 pub struct InlineRustImport {
@@ -419,13 +419,17 @@ fn inline_spec_from_import(import: &InlineRustImport) -> DependencySpec {
     .normalized()
 }
 
+/// Merge one inline import into its crate's resolved declaration after validating semantic requirement identity.
 fn merge_inline_spec(existing: &mut InlineMergedSpec, next: &InlineRustImport) -> Result<(), String> {
-    let next_version = next.version.clone();
-    if existing.spec.version != next_version {
+    if !rust_version_requirements_match(existing.spec.version.as_deref(), next.version.as_deref()) {
         return Err(format!(
             "conflicting inline dependency specifications for `{}`",
             existing.spec.crate_name
         ));
+    }
+
+    if next.version < existing.spec.version {
+        existing.spec.version.clone_from(&next.version);
     }
 
     for feature in &next.features {
@@ -463,7 +467,7 @@ fn merge_overlapping_dev_dependencies(
             continue;
         };
 
-        if dep.version != dev.version
+        if !dep.same_version_requirement(&dev)
             || dep.source != dev.source
             || dep.default_features != dev.default_features
             || dep.optional != dev.optional
@@ -487,6 +491,9 @@ fn merge_overlapping_dev_dependencies(
         }
 
         let mut merged = dep.clone();
+        if dev.version < merged.version {
+            merged.version.clone_from(&dev.version);
+        }
         merged.features.extend(dev.features);
         merged = merged.normalized();
         deps.insert(name.clone(), merged);
@@ -707,6 +714,34 @@ mod tests {
             "expected 'macros' feature"
         );
         assert!(tokio.features.contains(&"rt".to_string()), "expected 'rt' feature");
+        Ok(())
+    }
+
+    #[test]
+    fn equivalent_inline_requirements_produce_one_order_independent_dependency_digest() -> TestResult {
+        let first = resolve_ok(
+            None,
+            &[
+                inline("serde", Some("1"), &[], false),
+                inline("serde", Some("^1.0.0"), &[], false),
+            ],
+            false,
+            &default_cargo_features(),
+        )?;
+        let second = resolve_ok(
+            None,
+            &[
+                inline("serde", Some("^1.0.0"), &[], false),
+                inline("serde", Some("1"), &[], false),
+            ],
+            false,
+            &default_cargo_features(),
+        )?;
+        assert_eq!(first.dependencies, second.dependencies);
+        assert_eq!(
+            oven_store::digest_dependency_specs(&first.dependencies, &oven_store::NoProviderHooks)?,
+            oven_store::digest_dependency_specs(&second.dependencies, &oven_store::NoProviderHooks)?,
+        );
         Ok(())
     }
 

@@ -81,7 +81,7 @@ pub const C_MUTABLE_BYTES_SPAN_TYPE_ID: &str = "__incan_c_mutable_bytes_span";
 /// Compiler-internal nominal identity for an immutable checked `f32` span.
 ///
 /// This moves one owned Incan `list[f32]` allocation into the closed C bridge, where its pointer and element count
-/// can only be extracted as one declared pair inside an `unsafe:` acknowledgement.
+/// can only be extracted as one declared pair inside an `unsafe:` acknowledgment.
 pub const C_F32_SPAN_TYPE_ID: &str = "__incan_c_f32_span";
 
 /// Compiler-internal nominal identity for a mutable checked caller-owned `f32` span.

@@ -1,0 +1,34 @@
+# behavior: a row found while looping over a list of rows is returned inside Ok while the caller keeps the whole list, and a local returned inside Ok at its last use carries its value
+# retires: loaves/compiler/incan_emit/src/ownership.rs::result_payload_read_of_a_loop_binding_materializes_the_owned_value
+# expect-stdout:
+#   ["b", "2"]
+#   2
+#   ["fallback"]
+#   missing
+
+def find(rows: list[list[str]], key: str) -> Result[list[str], str]:
+    for row in rows:
+        if row[0] == key:
+            return Ok(row)
+    return Err("missing")
+
+
+def first_or_fallback(rows: list[list[str]]) -> Result[list[str], str]:
+    found = ["fallback"]
+    if len(rows) == 0:
+        return Ok(found)
+    return Ok(rows[0])
+
+
+def show(outcome: Result[list[str], str]) -> None:
+    match outcome:
+        Ok(row) => println(f"{row:?}")
+        Err(message) => println(message)
+
+
+def main() -> None:
+    rows = [["a", "1"], ["b", "2"]]
+    show(find(rows, "b"))
+    println(len(rows))
+    show(first_or_fallback([]))
+    show(find(rows, "z"))

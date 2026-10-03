@@ -1,19 +1,23 @@
 //! Shared helpers: type parameter lowering, trait-bound mapping, and derive extraction.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam};
+use super::super::super::decl::{
+    IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTraitBoundOrigin, IrTypeParam, StructField,
+};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::decorator_resolution;
-use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::interop::{is_rust_callable_capability_bound, is_rust_capability_bound};
 use incan_lang::lang::callables;
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits as core_traits;
+use incan_semantics_core::SemanticSourceTargetKind;
 
 const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
 const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
@@ -27,8 +31,8 @@ impl AstLowering {
     pub(in crate::lower) fn is_user_defined_decorator_candidate(&self, dec: &ast::Decorator) -> bool {
         let resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
         if decorators::from_segments(&resolved) == Some(DecoratorId::Describe) {
-            // RFC 113 owns `@describe` as a compiler-recognised declaration form. Its runtime registration is emitted
-            // through the defining registry static during module initialisation, not through RFC 036 callable wrapping.
+            // RFC 113 owns `@describe` as a compiler-recognized declaration form. Its runtime registration is emitted
+            // through the defining registry static during module initialization, not through RFC 036 callable wrapping.
             return false;
         }
         if decorators::from_segments(&resolved).is_some() {
@@ -58,12 +62,10 @@ impl AstLowering {
                 && is_rust_capability_bound(tp.name.as_str())
                 && let Some(prev) = lowered.last_mut()
             {
-                let prev_is_capability_bounded = prev.bounds.iter().any(|bound| {
-                    matches!(
-                        bound.origin,
-                        super::super::super::decl::IrTraitBoundOrigin::RustCapability
-                    )
-                });
+                let prev_is_capability_bounded = prev
+                    .bounds
+                    .iter()
+                    .any(|bound| matches!(bound.origin, IrTraitBoundOrigin::RustCapability));
                 if prev_is_capability_bounded
                     && !prev.bounds.iter().any(|bound| {
                         bound.trait_path == tp.name && bound.type_args.is_empty() && bound.assoc_types.is_empty()
@@ -80,13 +82,96 @@ impl AstLowering {
         lowered
     }
 
+    /// Lower the type parameters of a callable declaration, giving each RFC 041 `Fn`-family marker its callable shape.
+    ///
+    /// `F with Fn[int]` asks for a Rust `Fn(i64) -> R`: a parameter list the marker names and a return type it does
+    /// not. Rust spells that requirement only in its parenthesized form; the angle-bracket `Fn<i64>` a plain trait
+    /// path produces is the unstable form rustc refuses (#1716). The canonical `std.traits.callable.CallableN[Args...,
+    /// R]` trait carries exactly that shape, and its generated declaration provides the blanket implementation for
+    /// native functions and closures, so each marker lowers to that nominal bound by arity. The return type becomes a
+    /// hidden type parameter the caller's argument determines, appended after the declared parameters like the other
+    /// hidden parameters of a callable; an arity the callable vocabulary does not cover keeps the marker as written.
+    ///
+    /// Nominal owners (models, classes, enums, traits, newtypes) keep [`Self::lower_type_params`]: a hidden parameter
+    /// there would change the type's arity everywhere it is named.
+    pub(in crate::lower) fn lower_callable_type_params(&self, ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
+        let mut type_params = self.lower_type_params(ast_params);
+        let mut hidden_return_types = Vec::new();
+        for type_param in &mut type_params {
+            for bound in &mut type_param.bounds {
+                let Some(callable) = Self::callable_marker_trait(bound) else {
+                    continue;
+                };
+                let hidden_name = format!("__IncanFnReturn{}", hidden_return_types.len());
+                let mut type_args = std::mem::take(&mut bound.type_args);
+                type_args.push(IrType::Generic(hidden_name.clone()));
+                *bound = IrTraitBound::source_callable(Self::source_callable_trait_path(callable), type_args);
+                hidden_return_types.push(IrTypeParam {
+                    name: hidden_name,
+                    bounds: Vec::new(),
+                });
+            }
+        }
+        type_params.extend(hidden_return_types);
+        type_params
+    }
+
+    /// Return the callable trait an `Fn`-family capability marker bound stands for, by its parameter count.
+    ///
+    /// Only a marker that came in as a Rust capability (`Fn`, `FnMut`, `FnOnce` from `std.rust`) qualifies; a
+    /// same-spelled trait from any other origin is not a capability marker.
+    fn callable_marker_trait(bound: &IrTraitBound) -> Option<callables::CallableTraitId> {
+        if bound.origin != IrTraitBoundOrigin::RustCapability
+            || !is_rust_callable_capability_bound(&bound.trait_path)
+            || !bound.assoc_types.is_empty()
+        {
+            return None;
+        }
+        callables::for_arity(bound.type_args.len())
+    }
+
+    /// Return the generated Rust path of one canonical callable trait, qualified from the crate root.
+    ///
+    /// The `std.rust` markers emit no `use` of their own (`std.rust` is a checker-only namespace), so the bound must
+    /// name the trait absolutely; the compiled stdlib is mounted at `crate::__incan_std` in every generated crate.
+    fn source_callable_trait_path(callable: callables::CallableTraitId) -> String {
+        format!(
+            "{}::{}::{}::{}",
+            keywords::as_str(KeywordId::Crate),
+            stdlib::INCAN_STD_NAMESPACE,
+            callables::generated_module(),
+            callables::info_for(callable).name
+        )
+    }
+
+    /// Return the declared type parameters that no lowered field type mentions, in declaration order.
+    ///
+    /// This is the phantom-parameter fact recorded on every struct-shaped nominal (model, class, newtype). It is
+    /// computed once here, after the fields are lowered with the owner's parameters in scope, so the answer does not
+    /// depend on which declaration kind produced the fields. See [`IrStruct::phantom_type_params`] and #1370.
+    ///
+    /// [`IrStruct::phantom_type_params`]: super::super::super::decl::IrStruct::phantom_type_params
+    pub(in crate::lower) fn phantom_type_params(type_params: &[IrTypeParam], fields: &[StructField]) -> Vec<String> {
+        super::super::super::decl::phantom_type_params(
+            type_params.iter().map(|param| param.name.as_str()),
+            fields.iter().map(|field| &field.ty),
+        )
+    }
+
     /// Lower a single AST type parameter to its IR representation.
+    ///
+    /// A bound on a `std.serde.json` protocol trait also carries the Rust serde capability that trait forwards to its
+    /// adopters, through [`Self::json_protocol_capability_bound`].
     fn lower_type_param(&self, tp: &ast::TypeParam, type_param_names: &HashSet<&str>) -> IrTypeParam {
-        let bounds = tp
-            .bounds
-            .iter()
-            .map(|bound| self.lower_trait_bound(bound, type_param_names))
-            .collect();
+        let mut bounds = Vec::new();
+        for bound in &tp.bounds {
+            bounds.push(self.lower_trait_bound(bound, type_param_names));
+            if let Some(capability) = self.json_protocol_capability_bound(&bound.name)
+                && !bounds.contains(&capability)
+            {
+                bounds.push(capability);
+            }
+        }
         IrTypeParam {
             name: tp.name.clone(),
             bounds,
@@ -95,8 +180,10 @@ impl AstLowering {
 
     /// Map an Incan trait bound to the corresponding Rust trait bound.
     ///
-    /// Uses the `incan_lang::lang::trait_bounds` registry to resolve known Incan names to their Rust trait paths (e.g.,
-    /// Incan `Eq` → Rust `PartialEq`). Unknown names are passed through as-is, allowing user-defined trait bounds.
+    /// A bound on a builtin the `incan_lang::lang::trait_bounds` registry maps (Incan `Eq` to Rust `PartialEq`) is
+    /// resolved by the trait's identity through [`Self::rust_mapped_builtin_trait_path`], so an alias or a
+    /// module-qualified spelling of the same declaration lowers to the same Rust trait. Unknown names are passed
+    /// through as-is, allowing user-defined trait bounds.
     fn lower_trait_bound(&self, bound: &ast::TraitBound, type_param_names: &HashSet<&str>) -> IrTraitBound {
         let (module_path, source_name) = self.canonical_trait_identity(&bound.name);
         let callable = module_path
@@ -118,7 +205,8 @@ impl AstLowering {
                 return IrTraitBound::source_callable(trait_path, types);
             }
         }
-        let trait_path = trait_bounds::incan_to_rust(&bound.name)
+        let trait_path = self
+            .rust_mapped_builtin_trait_path(&bound.name)
             .map(str::to_string)
             .or_else(|| self.source_owned_builtin_trait_path(&bound.name))
             .unwrap_or_else(|| bound.name.clone());
@@ -130,13 +218,55 @@ impl AstLowering {
         IrTraitBound::with_type_args_classified(trait_path, type_args)
     }
 
+    /// Return the Rust trait path a builtin bound maps to, keyed on the trait's resolved identity.
+    ///
+    /// [`trait_bounds::incan_to_rust`] is a registry over declaration names (`Eq` to `PartialEq`), while a bound or
+    /// a checked dispatch carries a spelling. An alias (`from std.derives.comparison import Eq as Equality`) or a
+    /// module-qualified name (`comparison.Eq`) would miss a spelling-keyed lookup and lower to the generated
+    /// `__incan_std` source trait, which a `@derive(Eq)` type does not implement (#1374). The lookup therefore runs
+    /// on the declaration name [`Self::canonical_trait_identity`] resolves, and only when that identity is the
+    /// builtin's own: the declaring module is a stdlib module, or the spelling is the implicit builtin binding with
+    /// no import or local declaration behind it. A user trait that merely shares the declaration name
+    /// (`yaml.Serialize`, a local `trait Eq`) keeps its own path.
+    ///
+    /// The `std.serde.json` protocol traits map to no Rust trait under any spelling: the bare import (`Serialize`),
+    /// an alias (`JsonSerialize`) and the module-qualified name (`json.Serialize`) all lower as written and resolve
+    /// through the import to the stdlib trait, which is the trait a checked `to_json()` or `from_json()` call
+    /// dispatches through (#1712). The registry's `serde::Serialize` and `serde::de::DeserializeOwned` rows name the
+    /// Rust capability those traits forward to an adopter as a derive; a type parameter's bound carries it beside the
+    /// stdlib trait through [`Self::json_protocol_capability_bound`], never in its place (#1820).
+    pub(in crate::lower) fn rust_mapped_builtin_trait_path(&self, visible_name: &str) -> Option<&'static str> {
+        let (module_path, source_name) = self.canonical_trait_identity(visible_name);
+        let source_name = source_name?;
+        let stdlib_identity = module_path.as_deref().is_some_and(stdlib::is_any_stdlib_path);
+        if !stdlib_identity && !self.is_implicit_builtin_trait_spelling(visible_name, &source_name) {
+            return None;
+        }
+        let json_protocol = module_path
+            .as_deref()
+            .is_some_and(|segments| stdlib::stdlib_json_trait_id_for_identity(segments, &source_name).is_some());
+        if json_protocol {
+            return None;
+        }
+        trait_bounds::incan_to_rust(&source_name)
+    }
+
+    /// Return whether `visible_name` reaches a builtin trait through the implicit prelude binding alone: no module
+    /// qualifier, no import, no local declaration claiming the spelling, and the spelling is the declaration name.
+    fn is_implicit_builtin_trait_spelling(&self, visible_name: &str, source_name: &str) -> bool {
+        !visible_name.contains('.')
+            && !self.import_aliases.contains_key(visible_name)
+            && !self.trait_decls.contains_key(visible_name)
+            && visible_name == source_name
+    }
+
     /// Return the generated path for a builtin trait that is owned by ordinary Incan stdlib source.
     ///
     /// Native Rust capability mappings such as Incan `Eq` to Rust `PartialEq` are handled first by
-    /// [`trait_bounds::incan_to_rust`]. This helper covers source-owned protocols such as `Iterator[T]` and only
-    /// accepts either their exact imported owner or the implicit builtin binding. A local or third-party same-named
-    /// trait stays on its own path.
-    fn source_owned_builtin_trait_path(&self, visible_name: &str) -> Option<String> {
+    /// [`Self::rust_mapped_builtin_trait_path`]. This helper covers source-owned protocols such as `Iterator[T]` and
+    /// only accepts either their exact imported owner or the implicit builtin binding. A local or third-party
+    /// same-named trait stays on its own path.
+    pub(in crate::lower) fn source_owned_builtin_trait_path(&self, visible_name: &str) -> Option<String> {
         let (actual_module, source_name) = self.canonical_trait_identity(visible_name);
         let source_name = source_name?;
         let trait_id = core_traits::from_str(&source_name)?;
@@ -148,11 +278,7 @@ impl AstLowering {
                 .map(String::as_str)
                 .eq(expected_segments.iter().copied())
         });
-        let implicit_builtin = !visible_name.contains('.')
-            && !self.import_aliases.contains_key(visible_name)
-            && !self.trait_decls.contains_key(visible_name)
-            && visible_name == source_name;
-        if !exact_import && !implicit_builtin {
+        if !exact_import && !self.is_implicit_builtin_trait_spelling(visible_name, &source_name) {
             return None;
         }
 
@@ -175,39 +301,69 @@ impl AstLowering {
                 .is_some_and(|info| info.traits.type_params.contains_key(name))
     }
 
-    /// Lower an annotation like `Collection[int]` to a Rust trait bound shape.
-    pub(in crate::lower) fn lower_trait_annotation_bound(
+    /// Return whether a module-qualified annotation (`json.Serialize`) names a trait, by the identity the checker
+    /// recorded for the qualified spelling.
+    ///
+    /// A bare or aliased trait name is known to lowering by its visible spelling ([`Self::is_known_trait_name`]); a
+    /// qualified spelling is known only through the checked reference, which names the declaration and its kind.
+    fn qualified_annotation_names_trait(&self, segments: &[String]) -> bool {
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.qualified_type_reference(&segments.join(".")))
+            .is_some_and(|reference| reference.identity.kind == SemanticSourceTargetKind::Trait)
+    }
+
+    /// Return the trait spelling of an annotation that names a trait directly, generic or not, bare or
+    /// module-qualified (`Serialize`, `Collection[int]`, `json.Serialize`), with its type arguments.
+    fn trait_annotation_spelling<'a>(
         &self,
-        ty: &ast::Type,
+        ty: &'a ast::Type,
         type_param_names: Option<&HashSet<&str>>,
-    ) -> Option<IrTraitBound> {
+    ) -> Option<(String, &'a [Spanned<ast::Type>])> {
         match ty {
             ast::Type::Simple(name)
                 if !type_param_names.is_some_and(|params| params.contains(name.as_str()))
                     && self.is_known_trait_name(name) =>
             {
-                let trait_path = trait_bounds::incan_to_rust(name)
-                    .map(str::to_string)
-                    .or_else(|| self.source_owned_builtin_trait_path(name))
-                    .unwrap_or_else(|| name.clone());
-                Some(IrTraitBound::with_type_args_classified(trait_path, Vec::new()))
+                Some((name.clone(), &[]))
             }
-            ast::Type::Generic(base, args) if self.is_known_trait_name(base) => {
-                let trait_path = trait_bounds::incan_to_rust(base)
-                    .map(str::to_string)
-                    .or_else(|| self.source_owned_builtin_trait_path(base))
-                    .unwrap_or_else(|| base.clone());
-                let type_args = args
-                    .iter()
-                    .map(|arg| self.lower_type_with_type_params(&arg.node, type_param_names))
-                    .collect();
-                Some(IrTraitBound::with_type_args_classified(trait_path, type_args))
+            ast::Type::Generic(base, args) if self.is_known_trait_name(base) => Some((base.clone(), args.as_slice())),
+            ast::Type::Dotted(segments) if self.qualified_annotation_names_trait(segments) => {
+                Some((segments.join("."), &[]))
+            }
+            ast::Type::DottedGeneric(segments, args) if self.qualified_annotation_names_trait(segments) => {
+                Some((segments.join("."), args.as_slice()))
             }
             _ => None,
         }
     }
 
+    /// Lower an annotation that names a trait (`Collection[int]`, `json.Serialize`) to a Rust trait bound shape.
+    ///
+    /// A module-qualified spelling lowers as written, like the same spelling in a `with` bound, and resolves through
+    /// the module's import.
+    pub(in crate::lower) fn lower_trait_annotation_bound(
+        &self,
+        ty: &ast::Type,
+        type_param_names: Option<&HashSet<&str>>,
+    ) -> Option<IrTraitBound> {
+        let (spelling, args) = self.trait_annotation_spelling(ty, type_param_names)?;
+        let trait_path = self
+            .rust_mapped_builtin_trait_path(&spelling)
+            .map(str::to_string)
+            .or_else(|| self.source_owned_builtin_trait_path(&spelling))
+            .unwrap_or(spelling);
+        let type_args = args
+            .iter()
+            .map(|arg| self.lower_type_with_type_params(&arg.node, type_param_names))
+            .collect();
+        Some(IrTraitBound::with_type_args_classified(trait_path, type_args))
+    }
+
     /// Lower a callable parameter type, synthesizing a hidden Rust generic when the source annotation names a trait.
+    ///
+    /// The hidden generic is bounded exactly as a written `T with Trait` parameter would be, including the serde
+    /// capability of a `std.serde.json` protocol trait ([`Self::json_protocol_capability_bound`]).
     pub(in crate::lower) fn lower_callable_param_type(
         &self,
         ty: &ast::Type,
@@ -218,13 +374,44 @@ impl AstLowering {
         if let Some(bound) = self.lower_trait_annotation_bound(ty, type_param_names) {
             let hidden_name = format!("__IncanTrait{}", *hidden_counter);
             *hidden_counter += 1;
+            let mut bounds = vec![bound];
+            if let Some((spelling, _)) = self.trait_annotation_spelling(ty, type_param_names)
+                && let Some(capability) = self.json_protocol_capability_bound(&spelling)
+            {
+                bounds.push(capability);
+            }
             hidden_type_params.push(IrTypeParam {
                 name: hidden_name.clone(),
-                bounds: vec![bound],
+                bounds,
             });
             return IrType::Generic(hidden_name);
         }
         self.lower_type_with_type_params(ty, type_param_names)
+    }
+
+    /// Return whether the checker proved that the function-typed parameter declared at `span` holds any callable of its
+    /// type (#1561).
+    pub(in crate::lower) fn is_closure_holding_param(&self, span: ast::Span) -> bool {
+        self.type_info
+            .as_ref()
+            .is_some_and(|info| info.is_closure_holding_param(span))
+    }
+
+    /// Return whether the checker proved that the function return type written at `span` holds the capturing closure
+    /// its function returns (#1561).
+    pub(in crate::lower) fn is_closure_returning_type(&self, span: ast::Span) -> bool {
+        self.type_info
+            .as_ref()
+            .is_some_and(|info| info.is_closure_returning_type(span))
+    }
+
+    /// Spell a function type `(A) -> R` as `impl Fn(A) -> R`, which holds any callable of the type, closures that
+    /// capture included (#1561). Any other type is returned unchanged.
+    pub(in crate::lower) fn closure_holding_type(ty: IrType) -> IrType {
+        match ty {
+            IrType::Function { params, ret } => IrType::ImplTrait(IrTraitBound::function_type(params, *ret)),
+            other => other,
+        }
     }
 
     /// Lower a callable return type, preserving trait annotations as Rust `impl Trait` where needed.
@@ -257,12 +444,22 @@ impl AstLowering {
                     // Extract derive arguments: @derive(Serialize, Deserialize)
                     for arg in &decorator.node.args {
                         if let ast::DecoratorArg::Positional(expr) = arg {
-                            // Handle simple identifier expressions
-                            if let ast::Expr::Ident(name) = &expr.node {
+                            // A bare or module-qualified derive name (`Serialize`, `json.Serialize`).
+                            if let Some(name) = decorator_resolution::derive_argument_name(&expr.node) {
+                                let name = &name;
                                 if derives::from_str(name) == Some(DeriveId::Descriptor) {
                                     // `Descriptor` is a compiler-checked structural-snapshot opt-in, not a Rust
                                     // derive macro. The checked registry fact retains it; generated Rust must not
                                     // attempt `#[derive(Descriptor)]`.
+                                    continue;
+                                }
+                                if derives::from_str(name) == Some(DeriveId::Display) {
+                                    // Rust has no `Display` derive (#1872). The derived display form is the value's
+                                    // `Debug` structure (RFC 000), so the type takes the `Debug` it implies, and the
+                                    // `__str__` that renders it is added with the type's methods.
+                                    for implied in derives::implied_derives(DeriveId::Display) {
+                                        Self::push_unique(&mut derives, derives::as_str(*implied).to_string());
+                                    }
                                     continue;
                                 }
                                 if derives::from_str(name).is_some() {
@@ -332,29 +529,14 @@ impl AstLowering {
             }
         }
 
-        fn has(derives: &[String], name: &str) -> bool {
-            derives.iter().any(|d| d == name)
-        }
-
-        // Add prerequisite derives automatically
-        // Eq requires PartialEq
-        let eq = derives::as_str(DeriveId::Eq);
-        let partial_eq = derives::as_str(DeriveId::PartialEq);
-        if has(&derives, eq) && !has(&derives, partial_eq) {
-            derives.push(partial_eq.to_string());
-        }
-        // Ord requires PartialOrd and Eq (and thus PartialEq)
-        let ord = derives::as_str(DeriveId::Ord);
-        let partial_ord = derives::as_str(DeriveId::PartialOrd);
-        if has(&derives, ord) {
-            if !has(&derives, partial_ord) {
-                derives.push(partial_ord.to_string());
+        // Add prerequisite derives automatically, rule by rule in the registry's order (`Eq` brings `PartialEq`; `Ord`
+        // brings `PartialOrd`, `Eq` and `PartialEq`). The typechecker's derive relation reads the same table.
+        for (derive, implied) in derives::DERIVE_IMPLICATIONS {
+            if !derives.iter().any(|d| d == derives::as_str(*derive)) {
+                continue;
             }
-            if !has(&derives, eq) {
-                derives.push(eq.to_string());
-            }
-            if !has(&derives, partial_eq) {
-                derives.push(partial_eq.to_string());
+            for implied_derive in *implied {
+                Self::push_unique(&mut derives, derives::as_str(*implied_derive).to_string());
             }
         }
 
@@ -397,9 +579,10 @@ impl AstLowering {
                 let ast::DecoratorArg::Positional(expr) = arg else {
                     continue;
                 };
-                let ast::Expr::Ident(name) = &expr.node else {
+                let Some(name) = decorator_resolution::derive_argument_name(&expr.node) else {
                     continue;
                 };
+                let name = &name;
                 if derives::from_str(name).is_some() {
                     continue;
                 }
@@ -427,6 +610,37 @@ impl AstLowering {
             }
         }
         targets
+    }
+
+    /// Return the declaration names of the source-module traits a type adopts through `@derive(...)`.
+    ///
+    /// A module derive (`@derive(codec)` over `__derives__ = [Encode]`, RFC 024) and a derive of a derivable trait
+    /// imported from a source module (`from codec import Encode` with `@derive(Encode)`) adopt the trait as
+    /// `with Encode` does: the type implements it and its methods resolve on it. Lowering must count those traits
+    /// among the type's adopted traits, or a direct call such as `item.tag()` is not routed to the method the
+    /// implementation provides (#1792). Derives of stdlib modules are left out: their traits are realized through
+    /// backend derives and keep their own method routing.
+    pub(in crate::lower) fn derived_source_trait_adoptions(
+        &mut self,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> Vec<String> {
+        self.derive_trait_impl_targets(decorators)
+            .into_iter()
+            .filter_map(|(target, _)| {
+                let (module_path, trait_name) = match target.rsplit_once('.') {
+                    Some((qualifier, trait_name)) => {
+                        (self.module_path_for_derive_name(qualifier)?, trait_name.to_string())
+                    }
+                    None => {
+                        let resolved = self.resolve_derive_path(&target);
+                        let (trait_name, module_path) = resolved.split_last()?;
+                        (module_path.to_vec(), trait_name.clone())
+                    }
+                };
+                (!module_path.is_empty() && module_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT))
+                    .then_some(trait_name)
+            })
+            .collect()
     }
 
     /// Look up RFC 024 derivable traits for a module, preferring imported dependency metadata over stdlib metadata.
@@ -479,10 +693,30 @@ impl AstLowering {
         self.stdlib_cache.lookup_trait_meta(module_path, trait_name).is_some()
     }
 
-    /// Append a string only when it is not already present.
+    /// Append a derive unless one naming the same derive is already present, under this spelling or another
+    /// ([`Self::same_derive`]): naming a derive twice fails the build with E0119.
     fn push_unique(items: &mut Vec<String>, value: String) {
-        if !items.iter().any(|item| item == &value) {
+        if !items.iter().any(|item| Self::same_derive(item, &value)) {
             items.push(value);
+        }
+    }
+
+    /// Whether two derive spellings name the same derive: equal, or a Rust `std`/`core`/`alloc` path whose last segment
+    /// is the other spelling.
+    pub(in crate::lower) fn same_derive(left: &str, right: &str) -> bool {
+        Self::derive_identity(left) == Self::derive_identity(right)
+    }
+
+    /// Return the spelling a derive is compared by: a path into Rust's `std`, `core` or `alloc` names its last segment,
+    /// which is how the prelude spells the same derive; any other spelling is itself, without a leading `::`.
+    fn derive_identity(derive: &str) -> &str {
+        let path = derive.trim_start_matches("::");
+        let from_rust_std = ["std::", "core::", "alloc::"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix));
+        match path.rsplit_once("::") {
+            Some((_, leaf)) if from_rust_std => leaf,
+            _ => path,
         }
     }
 
@@ -491,36 +725,61 @@ impl AstLowering {
         Self::push_unique(derives, path);
     }
 
-    /// Forward explicit `with Serialize` / `with Deserialize` adoption into Rust derive emission.
+    /// Forward explicit `with Serialize` / `with Deserialize` adoption of the `std.serde.json` traits into Rust derive
+    /// emission.
     ///
     /// This keeps direct-interop serde trait defaults honest: a type that adopts the stdlib serde trait surface must
-    /// also satisfy the matching Rust-side serde capability when codegen expands those methods.
+    /// also satisfy the matching Rust-side serde capability when codegen expands those methods. The adoption is keyed
+    /// on the trait's canonical identity, so a source trait that only shares the spelling (a local `Serialize`, or a
+    /// `Serialize` exported by some other module) forwards nothing (#1431).
+    ///
+    /// Adopting a trait adopts its supertraits, so a `std.serde.json` trait reached through the adopted trait's
+    /// supertrait closure (`model Payload with Loggable` for `trait Loggable with Serialize`) forwards its derive too:
+    /// the adopter implements it, and the subtrait requires its capability (#1845).
     pub(in crate::lower) fn extend_derives_with_adopted_serde_traits(
         &self,
         derives: &mut Vec<String>,
         trait_bounds: &[Spanned<ast::TraitBound>],
     ) {
-        fn has(derives: &[String], name: &str) -> bool {
-            derives.iter().any(|d| d == name)
-        }
-
-        for bound in trait_bounds {
-            match bound.node.name.as_str() {
-                "Serialize" if !has(derives, SERDE_SERIALIZE_DERIVE) => {
-                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
-                }
-                "Deserialize" if !has(derives, SERDE_DESERIALIZE_DERIVE) => {
-                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
-                }
-                name if name.ends_with(".Serialize") && !has(derives, SERDE_SERIALIZE_DERIVE) => {
-                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
-                }
-                name if name.ends_with(".Deserialize") && !has(derives, SERDE_DESERIALIZE_DERIVE) => {
-                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
-                }
-                _ => {}
+        let mut pending = trait_bounds
+            .iter()
+            .map(|bound| bound.node.name.clone())
+            .collect::<VecDeque<_>>();
+        let mut visited = HashSet::new();
+        while let Some(trait_name) = pending.pop_front() {
+            if !visited.insert(trait_name.clone()) {
+                continue;
             }
+            if let Some(supertraits) = self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.traits.direct_supertraits.get(&trait_name))
+            {
+                pending.extend(supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
+            }
+            let Some(protocol) = self.stdlib_json_protocol_for_adopted_trait(&trait_name) else {
+                continue;
+            };
+            let derive = match protocol {
+                stdlib::StdlibJsonTraitId::Serialize => SERDE_SERIALIZE_DERIVE,
+                stdlib::StdlibJsonTraitId::Deserialize => SERDE_DESERIALIZE_DERIVE,
+            };
+            Self::push_unique(derives, derive.to_string());
         }
+    }
+
+    /// Return which `std.serde.json` protocol an adopted trait spelling names, by canonical trait identity.
+    ///
+    /// The visible spelling is resolved exactly as trait impl lowering resolves it: through the import identity the
+    /// frontend proved (which follows a facade re-export to the declaring module) and otherwise through the written
+    /// import alias. An alias (`JsonSerialize`), a module-qualified form (`json.Serialize`), the bare import, and a
+    /// facade re-export all identify the stdlib trait, while an unrelated trait with the same basename does not.
+    pub(in crate::lower) fn stdlib_json_protocol_for_adopted_trait(
+        &self,
+        visible_name: &str,
+    ) -> Option<stdlib::StdlibJsonTraitId> {
+        let (module_path, source_name) = self.canonical_trait_identity(visible_name);
+        stdlib::stdlib_json_trait_id_for_identity(module_path.as_deref()?, source_name.as_deref()?)
     }
 
     /// Extract passthrough Rust attributes from decorators.
@@ -597,7 +856,7 @@ impl AstLowering {
         decorator_resolution::resolve_decorator_path(
             &ast::Decorator {
                 path: ast::ImportPath {
-                    segments: vec![derive_name.to_string()],
+                    segments: derive_name.split('.').map(str::to_string).collect(),
                     is_absolute: false,
                     parent_levels: 0,
                 },
@@ -610,9 +869,10 @@ impl AstLowering {
         )
     }
 
-    /// Return the imported module path for a whole-module derive argument.
+    /// Return the imported module path for a whole-module derive argument, named by its import (`json`) or through
+    /// another imported module (`serde.json`).
     fn module_path_for_derive_name(&self, derive_name: &str) -> Option<Vec<String>> {
-        self.import_aliases.get(derive_name).cloned()
+        self.imported_module_path(derive_name)
     }
 
     /// Convert AST decorator arguments into their IR representation for Rust attribute emission.
@@ -691,6 +951,7 @@ impl AstLowering {
             ast::Type::Function(_, _) => "fn".to_string(),
             ast::Type::Ref(inner) => format!("&{}", Self::serialize_type(&inner.node)),
             ast::Type::RefMut(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
+            ast::Type::MutParam(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
             ast::Type::Unit => "()".to_string(),
             ast::Type::Tuple(items) => {
                 let inner = items
@@ -720,6 +981,61 @@ mod tests {
                 Spanned::new(ast::Type::Simple("U".to_string()), ast::Span::default()),
             ],
         }
+    }
+
+    fn adopted_bound(name: &str) -> Spanned<ast::TraitBound> {
+        Spanned::new(
+            ast::TraitBound {
+                name: name.to_string(),
+                type_args: Vec::new(),
+            },
+            ast::Span::default(),
+        )
+    }
+
+    /// #1431: serde derive forwarding keys on the adopted trait's canonical identity, not on its basename.
+    #[test]
+    fn adopted_serde_derives_require_canonical_std_serde_json_owner() {
+        let mut lowering = AstLowering::new();
+        lowering.current_source_module_name = Some("main".to_string());
+        let bounds = [adopted_bound("Serialize"), adopted_bound("Deserialize")];
+
+        // A local (or otherwise unrelated) trait spelled `Serialize` forwards nothing.
+        let mut derives = Vec::new();
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &bounds);
+        assert!(derives.is_empty(), "{derives:?}");
+        assert_eq!(lowering.stdlib_json_protocol_for_adopted_trait("Serialize"), None);
+
+        // A trait exported by another module under the same spelling forwards nothing either.
+        lowering.import_aliases.insert(
+            "Serialize".to_string(),
+            vec!["vendor".to_string(), "codec".to_string(), "Serialize".to_string()],
+        );
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &bounds);
+        assert!(derives.is_empty(), "{derives:?}");
+
+        // The canonical stdlib traits forward the serde derives through every accepted spelling.
+        let json_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+        lowering.import_aliases.clear();
+        lowering.import_aliases.insert("json".to_string(), json_module.clone());
+        lowering.import_aliases.insert(
+            "JsonDeserialize".to_string(),
+            [json_module.as_slice(), &["Deserialize".to_string()]].concat(),
+        );
+        let stdlib_bounds = [adopted_bound("json.Serialize"), adopted_bound("JsonDeserialize")];
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &stdlib_bounds);
+        assert_eq!(
+            derives,
+            vec![SERDE_SERIALIZE_DERIVE.to_string(), SERDE_DESERIALIZE_DERIVE.to_string()]
+        );
+        assert_eq!(
+            lowering.stdlib_json_protocol_for_adopted_trait("json.Serialize"),
+            Some(stdlib::StdlibJsonTraitId::Serialize)
+        );
+
+        // Forwarding is idempotent.
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &stdlib_bounds);
+        assert_eq!(derives.len(), 2, "{derives:?}");
     }
 
     #[test]
@@ -766,5 +1082,98 @@ mod tests {
             expanded_default.trait_path,
             "crate::__incan_std::traits::callable::Callable1"
         );
+    }
+
+    /// #1727: a derivable trait imported under another spelling is the Rust trait its derive implements, never the
+    /// generated `__incan_std` stub. The guardrail test `derivable_source_owned_traits_have_rust_bound_mappings` in
+    /// `incan_lang` pins that every such trait has a registry mapping to take.
+    #[test]
+    fn aliased_derivable_trait_bound_lowers_to_the_rust_trait_of_its_derive_issue1727() {
+        let mut lowering = AstLowering::new();
+        lowering.current_source_module_name = Some("main".to_string());
+        let type_params = HashSet::from(["T"]);
+        lowering.import_aliases.insert(
+            "Equality".to_string(),
+            vec![
+                "std".to_string(),
+                "derives".to_string(),
+                "comparison".to_string(),
+                core_traits::as_str(core_traits::TraitId::Eq).to_string(),
+            ],
+        );
+        lowering.import_aliases.insert(
+            "Copyable".to_string(),
+            vec![
+                "std".to_string(),
+                "derives".to_string(),
+                "copying".to_string(),
+                core_traits::as_str(core_traits::TraitId::Clone).to_string(),
+            ],
+        );
+
+        let equality = lowering.lower_trait_bound(&adopted_bound("Equality").node, &type_params);
+        assert_eq!(equality.origin, IrTraitBoundOrigin::Standard);
+        assert_eq!(
+            equality.trait_path,
+            trait_bounds::incan_to_rust(core_traits::as_str(core_traits::TraitId::Eq)).unwrap_or_default(),
+            "an aliased `Eq` takes the registry's Rust bound, not the stub"
+        );
+        let copyable = lowering.lower_trait_bound(&adopted_bound("Copyable").node, &type_params);
+        assert_eq!(
+            copyable.trait_path,
+            trait_bounds::incan_to_rust(core_traits::as_str(core_traits::TraitId::Clone)).unwrap_or_default(),
+        );
+        assert!(
+            !copyable.trait_path.contains(stdlib::INCAN_STD_NAMESPACE),
+            "a derivable trait never lowers to the generated stub: {}",
+            copyable.trait_path
+        );
+
+        // A source-owned protocol that no derive implements keeps its generated path through the same alias route.
+        lowering.import_aliases.insert(
+            "Stream".to_string(),
+            vec![
+                "std".to_string(),
+                "derives".to_string(),
+                "collection".to_string(),
+                core_traits::as_str(core_traits::TraitId::Iterator).to_string(),
+            ],
+        );
+        let stream = lowering.lower_trait_bound(&adopted_bound("Stream").node, &type_params);
+        assert_eq!(stream.trait_path, "crate::__incan_std::derives::collection::Iterator");
+    }
+
+    fn field(name: &str, ty: IrType) -> StructField {
+        StructField {
+            name: name.to_string(),
+            ty,
+            surface_type_name: None,
+            visibility: crate::decl::Visibility::Public,
+            is_type_private: false,
+            default: None,
+            alias: None,
+            description: None,
+        }
+    }
+
+    /// Issue #1370: a parameter no field type mentions is phantom; a mention anywhere inside a field type, including a
+    /// bare nominal spelling left by a declaration lowered without its parameters in scope, is not.
+    #[test]
+    fn phantom_type_params_are_the_parameters_no_field_mentions() {
+        let type_params = vec![IrTypeParam::bare("T"), IrTypeParam::bare("U"), IrTypeParam::bare("V")];
+        let fields = vec![
+            field("sql", IrType::String),
+            field("items", IrType::List(Box::new(IrType::Generic("U".to_string())))),
+            field("raw", IrType::Struct("V".to_string())),
+        ];
+        assert_eq!(
+            AstLowering::phantom_type_params(&type_params, &fields),
+            vec!["T".to_string()]
+        );
+        assert_eq!(
+            AstLowering::phantom_type_params(&type_params, &[field("value", IrType::Int)]),
+            vec!["T".to_string(), "U".to_string(), "V".to_string()]
+        );
+        assert!(AstLowering::phantom_type_params(&[], &fields).is_empty());
     }
 }

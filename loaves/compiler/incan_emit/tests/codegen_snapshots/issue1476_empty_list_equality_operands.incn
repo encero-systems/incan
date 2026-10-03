@@ -1,0 +1,13 @@
+"""Issue #1476: an empty list operand carries the checked element type in both positions and both operators."""
+
+def is_empty(values: list[str]) -> bool:
+    return values == []
+
+def is_not_empty(values: list[str]) -> bool:
+    return [] != values
+
+def main() -> None:
+    assert is_empty([])
+    assert not is_empty(["value"])
+    assert is_not_empty(["value"])
+    println("ok")

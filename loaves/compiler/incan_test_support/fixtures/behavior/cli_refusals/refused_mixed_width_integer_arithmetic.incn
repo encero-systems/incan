@@ -1,0 +1,7 @@
+# behavior: arithmetic over two different integer types is refused until one operand is converted to the other's type
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    small: i8 = 1
+    wide: i16 = 2
+    println(small + wide)

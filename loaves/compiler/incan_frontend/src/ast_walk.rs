@@ -52,6 +52,28 @@ where
     any_expr_in_body_impl(body, &mut pred)
 }
 
+/// Returns `true` if `expr` or any expression nested in it satisfies `pred`.
+///
+/// Use this when a caller already holds one expression slot, such as a parameter default or a match arm's `=> expr`
+/// body or guard, and needs no statement or declaration traversal around it.
+pub fn any_expr_in_expr<F>(expr: &Expr, mut pred: F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    expr_has(expr, &mut pred)
+}
+
+/// Returns `true` if the expression of an `if` or `while` condition, or any expression nested in it, satisfies
+/// `pred`.
+///
+/// Use this when a caller walks statements itself and needs a condition's expressions without the body it guards.
+pub fn any_expr_in_condition<F>(condition: &Condition, mut pred: F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    condition_has_expr(condition, &mut pred)
+}
+
 /// Checks whether a top-level declaration contains any matching expression.
 ///
 /// This helper is responsible for declaration-specific expression slots (for example defaults, decorators, and

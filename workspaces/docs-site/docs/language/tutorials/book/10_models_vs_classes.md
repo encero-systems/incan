@@ -91,7 +91,7 @@ class Counter:
         self.value += 1
 
 def main() -> None:
-    c = Counter(value=0)
+    mut c = Counter(value=0)
     c.increment()
     c.increment()
     println(f"value={c.value}")  # outputs: value=2

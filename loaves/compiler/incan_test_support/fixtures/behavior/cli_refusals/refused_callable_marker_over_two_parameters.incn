@@ -1,0 +1,16 @@
+# behavior: an Fn marker naming three parameters, and one on a model's type parameter, are refused at check time
+# expect-diagnostic: INCAN-T0106
+
+from std.rust import Fn
+
+
+def run_triple[F with Fn[int, int, int]](_f: F) -> None:
+    pass
+
+
+model Holder[F with Fn[int]]:
+    callback: F
+
+
+def main() -> None:
+    println("ok")

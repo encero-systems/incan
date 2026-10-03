@@ -1,0 +1,33 @@
+# behavior: a trait spelled Serialize from another module keeps its own to_json body, while the std.serde.json traits forward the JSON protocol whether adopted module-qualified or derived by their imported name (#1431)
+# retires: loaves/compiler/incan_ir/src/lower/decl/helpers.rs::adopted_serde_derives_require_canonical_std_serde_json_owner
+# expect-stdout:
+#   vendor codec
+#   {"value":1}
+#   9
+
+from codec import Serialize
+from std.serde import json
+from std.serde.json import Deserialize
+
+
+model Note with Serialize:
+    text: str
+
+
+model Payload with json.Serialize:
+    value: int
+
+
+@derive(Deserialize)
+model Config:
+    port: int
+
+
+def main() -> None:
+    println(Note(text="a").to_json())
+    println(Payload(value=1).to_json())
+    match Config.from_json('{"port":9}'):
+        case Ok(config):
+            println(config.port)
+        case Err(message):
+            println(message)

@@ -66,3 +66,14 @@ syn = { workspace = true, features = ["printing"] }
 oven_rustc = { workspace = true, features = ["test_support"] }
 oven_store = { workspace = true, features = ["test_support"] }
 rust_inspect = { workspace = true, features = ["test_fixtures"] }
+# The runtime crates a consumer's program links when it mounts `std.io` and `std.fs` from source: the session test
+# that builds such a program with rustc names them, as `incan_emit`'s build-and-run tests name `incan_std_core`. The
+# driver only names them in generated tokens otherwise, so the compiler ring never depends on them.
+byteorder = "1"
+encoding_rs = "0.8"
+incan_std_core = { workspace = true }
+
+[package.metadata.cargo-udeps.ignore]
+# The session test links `byteorder` and `incan_std_core` into the consumer program it builds with rustc; the Rust
+# test harness never names them in source.
+development = ["byteorder", "incan_std_core"]

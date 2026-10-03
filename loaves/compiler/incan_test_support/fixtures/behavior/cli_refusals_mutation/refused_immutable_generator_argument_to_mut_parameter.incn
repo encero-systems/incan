@@ -1,0 +1,22 @@
+# behavior: an immutable generator passed to a mut Generator parameter is refused at check time, whether the callee iterates it or never uses it, because iterating advances the caller's generator and a generator cannot be copied
+# expect-diagnostic: INCAN-T0117
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+
+def first(mut g: Generator[int]) -> int:
+    for v in g:
+        return v
+    return -1
+
+
+def ignore(mut g: Generator[int]) -> int:
+    return 0
+
+
+def main() -> None:
+    g = numbers(3)
+    println(first(g))
+    println(ignore(g))

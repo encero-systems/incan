@@ -1,0 +1,46 @@
+# behavior: every checked, wrapping, and saturating integer helper follows its overflow policy and explicit resize targets select their destination
+# retires: loaves/compiler/incan_emit/tests/numeric_helper_codegen_tests.rs::rfc009_integer_helpers_and_explicit_resizes_compile_and_run
+# expect-stdout:
+#   none
+#   none
+#   none
+#   none
+#   4
+#   251
+#   144
+#   217
+#   255
+#   0
+#   255
+#   255
+#   none
+#   44
+#   255
+
+def show(value: Option[u8]) -> None:
+    match value:
+        Some(item) => println(item)
+        None => println("none")
+
+
+def main() -> None:
+    high: u8 = 250
+    low: u8 = 5
+    twenty: u8 = 20
+    three: u8 = 3
+    show(high.checked_add(10u8))
+    show(low.checked_sub(10u8))
+    show(twenty.checked_mul(20u8))
+    show(three.checked_pow(6u32))
+    println(high.wrapping_add(10u8))
+    println(low.wrapping_sub(10u8))
+    println(twenty.wrapping_mul(20u8))
+    println(three.wrapping_pow(6u32))
+    println(high.saturating_add(10u8))
+    println(low.saturating_sub(10u8))
+    println(twenty.saturating_mul(20u8))
+    println(three.saturating_pow(6u32))
+    wide: i16 = 300
+    show(wide.try_resize[u8]())
+    println(wide.wrapping_resize[u8]())
+    println(wide.saturating_resize[u8]())

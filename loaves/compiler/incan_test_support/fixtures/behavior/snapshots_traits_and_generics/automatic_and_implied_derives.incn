@@ -1,0 +1,49 @@
+# behavior: the derives a declaration carries without writing them and those another derive implies satisfy bounds and method calls: clone() on a model, class, enum and newtype without @derive(Clone), a PartialOrd bound on an @derive(Ord) model, and a Copy bound on a newtype over int
+# expect-stdout:
+#   1
+#   2
+#   true
+#   a
+#   true
+#   3
+
+
+model Point:
+    x: int
+
+
+class Box:
+    pub size: int
+
+
+enum Color:
+    Red
+    Blue
+
+
+type Name = newtype str
+
+
+type Meters = newtype int
+
+
+@derive(Ord)
+model Score:
+    x: int
+
+
+def less[T with PartialOrd](a: T, b: T) -> bool:
+    return a < b
+
+
+def copied[T with Copy](value: T) -> T:
+    return value
+
+
+def main() -> None:
+    println(Point(x=1).clone().x)
+    println(Box(size=2).clone().size)
+    println(Color.Red.clone() == Color.Red)
+    println(Name("a").clone().0)
+    println(less(Score(x=1), Score(x=2)))
+    println(copied(Meters(3)).0)

@@ -31,6 +31,51 @@ pub enum OvenInteropAdapterArgument {
     Ios,
 }
 
+/// The profile a harvested fact record binds; the registry admits exactly these two.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OvenHarvestProfileArgument {
+    /// Cargo's `--release` profile.
+    Release,
+    /// Cargo's default profile.
+    Debug,
+}
+
+/// Release-evidence gates owned by Oven.
+#[derive(Subcommand, Debug)]
+pub enum OvenGateCommand {
+    /// Verify a checkout and its committed lock against a schema-1 registry pin
+    RegistryPin {
+        /// Schema-1 checkout and lock pin
+        #[arg(long, value_name = "PATH")]
+        pin: PathBuf,
+        /// Git checkout to verify
+        #[arg(long, value_name = "PATH")]
+        checkout: PathBuf,
+    },
+    /// Verify an admitted consumer graph against data-driven expectations and equivalence evidence
+    ConsumerGraph {
+        /// Schema-1 TOML gate expectations
+        #[arg(long, value_name = "PATH")]
+        expect: PathBuf,
+        /// Schema-1 artifact-equivalence attestation
+        #[arg(long = "equivalence-report", value_name = "PATH")]
+        equivalence_report: PathBuf,
+        /// Root and quickstart Oven locks whose registry records form the consumer graph
+        #[arg(value_name = "LOCK", required = true)]
+        locks: Vec<PathBuf>,
+    },
+}
+
+impl OvenHarvestProfileArgument {
+    /// The profile name as a fact record and the publisher spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Debug => "debug",
+        }
+    }
+}
+
 /// Built-in compiler-owned Loaf envelope selected by the hidden baker.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OvenLoafEnvelopeArgument {
@@ -125,11 +170,39 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
+    #[command(hide = true)]
+    SdkHandoff {
+        /// SDK handoff lifecycle operation
+        #[command(subcommand)]
+        command: SdkHandoffCommand,
+    },
+    /// Retain compiler-suite reports and transcripts, then reclaim disposable output
+    RetainSuiteOutput {
+        /// Print the host clock in nanoseconds
+        #[arg(long)]
+        clock: bool,
+        /// Positional retention arguments: output, scratch, success, report, status, and optional wrapper clocks
+        #[arg(value_name = "ARG")]
+        arguments: Vec<String>,
+    },
+    /// Reconcile compiler-suite partition reports into complete-suite evidence
+    ReconcilePartitions {
+        /// JSON report file or directory containing partition reports; may be repeated
+        #[arg(value_name = "REPORT_OR_DIRECTORY", required = true)]
+        reports: Vec<PathBuf>,
+        /// Optional path receiving the reconciliation summary
+        #[arg(long, value_name = "PATH")]
+        summary: Option<PathBuf>,
+    },
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
         /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
+        /// Explicit Rust compilation target; defaults to the active compiler's host target
+        #[arg(long, value_name = "TRIPLE")]
+        target: Option<String>,
         /// Select Incan package features for the baked project Loaf
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
@@ -170,6 +243,93 @@ pub enum OvenCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
+    },
+    /// Harvest incan.pub fact proposals from one compatibility-publisher observation of a checked manifest
+    Harvest {
+        /// Checked Loaf manifest (`loaf.toml`-shaped) or a directory holding one; its registry `[rust-dependencies]`
+        /// select the closure Cargo builds once
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        /// Exact target triple the facts are bound to
+        #[arg(long, value_name = "TRIPLE")]
+        target: String,
+        /// Build profile the facts are bound to
+        #[arg(long, value_enum, default_value = "release")]
+        profile: OvenHarvestProfileArgument,
+        /// Explicit Cargo executable used only for this publisher observation
+        #[arg(long, value_name = "PATH")]
+        cargo: PathBuf,
+        /// Explicit Rust compiler whose identity the facts are bound to
+        #[arg(long, value_name = "PATH")]
+        rustc: PathBuf,
+        /// Explicit real C compiler traced during the publisher observation
+        #[arg(long, value_name = "PATH")]
+        cc: PathBuf,
+        /// Explicit real C++ compiler traced during the publisher observation
+        #[arg(long, value_name = "PATH")]
+        cxx: PathBuf,
+        /// Explicit C sysroot used by traced native compiles
+        #[arg(long = "c-sysroot", value_name = "PATH")]
+        c_sysroot: PathBuf,
+        /// Existing `Cargo.lock` whose registry identities the observation must resolve within; without it Cargo
+        /// resolves the closure afresh
+        #[arg(long = "cargo-lock", value_name = "PATH")]
+        cargo_lock: Option<PathBuf>,
+        /// Directory receiving `<name>-<version>-<profile>/proposal.json`, its `out/` members, and
+        /// `refusals-<profile>.json`
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+    /// Generate or check a binding-level inventory of harvested registry closure facts
+    Inventory {
+        /// Cargo lock supplying the exact Incan registry package identities
+        #[arg(long = "incan-lock", value_name = "PATH")]
+        incan_lock: PathBuf,
+        /// Incan harvest directory containing proposals and selected-unit refusals
+        #[arg(long = "incan-harvest", value_name = "PATH")]
+        incan_harvest: PathBuf,
+        /// Cargo lock supplying the exact IncQL registry package identities
+        #[arg(long = "incql-lock", value_name = "PATH")]
+        incql_lock: Option<PathBuf>,
+        /// IncQL harvest directory containing proposals and selected-unit refusals
+        #[arg(long = "incql-harvest", value_name = "PATH")]
+        incql_harvest: Option<PathBuf>,
+        /// Write the generated canonical inventory
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present = "check",
+            conflicts_with = "check"
+        )]
+        output: Option<PathBuf>,
+        /// Check the generated inventory against this fixture
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present = "output",
+            conflicts_with = "output"
+        )]
+        check: Option<PathBuf>,
+    },
+    /// Prove literal artifact equivalence between Cargo harvest and Oven publisher captures
+    Equivalence {
+        /// Schema-1 Cargo harvest capture manifest
+        #[arg(long = "cargo-manifest", value_name = "PATH")]
+        cargo_manifest: PathBuf,
+        /// Schema-1 Cargo-free Oven publisher capture manifest
+        #[arg(long = "oven-manifest", value_name = "PATH")]
+        oven_manifest: PathBuf,
+        /// Destination for schema-1 attestation evidence
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+    },
+    /// Run release-evidence gates over Oven-owned semantic state
+    Gate {
+        #[command(subcommand)]
+        command: OvenGateCommand,
     },
     /// Bake locked C/C++ interop shims and static inputs into one receipt-bound direct-rustc plan
     Interop {
@@ -309,6 +469,50 @@ pub enum OvenCommand {
     },
 }
 
+/// CI-only SDK provider-store transport operations.
+#[derive(Subcommand, Debug)]
+pub enum SdkHandoffCommand {
+    /// Stage the exact selected provider for artifact upload
+    Stage {
+        /// Compiler source checkout
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        workspace: PathBuf,
+        /// Matching compiler executable
+        #[arg(long, value_name = "PATH", default_value = "target/debug/incan")]
+        compiler: PathBuf,
+        /// Rust compiler used to establish the toolchain identity
+        #[arg(long, value_name = "COMMAND", default_value = "rustc")]
+        rustc: PathBuf,
+        /// Destination handoff directory
+        #[arg(long, value_name = "PATH")]
+        artifact: PathBuf,
+        /// Prepared SDK provider store
+        #[arg(long, value_name = "PATH")]
+        store: PathBuf,
+    },
+    /// Validate a downloaded provider before exposing consumer paths
+    Consume {
+        /// Compiler source checkout
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        workspace: PathBuf,
+        /// Matching compiler executable
+        #[arg(long, value_name = "PATH", default_value = "target/debug/incan")]
+        compiler: PathBuf,
+        /// Rust compiler used to establish the toolchain identity
+        #[arg(long, value_name = "COMMAND", default_value = "rustc")]
+        rustc: PathBuf,
+        /// Downloaded handoff directory
+        #[arg(long, value_name = "PATH")]
+        artifact: PathBuf,
+        /// Consumer SDK provider path file
+        #[arg(long, value_name = "PATH")]
+        path_file: PathBuf,
+        /// Environment file appended for later CI steps
+        #[arg(long, value_name = "PATH")]
+        env_file: PathBuf,
+    },
+}
+
 /// Explicit Oven-owned native interop baking commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenInteropCommand {
@@ -393,6 +597,15 @@ pub enum OvenLegacyCargoCommand {
         /// Explicit Rust compiler required to match the receipt
         #[arg(long, value_name = "PATH")]
         rustc: PathBuf,
+        /// Explicit real C compiler traced during the publisher transition
+        #[arg(long, value_name = "PATH")]
+        cc: PathBuf,
+        /// Explicit real C++ compiler traced during the publisher transition
+        #[arg(long, value_name = "PATH")]
+        cxx: PathBuf,
+        /// Explicit C sysroot used by traced native compiles
+        #[arg(long = "c-sysroot", value_name = "PATH")]
+        c_sysroot: PathBuf,
         /// Stable compatibility domain for bounded Oven storage
         #[arg(long, value_name = "NAME")]
         domain: String,
@@ -414,6 +627,27 @@ pub enum OvenLegacyCargoCommand {
         /// Bounded compiler-suite store baked with the compiler-suite envelope
         #[arg(long = "suite-store", value_name = "PATH")]
         suite_store: Option<PathBuf>,
+        /// Existing Oven store containing the exact release policy ProjectOutput
+        #[arg(
+            long = "policy-engine-store",
+            value_name = "PATH",
+            requires_all = ["policy_engine_identity", "policy_engine_target"]
+        )]
+        policy_engine_store: Option<PathBuf>,
+        /// Exact ProjectOutput identity to embed in the release envelope
+        #[arg(
+            long = "policy-engine-identity",
+            value_name = "IDENTITY",
+            requires_all = ["policy_engine_store", "policy_engine_target"]
+        )]
+        policy_engine_identity: Option<String>,
+        /// Exact Rust target required of the embedded policy engine
+        #[arg(
+            long = "policy-engine-target",
+            value_name = "TRIPLE",
+            requires_all = ["policy_engine_store", "policy_engine_identity"]
+        )]
+        policy_engine_target: Option<String>,
         /// Built-in release or compiler-suite Loaf envelope
         #[arg(long, value_enum)]
         envelope: OvenLoafEnvelopeArgument,
@@ -426,6 +660,15 @@ pub enum OvenLegacyCargoCommand {
         /// Explicit Rust compiler recorded by each Loaf receipt
         #[arg(long, value_name = "PATH")]
         rustc: PathBuf,
+        /// Explicit real C compiler traced for native-link adoption
+        #[arg(long, value_name = "PATH")]
+        cc: PathBuf,
+        /// Explicit real C++ compiler traced for native-link adoption
+        #[arg(long, value_name = "PATH")]
+        cxx: PathBuf,
+        /// Explicit C sysroot used by traced native compiles
+        #[arg(long = "c-sysroot", value_name = "PATH")]
+        c_sysroot: PathBuf,
         /// Aggregate physical Loaf-envelope allowance
         #[arg(long = "max-physical-bytes", value_name = "BYTES")]
         max_physical_bytes: Option<u64>,
@@ -438,6 +681,18 @@ pub enum OvenLegacyCargoCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
+        /// Registered Loaf registry checkout whose adoption manifests govern captured registry units
+        #[arg(long = "loaf-registry", value_name = "PATH")]
+        loaf_registry: Option<PathBuf>,
+        /// Index commit the registry checkout must be at; the bake refuses any other revision
+        #[arg(long = "loaf-registry-commit", value_name = "SHA", requires = "loaf_registry")]
+        loaf_registry_commit: Option<String>,
+        /// Directory receiving incan.pub harvest proposals and refusals from the release runtime-foundation capture
+        #[arg(long = "harvest-dir", value_name = "PATH")]
+        harvest_dir: Option<PathBuf>,
+        /// Immutable executable-owner root available to publisher link/tool records; may be repeated
+        #[arg(long = "link-owner", value_name = "ROOT")]
+        link_owners: Vec<PathBuf>,
     },
 }
 

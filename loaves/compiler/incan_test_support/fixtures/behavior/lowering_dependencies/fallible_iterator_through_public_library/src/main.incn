@@ -1,0 +1,25 @@
+# behavior: a consumer that imports FallibleIterator chains map and collect on a stream returned by a dependency's function, collecting the mapped items or the source error
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::imported_method_chain_dispatches_trait_through_public_library
+# expect-stdout:
+#   2,4,6
+#   error boom
+
+from std.derives.collection import FallibleIterator
+from pub::fallible_streams import numbers, failing_numbers
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def render(items: list[int]) -> str:
+    return ",".join([str(item) for item in items])
+
+
+def main() -> None:
+    match numbers().map(double).collect():
+        Ok(items) => println(render(items))
+        Err(error) => println(f"error {error}")
+    match failing_numbers().map(double).collect():
+        Ok(items) => println(render(items))
+        Err(error) => println(f"error {error}")

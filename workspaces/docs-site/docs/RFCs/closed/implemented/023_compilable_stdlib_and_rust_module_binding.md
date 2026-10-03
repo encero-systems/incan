@@ -409,7 +409,7 @@ Incan supports explicit trait bound annotations using the `with` keyword — con
 # Single bound — bare word
 def identity[T with Clone](value: T) -> T: ...
 
-# Multiple bounds — parenthesised
+# Multiple bounds — parenthesized
 def assert_eq[T with (Eq, Debug)](left: T, right: T) -> None: ...
 
 # Multiple type parameters — with on each

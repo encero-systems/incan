@@ -1,0 +1,58 @@
+# behavior: a Result local, parameter, field and generic value read again after map, and_then, inspect or unwrap_or stays usable, in a loop and in both branches of an if
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::result_receivers_stay_usable_after_a_method_call_issue1561
+# expect-stdout:
+#   2
+#   3
+#   20
+#   2
+#   10
+#   true
+#   5
+#   15
+#   1
+#   1
+#   2
+#   2
+
+model Holder:
+    r: Result[int, str]
+
+    def total(self) -> int:
+        return self.r.unwrap_or(0) + self.r.map((x) => x * 2).unwrap_or(0)
+
+
+def twice(r: Result[int, str]) -> int:
+    a = r.map((x) => x + 1)
+    b = r.and_then((x) => Ok(x * 2))
+    return a.unwrap_or(0) + b.unwrap_or(0)
+
+
+def both[T, E](r: Result[T, E]) -> bool:
+    a = r.map((x) => 1)
+    b = r.map_err((e) => 2).map((x) => 3)
+    return a.unwrap_or(0) == 1 and b.unwrap_or(0) == 3
+
+
+def main() -> None:
+    r: Result[int, str] = Ok(2)
+    a = r.map((x) => x + 1)
+    b = r.and_then((x) => Ok(x * 10))
+    r.inspect((x) => println(x))
+    println(a.unwrap_or(0))
+    println(b.unwrap_or(0))
+    println(r.unwrap_or(0))
+    println(twice(Ok(3)))
+    println(both(Ok("x")))
+    h = Holder(r=Ok(5))
+    println(h.r.unwrap_or(0))
+    println(h.total())
+    words: Result[str, str] = Ok("a")
+    for i in range(2):
+        println(words.map((w) => len(w)).unwrap_or(0))
+    if len("q") > 0:
+        println(words.map((w) => len(w) + 1).unwrap_or(0))
+    else:
+        println(words.map((w) => len(w) + 2).unwrap_or(0))
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)

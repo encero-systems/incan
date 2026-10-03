@@ -63,7 +63,7 @@ print('fixture output preserved')
         self.assertEqual(records[0]['returncode'], 7)
 
     def test_signal_preserved(self):
-        """A self-signalled child remains a signal failure through the wrapper."""
+        """A self-signaled child remains a signal failure through the wrapper."""
         report, records, _ = self.exercise('import os, signal\nos.kill(os.getpid(), signal.SIGTERM)\n', expected=143)
         self.assertEqual(report['root_returncode'], -15)
         self.assertEqual(records[0]['returncode'], -15)

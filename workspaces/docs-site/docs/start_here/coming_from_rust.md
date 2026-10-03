@@ -34,6 +34,7 @@ Follow [Getting Started](../tooling/tutorials/getting_started.md) for the curren
 
 - Ownership and borrowing remain implementation concerns at Rust boundaries, but ordinary Incan application code does not expose Rust lifetime syntax.
 - Models, derives, named arguments, and Python-shaped control flow reduce authoring ceremony.
+- Representation details Rust asks you to spell out are the compiler's job. A generic model whose type parameter appears only in method signatures — `model Column[T]` with `def __mul__(self, other: T) -> Column[T]` and no field of type `T` — is written exactly like that; the compiler records that the parameter is stored nowhere and supplies whatever the target representation needs (in Rust, the zero-sized `PhantomData<T>` field you would otherwise add by hand). Only a newtype or an enum must store its parameters, and the checker says so at the parameter.
 - Generated Rust is inspectable backend output, not the public source or ABI compatibility contract.
 
 ## What not to expect

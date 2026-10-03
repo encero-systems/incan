@@ -105,7 +105,9 @@ pub(crate) fn innermost_type_node_at_offset(ty: &Spanned<Type>, offset: usize) -
             }
             Some(ty)
         }
-        Type::Ref(inner) | Type::RefMut(inner) => innermost_call_site_type_in_type(inner, offset).or(Some(ty)),
+        Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+            innermost_call_site_type_in_type(inner, offset).or(Some(ty))
+        }
         Type::Qualified(_)
         | Type::Dotted(_)
         | Type::Simple(_)

@@ -1,0 +1,18 @@
+# behavior: a nested module reaches a sibling package's model through a dotted from-import and a :: module import, and the root reaches the nested module too
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_multi_file_imports_use_crate_prefix
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_multi_file_imports_rust_style_module_import_uses_crate_prefix
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_non_nested_multi_file_nested_modules_use_crate_prefix
+# expect-stdout:
+#   dotted:1
+#   path:2
+#   root:4
+
+from db.schema import Database
+from store.dotted import touch_dotted
+from store.path_import import touch_path
+
+
+def main() -> None:
+    println(touch_dotted(Database(id=1)))
+    println(touch_path(Database(id=2)))
+    println(f"root:{Database(id=4).id}")

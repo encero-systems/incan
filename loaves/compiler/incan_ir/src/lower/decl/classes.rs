@@ -98,7 +98,8 @@ impl AstLowering {
                         self.lower_resolved_declaration_type(&emission_ty)
                     },
                     surface_type_name: field.surface_type_name,
-                    visibility: Self::map_visibility(field.visibility),
+                    visibility: self
+                        .default_reachable_field_visibility(&c.name, Self::map_visibility(field.visibility)),
                     is_type_private: matches!(field.visibility, incan_frontend::ast::Visibility::Private),
                     default,
                     alias: field.alias,
@@ -109,6 +110,7 @@ impl AstLowering {
 
         let (mut derives, derive_rust_modules) = self.extract_derives(&c.decorators);
         self.extend_derives_with_adopted_serde_traits(&mut derives, &c.traits);
+        Self::defer_default_derive_to_field_defaults(&mut derives, &fields);
 
         let debug = derives::as_str(DeriveId::Debug);
         let clone = derives::as_str(DeriveId::Clone);
@@ -119,10 +121,10 @@ impl AstLowering {
             && c.fields
                 .iter()
                 .any(|f| self.type_uses_direct_rust_import(&f.node.ty.node));
-        if !has_opaque_rust_field && !derives.iter().any(|d| d == debug) {
+        if !has_opaque_rust_field && !derives.iter().any(|d| Self::same_derive(d, debug)) {
             derives.push(debug.to_string());
         }
-        if !derives.iter().any(|d| d == clone) {
+        if !derives.iter().any(|d| Self::same_derive(d, clone)) {
             derives.push(clone.to_string());
         }
         // Classes always get FieldInfo for reflection.
@@ -134,14 +136,17 @@ impl AstLowering {
             derives.push(derives::INCAN_CLASS_DERIVE_NAME.to_string());
         }
 
+        let type_params = self.lower_type_params(&c.type_params);
+        let phantom_type_params = Self::phantom_type_params(&type_params, &fields);
         Ok(IrStruct {
             kind: IrStructKind::Class,
             name: c.name.clone(),
             docstring: c.docstring.clone(),
             fields,
             derives,
-            visibility: self.map_type_visibility(c.visibility),
-            type_params: self.lower_type_params(&c.type_params),
+            visibility: self.default_reachable_visibility(&c.name, self.map_type_visibility(c.visibility)),
+            type_params,
+            phantom_type_params,
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&c.decorators),
         })
@@ -168,7 +173,9 @@ impl AstLowering {
                     .any(|param| self.type_uses_direct_rust_import(&param.node))
                     || self.type_uses_direct_rust_import(&ret.node)
             }
-            ast::Type::Ref(inner) | ast::Type::RefMut(inner) => self.type_uses_direct_rust_import(&inner.node),
+            ast::Type::Ref(inner) | ast::Type::RefMut(inner) | ast::Type::MutParam(inner) => {
+                self.type_uses_direct_rust_import(&inner.node)
+            }
             ast::Type::Tuple(items) => items.iter().any(|item| self.type_uses_direct_rust_import(&item.node)),
             ast::Type::Unit | ast::Type::SelfType | ast::Type::IntLiteral(_) | ast::Type::Infer => false,
         }
@@ -192,6 +199,7 @@ impl AstLowering {
             | ast::Type::Function(_, _)
             | ast::Type::Ref(_)
             | ast::Type::RefMut(_)
+            | ast::Type::MutParam(_)
             | ast::Type::Tuple(_)
             | ast::Type::Unit
             | ast::Type::SelfType
@@ -200,14 +208,64 @@ impl AstLowering {
         }
     }
 
-    /// Lower source mutability without conflating an owned Rust handle with an Incan borrow.
-    pub(in crate::lower) fn lower_parameter_mutability(&self, is_mut: bool, ty: &ast::Type) -> Mutability {
-        if !is_mut {
+    /// Lower a parameter's source mutability to how it is passed.
+    ///
+    /// A `mut` parameter is passed the way the checker's marker says (#1790, #1773): a marked parameter, whose changes
+    /// reach the caller, as [`Mutability::Mutable`] (`&mut T`), an unmarked one (an `int`, `float` or `bool`, also
+    /// through a type alias, or a direct Rust handle) by value as [`Mutability::OwnedMutable`], `mut name: T`. A
+    /// recorded marker decides without reading the parameter's IR type. A parameter of this module the checker
+    /// recorded no marker for is decided by [`Self::unrecorded_parameter_mutability`], which reads its annotation.
+    pub(in crate::lower) fn lower_parameter_mutability(&self, param: &ast::Spanned<ast::Param>) -> Mutability {
+        if !param.node.is_mut {
+            return Mutability::Immutable;
+        }
+        let marker = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.declarations.mut_param_marker(param.span, &param.node.name));
+        match marker {
+            Some(true) => Mutability::Mutable,
+            Some(false) => Mutability::OwnedMutable,
+            None => self.unrecorded_parameter_mutability(param),
+        }
+    }
+
+    /// Lower the passing mode of a parameter whose marker this module's checker did not record, such as a parameter of
+    /// a stdlib declaration read from its own source (#1827).
+    ///
+    /// The marker facts are keyed by source span within one module, so a declaration from another source must not be
+    /// looked up there. This applies the marker rule to the annotation instead, the rule the stdlib loader marks such
+    /// declarations by: an `int`, `float` or `bool` annotation and a direct Rust handle are unmarked and passed by
+    /// value, and any other ordinary `mut` parameter is marked and passed as `&mut T`.
+    pub(in crate::lower) fn unrecorded_parameter_mutability(&self, param: &ast::Spanned<ast::Param>) -> Mutability {
+        if !param.node.is_mut {
             Mutability::Immutable
-        } else if self.type_is_top_level_direct_rust_import(ty) {
+        } else if self.type_is_top_level_direct_rust_import(&param.node.ty.node)
+            || (param.node.kind == ast::ParamKind::Normal
+                && matches!(
+                    self.lower_type(&param.node.ty.node),
+                    IrType::Int | IrType::Float | IrType::Bool
+                ))
+        {
             Mutability::OwnedMutable
         } else {
             Mutability::Mutable
+        }
+    }
+
+    /// Lower the passing mode of a parameter in a bodiless trait slot (#1827).
+    ///
+    /// The slot declares the parameter's type only. A by-value `mut` binding of a copied scalar (`int`, `float`,
+    /// `bool`, also through a type alias) belongs to each implementing body, and Rust refuses a `mut` binding in a
+    /// method declaration without a body, so the slot declares that parameter immutable; for a scalar the two modes
+    /// pass the argument alike. A marked parameter keeps its `&mut T` type, and a direct Rust handle keeps the owned
+    /// mode its call sites move the handle by.
+    pub(in crate::lower) fn trait_slot_parameter_mutability(&self, param: &ast::Spanned<ast::Param>) -> Mutability {
+        match self.lower_parameter_mutability(param) {
+            Mutability::OwnedMutable if !self.type_is_top_level_direct_rust_import(&param.node.ty.node) => {
+                Mutability::Immutable
+            }
+            other => other,
         }
     }
 
@@ -293,6 +351,44 @@ impl AstLowering {
             methods.extend(class.methods.iter().cloned());
         }
         Ok(())
+    }
+
+    /// Return the declaration of `method_name` that `class_name` dispatches to: its own, else the one of the nearest
+    /// parent class that declares it.
+    ///
+    /// An inherited method is lowered again for each subclass, and a `self` call in it reaches the override closest to
+    /// that subclass (#1841), which may be declared by a class between the subclass and the method's own class.
+    pub(in crate::lower) fn nearest_class_method(
+        &self,
+        class_name: &str,
+        method_name: &str,
+    ) -> Option<&Spanned<ast::MethodDecl>> {
+        let mut visited = std::collections::HashSet::new();
+        let mut current = class_name;
+        while visited.insert(current) {
+            let class = self.class_decls.get(current)?;
+            if let Some(method) = class.methods.iter().find(|method| method.node.name == method_name) {
+                return Some(method);
+            }
+            current = class.extends.as_deref()?;
+        }
+        None
+    }
+
+    /// Whether `class_name` extends `ancestor`, directly or through its parent classes.
+    pub(in crate::lower) fn class_extends(&self, class_name: &str, ancestor: &str) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        let mut current = class_name;
+        while visited.insert(current) {
+            let Some(parent) = self.class_decls.get(current).and_then(|class| class.extends.as_deref()) else {
+                return false;
+            };
+            if parent == ancestor {
+                return true;
+            }
+            current = parent;
+        }
+        false
     }
 
     /// Recursively collect all computed properties from this class and parent classes.

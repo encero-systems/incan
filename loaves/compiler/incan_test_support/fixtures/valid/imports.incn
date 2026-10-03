@@ -1,6 +1,5 @@
 import rust::polars::prelude as pl
 import std::math as math
-import python "requests" as pyreq
 from db import CategoryId, TagId
 from db import (
     OtherId,

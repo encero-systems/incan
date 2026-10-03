@@ -1,0 +1,16 @@
+pub trait Catalog[T with Clone]:
+    def item(self) -> T: ...
+
+
+pub trait OrderedCatalog[T with Clone] with Catalog[T]:
+    def ordered(self) -> Self: ...
+
+
+pub model Parcel[T with Clone] with OrderedCatalog:
+    pub value: T
+
+    def item(self) -> T:
+        return self.value
+
+    def ordered(self) -> Self:
+        return self

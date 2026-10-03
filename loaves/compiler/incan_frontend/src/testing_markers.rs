@@ -246,6 +246,17 @@ pub fn resolve_testing_marker_kind(
     semantics.marker_kind(resolved[2].as_str())
 }
 
+/// Return the declaration span of the teardown a runner splits out of a yield fixture at the `yield` spanning
+/// `yield_span`.
+///
+/// The teardown is a second declaration split out of one source function, and declarations are keyed by span, so it
+/// takes the synthetic span anchored at the `yield`: one span per fixture, and one the reserved `__incan_` name check
+/// (#1769) reads as compiler-authored, since the runner, not the source, spells the teardown's name.
+#[must_use]
+pub fn yield_fixture_teardown_span(yield_span: ast::Span) -> ast::Span {
+    crate::vocab_ast_bridge::synthetic_span_anchored_at(yield_span)
+}
+
 /// Resolve and parse the first `@fixture(...)` marker on a declaration.
 ///
 /// The returned metadata is intentionally declaration-only: it captures static fixture configuration and flags

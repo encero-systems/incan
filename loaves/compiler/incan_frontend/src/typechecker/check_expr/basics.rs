@@ -10,7 +10,7 @@ use crate::typechecker::IdentKind;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SemanticSourceTargetKind;
 
-use super::TypeChecker;
+use super::{GenericPartialTarget, TypeChecker};
 
 /// Return whether a metadata-free Rust import path follows Rust's constant naming convention.
 fn rust_path_last_segment_looks_like_const(path: &str) -> bool {
@@ -46,6 +46,10 @@ impl TypeChecker {
             ));
         }
 
+        // A read is what lets Rust fix an open constructor's type arguments later; release any watched binding by
+        // this name before anything else decides how the read resolves (#1720).
+        self.mark_open_rust_generic_binding_read(name);
+
         let Some(sym_id) = self.symbols.lookup(name) else {
             if name == "log" {
                 self.type_info
@@ -58,6 +62,8 @@ impl TypeChecker {
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;
         };
+        self.observe_binding_read(sym_id, span);
+        self.note_mut_param_read(name, span);
         if self.symbols.identity_of(sym_id).is_some_and(|identity| {
             identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "cls"
         }) {
@@ -105,6 +111,22 @@ impl TypeChecker {
             }
             return ResolvedType::Unknown;
         }
+        if let SymbolKind::Variable(info) = &sym.kind
+            && matches!(&info.ty, ResolvedType::Named(identity) if identity == incan_lang::lang::c_abi::SCOPED_C_STRING_VIEW_TYPE_ID)
+        {
+            // A scoped C text view is read only as the receiver of `copy_utf8`, in the closure depth it was bound at
+            // (RFC 116); any other read would let it outlive the memory it points into.
+            let receiver = self.scoped_c_string_view_receivers.contains(&(span.start, span.end));
+            let bound_depth = self
+                .scoped_c_string_view_bindings
+                .get(&(sym.span.start, sym.span.end))
+                .copied()
+                .unwrap_or(0);
+            if !receiver || self.closure_depth > bound_depth {
+                self.errors.push(errors::scoped_c_string_view_escapes(span));
+                return ResolvedType::Unknown;
+            }
+        }
         let source_target = self.source_target_for_symbol(name, &sym.kind);
 
         let (kind, ty) = match &sym.kind {
@@ -112,8 +134,13 @@ impl TypeChecker {
             SymbolKind::Static(info) => (IdentKind::Static, info.ty.clone()),
             SymbolKind::Function(info) => {
                 if !info.type_params.is_empty() {
-                    self.errors.push(errors::generic_function_reference(name, span));
-                    return ResolvedType::Unknown;
+                    // A local partial instantiates the generic function it names (RFC 084); anywhere else a generic
+                    // function is not a value.
+                    if !self.is_generic_partial_target_span(span) {
+                        self.errors.push(errors::generic_function_reference(name, span));
+                        return ResolvedType::Unknown;
+                    }
+                    self.generic_partial_target = Some(GenericPartialTarget::of_function(name, info));
                 }
                 (
                     IdentKind::Value,
@@ -250,11 +277,26 @@ impl TypeChecker {
     }
 
     /// Resolve a literal value to its type.
-    pub(in crate::typechecker::check_expr) fn check_literal(&self, lit: &Literal) -> ResolvedType {
+    pub(in crate::typechecker::check_expr) fn check_literal(&mut self, lit: &Literal, span: Span) -> ResolvedType {
         match lit {
-            Literal::Int(_) => ResolvedType::Int,
-            Literal::Float(_) => ResolvedType::Float,
-            Literal::Decimal(_) => ResolvedType::Unknown,
+            Literal::Int(value) => match value.suffix {
+                Some(_) => self.check_suffixed_int_literal(value, false, span),
+                None => ResolvedType::Int,
+            },
+            Literal::Float(value) => match value.suffix {
+                Some(_) => self.check_suffixed_float_literal(value, span),
+                None => ResolvedType::Float,
+            },
+            Literal::Decimal(value) => {
+                self.errors.push(
+                    CompileError::type_error(
+                        format!("Decimal literal {} requires a decimal destination", value.repr),
+                        span,
+                    )
+                    .with_hint("Declare a destination such as `value: decimal[10, 2] = 19.99d`"),
+                );
+                ResolvedType::Unknown
+            }
             Literal::String(_) => ResolvedType::Str,
             Literal::Bytes(_) => ResolvedType::Bytes,
             Literal::Bool(_) => ResolvedType::Bool,

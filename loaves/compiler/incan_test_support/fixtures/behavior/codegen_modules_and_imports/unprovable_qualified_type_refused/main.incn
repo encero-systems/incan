@@ -1,0 +1,13 @@
+# behavior: a module-qualified type spelling that names no declaration of the module is refused at check time (#1437)
+# retires: loaves/compiler/incan_emit/tests/qualified_type_annotation_codegen_tests.rs::an_unprovable_qualified_type_is_refused_by_the_checker_issue1437
+# expect-diagnostic: INCAN-T0001
+
+import errors
+
+
+pub def result() -> Result[None, errors.Missing]:
+    return Ok(None)
+
+
+def main() -> None:
+    pass

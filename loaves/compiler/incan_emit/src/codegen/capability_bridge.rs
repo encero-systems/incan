@@ -142,6 +142,9 @@ fn substitute_type_ref_params(ty: &TypeRef, substitutions: &HashMap<String, Type
         TypeRef::Ref { inner } => TypeRef::Ref {
             inner: Box::new(substitute_type_ref_params(inner, substitutions)),
         },
+        TypeRef::MutParam { inner } => TypeRef::MutParam {
+            inner: Box::new(substitute_type_ref_params(inner, substitutions)),
+        },
         TypeRef::NativeUnion(native) => {
             let mut projected = native.clone();
             projected.members = native

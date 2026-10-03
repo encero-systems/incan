@@ -1,4 +1,4 @@
-//! Lowering results that emission has to honour: the lowering tests that need an emission pass or plan.
+//! Lowering results that emission has to honor: the lowering tests that need an emission pass or plan.
 
 use incan_ir::decl::IrDeclKind;
 use incan_ir::expr::{BinOp, IrExprKind};
@@ -117,6 +117,7 @@ fn foreign_union_keeps_its_producer_wrapper_identity() -> Result<(), Box<dyn std
             emitted_name: None,
             type_params: Vec::new(),
             params: vec![incan_frontend::library_manifest::ParamExport {
+                is_mut: false,
                 name: "value".into(),
                 ty: TypeRef::NativeUnion(native.clone()),
                 kind: Default::default(),

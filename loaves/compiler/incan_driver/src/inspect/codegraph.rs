@@ -26,11 +26,13 @@ use incan_codegraph::{
     CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord, CodegraphReferenceRecord,
     CodegraphRegistryRecord, CodegraphRegistryReexportProjection, CodegraphSdkComponentProjection,
     CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId,
-    CodegraphSymbolOrigin,
+    CodegraphStableDeclarationLocation, CodegraphSymbolOrigin,
 };
 use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
-use incan_semantics_core::stable_identity::{DeclarationNesting, DeclarationSignature, StableDeclarationId};
+use incan_semantics_core::stable_identity::{
+    DeclarationSignature, StableDeclarationContext, StableDeclarationId, StableDeclarationLocation,
+};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
@@ -40,6 +42,7 @@ use incan_frontend::ast::{
     RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use incan_frontend::diagnostics::{self, StableDiagnostic};
+use incan_frontend::module::logical_module_segments_from_file;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::registry_metadata::{
     CheckedRegistryMetadataModule, CheckedRegistrySubjectKind, CheckedRegistryValue, collect_checked_registry_metadata,
@@ -61,7 +64,10 @@ use incan_provider::{
 // incan_driver out of an 8,691-line module with ten dependents (#1479), not editing this file. When that lands the
 // edge resolves with no further work here.
 use crate::diagnostics::CliDiagnosticFailure;
-use crate::modules::{collect_modules_detailed_with_selections, collect_modules_detailed_with_session};
+use crate::modules::{
+    collect_modules_detailed_with_selections, collect_modules_detailed_with_session,
+    collect_modules_detailed_with_session_at_path,
+};
 use crate::project::{discover_effective_project_manifest, read_source, resolve_project_root};
 use crate::session::{CompilationAnalysis, CompilationSession};
 
@@ -258,7 +264,11 @@ fn directory_modules_diagnostics_and_info(
                 project_root.display()
             )));
         };
-        match collect_modules_detailed_with_session(file.clone(), session) {
+        let collected = logical_module_segments_from_file(&session.source_root, file).map_or_else(
+            || collect_modules_detailed_with_session(file.clone(), session),
+            |root_module_path| collect_modules_detailed_with_session_at_path(file.clone(), session, root_module_path),
+        );
+        match collected {
             Ok(modules) => {
                 for module in &modules {
                     if file_set.contains(&module.file_path) {
@@ -274,21 +284,19 @@ fn directory_modules_diagnostics_and_info(
                 ) {
                     Ok(analysis) => {
                         for (path, snapshot) in analysis.semantic_snapshots() {
-                            semantic_snapshots_by_path
-                                .entry(path.clone())
-                                .or_insert_with(|| snapshot.clone());
+                            retain_root_analysis(&mut semantic_snapshots_by_path, file, path, snapshot.clone());
                         }
                         let package_name = package_identity(&project_root)?
                             .and_then(|package| package.name)
                             .unwrap_or_else(|| "<unpackaged>".to_string());
                         for (path, metadata) in checked_registry_metadata_by_path(&analysis, &modules, &package_name) {
-                            registry_metadata_by_path.entry(path).or_insert(metadata);
+                            retain_root_analysis(&mut registry_metadata_by_path, file, &path, metadata);
                         }
                         for (path, declarations) in checked_capabilities_by_path(&analysis, &modules) {
-                            capabilities_by_path.entry(path).or_insert(declarations);
+                            retain_root_analysis(&mut capabilities_by_path, file, &path, declarations);
                         }
                         for (path, c_abi) in checked_c_abi_by_path(&analysis, &modules) {
-                            c_abi_by_path.entry(path).or_insert(c_abi);
+                            retain_root_analysis(&mut c_abi_by_path, file, &path, c_abi);
                         }
                         // Lowering happens here rather than in `SemanticModuleSnapshot`, so only the graph pays
                         // for it. A module whose type info is unavailable contributes no signatures, and its
@@ -345,6 +353,15 @@ fn directory_modules_diagnostics_and_info(
             },
         },
     ))
+}
+
+/// Retain each file's own analysis over any copy first encountered as another root's dependency.
+fn retain_root_analysis<T>(analyses: &mut BTreeMap<PathBuf, T>, root: &Path, path: &Path, analysis: T) {
+    if path == root {
+        analyses.insert(path.to_path_buf(), analysis);
+    } else {
+        analyses.entry(path.to_path_buf()).or_insert(analysis);
+    }
 }
 
 /// Run typechecking and keep reusable semantic artifacts when the checked graph succeeds.
@@ -794,6 +811,8 @@ struct CodegraphBuilder {
     /// Populated only where the modules actually lowered. A declaration with no entry exports an identity whose
     /// `signature` is `None`, which a consumer must read as unproven rather than as a key.
     signatures_by_identity: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>,
+    /// Checked owner and collision-local ordinal for nested declarations.
+    stable_contexts_by_identity: BTreeMap<CanonicalSymbolId, (CanonicalSymbolId, u32)>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -828,6 +847,7 @@ impl CodegraphBuilder {
             records: Vec::new(),
             diagnostics: Vec::new(),
             signatures_by_identity: BTreeMap::new(),
+            stable_contexts_by_identity: BTreeMap::new(),
             file_ids: BTreeMap::new(),
             module_ids: BTreeSet::new(),
             namespace_ids: BTreeSet::new(),
@@ -857,16 +877,46 @@ impl CodegraphBuilder {
     /// Project one checked identity into its exported edit-stable form, carrying a signature when one was proved.
     fn stable_identity_for(&self, canonical: Option<&CanonicalSymbolId>) -> Option<CodegraphStableDeclarationId> {
         let canonical = canonical?;
-        Some(codegraph_stable_identity(
+        let context = self
+            .stable_contexts_by_identity
+            .get(canonical)
+            .and_then(|(owner, binding_ordinal)| {
+                let owner = StableDeclarationId::from_canonical(
+                    owner,
+                    self.signatures_by_identity
+                        .get(owner)
+                        .map(|facts| facts.signature.clone()),
+                    None,
+                )?;
+                Some(StableDeclarationContext {
+                    owner,
+                    binding_ordinal: *binding_ordinal,
+                })
+            });
+        codegraph_stable_identity(
             canonical,
             self.signatures_by_identity
                 .get(canonical)
                 .map(|facts| facts.signature.clone()),
-        ))
+            context,
+        )
     }
 
     /// Attach session-owned semantic facts for checked body target population.
     fn set_semantic_snapshots(&mut self, semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>) {
+        self.stable_contexts_by_identity.clear();
+        for snapshot in semantic_snapshots_by_path.values() {
+            for subject in snapshot.facts.subjects() {
+                let Some(identity) = snapshot.facts.symbol_identities_for(subject).next() else {
+                    continue;
+                };
+                let Some(context) = snapshot.facts.stable_declaration_contexts_for(subject).next() else {
+                    continue;
+                };
+                self.stable_contexts_by_identity
+                    .insert(identity.clone(), (context.owner.clone(), context.binding_ordinal));
+            }
+        }
         self.semantic_snapshots_by_path = semantic_snapshots_by_path;
     }
 
@@ -1914,7 +1964,7 @@ impl CodegraphBuilder {
             }
             Expr::MethodCall(receiver, method, type_args, args) => {
                 // `helpers.make_widget(..)` parses as a method call, but it is a call into an imported module, not a
-                // method on a value. Labelling it by the bare method name loses which module answers the call and
+                // method on a value. Labeling it by the bare method name loses which module answers the call and
                 // makes it indistinguishable from a local `make_widget(..)` in the same file.
                 let qualified;
                 let callee_label = if Self::receiver_names_an_imported_module(module, receiver)
@@ -2242,7 +2292,7 @@ impl CodegraphBuilder {
     /// Return whether a method-call receiver names a type this module declares.
     ///
     /// `Signal.Ready()` and `Widget.build()` parse as method calls on a bare identifier, but the identifier is a type,
-    /// not a value. Labelling those by the bare member name loses which type answers the call and makes a variant
+    /// not a value. Labeling those by the bare member name loses which type answers the call and makes a variant
     /// indistinguishable from any other `Ready` in the file, so record the receiver the source wrote. A receiver that
     /// is an ordinary value keeps the bare member name: `user.save()` is a method on a value, not a qualified path.
     fn receiver_names_a_declared_type(module: &ParsedModule, receiver: &Spanned<Expr>) -> bool {
@@ -2409,12 +2459,13 @@ impl CodegraphBuilder {
     fn finish(mut self) -> Vec<CodegraphRecord> {
         self.materialize_registry_reexport_projections();
         let degraded = self.records.iter().any(record_degraded) || !self.diagnostics.is_empty();
+        let languages = represented_languages(&self.records);
         let mut records = vec![CodegraphRecord::Header(CodegraphHeaderRecord {
             schema_version: CODEGRAPH_SCHEMA_VERSION,
             compiler_version: INCAN_VERSION.to_string(),
             mode: self.mode,
             root_path: self.root_path,
-            languages: vec![CodegraphLanguage::Incan],
+            languages,
             package: self.package,
             semantic_contexts: self.semantic_contexts,
             degraded,
@@ -2631,8 +2682,14 @@ fn lowered_declaration_facts(
 fn codegraph_stable_identity(
     identity: &CanonicalSymbolId,
     signature: Option<DeclarationSignature>,
-) -> CodegraphStableDeclarationId {
-    let stable = StableDeclarationId::from_canonical(identity, signature);
+    context: Option<StableDeclarationContext>,
+) -> Option<CodegraphStableDeclarationId> {
+    let stable = StableDeclarationId::from_canonical(identity, signature, context)?;
+    Some(codegraph_stable_identity_from_semantic(&stable))
+}
+
+/// Convert the compiler-owned stable identity into the storage-neutral codegraph shape.
+fn codegraph_stable_identity_from_semantic(stable: &StableDeclarationId) -> CodegraphStableDeclarationId {
     CodegraphStableDeclarationId {
         namespace: match stable.namespace {
             incan_semantics_core::SymbolNamespace::OrdinaryLexical => "ordinary_lexical",
@@ -2651,7 +2708,15 @@ fn codegraph_stable_identity(
         },
         declaration_name: stable.declaration_name.clone(),
         declaration_kind: stable.kind.as_str().to_string(),
-        nested: matches!(stable.nesting, DeclarationNesting::Nested),
+        location: match &stable.location {
+            StableDeclarationLocation::ModuleLevel => CodegraphStableDeclarationLocation::ModuleLevel,
+            StableDeclarationLocation::Nested { owner, binding_ordinal } => {
+                CodegraphStableDeclarationLocation::Nested {
+                    owner: Box::new(codegraph_stable_identity_from_semantic(owner)),
+                    binding_ordinal: *binding_ordinal,
+                }
+            }
+        },
         signature: stable
             .signature
             .as_ref()
@@ -2889,6 +2954,45 @@ fn c_binding_struct_field_record(field: &CBindingStructField) -> CodegraphCBindi
     }
 }
 
+/// Return the languages the export's facts are written in, `incan` first (RFC 106: the header lists the languages
+/// represented by the export, and `language` is an attribute of each fact).
+///
+/// Incan is always represented: every export carries the Incan file and module facts of its sources. Rust is
+/// represented when any fact is a Rust one, such as the import of a `rust::` item or a reference resolved into a Rust
+/// crate (#1561).
+fn represented_languages(records: &[CodegraphRecord]) -> Vec<CodegraphLanguage> {
+    let rust = records
+        .iter()
+        .any(|record| record_language(record) == Some(CodegraphLanguage::Rust));
+    let mut languages = vec![CodegraphLanguage::Incan];
+    if rust {
+        languages.push(CodegraphLanguage::Rust);
+    }
+    languages
+}
+
+/// Return the language one fact is written in, or `None` for the header, which describes the export.
+fn record_language(record: &CodegraphRecord) -> Option<CodegraphLanguage> {
+    match record {
+        CodegraphRecord::Header(_) => None,
+        CodegraphRecord::File(record) => Some(record.language),
+        CodegraphRecord::Namespace(record) => Some(record.language),
+        CodegraphRecord::Module(record) => Some(record.language),
+        CodegraphRecord::Declaration(record) => Some(record.language),
+        CodegraphRecord::Import(record) => Some(record.language),
+        CodegraphRecord::Export(record) => Some(record.language),
+        CodegraphRecord::Reference(record) => Some(record.language),
+        CodegraphRecord::Call(record) => Some(record.language),
+        CodegraphRecord::Containment(record) => Some(record.language),
+        CodegraphRecord::Diagnostic(record) => Some(record.language),
+        CodegraphRecord::Registry(record) => Some(record.language),
+        CodegraphRecord::CBinding(record) => Some(record.language),
+        CodegraphRecord::CBindingCall(record) => Some(record.language),
+        CodegraphRecord::CBindingFacade(record) => Some(record.language),
+        CodegraphRecord::Capability(record) => Some(record.language),
+    }
+}
+
 /// Read the degraded flag from any codegraph record variant.
 fn record_degraded(record: &CodegraphRecord) -> bool {
     match record {
@@ -2914,7 +3018,7 @@ fn record_degraded(record: &CodegraphRecord) -> bool {
 /// Construct a deterministic id for one capability declaration.
 ///
 /// Module path, declaration name, and span start together stay unique within an export without depending on the
-/// order modules were analysed in, which is what keeps a JSONL export byte-stable between runs.
+/// order modules were analyzed in, which is what keeps a JSONL export byte-stable between runs.
 fn capability_record_id(identity: &CanonicalSymbolId, anchor_start: usize) -> String {
     let module = identity.module_path().map(|path| path.join(".")).unwrap_or_default();
     format!(
@@ -3637,6 +3741,91 @@ mod tests {
     use incan_lang::lang::c_abi::ScalarTypeId;
     use std::path::PathBuf;
 
+    #[test]
+    fn own_root_analysis_replaces_an_earlier_dependency_snapshot() {
+        let provider = Path::new("src/provider.incn");
+        let consumer = Path::new("src/consumer.incn");
+        let mut analyses = BTreeMap::new();
+
+        retain_root_analysis(&mut analyses, consumer, provider, "dependency-context");
+        retain_root_analysis(&mut analyses, provider, provider, "provider-root-context");
+        retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
+
+        assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
+    }
+
+    #[test]
+    fn own_root_analysis_replaces_dependency_copies_for_every_checked_projection() {
+        let provider = Path::new("src/provider.incn");
+        let consumer = Path::new("src/consumer.incn");
+        for mut analyses in [BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), BTreeMap::new()] {
+            retain_root_analysis(&mut analyses, consumer, provider, "dependency-context");
+            retain_root_analysis(&mut analyses, provider, provider, "provider-root-context");
+            retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
+            assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
+        }
+    }
+
+    #[test]
+    fn directory_analysis_keeps_provider_origin_through_a_reexport() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let source_root = temp.path().join("src");
+        fs::create_dir_all(&source_root)?;
+        fs::write(
+            temp.path().join("loaf.toml"),
+            "[project]\nname = \"identity_graph\"\nversion = \"0.1.0\"\n",
+        )?;
+        let provider_path = source_root.join("provider.incn");
+        let facade_path = source_root.join("facade.incn");
+        let main_path = source_root.join("main.incn");
+        fs::write(
+            &provider_path,
+            "pub def helper() -> int:\n    return 7\n\npub run = alias helper\n",
+        )?;
+        fs::write(&facade_path, "pub from provider import run as h\n")?;
+        fs::write(
+            &main_path,
+            "from facade import h as run_helper\n\ndef entrypoint() -> int:\n    return run_helper()\n",
+        )?;
+
+        let files = vec![facade_path.clone(), main_path, provider_path.clone()];
+        let (_, analysis) = directory_modules_diagnostics_and_info(&files, &FeatureSelection::default(), None)?;
+        let provider = analysis
+            .semantic_snapshots_by_path
+            .get(&provider_path)
+            .and_then(|snapshot| {
+                snapshot
+                    .hir
+                    .declarations
+                    .iter()
+                    .find(|declaration| declaration.name.as_deref() == Some("helper"))
+            })
+            .and_then(|declaration| declaration.canonical.as_ref())
+            .ok_or("provider helper identity absent")?;
+        let reexport = analysis
+            .semantic_snapshots_by_path
+            .get(&facade_path)
+            .and_then(|snapshot| {
+                snapshot
+                    .hir
+                    .declarations
+                    .iter()
+                    .find(|declaration| declaration.name.as_deref() == Some("h"))
+            })
+            .and_then(|declaration| declaration.canonical.as_ref())
+            .ok_or("facade re-export identity absent")?;
+
+        assert_eq!(
+            reexport, provider,
+            "a temporary graph root must retain its source-relative provider identity"
+        );
+        assert!(matches!(
+            &provider.origin,
+            SymbolOrigin::Module(path) if path.as_slice() == ["provider"]
+        ));
+        Ok(())
+    }
+
     /// Execution requirements and inspection consume one checked consumer snapshot, including aliases and nested
     /// owners.
     #[test]
@@ -4022,7 +4211,7 @@ pub def pick(value: int, fallback: int) -> int:
                 derived
                     .into_iter()
                     .filter(|(identity, _)| identity.declaration_name == "pick")
-                    .map(|(identity, facts)| codegraph_stable_identity(&identity, Some(facts.signature)))
+                    .filter_map(|(identity, facts)| codegraph_stable_identity(&identity, Some(facts.signature), None))
                     .collect::<Vec<_>>(),
             )
         })
@@ -4038,9 +4227,10 @@ pub def pick(value: int, fallback: int) -> int:
             "the two overloads must export distinct signatures: {signatures:?}"
         );
         assert!(
-            signatures
-                .iter()
-                .all(|identity| identity.declaration_name == "pick" && !identity.nested),
+            signatures.iter().all(|identity| {
+                identity.declaration_name == "pick"
+                    && matches!(identity.location, CodegraphStableDeclarationLocation::ModuleLevel)
+            }),
             "both are module-level declarations named `pick`: {signatures:?}"
         );
         Ok(())
@@ -4233,8 +4423,47 @@ pub def pick(value: int, fallback: int) -> int:
         assert_eq!(
             incan.1,
             CodegraphLanguage::Incan,
-            "an ordinary Incan import must not be relabelled by this change"
+            "an ordinary Incan import must not be relabeled by this change"
         );
+        Ok(())
+    }
+
+    /// #1561: the header lists every language the export's facts are written in, so an export with a Rust import
+    /// fact lists `rust` beside `incan`, and one without lists `incan` alone.
+    #[test]
+    fn header_languages_list_the_languages_of_the_facts_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "from rust::std::option import Option as RustOption\nfrom std.collections import Deque\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module = ParsedModule {
+            name: "probe".to_string(),
+            path_segments: vec!["probe".to_string()],
+            file_path: PathBuf::from("probe.incn"),
+            source: source.to_string(),
+            ast: program.clone(),
+        };
+        let mut records = Vec::new();
+        for declaration in &program.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            records.push(CodegraphRecord::Import(import_record(
+                &module,
+                "m",
+                "i",
+                import,
+                declaration.span,
+                Vec::new(),
+                CodegraphProvenance::Syntax,
+                false,
+            )));
+        }
+        assert_eq!(
+            represented_languages(&records),
+            vec![CodegraphLanguage::Incan, CodegraphLanguage::Rust]
+        );
+        records.retain(|record| record_language(record) == Some(CodegraphLanguage::Incan));
+        assert_eq!(represented_languages(&records), vec![CodegraphLanguage::Incan]);
         Ok(())
     }
 

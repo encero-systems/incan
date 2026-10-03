@@ -1,0 +1,10 @@
+from aggregate_builders import AggregateMeasure, count as count_builder
+from projection_builders import ColumnExpr
+
+
+pub def count(expr: Option[ColumnExpr] = None) -> AggregateMeasure:
+    return count_builder(expr)
+
+
+pub def count_expr(expr: ColumnExpr) -> AggregateMeasure:
+    return count(expr)

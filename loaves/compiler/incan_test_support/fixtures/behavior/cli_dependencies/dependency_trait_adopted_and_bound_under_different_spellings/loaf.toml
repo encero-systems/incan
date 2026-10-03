@@ -1,0 +1,9 @@
+[project]
+name = "dependency_trait_adopted_and_bound_under_different_spellings"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+tags = { path = "deps/tags" }

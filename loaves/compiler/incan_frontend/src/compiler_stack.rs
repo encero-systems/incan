@@ -40,7 +40,7 @@ pub fn compiler_stack_bytes() -> usize {
 /// Panics from `work` are resumed on the calling thread, so panic behavior, backtraces and abort semantics are
 /// unchanged from running it inline. If the thread cannot be spawned at all the process exits with a clear
 /// message: `spawn` has already consumed the closure, so there is no way to run it inline instead, and reporting
-/// that plainly beats any pretence of having compiled something.
+/// that plainly beats any pretense of having compiled something.
 pub fn run_on_compiler_stack<T, F>(work: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,

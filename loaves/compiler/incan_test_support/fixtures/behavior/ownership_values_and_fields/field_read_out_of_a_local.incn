@@ -1,0 +1,31 @@
+# behavior: a list field read out of a local keeps the local intact when the local is used again, a field read from self leaves self intact across two calls, and a field read at the local's last use reaches its new home
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_owned_storage_field_read_moves_only_out_of_a_last_use_local
+# expect-stdout:
+#   2
+#   1
+#   ["a", "b"] ["a", "b"]
+#   ["a", "b"] ["x"]
+
+model Record:
+    tags: list[str]
+
+
+model Decoded:
+    value: list[str]
+
+    def record(self) -> Record:
+        return Record(tags=self.value)
+
+
+def main() -> None:
+    kept = Decoded(value=["a", "b"])
+    first = Record(tags=kept.value)
+    println(len(kept.value))
+    rows = [kept.value]
+    println(len(rows))
+    once = kept.record()
+    twice = kept.record()
+    println(f"{once.tags:?} {twice.tags:?}")
+    last = Decoded(value=["x"])
+    second = Record(tags=last.value)
+    println(f"{first.tags:?} {second.tags:?}")

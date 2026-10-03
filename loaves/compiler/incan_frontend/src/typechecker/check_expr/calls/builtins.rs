@@ -2,16 +2,18 @@
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, HashedCollectionRole};
 use crate::symbols::{CallableParam, FunctionInfo, ResolvedType};
-use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
+use crate::typechecker::derive_requirements::DeriveSupport;
+use crate::typechecker::helpers::{collection_type_id, dict_ty, is_frozen_str, list_ty, option_ty, result_ty, set_ty};
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_lang::lang::surface::functions::SurfaceFnId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
-use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 impl TypeChecker {
     /// Return the builtin member name for an explicit `std.builtins.<name>` callee.
@@ -23,6 +25,24 @@ impl TypeChecker {
             Some(member.as_str())
         } else {
             None
+        }
+    }
+
+    /// Type-check the arguments of a `print`/`println` call and refuse any that has no printed form (#1748).
+    ///
+    /// Every argument is checked as usual so its own diagnostics still surface. An argument displays under the rule
+    /// `str(...)` and an f-string `{value}` share (see [`Self::check_display_operand`]): a tuple, list, dict, set,
+    /// `Option` or `Result` prints its structure, an `Error` adopter with no `__str__` is recorded to print its
+    /// `message()` (#1778), and only a value with no printed form is refused, with the call's own spelling (`builtin`)
+    /// in the message.
+    fn check_print_call_args(&mut self, builtin: &str, args: &[CallArg]) {
+        for arg in args {
+            let arg_expr = Self::call_arg_expr(arg);
+            self.call_argument_depth += 1;
+            let arg_ty = self.check_expr(arg_expr);
+            self.call_argument_depth -= 1;
+            self.record_error_message_display(arg_expr.span, &arg_ty);
+            self.check_display_operand(errors::DisplayPosition::Print { builtin }, arg_expr, &arg_ty);
         }
     }
 
@@ -98,6 +118,52 @@ impl TypeChecker {
         if arity_ok { resolved } else { ResolvedType::Unknown }
     }
 
+    /// Return the union a `Some(payload)` checked against `Option[expected_inner]` injects its payload into.
+    ///
+    /// The destination's inner type, with source aliases expanded, must be an anonymous union that admits the
+    /// payload as one of its members, while the payload's own type is neither that union (a value already carried in
+    /// the wrapper needs no injection; a union-to-union widening keeps its own path) nor a placeholder the checker
+    /// has not resolved (`Unknown`, `Never`, a type variable, an inferred call-site slot), so error recovery and
+    /// generic bodies never record an instantiation the program did not establish.
+    fn some_payload_union_wrapper(
+        &self,
+        payload_ty: &ResolvedType,
+        expected_inner: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        let expected_inner = self.expand_type_aliases(expected_inner.clone());
+        if !expected_inner.is_union() || payload_ty.is_union() {
+            return None;
+        }
+        if matches!(
+            payload_ty,
+            ResolvedType::Unknown | ResolvedType::Never | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer
+        ) || self.is_generic_placeholder_type(payload_ty)
+        {
+            return None;
+        }
+        self.types_compatible(payload_ty, &expected_inner)
+            .then_some(expected_inner)
+    }
+
+    /// Return the string type a `Some(payload)` checked against `Option[expected_inner]` converts a `FrozenStr` payload
+    /// to.
+    ///
+    /// `FrozenStr` (which is also what a `const` declared `str` carries) reads anywhere `str` is expected, but the two
+    /// are stored differently, so a `FrozenStr` payload placed in an `Option[str]` or an `Option[FrozenStr]` is
+    /// converted to the destination's own string type at the constructor's argument. The destination's inner type,
+    /// with source aliases expanded, must be `str` or `FrozenStr`; any other payload records nothing.
+    fn some_payload_string_destination(
+        &self,
+        payload_ty: &ResolvedType,
+        expected_inner: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        if !is_frozen_str(payload_ty) {
+            return None;
+        }
+        let expected_inner = self.expand_type_aliases(expected_inner.clone());
+        (matches!(expected_inner, ResolvedType::Str) || is_frozen_str(&expected_inner)).then_some(expected_inner)
+    }
+
     // ---- Rust boundary matching and coercion recording ----
 
     /// Type-check an ordinary builtin call, optionally retaining an already-known result context.
@@ -127,6 +193,27 @@ impl TypeChecker {
         (collection_type_id(name) == Some(collection) && type_args.len() == arity).then_some(type_args)
     }
 
+    /// Return the element type `list(source)` collects, or `None` when the source is not iterable.
+    ///
+    /// The rule is the built-in loop-header rule (`infer_iterator_element_type`): a collection yields its items, a
+    /// dict its keys, text its one-character strings, bytes its integers, and an `Iterator[T]` or `Generator[T]` its
+    /// `T`. A Rust value the checker cannot see into (a `rust::` import or an unresolved type) is accepted with an
+    /// unknown element, as a loop over it is. Everything else is refused so the call never lowers to an undefined
+    /// conversion: a scalar, a tuple, an `Option`, and also a class or model that implements `__iter__` / `__next__`,
+    /// which a `for` statement accepts through `resolve_iteration_protocol` but which no `list(...)` lowering drives
+    /// yet.
+    fn list_constructor_item_type(&self, source_ty: &ResolvedType) -> Option<ResolvedType> {
+        match source_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.list_constructor_item_type(inner),
+            ResolvedType::RustPath(_) | ResolvedType::Unknown => Some(ResolvedType::Unknown),
+            ResolvedType::Tuple(_) => None,
+            _ => {
+                let elem_ty = self.infer_iterator_element_type(source_ty);
+                (!matches!(elem_ty, ResolvedType::Unknown)).then_some(elem_ty)
+            }
+        }
+    }
+
     /// Typecheck a builtin call, optionally preserving ordinary root-name shadowing behavior.
     fn check_builtin_call_inner(
         &mut self,
@@ -151,7 +238,25 @@ impl TypeChecker {
             }
             return match cid {
                 ConstructorId::Ok | ConstructorId::Err => {
-                    let arg_types = self.check_call_arg_types(args);
+                    // The payload is checked against the payload type of the `Result` the destination expects, so an
+                    // integer literal in `Ok(1)` at a `Result[float, str]` destination takes the float type (#1859).
+                    let expected_sides =
+                        Self::matching_collection_constructor_args(expected_return_ty, CollectionTypeId::Result, 2);
+                    let expected_payload = expected_sides
+                        .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Err)))
+                        .cloned();
+                    let expected_open_side = expected_sides
+                        .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Ok)))
+                        .cloned();
+                    let arg_types = match (expected_payload, args) {
+                        (Some(expected_payload), [CallArg::Positional(expr)]) => {
+                            self.call_argument_depth += 1;
+                            let ty = self.check_expr_with_expected(expr, Some(&expected_payload));
+                            self.call_argument_depth -= 1;
+                            vec![ty]
+                        }
+                        _ => self.check_call_arg_types(args),
+                    };
                     let current_result = self.symbols.current_return_type().and_then(|ty| match ty {
                         ResolvedType::Generic(name, args)
                             if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
@@ -172,6 +277,24 @@ impl TypeChecker {
                         .unwrap_or(ResolvedType::Unknown);
                     let inferred_arg = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
 
+                    // The side the constructor leaves open is the side its destination gives (#1561). A side the
+                    // call still infers, the callee's own type parameter, stays open here, so the call's type
+                    // arguments come from all of its arguments before that side is settled (`pick(Err(2), 5)` for
+                    // `def pick[T](r: Result[T, int], d: T)` builds its `Err` with the `int` that `d` fixes). With no
+                    // destination side, the side is the enclosing function's.
+                    let (current_ok, current_err) = match expected_open_side {
+                        Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) if cid == ConstructorId::Ok => {
+                            (current_ok, ResolvedType::Unknown)
+                        }
+                        Some(ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer) => {
+                            (ResolvedType::Unknown, current_err)
+                        }
+                        Some(side) if !matches!(side, ResolvedType::Unknown) && cid == ConstructorId::Ok => {
+                            (current_ok, side)
+                        }
+                        Some(side) if !matches!(side, ResolvedType::Unknown) => (side, current_err),
+                        _ => (current_ok, current_err),
+                    };
                     let (ok_ty, err_ty) = if cid == ConstructorId::Ok {
                         // `Ok(...)` must reflect the payload type so return checking can catch mismatches against the
                         // declared `Result[T, E]`.
@@ -212,6 +335,21 @@ impl TypeChecker {
                             self.call_argument_depth += 1;
                             let ty = self.check_expr_with_expected(expr, Some(expected_inner));
                             self.call_argument_depth -= 1;
+                            // The constructor is instantiated at the destination's union, or at the destination's
+                            // own string type for a `FrozenStr` payload: record that parameter as the call's
+                            // callable fact so lowering carries it and the payload is injected into the wrapper or
+                            // converted at the argument, as it is for any callable taking that type (#1724, #1794).
+                            // The call's type is the instantiation, not `Option[payload]`.
+                            if let Some(destination) = self
+                                .some_payload_union_wrapper(&ty, expected_inner)
+                                .or_else(|| self.some_payload_string_destination(&ty, expected_inner))
+                            {
+                                self.type_info.record_call_site_callable_params_exact(
+                                    call_span,
+                                    &[CallableParam::positional(destination.clone())],
+                                );
+                                return Some(option_ty(destination));
+                            }
                             ty
                         }
                         _ => {
@@ -259,7 +397,7 @@ impl TypeChecker {
                     Some(ResolvedType::Bool)
                 }
                 BuiltinFnId::Print => {
-                    self.check_call_args(args);
+                    self.check_print_call_args(name, args);
                     Some(ResolvedType::Unit)
                 }
                 BuiltinFnId::Len => {
@@ -328,7 +466,13 @@ impl TypeChecker {
                     }
                 }
                 BuiltinFnId::Str => {
-                    self.check_call_args(args);
+                    // `str(value)` displays its argument under the rule `print` and an f-string share (#1748); an
+                    // `Error` adopter with no `__str__` renders its `message()` (#1778).
+                    let arg_types = self.check_call_arg_types(args);
+                    if let ([arg], [arg_ty]) = (args, arg_types.as_slice()) {
+                        self.record_error_message_display(Self::call_arg_expr(arg).span, arg_ty);
+                        self.check_display_operand(errors::DisplayPosition::Str, Self::call_arg_expr(arg), arg_ty);
+                    }
                     Some(ResolvedType::Str)
                 }
                 BuiltinFnId::Int => {
@@ -478,21 +622,40 @@ impl TypeChecker {
                         return Some(ResolvedType::Unknown);
                     }
 
-                    match inner {
-                        ResolvedType::Int
-                        | ResolvedType::Float
-                        | ResolvedType::Bool
-                        | ResolvedType::Str
-                        | ResolvedType::FrozenStr => Some(list_ty(inner)),
-                        other => {
-                            self.errors.push(errors::builtin_list_element_type_not_supported(
-                                name,
-                                &other.to_string(),
-                                call_span,
-                            ));
-                            Some(ResolvedType::Unknown)
-                        }
+                    // A `float` list sorts by its partial order; any other element type sorts by its total order
+                    // (#1881): a derived or adopted `Ord`, or a tuple, list or `Option` of ordered values. An element
+                    // type the derive relation cannot decide is refused, as it cannot be sorted without one, and so
+                    // is a type parameter, whose `Ord` bound does not give the generated program a total order.
+                    if matches!(inner, ResolvedType::Float)
+                        || self.derive_support(&inner, DeriveId::Ord) == DeriveSupport::Supported
+                    {
+                        return Some(list_ty(inner));
                     }
+                    if let Some(placeholder) = self.generic_placeholder_name(&inner)
+                        && self.active_type_param_satisfies_builtin_bound(placeholder, TraitId::Ord)
+                    {
+                        return Some(list_ty(inner));
+                    }
+                    if self.generic_placeholder_name(&inner).is_some() {
+                        self.errors.push(errors::builtin_list_element_type_not_supported(
+                            name,
+                            &inner.to_string(),
+                            call_span,
+                        ));
+                        return Some(ResolvedType::Unknown);
+                    }
+                    let holder = match self.derive_support(&inner, DeriveId::Ord) {
+                        DeriveSupport::Missing(holder) => holder,
+                        DeriveSupport::Supported | DeriveSupport::Unknown => inner.clone(),
+                    };
+                    let holder_is_declared = self.is_user_operator_receiver(&holder);
+                    self.errors.push(errors::sorted_element_not_ordered(
+                        &inner.to_string(),
+                        &holder.to_string(),
+                        holder_is_declared,
+                        call_span,
+                    ));
+                    Some(ResolvedType::Unknown)
                 }
                 BuiltinFnId::ReadFile => {
                     self.check_call_args(args);
@@ -508,7 +671,16 @@ impl TypeChecker {
                         self.check_call_args(args);
                         return Some(ResolvedType::Str);
                     }
-                    self.check_expr(Self::call_arg_expr(&args[0]));
+                    // The value is written as JSON, so its type needs a `Serialize` form.
+                    let arg_expr = Self::call_arg_expr(&args[0]);
+                    let arg_ty = self.check_expr(arg_expr);
+                    if let Some(holder) = self.value_type_without_serialize_form(&arg_ty) {
+                        self.errors.push(errors::json_stringify_value_lacks_serialize(
+                            &arg_ty.to_string(),
+                            &holder,
+                            arg_expr.span,
+                        ));
+                    }
                     Some(ResolvedType::Str)
                 }
             };
@@ -543,12 +715,22 @@ impl TypeChecker {
                                 .push(errors::type_mismatch(expected_name, &arg_ty.to_string(), arg_expr.span));
                         }
                     }
-                    self.check_call_args(args);
+                    let arg_types = self.check_call_arg_types(args);
+                    // The second argument is the task the deadline applies to (`RuntimeFuture[T]`).
+                    if let (Some(task), Some(task_ty)) = (args.get(1), arg_types.get(1)) {
+                        self.refuse_non_task_argument(name, Self::call_arg_expr(task), task_ty);
+                    }
                     Some(ResolvedType::Unknown)
                 }
                 SurfaceFnId::YieldNow => Some(ResolvedType::Unit),
                 SurfaceFnId::Spawn | SurfaceFnId::SpawnBlocking => {
-                    self.check_call_args(args);
+                    let arg_types = self.check_call_arg_types(args);
+                    // `spawn` takes the task itself (`RuntimeFuture[T]`); `spawn_blocking` takes a function to call.
+                    if fid == SurfaceFnId::Spawn
+                        && let (Some(task), Some(task_ty)) = (args.first(), arg_types.first())
+                    {
+                        self.refuse_non_task_argument(name, Self::call_arg_expr(task), task_ty);
+                    }
                     Some(ResolvedType::Generic(
                         surface_types::as_str(SurfaceTypeId::JoinHandle).to_string(),
                         vec![ResolvedType::Unknown],
@@ -653,14 +835,38 @@ impl TypeChecker {
             if has_call_root_binding {
                 return None;
             }
-            if cid == CollectionTypeId::Set && args.len() > 1 {
+            if matches!(
+                cid,
+                CollectionTypeId::Set | CollectionTypeId::List | CollectionTypeId::Dict
+            ) && args.len() > 1
+            {
                 self.check_call_args(args);
                 self.errors
                     .push(errors::builtin_max_arity(name, 1, args.len(), call_span));
                 return Some(ResolvedType::Unknown);
             }
+            if matches!(
+                cid,
+                CollectionTypeId::FrozenList | CollectionTypeId::FrozenDict | CollectionTypeId::FrozenSet
+            ) {
+                // A frozen collection is a `const` value; the language defines no constructor call for one, so the
+                // call is refused here rather than typed `Unknown` and left for the build to reject (#1719).
+                self.check_call_args(args);
+                let (type_params, literal) = if cid == CollectionTypeId::FrozenDict {
+                    ("[K, V]", "{...}")
+                } else {
+                    ("[T]", "[...]")
+                };
+                let canonical = format!("{}{type_params}", collections::as_str(cid));
+                self.errors.push(errors::frozen_collection_has_no_constructor(
+                    name, &canonical, literal, call_span,
+                ));
+                return Some(ResolvedType::Unknown);
+            }
             return match cid {
                 CollectionTypeId::Dict => {
+                    // `dict(source)` copies a dict, so its source is a dict; the constructor identity is recorded for
+                    // lowering so the call never reaches emission as an ordinary function named `dict` (#1852).
                     let (key_ty, val_ty) = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
@@ -671,7 +877,15 @@ impl TypeChecker {
                             {
                                 (type_args[0].clone(), type_args[1].clone())
                             }
-                            _ => (ResolvedType::Unknown, ResolvedType::Unknown),
+                            ResolvedType::Unknown => (ResolvedType::Unknown, ResolvedType::Unknown),
+                            other => {
+                                self.errors.push(errors::type_mismatch(
+                                    &format!("{}[K, V]", collections::as_str(cid)),
+                                    &other.to_string(),
+                                    arg_expr.span,
+                                ));
+                                return Some(ResolvedType::Unknown);
+                            }
                         }
                     } else if let Some(type_args) =
                         Self::matching_collection_constructor_args(expected_return_ty, cid, 2)
@@ -680,44 +894,37 @@ impl TypeChecker {
                     } else {
                         (ResolvedType::Unknown, ResolvedType::Unknown)
                     };
-                    if args.is_empty() {
-                        self.type_info.record_resolved_collection_constructor(call_span, cid);
-                    }
+                    self.type_info.record_resolved_collection_constructor(call_span, cid);
                     Some(dict_ty(key_ty, val_ty))
                 }
                 CollectionTypeId::List => {
+                    // `list(source)` collects exactly the items `for item in source` yields, so the element type
+                    // comes from the same iteration rule a loop header uses. The constructor identity is recorded
+                    // for lowering so the call never reaches emission as an ordinary function named `list` (#1464).
                     let elem_ty = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                    || matches!(
-                                        collection_type_id(name.as_str()),
-                                        Some(
-                                            CollectionTypeId::List
-                                                | CollectionTypeId::Set
-                                                | CollectionTypeId::FrozenList
-                                                | CollectionTypeId::FrozenSet
-                                        )
-                                    ))
-                                    && !type_args.is_empty() =>
-                            {
-                                type_args[0].clone()
-                            }
-                            ResolvedType::Str => ResolvedType::Str,
-                            _ => ResolvedType::Unknown,
-                        }
+                        let Some(elem_ty) = self.list_constructor_item_type(&arg_ty) else {
+                            self.errors
+                                .push(errors::builtin_expects_iterable(name, &arg_ty.to_string(), call_span));
+                            return Some(ResolvedType::Unknown);
+                        };
+                        elem_ty
+                    } else if let Some(type_args) =
+                        Self::matching_collection_constructor_args(expected_return_ty, cid, 1)
+                    {
+                        type_args[0].clone()
                     } else {
                         ResolvedType::Unknown
                     };
+                    self.type_info.record_resolved_collection_constructor(call_span, cid);
                     Some(list_ty(elem_ty))
                 }
                 CollectionTypeId::Set => {
                     let elem_ty = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
+                        let source_elem_ty = match &arg_ty {
                             ResolvedType::Generic(name, type_args)
                                 if (name == surface_types::as_str(SurfaceTypeId::Vec)
                                     || matches!(
@@ -734,7 +941,14 @@ impl TypeChecker {
                                 type_args[0].clone()
                             }
                             _ => ResolvedType::Unknown,
-                        }
+                        };
+                        // `set(source)` hashes every item of its source (#1758).
+                        self.refuse_unhashable_collection_member(
+                            HashedCollectionRole::SetElement,
+                            &source_elem_ty,
+                            arg_expr.span,
+                        );
+                        source_elem_ty
                     } else if let Some(type_args) =
                         Self::matching_collection_constructor_args(expected_return_ty, cid, 1)
                     {

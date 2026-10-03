@@ -21,6 +21,6 @@ fn main() {
             }
         }),
     );
-    let _ = println!("{}", PI);
-    let _ = println!("{}", E);
+    let _ = println!("{}", incan_std_core::strings::float_to_string(PI));
+    let _ = println!("{}", incan_std_core::strings::float_to_string(E));
 }

@@ -3,6 +3,7 @@
 //!
 //! The whole module rides the `rust_inspect` feature: without the inspector there is nothing here to prepare.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,27 +17,51 @@ use oven_cargo_compat::cargo_process::resolved_cargo_executable;
 use oven_cargo_compat::explicit_project_bake_inspection_sources;
 use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity;
+use oven_rustc::plan::composition::{compose_direct_packaged_provider_plan, compose_packaged_provider_plan};
+use oven_rustc::plan::{
+    OvenDirectRustcPlanSelection, OvenPackagedLibraryLoafEntry, OvenProjectExtensionExecutionPlan,
+    OvenStoredDirectRustcExecutionPlan,
+};
 use oven_rustc::rustc::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH;
 use oven_rustc::rustc::OvenLoadedProjectInspectionAuthority;
 use oven_rustc::rustc::OvenProjectInspectionConstituent;
 use oven_rustc::rustc::OvenProjectInspectionSourceOwner;
 use oven_rustc::rustc::project_inspection_authority_supports_dependencies;
-use oven_rustc::rustc::project_inspection_test_dependency_envelope_supports_dependencies;
+use oven_rustc::rustc::project_inspection_test_dependency_envelope_mismatch;
 use oven_rustc::rustc::validate_project_extension_payload_against_base;
 
 /// Resolve one exact project authority and all named constituents once for the complete test command.
 pub fn prepare_project_registry_source_authorities(
     mut authority: OvenLoadedProjectInspectionAuthority,
 ) -> CliResult<Arc<PreparedOvenProjectRegistrySourceAuthorities>> {
-    struct ResolvedSourceOwner {
+    struct ResolvedSourceCatalog {
         root: PathBuf,
-        catalog: Vec<oven_rustc::rustc::OvenRustcRegistrySourcePackage>,
+        packages: Vec<oven_rustc::rustc::OvenRustcRegistrySourcePackage>,
+    }
+
+    struct ResolvedSourceOwner {
+        catalogs: Vec<ResolvedSourceCatalog>,
     }
 
     let mut release_loafs = Vec::new();
     let mut owners = Vec::with_capacity(authority.payload.constituents.len());
     let mut stored_index = 0;
-    let mut test_dependency_stored_index = None;
+    let test_dependency_roles = authority
+        .payload
+        .test_dependency_envelope
+        .as_ref()
+        .map(|envelope| {
+            std::iter::once((envelope.constituent_index, None))
+                .chain(
+                    envelope
+                        .provider_constituents
+                        .iter()
+                        .map(|provider| (provider.constituent_index, Some(provider.dependency_key.clone()))),
+                )
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let mut test_dependency_stored_roles = Vec::new();
     let mut test_dependency_release_identity = None;
     for (constituent_index, constituent) in authority.payload.constituents.iter().enumerate() {
         match constituent {
@@ -58,14 +83,14 @@ pub fn prepare_project_registry_source_authorities(
                     )));
                 }
                 owners.push(ResolvedSourceOwner {
-                    root: loaf.artifact_root.clone(),
-                    catalog: loaf.artifacts.registry_sources.clone(),
+                    catalogs: vec![ResolvedSourceCatalog {
+                        root: loaf.artifact_root.clone(),
+                        packages: loaf.artifacts.registry_sources.clone(),
+                    }],
                 });
-                if authority
-                    .payload
-                    .test_dependency_envelope
-                    .as_ref()
-                    .is_some_and(|envelope| envelope.constituent_index == constituent_index)
+                if test_dependency_roles
+                    .get(&constituent_index)
+                    .is_some_and(Option::is_none)
                 {
                     test_dependency_release_identity = Some(loaf.loaf_identity.clone());
                 }
@@ -76,27 +101,27 @@ pub fn prepare_project_registry_source_authorities(
                 base_loaf_identity,
                 ..
             } => {
-                if authority
-                    .payload
-                    .test_dependency_envelope
-                    .as_ref()
-                    .is_some_and(|envelope| envelope.constituent_index == constituent_index)
-                {
-                    test_dependency_stored_index = Some(stored_index);
+                if let Some(dependency_key) = test_dependency_roles.get(&constituent_index) {
+                    test_dependency_stored_roles.push((constituent_index, stored_index, dependency_key.clone()));
                 }
                 let selected = authority.stored_constituents.get(stored_index).ok_or_else(|| {
                     CliError::failure("project inspection authority lost a store constituent during preparation")
                 })?;
                 stored_index += 1;
-                let catalog = match artifact_kind {
+                let catalogs = match artifact_kind {
                     oven_store::store::OvenArtifactKind::DirectRustcPlan => {
-                        serde_json::from_slice::<oven_rustc::rustc::OvenRustcArtifactManifest>(&selected.payload)
-                            .map_err(|error| {
-                                CliError::failure(format!(
-                                    "project inspection direct-plan constituent is invalid: {error}"
-                                ))
-                            })?
-                            .registry_sources
+                        let packages =
+                            serde_json::from_slice::<oven_rustc::rustc::OvenRustcArtifactManifest>(&selected.payload)
+                                .map_err(|error| {
+                                    CliError::failure(format!(
+                                        "project inspection direct-plan constituent is invalid: {error}"
+                                    ))
+                                })?
+                                .registry_sources;
+                        vec![ResolvedSourceCatalog {
+                            root: selected.artifact_root.clone(),
+                            packages,
+                        }]
                     }
                     oven_store::store::OvenArtifactKind::ProjectPayload => {
                         let payload =
@@ -124,7 +149,23 @@ pub fn prepare_project_registry_source_authorities(
                             &base.artifacts,
                         )
                         .map_err(|error| CliError::failure(error.to_string()))?;
-                        payload.complete_plan.registry_sources
+                        let extension_packages = payload
+                            .complete_plan
+                            .registry_sources
+                            .iter()
+                            .filter(|package| extension_owns_registry_source(&payload.extension_paths, package))
+                            .cloned()
+                            .collect();
+                        vec![
+                            ResolvedSourceCatalog {
+                                root: selected.artifact_root.clone(),
+                                packages: extension_packages,
+                            },
+                            ResolvedSourceCatalog {
+                                root: base.artifact_root.clone(),
+                                packages: base.artifacts.registry_sources.clone(),
+                            },
+                        ]
                     }
                     unsupported => {
                         return Err(CliError::failure(format!(
@@ -132,35 +173,34 @@ pub fn prepare_project_registry_source_authorities(
                         )));
                     }
                 };
-                owners.push(ResolvedSourceOwner {
-                    root: selected.artifact_root.clone(),
-                    catalog,
-                });
+                owners.push(ResolvedSourceOwner { catalogs });
             }
         }
     }
 
     let mut sources = Vec::with_capacity(authority.payload.registry_sources.len());
     for source in &authority.payload.registry_sources {
-        let (root, catalog) = match source.owner {
-            OvenProjectInspectionSourceOwner::Authority => {
-                (authority.artifact_root(), std::slice::from_ref(&source.package))
-            }
+        let root = match source.owner {
+            OvenProjectInspectionSourceOwner::Authority => authority.artifact_root(),
             OvenProjectInspectionSourceOwner::Constituent { index } => {
                 let owner = owners.get(index).ok_or_else(|| {
                     CliError::failure(format!(
                         "project inspection source references missing constituent index {index}"
                     ))
                 })?;
-                (owner.root.as_path(), owner.catalog.as_slice())
+                owner
+                    .catalogs
+                    .iter()
+                    .find(|catalog| registry_source_is_owned_by_catalog(&source.package, &catalog.packages))
+                    .map(|catalog| catalog.root.as_path())
+                    .ok_or_else(|| {
+                        CliError::failure(format!(
+                            "project inspection source `{}` {} has no exact record in its named owner",
+                            source.package.package, source.package.version
+                        ))
+                    })?
             }
         };
-        if !registry_source_is_owned_by_catalog(&source.package, catalog) {
-            return Err(CliError::failure(format!(
-                "project inspection source `{}` {} has no exact record in its named owner",
-                source.package.package, source.package.version
-            )));
-        }
         sources.push(::rust_inspect::OvenInspectionRegistrySource {
             package: source.package.package.clone(),
             version: source.package.version.clone(),
@@ -200,13 +240,48 @@ pub fn prepare_project_registry_source_authorities(
             version: dir.version.clone(),
         })
         .collect::<Vec<_>>();
-    let test_dependency_plan = if let Some(stored_index) = test_dependency_stored_index {
-        let constituent_index = authority
-            .payload
-            .test_dependency_envelope
-            .as_ref()
-            .ok_or_else(|| CliError::failure("project inspection authority lost its test dependency role"))?
-            .constituent_index;
+    let test_dependency_plan = prepare_project_test_dependency_plan(
+        &mut authority,
+        &mut release_loafs,
+        test_dependency_stored_roles,
+        test_dependency_release_identity,
+    )?;
+    Ok(Arc::new(PreparedOvenProjectRegistrySourceAuthorities {
+        authority,
+        sources,
+        registry_lock_source,
+        generated_out_dirs,
+        test_dependency_plan,
+        _release_loafs: release_loafs,
+    }))
+}
+
+/// Return whether a stored project extension physically owns one sealed registry source tree.
+fn extension_owns_registry_source(
+    extension_paths: &[String],
+    package: &oven_rustc::rustc::OvenRustcRegistrySourcePackage,
+) -> bool {
+    let prefix = format!("{}/", package.source.relative_root);
+    extension_paths
+        .iter()
+        .any(|path| path == &package.source.relative_root || path.starts_with(&prefix))
+}
+
+/// Reconstruct and compose every role-bearing test constituent without resolving or compiling another crate.
+fn prepare_project_test_dependency_plan(
+    authority: &mut OvenLoadedProjectInspectionAuthority,
+    release_loafs: &mut Vec<oven_rustc::loaf::OvenToolchainLoaf>,
+    mut stored_roles: Vec<(usize, usize, Option<String>)>,
+    release_identity: Option<String>,
+) -> CliResult<Option<OvenDirectRustcPlanSelection>> {
+    let envelope = authority.payload.test_dependency_envelope.as_ref();
+    if envelope.is_none() {
+        return Ok(None);
+    }
+    stored_roles.sort_by_key(|(_, stored_index, _)| std::cmp::Reverse(*stored_index));
+    let mut main = None;
+    let mut providers = Vec::new();
+    for (constituent_index, stored_index, dependency_key) in stored_roles {
         let receipt = match authority.payload.constituents.get(constituent_index) {
             Some(OvenProjectInspectionConstituent::Stored { receipt, .. }) => receipt.clone(),
             _ => {
@@ -216,34 +291,90 @@ pub fn prepare_project_registry_source_authorities(
             }
         };
         let selected = authority.stored_constituents.remove(stored_index);
-        Some(
-            oven_rustc::plan::selection::project_test_dependency_plan_from_constituent(selected, &receipt)
-                .map_err(crate::error::oven_plan_error)?,
-        )
-    } else if let Some(identity) = test_dependency_release_identity {
+        let plan = oven_rustc::plan::selection::project_test_dependency_plan_from_constituent(selected, &receipt)
+            .map_err(crate::error::oven_plan_error)?;
+        if let Some(dependency_key) = dependency_key {
+            providers.push((dependency_key, receipt, plan));
+        } else {
+            main = Some((receipt, plan));
+        }
+    }
+    if let Some(identity) = release_identity {
         let index = release_loafs
             .iter()
             .position(|loaf| loaf.loaf_identity == identity)
             .ok_or_else(|| CliError::failure("project inspection authority lost its role-bearing release Loaf"))?;
-        Some(oven_rustc::plan::OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(
-            release_loafs.remove(index),
-        )))
-    } else {
-        if authority.payload.test_dependency_envelope.is_some() {
-            return Err(CliError::failure(
-                "project inspection authority test dependency role did not resolve to its exact constituent",
-            ));
+        let loaf = release_loafs.remove(index);
+        let receipt = authority
+            .payload
+            .test_dependency_envelope
+            .as_ref()
+            .and_then(|envelope| authority.payload.constituents.get(envelope.constituent_index))
+            .and_then(|constituent| match constituent {
+                OvenProjectInspectionConstituent::ReleaseLoaf { receipt, .. } => Some(receipt.clone()),
+                OvenProjectInspectionConstituent::Stored { .. } => None,
+            })
+            .ok_or_else(|| CliError::failure("project inspection authority lost its release-Loaf receipt"))?;
+        main = Some((receipt, OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(loaf))));
+    }
+    if providers.is_empty() {
+        return main.map(|(_, plan)| Some(plan)).ok_or_else(|| {
+            CliError::failure("project inspection authority test dependency role did not resolve to its constituent")
+        });
+    }
+    let expected_intent = main
+        .as_ref()
+        .map(|(receipt, _)| receipt.intent.clone())
+        .ok_or_else(|| CliError::failure("project inspection provider roles lost the project-owned test delta"))?;
+    let mut extensions: Vec<(String, OvenPackagedLibraryLoafEntry, OvenProjectExtensionExecutionPlan)> = Vec::new();
+    let mut direct: Vec<(String, OvenPackagedLibraryLoafEntry, OvenStoredDirectRustcExecutionPlan)> = Vec::new();
+    let inputs = std::iter::once(("project-test-dependencies".to_string(), main)).chain(
+        providers
+            .into_iter()
+            .map(|(key, receipt, plan)| (key, Some((receipt, plan)))),
+    );
+    for (dependency_key, input) in inputs {
+        let Some((receipt, plan)) = input else {
+            continue;
+        };
+        match plan {
+            OvenDirectRustcPlanSelection::Stored(selected) => {
+                let entry = OvenPackagedLibraryLoafEntry {
+                    receipt,
+                    identity: selected.identity.clone(),
+                    kind: oven_store::store::OvenArtifactKind::DirectRustcPlan,
+                    base_loaf_identity: None,
+                };
+                direct.push((dependency_key, entry, *selected));
+            }
+            OvenDirectRustcPlanSelection::ProjectExtension(selected) => {
+                let entry = OvenPackagedLibraryLoafEntry {
+                    receipt,
+                    identity: selected.extension.identity.clone(),
+                    kind: oven_store::store::OvenArtifactKind::ProjectPayload,
+                    base_loaf_identity: Some(selected.base.loaf_identity.clone()),
+                };
+                extensions.push((dependency_key, entry, *selected));
+            }
+            OvenDirectRustcPlanSelection::ToolchainLoaf(_) => {}
+            OvenDirectRustcPlanSelection::PackagedProvider(_) => {
+                return Err(CliError::failure(
+                    "project inspection authority nested an already composed provider plan",
+                ));
+            }
         }
-        None
+    }
+    if !extensions.is_empty() && !direct.is_empty() {
+        return Err(CliError::failure(
+            "project inspection authority cannot compose mixed extension and direct provider closures",
+        ));
+    }
+    let composed = if !extensions.is_empty() {
+        compose_packaged_provider_plan(extensions, &expected_intent).map_err(crate::error::oven_plan_error)?
+    } else {
+        compose_direct_packaged_provider_plan(direct, &expected_intent).map_err(crate::error::oven_plan_error)?
     };
-    Ok(Arc::new(PreparedOvenProjectRegistrySourceAuthorities {
-        authority,
-        sources,
-        registry_lock_source,
-        generated_out_dirs,
-        test_dependency_plan,
-        _release_loafs: release_loafs,
-    }))
+    Ok(Some(OvenDirectRustcPlanSelection::PackagedProvider(Box::new(composed))))
 }
 
 impl PreparedOvenProjectRegistrySourceAuthorities {
@@ -262,7 +393,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
         if !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted) {
             return Err(project_inspection_selection_mismatch("this test dependency subset"));
         }
-        if !project_inspection_test_dependency_envelope_supports_dependencies(
+        if let Some(mismatch) = project_inspection_test_dependency_envelope_mismatch(
             &self.authority.payload,
             &promoted,
             incan_oven_facet::provider_hooks().as_ref(),
@@ -282,7 +413,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(CliError::failure(format!(
-                "Oven Alpha project inspection authority has a missing, stale, or incompatible test dependency root (sealed aliases: [{expected}]; requested aliases: [{actual}]); rerun `incan oven bake --project .`"
+                "Oven Alpha project inspection authority has a missing, stale, or incompatible test dependency root: {mismatch} (sealed aliases: [{expected}]; requested aliases: [{actual}]); rerun `incan oven bake --project .`"
             )));
         }
         self.test_dependency_plan.as_ref().map(Some).ok_or_else(|| {
@@ -469,6 +600,41 @@ pub fn install_required_oven_registry_lock(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build one made-up sealed source record for ownership-routing tests.
+    fn registry_source_package(
+        package: &str,
+        relative_root: &str,
+    ) -> oven_rustc::rustc::OvenRustcRegistrySourcePackage {
+        oven_rustc::rustc::OvenRustcRegistrySourcePackage {
+            package: package.to_string(),
+            version: "1.0.0".to_string(),
+            features: Vec::new(),
+            source: oven_rustc::rustc::OvenRustcRegistrySource {
+                registry: "registry+https://packages.invalid/index".to_string(),
+                checksum: format!("{package}-checksum"),
+                relative_root: relative_root.to_string(),
+                digest: format!("sha256:{package}"),
+            },
+        }
+    }
+
+    #[test]
+    fn project_extension_source_ownership_follows_physically_retained_paths() {
+        let project = registry_source_package("project-models", "registry-sources/project-models");
+        let base = registry_source_package("base-support", "registry-sources/base-support");
+        let extension_paths = vec![
+            "registry-sources/project-models/Cargo.toml".to_string(),
+            "registry-sources/project-models/src/lib.rs".to_string(),
+        ];
+
+        assert!(extension_owns_registry_source(&extension_paths, &project));
+        assert!(
+            !extension_owns_registry_source(&extension_paths, &base),
+            "a complete composed plan must not assign a base-only source to the extension artifact root"
+        );
+    }
+
     #[cfg(test)]
     #[test]
     fn sealed_oven_registry_lock_can_replace_a_prior_projection() -> Result<(), Box<dyn std::error::Error>> {

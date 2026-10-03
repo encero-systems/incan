@@ -1,6 +1,6 @@
-# Build a typed function catalogue
+# Build a typed function catalog
 
-This tutorial builds a small catalogue of text functions with `std.registry`. You will describe ordinary Incan functions once, read the entries loaded by a running program, and inspect the complete checked catalogue without executing that program.
+This tutorial builds a small catalog of text functions with `std.registry`. You will describe ordinary Incan functions once, read the entries loaded by a running program, and inspect the complete checked catalog without executing that program.
 
 ## Create the project
 
@@ -69,7 +69,7 @@ The process prints that two descriptions are loaded and then prints `incan`. The
 
 ## Inspect the complete checked view
 
-Ask the compiler for the complete source catalogue:
+Ask the compiler for the complete source catalog:
 
 ```console
 incan inspect registry main::functions --project . --format json

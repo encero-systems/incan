@@ -63,7 +63,7 @@ async def get_posts(year: int, month: int) -> Json[list[Post]]:
     return Json(fetch_posts(year, month))
 ```
 
-Use a scalar parameter when the handler body needs the captured value. A route may instead declare an unused typed `Path[T]` extractor with the wildcard pattern when only Axum's extraction and rejection behavior is required:
+Use a scalar parameter when the handler body needs the captured value. Every scalar parameter must be named by a `{segment}` of the path: a parameter that no segment binds and no `Json[T]`, `Query[T]` or `Path[T]` extractor supplies has nothing to receive, and `incan check` refuses it (`INCAN-T0108`). A route may instead declare an unused typed `Path[T]` extractor with the wildcard pattern when only Axum's extraction and rejection behavior is required:
 
 ```incan
 from std.web import route, Json, Path
@@ -105,6 +105,8 @@ async def delete_item(id: int) -> Response:
 
 ## Responses
 
+A handler's return value is the HTTP response, so its declared return type must be a response type: `str`, `None`, `Json[T]`, `Html`, `Response`, a `Result` of those, or a wrapper type that derives `IntoResponse`. A handler declared to return an `int`, a tuple, a list or a plain model is refused by `incan check` (`INCAN-T0107`); return the value as text (`str(value)`) or wrap it in `Json(...)`.
+
 ### JSON Responses
 
 Use `Json[T]` for JSON responses. The inner type must have `@derive(json)`:
@@ -137,6 +139,17 @@ import std.async
 @route("/")
 async def index() -> Response:
     return Response.html("<h1>Welcome!</h1>")
+```
+
+Or declare the `Html` response type and wrap the markup in `Html(...)`:
+
+```incan
+from std.web import route, Html
+import std.async
+
+@route("/about")
+async def about() -> Html:
+    return Html("<h1>About</h1>")
 ```
 
 ### Status Codes
@@ -194,6 +207,8 @@ Use `Query[T]` for typed query-string parameters and `Json[T]` for typed JSON re
 ```incan
 --8<-- "_snippets/language/examples/verified_web_request_extractors.incn"
 ```
+
+A handler reads the payload's fields through the wrapper (`params.q`, `body.name`) or takes the whole payload with `.value` (`Json(body.value)`). A `Json[T]` payload is read and written as JSON, while a `Query[T]` payload is decoded from the query string and a `Path[T]` payload from the path; all three go through the serde support that `@derive(json)` gives a model. Every model in the payload, including one inside a collection such as `Json[list[User]]`, therefore derives `json`: `incan check` refuses one that does not (`INCAN-T0112`).
 
 ## Application design
 

@@ -1,0 +1,3 @@
+pub trait Serialize:
+    def to_json(self) -> str:
+        return "vendor codec"

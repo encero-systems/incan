@@ -11,6 +11,7 @@ pub use incan_driver::oven_store::OvenStoreCommandOptions;
 use serde::Serialize;
 
 use crate::{OvenInteropAdapterArgument, OvenLoafEnvelopeArgument, OvenOutputFormat};
+use oven_model::manifest::RustBinaryRole;
 use oven_store::OvenBuildIntent;
 
 /// Inputs for `incan oven import`.
@@ -32,6 +33,50 @@ pub struct OvenImportCommandOptions {
     pub output: Option<PathBuf>,
     /// Requested rendering format.
     pub format: OvenOutputFormat,
+}
+
+/// Inputs for `incan oven harvest`.
+#[derive(Debug, Clone)]
+pub struct OvenHarvestCommandOptions {
+    /// Checked Loaf manifest file, or a directory whose `loaf.toml` is the manifest.
+    pub project: PathBuf,
+    /// Exact target triple the harvested facts bind.
+    pub target: String,
+    /// `release` or `debug`.
+    pub profile: String,
+    /// Explicit Cargo executable for the one publisher observation.
+    pub cargo: PathBuf,
+    /// Explicit Rust compiler whose `-vV` identity the facts bind.
+    pub rustc: PathBuf,
+    /// Explicit real C compiler traced during native-link adoption.
+    pub cc: PathBuf,
+    /// Explicit real C++ compiler traced during native-link adoption.
+    pub cxx: PathBuf,
+    /// Explicit C sysroot used by the traced compiler.
+    pub c_sysroot: PathBuf,
+    /// Optional existing `Cargo.lock` the observation must resolve within.
+    pub cargo_lock: Option<PathBuf>,
+    /// Directory receiving the proposals and the refusal list.
+    pub output: PathBuf,
+    /// Requested rendering format.
+    pub format: OvenOutputFormat,
+}
+
+/// Inputs for `incan oven inventory`.
+#[derive(Debug, Clone)]
+pub struct OvenInventoryCommandOptions {
+    /// Cargo lock supplying the exact Incan registry package identities.
+    pub incan_lock: PathBuf,
+    /// Incan harvest directory containing proposals and refusal reports.
+    pub incan_harvest: PathBuf,
+    /// Optional Cargo lock supplying the exact IncQL registry package identities.
+    pub incql_lock: Option<PathBuf>,
+    /// Optional IncQL harvest directory containing proposals and refusal reports.
+    pub incql_harvest: Option<PathBuf>,
+    /// Destination for a newly generated inventory.
+    pub output: Option<PathBuf>,
+    /// Existing inventory fixture to check byte-for-byte after canonical decoding.
+    pub check: Option<PathBuf>,
 }
 
 /// Inputs for `incan inspect oven` receipt and build-unit inspection.
@@ -109,6 +154,12 @@ pub struct OvenLegacyCargoPrepareCommandOptions {
     pub cargo: PathBuf,
     /// Explicit Rust compiler used by Cargo and recorded in the receipt.
     pub rustc: PathBuf,
+    /// Explicit real C compiler traced during native-link adoption.
+    pub cc: PathBuf,
+    /// Explicit real C++ compiler traced during native-link adoption.
+    pub cxx: PathBuf,
+    /// Explicit C sysroot used by the traced compiler.
+    pub c_sysroot: PathBuf,
     /// Stable compatibility domain for bounded store admission.
     pub domain: String,
     /// Bounded store selection and policy.
@@ -178,6 +229,12 @@ pub struct OvenLoafBakeCommandOptions {
     pub output: PathBuf,
     /// Bounded compiler-suite store baked beside a compiler-suite Loaf envelope.
     pub suite_store: Option<PathBuf>,
+    /// Optional existing ProjectOutput store, accepted only by the release publisher.
+    pub policy_engine_store: Option<PathBuf>,
+    /// Exact policy-engine ProjectOutput identity paired with `policy_engine_store`.
+    pub policy_engine_identity: Option<String>,
+    /// Exact Rust target required of the embedded policy engine.
+    pub policy_engine_target: Option<String>,
     /// Built-in release or compiler-suite envelope.
     pub envelope: OvenLoafEnvelopeArgument,
     /// Exact SDK provider inventory used to derive compatibility identities.
@@ -186,6 +243,12 @@ pub struct OvenLoafBakeCommandOptions {
     pub cargo: PathBuf,
     /// Rust compiler used by the baker and recorded by each receipt.
     pub rustc: PathBuf,
+    /// Explicit real C compiler traced during native-link adoption.
+    pub cc: PathBuf,
+    /// Explicit real C++ compiler traced during native-link adoption.
+    pub cxx: PathBuf,
+    /// Explicit C sysroot used by the traced compiler.
+    pub c_sysroot: PathBuf,
     /// Aggregate physical allowance for the selected envelope.
     pub max_physical_bytes: Option<u64>,
     /// Per-Loaf physical allowance.
@@ -194,6 +257,33 @@ pub struct OvenLoafBakeCommandOptions {
     pub max_domain_logical_bytes: Option<u64>,
     /// Requested rendering format.
     pub format: OvenOutputFormat,
+    /// Registered Loaf registry checkout whose adoption manifests govern captured registry units (release only).
+    pub loaf_registry: Option<PathBuf>,
+    /// Index commit `loaf_registry` must be checked out at; any other revision refuses the bake.
+    pub loaf_registry_commit: Option<String>,
+    /// Directory receiving harvest proposals and refusals from the release runtime-foundation capture (release only).
+    ///
+    /// TODO(#1561): temporary; retires with the Cargo-observed harvest once incan.pub records govern the corpus.
+    pub harvest_dir: Option<PathBuf>,
+    /// Immutable executable-owner roots explicitly supplied to publisher link/tool records.
+    pub link_owners: Vec<PathBuf>,
+}
+
+/// Inputs for baking a toolchain Loaf's declared Rust binaries from the stored compiler-suite plans (#1698).
+#[derive(Debug, Clone)]
+pub struct OvenToolchainBuildCommandOptions {
+    /// The workspace root the stored compiler-suite plans were published for; every plan's source is relative to it.
+    pub compiler_root: PathBuf,
+    /// The Loaf whose `[[rust.bin]]` roles are baked; the roles' paths are relative to this directory.
+    pub project_root: PathBuf,
+    /// The binary roles to bake, as the Loaf declares them.
+    pub binaries: Vec<RustBinaryRole>,
+    /// Optional explicit Rust compiler; the active toolchain is resolved when absent.
+    pub rustc: Option<PathBuf>,
+    /// The compiler-suite store holding the receipt-bound plans.
+    pub store: OvenStoreCommandOptions,
+    /// Caller-owned output directory; `target/incan/oven/toolchain` below the workspace root when absent.
+    pub output: Option<PathBuf>,
 }
 
 /// Inputs for the direct-rustc compiler workspace-test consumer.

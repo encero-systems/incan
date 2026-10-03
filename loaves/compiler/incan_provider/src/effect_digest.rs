@@ -20,13 +20,13 @@
 //!
 //! Every component links against the standard library facets, thousands of lines of Rust runtime. A digest that folded
 //! only `.incn` meaning would report a hit for an edit to that runtime, which is a false reuse of a component whose
-//! behaviour changed. The Rust half is therefore mandatory rather than an enhancement, and it is folded here beside the
+//! behavior changed. The Rust half is therefore mandatory rather than an enhancement, and it is folded here beside the
 //! Incan half.
 //!
 //! # The transitional input, and when to remove it
 //!
 //! Today the compiler still lowers to Rust and emits it, so a change confined to lowering or emission alters
-//! generated output without moving any HIR. Two of this programme's own defects had exactly that shape. Until
+//! generated output without moving any HIR. Two of this program's own defects had exactly that shape. Until
 //! emission is gone, a digest over HIR alone would be a false hit for such a change, so the backend's own sources
 //! are folded in as a narrow, explicitly transitional input — narrow enough to exclude the rest of the compiler,
 //! and removed with the backend rather than maintained forever.
@@ -37,7 +37,7 @@
 //! # The caller names the Rust roots
 //!
 //! Which Rust trees reach a compiled component is a property of the compiler's layout, not of digesting, so the
-//! caller supplies them as labelled roots rather than this module hard-coding three. A root is labelled so the
+//! caller supplies them as labeled roots rather than this module hard-coding three. A root is labeled so the
 //! hash distinguishes the same bytes arriving under a different role, and the labels are folded in the order
 //! given, which the caller keeps stable.
 
@@ -169,7 +169,11 @@ fn module_meaning(path: &Path, source: &str) -> Result<BTreeMap<String, String>,
             body.params.iter().map(|param| &param.ty),
             &body.return_type,
         ));
-        let identity = StableDeclarationId::from_canonical(canonical, signature);
+        let identity = StableDeclarationId::from_canonical(canonical, signature, None).ok_or_else(|| {
+            fail(format!(
+                "provider body unexpectedly required nested identity context: {canonical:?}"
+            ))
+        })?;
         // The docstring is removed before digesting because a documentation edit cannot change what the compiler
         // emits for a body, and the whole point of this digest is to stop such an edit costing a rebuild.
         let digest =
@@ -191,11 +195,10 @@ pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 /// excluded and nothing tells you. This list is the other shape. It answers "what can reach a compiled component"
 /// and everything it omits is omitted for a stated reason, each of which is one of exactly two:
 ///
-/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `loaves/kernel/incan_syntax` and
-///   `loaves/kernel/incan_vocab` are run, not hashed: the digest lexes, parses, checks and lowers all 104
-///   standard-library sources with this compiler, so a change to any of them that alters what the compiler understands
-///   moves the digest, and one that does not, does not. That is a stronger answer than hashing their source, not a
-///   weaker one.
+/// - **Covered by meaning.** `loaves/compiler/incan_frontend` and `loaves/kernel/incan_syntax` are run, not hashed: the
+///   digest lexes, parses, checks and lowers all 104 standard-library sources with this compiler, so a change to any of
+///   them that alters what the compiler understands moves the digest, and one that does not, does not. That is a
+///   stronger answer than hashing their source, not a weaker one.
 /// - **Cannot reach a component.** The toolchain ring (`loaves/toolchain`), the driver's orchestration and inspection
 ///   (`loaves/compiler/incan_driver` outside its `backend`), the Oven ring, `loaves/kernel/incan_codegraph`,
 ///   `loaves/compiler/rust_inspect` and every `tests/` root are the compiler's own tooling. They decide *when*
@@ -208,10 +211,14 @@ pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 /// is folded into the store identity beside this digest. Publication changes bump that constant; they do not rely on a
 /// source hash noticing them.
 ///
+/// The authored interop vocab companion and its `incan_vocab` dependency are published code too: changes to their
+/// registration/desugarer implementation need not alter the ordinary Incan HIR digest. Both therefore contribute Rust
+/// tokens and their owning manifests contribute publication configuration.
+///
 /// Lowering and emission are the transitional entries. They change generated Rust without moving any HIR, so until
 /// direct-HIR lands their source is folded: `loaves/compiler/incan_ir` and `loaves/compiler/incan_emit` since the
 /// layout rewrite moved them out of `src/backend`, and the rest of that backend (the generated-project shape and the
-/// shadow comparison, now `loaves/compiler/incan_driver/src/backend`) with them. They are labelled apart from the
+/// shadow comparison, now `loaves/compiler/incan_driver/src/backend`) with them. They are labeled apart from the
 /// runtime crates for that reason, and they are removed with the backend rather than maintained. A root that stops
 /// existing fails the digest rather than silently narrowing it, so a move has to update this list.
 pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
@@ -223,6 +230,8 @@ pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("lang", "loaves/kernel/incan_lang"),
     ("derive", "loaves/stdlib/derive/incan_derive"),
     ("web-macros", "loaves/stdlib/derive/incan_web_macros"),
+    ("interop-vocab", "loaves/stdlib/interop/vocab_companion"),
+    ("vocab-contract", "loaves/kernel/incan_vocab"),
     ("semantics-core", "loaves/kernel/incan_semantics_core"),
     ("semantics-stdlib", "loaves/compiler/incan_semantics_stdlib"),
     ("transitional-lowering", "loaves/compiler/incan_ir/src"),
@@ -305,7 +314,7 @@ fn fold_incan_meaning(hasher: &mut Sha256, root: &Path) -> Result<(), EffectDige
     Ok(())
 }
 
-/// Fold the token-level content of each labelled Rust root.
+/// Fold the token-level content of each labeled Rust root.
 fn fold_rust_roots(hasher: &mut Sha256, rust_roots: &[(&str, &Path)]) -> Result<(), EffectDigestError> {
     for (label, root) in rust_roots {
         update_delimited(hasher, b"rust-root");
@@ -422,7 +431,7 @@ pub fn component_effect_digests(
         );
     }
 
-    // `closure_digests` already labels each digest `sha256:`; re-labelling here doubled the prefix.
+    // `closure_digests` already labels each digest `sha256:`; re-labeling here doubled the prefix.
     Ok(closure_digests(&nodes).into_iter().collect())
 }
 

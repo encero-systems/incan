@@ -27,6 +27,10 @@ use ::incan_std_async::channel::receiver_try_recv as rust_receiver_try_recv;
 use ::incan_std_async::channel::receiver_close as rust_receiver_close;
 use ::incan_std_async::channel::oneshot_sender_send as rust_oneshot_sender_send;
 use ::incan_std_async::channel::oneshot_receiver_recv as rust_oneshot_receiver_recv;
+fn _no_message() {
+    let _ = "The unit value a reservation error carries: a reservation sends no message, so none can be returned.";
+    return;
+}
 /// Error returned when a send operation fails.
 ///
 /// Preserves the unsent value so callers can recover it or retry. This is used for closed-channel sends and for bounded
@@ -82,6 +86,9 @@ impl<T> SendError<T> {
     pub fn source(&self) -> Option<String> {
         return None::<_>;
     }
+    fn __str__(&self) -> String {
+        return self.message();
+    }
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
@@ -100,7 +107,12 @@ impl<T> SendError<T> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T> Error for SendError<T> {
+impl<T> std::fmt::Display for SendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.__str__())
+    }
+}
+impl<T> crate::__incan_std::traits::error::Error for SendError<T> {
     fn message(&self) -> String {
         return "channel send failed".to_string();
     }
@@ -160,6 +172,9 @@ impl RecvError {
     pub fn source(&self) -> Option<String> {
         return None::<_>;
     }
+    fn __str__(&self) -> String {
+        return self.message();
+    }
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
@@ -168,7 +183,12 @@ impl RecvError {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl Error for RecvError {
+impl std::fmt::Display for RecvError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.__str__())
+    }
+}
+impl crate::__incan_std::traits::error::Error for RecvError {
     fn message(&self) -> String {
         return "channel closed: no more messages".to_string();
     }
@@ -225,13 +245,11 @@ impl<T> Sender<T> {
             Ok(permit) => {
                 return Ok::<SenderPermit<T>, SendError<()>>(SenderPermit(permit));
             }
-            Err(err) => {
+            Err(_err) => {
                 return Err::<
                     SenderPermit<T>,
                     SendError<()>,
-                >(SendError {
-                    value: err.into_value(),
-                });
+                >(SendError { value: _no_message() });
             }
         };
     }

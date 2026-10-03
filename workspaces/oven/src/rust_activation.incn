@@ -24,7 +24,7 @@ pub enum ActivationPurpose(str):
 
 @derive(Eq)
 pub enum DependencyDomain(str):
-    """Keep host build dependencies separate from the current unit's target dependencies."""
+    """Keep host procedural-macro closures separate from target compilation closures."""
 
     Host = "host"
     Target = "target"
@@ -37,7 +37,7 @@ pub enum InactiveReason(str):
     OptionalNotEnabled = "optional_not_enabled"
     TargetConditionFalse = "target_condition_false"
     DevelopmentExcluded = "development_excluded"
-    BuildUnitAbsent = "build_unit_absent"
+    InertBuildScript = "inert_build_script"
 
 
 pub model CfgSnapshot:
@@ -72,6 +72,7 @@ pub model ActivationContext:
     pub host: TargetConfiguration
     pub target: TargetConfiguration
     pub purpose: ActivationPurpose
+    pub domain: DependencyDomain
     pub requested_features: list[str]
     pub default_features: bool
     pub build_unit_present: bool
@@ -203,16 +204,9 @@ def target_matches(
                     return Err(refusal(manifest, field, IntakeErrorKind.Missing, "complete target predicate evidence"))
 
 
-def dependency_domain(role: RustDependencyRole) -> DependencyDomain:
-    """Choose the original dependency role's execution domain without merging host and target requests."""
-    if role == RustDependencyRole.Build:
-        return DependencyDomain.Host
-    return DependencyDomain.Target
-
-
-def dependency_target(role: RustDependencyRole, context: ActivationContext) -> TargetConfiguration:
-    """Use host cfg only for build dependencies; the owning unit's selected target covers normal/dev edges."""
-    if dependency_domain(role) == DependencyDomain.Host:
+def dependency_target(context: ActivationContext) -> TargetConfiguration:
+    """Active declarations inherit their parent's domain; build declarations never reach this policy."""
+    if context.domain == DependencyDomain.Host:
         return context.host
     return context.target
 
@@ -244,15 +238,16 @@ def slot_restrictions(
                 .map_err(
                     (error) => refusal(manifest, declaration.field + ["version"], IntakeErrorKind.Invalid, str(error)),
                 )?
-        selected_target = dependency_target(declaration.role, context)
+        if declaration.role == RustDependencyRole.Build:
+            restrictions.append(Some(InactiveReason.InertBuildScript))
+            continue
+        selected_target = dependency_target(context)
         mut matches_target = true
         if let Some(condition) = declaration.target_condition:
             matches_target = target_matches(condition, selected_target, manifest, declaration.field)?
         mut reason: Option[InactiveReason] = None
         if declaration.role == RustDependencyRole.Dev and context.purpose == ActivationPurpose.Normal:
             reason = Some(InactiveReason.DevelopmentExcluded)
-        elif declaration.role == RustDependencyRole.Build and not context.build_unit_present:
-            reason = Some(InactiveReason.BuildUnitAbsent)
         elif not matches_target:
             reason = Some(InactiveReason.TargetConditionFalse)
         restrictions.append(reason)
@@ -401,6 +396,7 @@ def slot_demand(
     declaration: RustDependencyDeclaration,
     restriction: Option[InactiveReason],
     closure: FeatureClosure,
+    parent_domain: DependencyDomain,
 ) -> SlotDemand:
     """Retain an inactive original slot or issue an exact active child request without selecting its source."""
     if let Some(reason) = restriction:
@@ -414,9 +410,11 @@ def slot_demand(
                 if alias == declaration.alias:
                     requested.append(feature)
             _ => pass
-    domain = dependency_domain(declaration.role)
     defaults = declaration.default_features != Some(false)
-    return SlotDemand(index=declaration.index, activation=SlotActivation.Active(unique(requested), defaults, domain))
+    return SlotDemand(
+        index=declaration.index,
+        activation=SlotActivation.Active(unique(requested), defaults, parent_domain),
+    )
 
 
 pub def activate_unit(
@@ -438,7 +436,7 @@ pub def activate_unit(
     closure = expand_features(catalog, features, context, restrictions, manifest)?
     mut slots: list[SlotDemand] = []
     for declaration in catalog.dependencies:
-        slots.append(slot_demand(declaration, restrictions[declaration.index], closure))
+        slots.append(slot_demand(declaration, restrictions[declaration.index], closure, context.domain))
     return Ok(RustActivation(effective_features=closure.names, slots=slots))
 
 

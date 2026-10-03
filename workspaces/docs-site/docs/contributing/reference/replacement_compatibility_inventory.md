@@ -4,7 +4,7 @@
 
     Do not edit this page by hand. Regenerate it from the checked public-capability baseline and compiler-boundary registrations.
 
-This is a validated migration control plane, not a permanent second language-feature catalogue and not a parity claim. Durable feature and private-mechanism records are registered beside the compiler boundary that owns them; the collector joins and validates them here. The explicitly marked migration bootstrap exists only while unlanded work lacks such a boundary. A feature row turns green only after direct execution and an independent, receipt-bound source-observable comparison for its full contract. A matched corpus case remains scoped evidence and cannot promote an incomplete feature. Generated Rust, Body IR representation, and legacy compilation are separate facts.
+This is a validated migration control plane, not a permanent second language-feature catalog and not a parity claim. Durable feature and private-mechanism records are registered beside the compiler boundary that owns them; the collector joins and validates them here. The explicitly marked migration bootstrap exists only while unlanded work lacks such a boundary. A feature row turns green only after direct execution and an independent, receipt-bound source-observable comparison for its full contract. A matched corpus case remains scoped evidence and cannot promote an incomplete feature. Generated Rust, Body IR representation, and legacy compilation are separate facts.
 
 ## Release-pinned public baseline
 
@@ -296,10 +296,10 @@ Generator functions suspend and resume without replaying prior effects or losing
 
 ### `interop.rust-and-c`
 
-Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.
+Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.
 
 - `probe:interop.rust-and-c:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
-  - Positive contract: Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.
+  - Positive contract: Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
 - Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
@@ -414,10 +414,10 @@ Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool
 
 ### `language.numeric-complete`
 
-Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.
+Exact signed and unsigned widths, finite f32, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison; f64 is float and travels as the ordinary float value. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.
 
 - `probe:language.numeric-complete:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment`
-  - Positive contract: Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.
+  - Positive contract: Exact signed and unsigned widths, finite f32, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison; f64 is float and travels as the ordinary float value. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
 - Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment`

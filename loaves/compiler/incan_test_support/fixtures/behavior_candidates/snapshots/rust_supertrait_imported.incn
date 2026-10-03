@@ -1,0 +1,28 @@
+# behavior: a source trait with an imported Rust Display supertrait is adopted by a model with __str__, and the trait's default method renders through it (#1427)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rust_supertrait_imported_codegen
+# expect-stdout:
+#   release
+
+from rust::std::fmt import Display as RustDisplay
+
+
+pub trait Labeled with RustDisplay:
+    """A value whose label is its Rust `Display` rendering."""
+
+    def label(self) -> str:
+        return f"{self}"
+
+
+model Tag with Labeled:
+    name: str
+
+    def __str__(self) -> str:
+        return self.name
+
+
+def describe[T with Labeled](value: T) -> str:
+    return value.label()
+
+
+def main() -> None:
+    println(describe(Tag(name="release")))

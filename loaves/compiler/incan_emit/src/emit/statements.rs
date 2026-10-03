@@ -14,7 +14,9 @@ use crate::emit::expressions::{
     method_dispatch_uses_mutable_receiver, method_kind_uses_mutable_receiver, method_name_uses_mutable_receiver,
 };
 use crate::ownership::{
-    LoopIterationPlan, ValueUseSite, list_index_assignment_element_type, plan_for_loop_iteration, plan_value_use,
+    DerivedLoopSourceShape, LoopIterationPlan, MutatingDerivedLoopPlan, ValueUseSite,
+    copy_elements_of_in_place_tuple_items, dict_entry_types, list_index_assignment_element_type,
+    plan_for_loop_iteration, plan_mutating_derived_loop, plan_value_use,
 };
 use incan_ir::expr::{
     BuiltinFn, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern, TypedExpr,
@@ -47,7 +49,7 @@ fn target_mutates_var(target: &AssignTarget, var: &str) -> bool {
 }
 
 /// Check if an expression contains a mutation of a variable.
-fn expr_contains_mutation(expr: &incan_ir::expr::IrExpr, var: &str) -> bool {
+pub(crate) fn expr_contains_mutation(expr: &incan_ir::expr::IrExpr, var: &str) -> bool {
     match &expr.kind {
         IrExprKind::Var {
             name,
@@ -72,11 +74,25 @@ fn expr_contains_mutation(expr: &incan_ir::expr::IrExpr, var: &str) -> bool {
             args,
             arg_policy,
             dispatch,
+            callable_signature,
             ..
         } => {
             ((!matches!(arg_policy, incan_ir::expr::MethodCallArgPolicy::PreserveShape)
                 && method_name_uses_mutable_receiver(method)
-                || method_dispatch_uses_mutable_receiver(dispatch.as_ref()))
+                || method_dispatch_uses_mutable_receiver(dispatch.as_ref())
+                || callable_signature.as_ref().is_some_and(|signature| {
+                    signature
+                        .params
+                        .first()
+                        .is_some_and(|param| param.is_self && matches!(param.mutability, Mutability::Mutable))
+                })
+                || matches!(
+                    receiver.kind,
+                    IrExprKind::Var {
+                        access: VarAccess::BorrowMut,
+                        ..
+                    }
+                ))
                 && root_var_name(receiver).is_some_and(|name| name == var))
                 || expr_contains_mutation(receiver, var)
                 || args.iter().any(|arg| expr_contains_mutation(&arg.expr, var))
@@ -241,22 +257,6 @@ pub(in crate::emit) fn stmt_mutates_var(stmt: &IrStmt, var: &str) -> bool {
     }
 }
 
-/// Determine whether a `for` loop body requires mutable iteration of the loop variable.
-///
-/// We use this as a *codegen heuristic* to avoid emitting `.iter_mut()` when the loop body performs no mutation of the
-/// loop item. Emitting `.iter_mut()`:
-///
-/// - requires mutable access to the source collection, and
-/// - changes the loop item type from `&T` to `&mut T`.
-fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
-    let loop_var = match pattern {
-        Pattern::Var(name) => name.as_str(),
-        _ => return false,
-    };
-
-    body.iter().any(|s| stmt_mutates_var(s, loop_var))
-}
-
 /// Collect `for` pattern bindings mutated by the loop body.
 ///
 /// Incan patterns do not spell Rust's local `mut` qualifier. When a source assignment writes through an iterator item,
@@ -265,6 +265,14 @@ fn for_pattern_mutated_bindings(pattern: &Pattern, body: &[IrStmt]) -> HashSet<S
     let mut bindings = HashSet::new();
     collect_pattern_binding_names(pattern, &mut bindings);
     bindings.retain(|binding| body.iter().any(|stmt| stmt_mutates_var(stmt, binding)));
+    bindings
+}
+
+/// Collect pattern bindings changed by an expression body, for match arms and comprehensions.
+pub(crate) fn pattern_mutated_bindings_in_expr(pattern: &Pattern, body: &TypedExpr) -> HashSet<String> {
+    let mut bindings = HashSet::new();
+    collect_pattern_binding_names(pattern, &mut bindings);
+    bindings.retain(|binding| expr_contains_mutation(body, binding));
     bindings
 }
 
@@ -743,12 +751,13 @@ fn erase_unused_pattern_bindings(pattern: &Pattern, arm: &MatchArm) -> Pattern {
                 .map(|item| erase_unused_pattern_bindings(item, arm))
                 .collect(),
         ),
-        Pattern::Struct { name, fields } => Pattern::Struct {
+        Pattern::Struct { name, fields, rest } => Pattern::Struct {
             name: name.clone(),
             fields: fields
                 .iter()
                 .map(|(field, pattern)| (field.clone(), erase_unused_pattern_bindings(pattern, arm)))
                 .collect(),
+            rest: *rest,
         },
         Pattern::Enum { name, variant, fields } => Pattern::Enum {
             name: name.clone(),
@@ -911,6 +920,8 @@ impl<'a> IrEmitter<'a> {
     ///
     /// This is what turns a bare `str` literal into an owned `String` when the target asks for one, so every context
     /// that hands a value to a typed slot goes through it: a `let`, or a `match` arm feeding the match's own result.
+    /// Unlike a callee signature's generic placeholders at a call site, a generic in an assignment target is in scope
+    /// at the write itself, so a `None` stored in `Option[T]` must be emitted as `None::<T>`.
     pub fn emit_value_for_target(&self, value: &TypedExpr, target_ty: &IrType) -> Result<TokenStream, EmitError> {
         let emitted = self.emit_assignment_value(value, Some(target_ty))?;
         if matches!(value.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) {
@@ -944,6 +955,14 @@ impl<'a> IrEmitter<'a> {
                     target_ty: Some(target_ty),
                 },
             );
+        }
+
+        if matches!(value.kind, IrExprKind::None)
+            && let Some(IrType::Option(inner)) = expected_ty
+            && !Self::is_unresolved_type(inner)
+        {
+            let inner_ty = self.emit_type(inner);
+            return Ok(quote! { None::<#inner_ty> });
         }
 
         if let Some(target_ty) = expected_ty
@@ -1059,9 +1078,10 @@ impl<'a> IrEmitter<'a> {
         let rhs_name = "__incan_static_rhs";
         let rhs_ident = format_ident!("{}", rhs_name);
         let rewritten_target = match target {
-            AssignTarget::Field { object, field } => AssignTarget::Field {
+            AssignTarget::Field { object, field, ty } => AssignTarget::Field {
                 object: Box::new(Self::rewrite_storage_root_expr_for_mut(object, local_name)),
                 field: field.clone(),
+                ty: ty.clone(),
             },
             AssignTarget::Index { object, index } => AssignTarget::Index {
                 object: Box::new(Self::rewrite_storage_root_expr_for_mut(object, local_name)),
@@ -1188,15 +1208,15 @@ impl<'a> IrEmitter<'a> {
                     return self.emit_storage_rooted_assignment(target, value);
                 }
 
-                // For Dict index assignment, use .insert() instead of []=
-                // because HashMap's IndexMut doesn't work with owned keys
+                // For Dict index assignment, use .insert() instead of []= because HashMap has no IndexMut. The
+                // projection sees through a `mut Dict` parameter's `RefMut` wrapper so it takes the same route (#1668).
                 if let AssignTarget::Index { object, index } = target
-                    && matches!(&object.ty, IrType::Dict(_, _) | IrType::Unknown)
+                    && (matches!(&object.ty, IrType::Unknown) || dict_entry_types(&object.ty).is_some())
                 {
                     let o = self.emit_expr(object)?;
-                    let (key_target_ty, value_target_ty) = match &object.ty {
-                        IrType::Dict(key_ty, value_ty) => (Some(key_ty.as_ref()), Some(value_ty.as_ref())),
-                        _ => (None, None),
+                    let (key_target_ty, value_target_ty) = match dict_entry_types(&object.ty) {
+                        Some((key_ty, value_ty)) => (Some(key_ty), Some(value_ty)),
+                        None => (None, None),
                     };
                     let k = self.emit_expr_for_use(
                         index,
@@ -1236,6 +1256,7 @@ impl<'a> IrEmitter<'a> {
                 let t = self.emit_assign_target(target)?;
                 let v = match target {
                     AssignTarget::Var { ty, .. } => self.emit_value_for_target(value, ty)?,
+                    AssignTarget::Field { ty, .. } => self.emit_value_for_target(value, ty)?,
                     _ => self.emit_assignment_value(value, None)?,
                 };
                 Ok(quote! { #t = #v; })
@@ -1310,7 +1331,7 @@ impl<'a> IrEmitter<'a> {
                         }
                     })
                 } else {
-                    let cond = self.emit_expr(condition)?;
+                    let cond = self.emit_condition_position_expr(condition)?;
                     Ok(quote! {
                         while #cond {
                             #(#body_stmts)*
@@ -1324,13 +1345,12 @@ impl<'a> IrEmitter<'a> {
                 iterable,
                 body,
             } => {
-                let mutable_bindings = for_pattern_mutated_bindings(pattern, body);
-                let pat = self.emit_pattern_with_mutable_bindings(pattern, &mutable_bindings);
                 let body_stmts = self.emit_stmts(body)?;
-                // For non-copy collections, iterate by reference to avoid move This handles the common case where a
-                // collection is used multiple times For primitive element types, use .iter().copied() to get values
-                // instead of references
-                let needs_mut_items = for_body_needs_mut_iteration(pattern, body);
+                // A non-copy collection is iterated by reference, so a collection used again after the loop is not
+                // moved; primitive elements are copied out with `.iter().copied()`. A body that changes a loop binding
+                // needs its items in place.
+                let changed_bindings = for_pattern_mutated_bindings(pattern, body);
+                let needs_mut_items = !changed_bindings.is_empty();
                 let iterable_is_borrowable_lvalue = matches!(
                     &iterable.kind,
                     IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
@@ -1349,12 +1369,41 @@ impl<'a> IrEmitter<'a> {
                     needs_mut_items,
                     item_is_user_enum,
                 );
+                // A tuple pattern over `&mut` items binds its elements by reference already, and Rust refuses `mut`
+                // there (#1869); a plain name binds the `&mut` item itself, which a mutating helper borrows mutably
+                // (`list_pop(&mut row)`), so it stays `mut` when the body changes it.
+                let mutable_bindings = if iter_plan == LoopIterationPlan::IterMut && !matches!(pattern, Pattern::Var(_))
+                {
+                    HashSet::new()
+                } else {
+                    changed_bindings.clone()
+                };
+                let pat = self.emit_pattern_with_mutable_bindings(pattern, &mutable_bindings);
+                if needs_mut_items
+                    && let Some(plan) = plan_mutating_derived_loop(iterable, pattern, &changed_bindings, |ty| {
+                        self.type_is_user_enum(ty)
+                    })
+                {
+                    let iter_expr = self.emit_mutating_derived_for_iterable(&plan)?;
+                    let iter_expr = self.parenthesize_condition_position(iterable, iter_expr);
+                    return Ok(quote! {
+                        for #pat in #iter_expr {
+                            #(#body_stmts)*
+                        }
+                    });
+                }
                 if iter_plan == LoopIterationPlan::AsIs
                     && let Some(range_for) = self.emit_direct_range_for_stmt(&pat, iterable, &body_stmts)?
                 {
                     return Ok(range_for);
                 }
                 let iter_expr = self.emit_for_iterable(iterable, iter_plan)?;
+                let iter_expr = if iter_plan == LoopIterationPlan::IterMut {
+                    copy_elements_of_in_place_tuple_items(pattern, &iterable.ty, iter_expr)
+                } else {
+                    iter_expr
+                };
+                let iter_expr = self.parenthesize_condition_position(iterable, iter_expr);
                 Ok(quote! {
                     for #pat in #iter_expr {
                         #(#body_stmts)*
@@ -1374,7 +1423,7 @@ impl<'a> IrEmitter<'a> {
                 then_branch,
                 else_branch,
             } => {
-                let cond = self.emit_expr(condition)?;
+                let cond = self.emit_condition_position_expr(condition)?;
                 let then_stmts = self.emit_stmts(then_branch)?;
                 if let Some(else_stmts) = else_branch {
                     let else_tokens = self.emit_stmts(else_stmts)?;
@@ -1399,7 +1448,9 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|arm| {
                         let pattern = erase_unused_pattern_bindings(&arm.pattern, arm);
-                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&pattern, &scrutinee.ty);
+                        let mutable_bindings = pattern_mutated_bindings_in_expr(&pattern, &arm.body);
+                        let (pat, pattern_guard) =
+                            self.emit_pattern_for_scrutinee(&pattern, &scrutinee.ty, &mutable_bindings);
                         let body = self.emit_match_arm_body(arm, None)?;
                         let guard = self.emit_match_arm_guard(arm, pattern_guard)?;
                         if let Some(guard) = guard {
@@ -1613,10 +1664,26 @@ impl<'a> IrEmitter<'a> {
             if let Some(iter) = self.emit_incan_iterator_source(iterable)? {
                 return Ok(iter);
             }
+            if let Some(iter) = self.emit_direct_dict_view_iter(iterable)? {
+                return Ok(iter);
+            }
         }
 
         let iter = self.emit_expr(iterable)?;
         Ok(iter_plan.apply(iter))
+    }
+
+    /// Emit the iterator of a `for` loop or a list comprehension over a derived iterable whose body changes its items,
+    /// as `plan` reads each source: a source read in place is emitted as its place, any other as an ordinary loop over
+    /// it would iterate it.
+    pub(in crate::emit) fn emit_mutating_derived_for_iterable(
+        &self,
+        plan: &MutatingDerivedLoopPlan<'_>,
+    ) -> Result<TokenStream, EmitError> {
+        plan.assemble(|source, shape| match shape {
+            DerivedLoopSourceShape::Place => self.emit_lvalue_expr(source),
+            DerivedLoopSourceShape::Iterable(iter_plan) => self.emit_for_iterable(source, iter_plan),
+        })
     }
 }
 

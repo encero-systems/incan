@@ -177,7 +177,7 @@ pub struct NominalDeclaration {
     pub direct_declaration_id: CompilerNodeId,
     /// RFC 120 identity minted by the checker for this declaration.
     pub canonical: CanonicalSymbolId,
-    /// Canonical source declaration name, checked again by consumers as a defence against malformed Body IR.
+    /// Canonical source declaration name, checked again by consumers as a defense against malformed Body IR.
     pub name: String,
     /// Canonical declared field names in declaration order.
     pub fields: Vec<String>,
@@ -1643,9 +1643,10 @@ impl MatchArm {
 /// or RFC 021 field-alias resolution for named struct-pattern fields (`resolve_field_alias`, private to that backend's
 /// own lowering pass, with no Body IR v0 equivalent). Both are backend-owned refinements layered on top of the same
 /// closed vocabulary below, not part of the vocabulary itself, and out of scope for this bucket; a pattern that
-/// would need either still lowers structurally through the plain (non-narrowed) mapping, at the cost of the
-/// resulting field types sometimes falling back to [`IncanType::Unknown`] where the existing backend's richer
-/// resolution would have found something more precise.
+/// would need either still lowers structurally through the plain (non-narrowed) mapping. The *types* its bindings
+/// carry are not part of that gap: every [`PatternBinding`]'s local is typed from the typechecker's recorded
+/// per-pattern-node type (#1245), so a destructured payload's local carries its declared type and an ownership fact
+/// that follows from it, whichever pattern shape delivered it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Pattern {
     /// `_`: matches anything, binds nothing.
@@ -2102,7 +2103,7 @@ pub enum AggregateKind {
     /// A range is an aggregate rather than a [`Constant`] form or a helper-constructed value, for two reasons.
     /// Its bounds are arbitrary expressions (`lo..hi` is as legal as `0..10`), which a constant cannot hold; and
     /// it needs no runtime service to exist -- four scalars laid out side by side, allocating nothing and calling
-    /// nothing -- so modelling it as a [`Callee::Helper`] call would invent a runtime dependency that the `for`
+    /// nothing -- so modeling it as a [`Callee::Helper`] call would invent a runtime dependency that the `for`
     /// header's own normalization proves is not there. That is also why range construction records no
     /// [`crate::AbiV0RuntimeRequirement`], the same as [`Self::Tuple`] and unlike [`Self::List`]/[`Self::Set`].
     ///
@@ -2883,7 +2884,8 @@ impl HelperOp {
             | StringMethodId::SplitWhitespace
             | StringMethodId::StartsWith
             | StringMethodId::EndsWith
-            | StringMethodId::IsEmpty => None,
+            | StringMethodId::IsEmpty
+            | StringMethodId::Encode => None,
         }
     }
 

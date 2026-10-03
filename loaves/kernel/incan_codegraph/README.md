@@ -27,7 +27,7 @@ This crate deliberately has no dependency on compiler internals, graph databases
 The v0.6 exporter emits Incan-language facts only:
 
 ```json
-{"record":"header","schema_version":7,"languages":["incan"]}
+{"record":"header","schema_version":8,"languages":["incan"]}
 ```
 
 Every non-header fact record carries:

@@ -354,7 +354,7 @@ pub enum IncanStatement {
         iter: IncanExpr,
         body: Vec<IncanStatement>,
     },
-    /// Scoped acknowledgement whose authorized operations are defined by the receiving language feature.
+    /// Scoped acknowledgment whose authorized operations are defined by the receiving language feature.
     Unsafe { body: Vec<IncanStatement> },
 }
 

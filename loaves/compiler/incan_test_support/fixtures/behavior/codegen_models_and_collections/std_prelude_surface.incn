@@ -1,0 +1,12 @@
+# behavior: std.prelude imports as a module, plain and under an alias, and the program runs
+# retires: loaves/compiler/incan_emit/src/codegen.rs::std_prelude_module_import_does_not_reimport_sdk_facade_root
+# retires: loaves/compiler/incan_emit/src/codegen.rs::aliased_std_prelude_module_import_retains_requested_binding
+# expect-stdout:
+#   ok
+
+import std.prelude
+import std.prelude as foundation
+
+
+def main() -> None:
+    println("ok")

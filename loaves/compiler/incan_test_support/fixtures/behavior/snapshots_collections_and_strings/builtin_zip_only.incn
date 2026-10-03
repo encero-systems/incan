@@ -1,0 +1,24 @@
+# behavior: builtin zip pairs two lists up to the shorter one, through the bare and the std.builtins spelling (#950)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue950_builtin_zip_only_codegen
+# expect-stdout:
+#   11
+#   alpha:1
+
+def score_pairs(left: list[int], right: list[int]) -> int:
+    """Compute a score through builtin zip without invoking an iterator method."""
+    mut score = 0
+    for pair in zip(left, right):
+        score += pair[0] * pair[1]
+    return score
+
+
+def print_named_values(names: list[str], values: list[int]) -> None:
+    """Exercise the explicit builtin namespace without invoking an iterator method."""
+    for pair in std.builtins.zip(names, values):
+        println(f"{pair[0]}:{pair[1]}")
+
+
+def main() -> None:
+    """Exercise both direct builtin zip spellings through generated stdlib support."""
+    println(score_pairs([1, 2], [3, 4]))
+    print_named_values(["alpha", "beta"], [1])

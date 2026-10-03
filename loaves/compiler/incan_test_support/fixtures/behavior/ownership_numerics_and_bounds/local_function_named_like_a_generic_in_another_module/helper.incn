@@ -1,0 +1,6 @@
+pub def timeout[T with Display](value: T) -> str:
+    return f"helper timeout {value}"
+
+
+pub def describe[T with Display](value: T) -> str:
+    return f"helper {value}"

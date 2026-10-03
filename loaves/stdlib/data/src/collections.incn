@@ -588,7 +588,7 @@ pub model Deque[T with (Clone, Eq)]:
     Example:
 
     ```incan
-    queue = Deque[int]()
+    mut queue = Deque[int]()
     queue.append(1)
     queue.appendleft(0)
     println(queue.pop())      # 1

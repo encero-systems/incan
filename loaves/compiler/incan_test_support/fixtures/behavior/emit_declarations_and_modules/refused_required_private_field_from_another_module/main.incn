@@ -1,0 +1,13 @@
+# behavior: a model imported from another module with a required private field, plain or of a private nominal type, cannot be constructed from its public fields alone
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::constructor_metadata_omits_required_private_fields_from_native_surfaces
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::constructor_metadata_hides_required_private_nominal_field_types
+# expect-diagnostic: INCAN-T0001
+
+from vaults import Vault, Sealed
+
+
+def main() -> None:
+    vault = Vault(label="x")
+    sealed = Sealed(label="y")
+    println(vault.label)
+    println(sealed.label)

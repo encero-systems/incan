@@ -1,0 +1,11 @@
+# behavior: printing the error side of a match whose every arm builds Ok, a side no arm fixes and which is None where the function returns no Result, is refused
+# expect-diagnostic: INCAN-T0103
+
+def main() -> None:
+    content: Option[int] = Some(1)
+    settled = match content:
+        Some(value) => Ok(value)
+        None => Ok(0)
+    match settled:
+        Ok(v) => println(v)
+        Err(m) => println(m)

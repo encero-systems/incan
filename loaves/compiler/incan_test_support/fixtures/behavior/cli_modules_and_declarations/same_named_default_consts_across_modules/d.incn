@@ -1,0 +1,5 @@
+from c import SIZE
+
+
+pub def third(n: int = SIZE) -> int:
+    return n

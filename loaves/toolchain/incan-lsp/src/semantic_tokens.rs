@@ -19,7 +19,7 @@
 //!
 //! 1. **Token stream** ([`classify_token_stream`]). The lexer's `Token { kind, span }` output is the base layer, and it
 //!    is the only layer that survives a file that does not parse — the ordinary state of a document being typed.
-//!    Keyword colouring is registry-driven through [`keywords::category`], never a local word list.
+//!    Keyword coloring is registry-driven through [`keywords::category`], never a local word list.
 //! 2. **AST regions** ([`collect_regions`]). Names in this AST are `Ident = String` and carry no span of their own, but
 //!    the slots that *hold* types, parameters and decorators are `Spanned`. So the AST contributes byte *regions* —
 //!    "this range is a type position" — and each identifier token takes the category of the smallest region containing
@@ -46,7 +46,7 @@ use incan_frontend::ast_walk::any_expr_in_program;
 /// Token types this server publishes, in legend order.
 ///
 /// Every entry is a *standard* LSP token type. Custom types are deliberately avoided: an editor that does not know
-/// a custom name renders it with no colour at all, which would make DSL-owned regions less visible rather than more
+/// a custom name renders it with no color at all, which would make DSL-owned regions less visible rather than more
 /// — the opposite of what RFC 081 asks for.
 pub const TOKEN_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::KEYWORD,
@@ -83,7 +83,7 @@ pub const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
 /// The legend advertised in `ServerCapabilities`, and the index basis for every encoded token.
 ///
 /// The client resolves a token's `tokenType` field by indexing into this list, so its order is part of the wire
-/// contract: appending is safe, reordering silently recolours every document.
+/// contract: appending is safe, reordering silently recolors every document.
 pub fn legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
         token_types: TOKEN_TYPES.to_vec(),
@@ -458,7 +458,7 @@ fn resolve_regions(regions: &[Region], len: usize) -> Vec<Option<RegionKind>> {
 /// Classify a lexed token stream, refined by AST regions where they exist.
 ///
 /// This layer alone is what a document being actively typed gets: `regions` is empty whenever the file does not
-/// parse, and every rule below still applies. Structural context comes from neighbouring tokens (`Ident` after
+/// parse, and every rule below still applies. Structural context comes from neighboring tokens (`Ident` after
 /// `def`, `Ident` before `(`) rather than from a name's spelling, so nothing here guesses from `PascalCase`.
 fn classify_token_stream(tokens: &[Token], regions: &[Option<RegionKind>]) -> Vec<ClassifiedRange> {
     let mut ranges = Vec::new();
@@ -487,7 +487,7 @@ fn classify_token_stream(tokens: &[Token], regions: &[Option<RegionKind>]) -> Ve
             TokenKind::Ident(_) => {
                 ranges.push(classify_identifier(tokens, index, start, end, regions));
             }
-            // Punctuation carries no semantic information an editor's grammar does not already colour correctly,
+            // Punctuation carries no semantic information an editor's grammar does not already color correctly,
             // and emitting it would roughly double the response for no visible gain. Indentation and EOF are
             // synthetic: `Indent`/`Dedent` spans are zero-width markers, not source the reader sees.
             TokenKind::Punctuation(_) | TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent | TokenKind::Eof => {
@@ -497,9 +497,9 @@ fn classify_token_stream(tokens: &[Token], regions: &[Option<RegionKind>]) -> Ve
     ranges
 }
 
-/// Classify one identifier token from its AST region, then its neighbours, then a default of `variable`.
+/// Classify one identifier token from its AST region, then its neighbors, then a default of `variable`.
 ///
-/// AST regions win because they are derived from what the parser actually built. The neighbour rules below are the
+/// AST regions win because they are derived from what the parser actually built. The neighbor rules below are the
 /// fallback for slots the AST records no span for, and they are also the only classification a file that fails to
 /// parse ever gets.
 fn classify_identifier(
@@ -1143,7 +1143,7 @@ mod tests {
     #[test]
     fn legend_indices_match_the_category_discriminants() {
         // The client resolves `tokenType` by indexing into the published legend, so a category whose discriminant
-        // drifts from its position in TOKEN_TYPES silently recolours every document rather than failing loudly.
+        // drifts from its position in TOKEN_TYPES silently recolors every document rather than failing loudly.
         assert_eq!(TOKEN_TYPES.len(), Category::Macro.index() as usize + 1);
         assert_eq!(
             TOKEN_TYPES[Category::Keyword.index() as usize],
@@ -1158,7 +1158,7 @@ mod tests {
         );
     }
 
-    /// A declaration's name takes the kind of the thing it declares, not a generic identifier colour.
+    /// A declaration's name takes the kind of the thing it declares, not a generic identifier color.
     #[test]
     fn a_declaration_name_is_the_thing_it_declares() -> TestResult {
         // The problem statement's first complaint: a regex grammar cannot tell a declaration name from a local.
@@ -1169,7 +1169,7 @@ mod tests {
         Ok(())
     }
 
-    /// Type positions are decided by where the parser put them, never by how the name is capitalised.
+    /// Type positions are decided by where the parser put them, never by how the name is capitalized.
     #[test]
     fn type_positions_come_from_the_ast_rather_than_from_spelling() -> TestResult {
         // `str` is lowercase and `Total` is PascalCase, so any spelling heuristic gets both of these backwards.
@@ -1232,7 +1232,7 @@ mod tests {
     #[test]
     fn an_fstring_hole_is_classified_as_ordinary_incan() -> TestResult {
         // An f-string is how most Incan code produces output. Treating one as a flat string blob would leave the
-        // names inside it — the part a reader most needs to follow — uncoloured.
+        // names inside it — the part a reader most needs to follow — uncolored.
         let source = "def greet(name: str) -> None:\n    println(f\"hello {name}\")\n    return None\n";
         let ranges = classify(source)?;
         assert_eq!(category_of(source, &ranges, "hello ")?, Category::String);
@@ -1244,7 +1244,7 @@ mod tests {
     #[test]
     fn a_document_that_does_not_parse_is_still_classified() -> TestResult {
         // The ordinary state of a document being edited. Without an AST the type and fragment layers are gone, but
-        // losing every colour on each keystroke would be worse than never having had semantic highlighting.
+        // losing every color on each keystroke would be worse than never having had semantic highlighting.
         let source = "def compute(value: int) -> int:\n    return value +\n";
         let ranges = classified_ranges(source, None);
         assert_eq!(category_of(source, &ranges, "def")?, Category::Keyword);

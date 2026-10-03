@@ -6,11 +6,11 @@
 //! most of the standard library, because no example uses them. A cutover decision resting on a green execution
 //! number would be resting on a denominator nobody had checked.
 //!
-//! The v0.5 capability catalogue is the authority for what Incan claims to ship, so the target list is derived from
+//! The v0.5 capability catalog is the authority for what Incan claims to ship, so the target list is derived from
 //! it rather than invented here. A capability counts as demonstrated when a distinctive fragment of one of its
 //! `canonical_forms` appears somewhere in the corpus.
 //!
-//! Two decisions worth stating, because both are judgement calls a reader should be able to disagree with:
+//! Two decisions worth stating, because both are judgment calls a reader should be able to disagree with:
 //!
 //! - **Matching is on a derived marker, not the whole canonical form.** Requiring the entire form verbatim finds only 8
 //!   of 63 capabilities, because forms are illustrative lines (`from std.hash import Sha256Hasher, sha256,
@@ -109,11 +109,11 @@ const SOURCE_SHAPED_BASELINE: usize = 56;
 /// emits one; a file existing only to carry the decorator would be the conformance dump this suite is meant to avoid.
 const COVERED_BASELINE: usize = 54;
 
-/// One capability entry read from the v0.5 catalogue.
+/// One capability entry read from the v0.5 catalog.
 struct Capability {
     /// Stable typed identity, for example `IfWhileLet`.
     id: String,
-    /// Illustrative source lines the catalogue publishes for this capability.
+    /// Illustrative source lines the catalog publishes for this capability.
     forms: Vec<String>,
 }
 
@@ -124,8 +124,8 @@ impl Capability {
     }
 }
 
-/// Return the catalogue path that owns the documented capability surface.
-fn catalogue_path() -> PathBuf {
+/// Return the catalog path that owns the documented capability surface.
+fn catalog_path() -> PathBuf {
     support::repo_root()
         .join("loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn")
 }
@@ -162,15 +162,15 @@ fn example_corpus_text() -> Result<String, Box<dyn std::error::Error>> {
     Ok(text)
 }
 
-/// Parse the catalogue's stable capabilities and the canonical forms each publishes.
+/// Parse the catalog's stable capabilities and the canonical forms each publishes.
 fn stable_capabilities() -> Result<Vec<Capability>, Box<dyn std::error::Error>> {
-    let catalogue = std::fs::read_to_string(catalogue_path())?;
+    let catalog = std::fs::read_to_string(catalog_path())?;
 
     // `const <name>_forms: FrozenList[str] = ["...", "..."]`
     let forms_decl = Regex::new(r#"(?s)const\s+(\w+_forms):\s*FrozenList\[str\]\s*=\s*\[(.*?)\]\n"#)?;
     let quoted = Regex::new(r#""((?:[^"\\]|\\.)*)""#)?;
     let mut forms_by_name = std::collections::BTreeMap::new();
-    for capture in forms_decl.captures_iter(&catalogue) {
+    for capture in forms_decl.captures_iter(&catalog) {
         let (Some(name), Some(body)) = (capture.get(1), capture.get(2)) else {
             continue;
         };
@@ -187,7 +187,7 @@ fn stable_capabilities() -> Result<Vec<Capability>, Box<dyn std::error::Error>> 
     let forms_field = Regex::new(r#"canonical_forms=(\w+)"#)?;
 
     let mut capabilities = Vec::new();
-    for block in entry.captures_iter(&catalogue) {
+    for block in entry.captures_iter(&catalog) {
         let Some(body) = block.get(1).map(|matched| matched.as_str()) else {
             continue;
         };
@@ -262,7 +262,7 @@ fn stable_capability_example_coverage_does_not_regress() -> Result<(), Box<dyn s
     assert_eq!(
         source_shaped.len(),
         SOURCE_SHAPED_BASELINE,
-        "the catalogue's source-shaped stable capability count moved; record the new denominator with the change \
+        "the catalog's source-shaped stable capability count moved; record the new denominator with the change \
          that moved it"
     );
     assert_eq!(

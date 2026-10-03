@@ -1,0 +1,20 @@
+from substrait.schema import reflected_schema_marker
+
+
+def registered_application(parts: list[str]) -> str:
+    return parts[0]
+
+
+def register[F]() -> ((F) -> F):
+    return (func) => remember[F](func)
+
+
+def remember[F](func: F) -> F:
+    if func.__name__ == "":
+        return func
+    return func
+
+
+@register()
+pub def from_csv[T]() -> str:
+    return registered_application([reflected_schema_marker[T]()])

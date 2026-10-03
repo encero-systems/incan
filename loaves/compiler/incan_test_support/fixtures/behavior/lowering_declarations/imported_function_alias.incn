@@ -1,0 +1,12 @@
+# behavior: a public alias of an imported function calls the imported declaration
+# retires: loaves/compiler/incan_ir/src/lower/tests/import_paths.rs::imported_single_segment_alias_stays_a_symbol_alias
+# expect-stdout:
+#   4
+
+from std.math import sqrt
+
+pub root = sqrt
+
+
+def main() -> None:
+    println(int(root(16.0)))

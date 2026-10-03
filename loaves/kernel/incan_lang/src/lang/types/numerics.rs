@@ -46,6 +46,43 @@ pub enum NumericFamily {
     Bool,
 }
 
+/// Stable identifier for an RFC 009 integer overflow-helper family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntegerHelperFamily {
+    /// Helpers that return `Option[T]` and report overflow as `None`.
+    Checked,
+    /// Helpers that wrap at the integer type's bounds.
+    Wrapping,
+    /// Helpers that clamp at the integer type's bounds.
+    Saturating,
+}
+
+/// Operation performed by an RFC 009 integer overflow helper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntegerHelperOperation {
+    /// Addition with an operand of the receiver's type.
+    Add,
+    /// Subtraction with an operand of the receiver's type.
+    Sub,
+    /// Multiplication with an operand of the receiver's type.
+    Mul,
+    /// Exponentiation with Rust's `u32` exponent contract.
+    Pow,
+}
+
+/// Metadata for one RFC 009 integer overflow helper.
+#[derive(Debug, Clone, Copy)]
+pub struct IntegerHelperInfo {
+    /// Canonical source spelling of the helper.
+    pub canonical: &'static str,
+    /// Overflow policy selected by the helper.
+    pub family: IntegerHelperFamily,
+    /// Arithmetic operation performed by the helper.
+    pub operation: IntegerHelperOperation,
+    /// Numeric receiver families that provide this helper.
+    pub supported_numeric_families: &'static [NumericFamily],
+}
+
 /// Metadata for a numeric builtin type.
 #[derive(Debug, Clone, Copy)]
 pub struct NumericTypeInfo {
@@ -213,6 +250,56 @@ pub const DECIMAL_TYPE_CONSTRUCTORS: &[DecimalTypeConstructorInfo] = &[
     decimal_constructor(DecimalTypeConstructorId::Decimal128, "decimal128", &[], 38, 128),
 ];
 
+const INTEGER_FAMILIES: &[NumericFamily] = &[NumericFamily::SignedInteger, NumericFamily::UnsignedInteger];
+
+/// Registry of RFC 009 integer overflow helpers and the numeric families that support them.
+pub const INTEGER_HELPERS: &[IntegerHelperInfo] = &[
+    integer_helper("checked_add", IntegerHelperFamily::Checked, IntegerHelperOperation::Add),
+    integer_helper("checked_sub", IntegerHelperFamily::Checked, IntegerHelperOperation::Sub),
+    integer_helper("checked_mul", IntegerHelperFamily::Checked, IntegerHelperOperation::Mul),
+    integer_helper("checked_pow", IntegerHelperFamily::Checked, IntegerHelperOperation::Pow),
+    integer_helper(
+        "wrapping_add",
+        IntegerHelperFamily::Wrapping,
+        IntegerHelperOperation::Add,
+    ),
+    integer_helper(
+        "wrapping_sub",
+        IntegerHelperFamily::Wrapping,
+        IntegerHelperOperation::Sub,
+    ),
+    integer_helper(
+        "wrapping_mul",
+        IntegerHelperFamily::Wrapping,
+        IntegerHelperOperation::Mul,
+    ),
+    integer_helper(
+        "wrapping_pow",
+        IntegerHelperFamily::Wrapping,
+        IntegerHelperOperation::Pow,
+    ),
+    integer_helper(
+        "saturating_add",
+        IntegerHelperFamily::Saturating,
+        IntegerHelperOperation::Add,
+    ),
+    integer_helper(
+        "saturating_sub",
+        IntegerHelperFamily::Saturating,
+        IntegerHelperOperation::Sub,
+    ),
+    integer_helper(
+        "saturating_mul",
+        IntegerHelperFamily::Saturating,
+        IntegerHelperOperation::Mul,
+    ),
+    integer_helper(
+        "saturating_pow",
+        IntegerHelperFamily::Saturating,
+        IntegerHelperOperation::Pow,
+    ),
+];
+
 /// Resolve a type name to a [`NumericTypeId`].
 ///
 /// ## Parameters
@@ -278,6 +365,16 @@ pub fn is_integer(id: NumericTypeId) -> bool {
 /// Return whether `id` is a binary floating-point numeric.
 pub fn is_binary_float(id: NumericTypeId) -> bool {
     matches!(info_for(id).family, NumericFamily::BinaryFloat)
+}
+
+/// Resolve an integer overflow-helper spelling to its registry entry.
+pub fn integer_helper_from_str(name: &str) -> Option<IntegerHelperInfo> {
+    INTEGER_HELPERS.iter().copied().find(|helper| helper.canonical == name)
+}
+
+/// Return whether a numeric type supports a registered integer overflow helper.
+pub fn supports_integer_helper(id: NumericTypeId, helper: IntegerHelperInfo) -> bool {
+    helper.supported_numeric_families.contains(&info_for(id).family)
 }
 
 /// Return the full metadata entry for a numeric builtin type.
@@ -387,6 +484,20 @@ const fn decimal_constructor(
     }
 }
 
+/// Build one RFC 009 integer overflow-helper registry entry.
+const fn integer_helper(
+    canonical: &'static str,
+    family: IntegerHelperFamily,
+    operation: IntegerHelperOperation,
+) -> IntegerHelperInfo {
+    IntegerHelperInfo {
+        canonical,
+        family,
+        operation,
+        supported_numeric_families: INTEGER_FAMILIES,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,6 +535,19 @@ mod tests {
         assert_eq!(from_str("real"), Some(NumericTypeId::F32));
         assert_eq!(from_str("fp32"), Some(NumericTypeId::F32));
         assert_eq!(from_str("fp64"), Some(NumericTypeId::F64));
+    }
+
+    #[test]
+    fn integer_helper_registry_records_all_rfc009_families() {
+        assert_eq!(INTEGER_HELPERS.len(), 12);
+        let checked_pow = integer_helper_from_str("checked_pow");
+        assert!(checked_pow.is_some_and(|helper| {
+            helper.family == IntegerHelperFamily::Checked
+                && helper.operation == IntegerHelperOperation::Pow
+                && supports_integer_helper(NumericTypeId::I8, helper)
+                && supports_integer_helper(NumericTypeId::U128, helper)
+                && !supports_integer_helper(NumericTypeId::F32, helper)
+        }));
     }
 
     #[test]

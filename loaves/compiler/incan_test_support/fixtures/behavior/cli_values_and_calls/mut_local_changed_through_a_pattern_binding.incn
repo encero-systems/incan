@@ -1,0 +1,44 @@
+# behavior: a change through a name a match, if let or while let pattern binds from a mut local, a field or list element of one, or the variable of a loop over one changes that local, and a pattern that only reads leaves an immutable local as it is
+# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::change_through_a_pattern_binding_of_a_mut_local_reaches_it_issue1561
+# expect-stdout:
+#   Some([1, 2, 3])
+#   Some([1, 4])
+#   [Some([1, 5])]
+#   [Some([1, 6, 7]), None]
+#   1
+#   Some([1])
+
+model Holder:
+    pub inner: Option[list[int]]
+    pub slots: list[Option[list[int]]]
+
+
+def main() -> None:
+    mut box = Some([1])
+    match box:
+        Some(xs) => xs.append(2)
+        None => pass
+    if let Some(xs) = box:
+        xs.append(3)
+    println(box)
+    mut h = Holder(inner=Some([1]), slots=[Some([1])])
+    if let Some(xs) = h.inner:
+        xs.append(4)
+    while let Some(xs) = h.slots[0]:
+        xs.append(5)
+        break
+    println(h.inner)
+    println(h.slots)
+    mut rows = [Some([1]), None]
+    match rows[0]:
+        Some(xs) => xs.append(6)
+        None => pass
+    for row in rows:
+        if let Some(xs) = row:
+            xs.append(7)
+    println(rows)
+    kept = Some([1])
+    match kept:
+        Some(xs) => println(len(xs))
+        None => pass
+    println(kept)

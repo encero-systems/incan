@@ -1,0 +1,34 @@
+# behavior: to_json dispatches to the std.serde.json Serialize protocol whether the trait is adopted by its imported name or module-qualified, and from_json reads the Deserialize protocol back
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::stdlib_json_trait_owner_precedes_native_serde_mapping
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::unqualified_stdlib_json_trait_precedes_native_serde_mapping
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::stdlib_json_trait_dispatch_keeps_source_protocol_lookup
+# expect-stdout:
+#   {"value":1}
+#   {"label":"x"}
+#   7
+
+from std.serde import json
+from std.serde.json import Serialize, Deserialize
+
+
+model Payload with Serialize:
+    value: int
+
+
+model Tagged with json.Serialize:
+    label: str
+
+
+@derive(Deserialize)
+model Config:
+    port: int
+
+
+def main() -> None:
+    println(Payload(value=1).to_json())
+    println(Tagged(label="x").to_json())
+    match Config.from_json('{"port":7}'):
+        case Ok(config):
+            println(config.port)
+        case Err(message):
+            println(message)

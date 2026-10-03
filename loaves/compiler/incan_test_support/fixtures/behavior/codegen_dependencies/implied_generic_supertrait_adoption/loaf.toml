@@ -1,0 +1,9 @@
+[project]
+name = "implied_generic_supertrait_adoption"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+catalogs = { path = "deps/catalogs" }

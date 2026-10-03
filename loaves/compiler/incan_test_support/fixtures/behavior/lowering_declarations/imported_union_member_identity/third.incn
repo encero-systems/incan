@@ -1,0 +1,11 @@
+pub from first import Product
+
+pub type Answer = Product | str
+
+
+pub def describe(answer: Answer) -> str:
+    match answer:
+        case Product(product):
+            return f"product {product.value}"
+        case str(text):
+            return f"text {text}"

@@ -74,11 +74,17 @@ If a preset value needs runtime state, use a local partial expression or a wrapp
 Local presets are expressions. They evaluate where they appear and may capture local values:
 
 ```incan
-def reader_for(layer: str) -> Callable[[str], Reader]:
-    return partial Reader(layer=layer)
+model Reader:
+    layer: str
+    format: str
+    path: str
+
+def read_orders(layer: str) -> Reader:
+    reader = partial Reader(layer=layer, format="delta")
+    return reader("orders")
 ```
 
-That makes local presets the right form when the preset value depends on a function argument, a local binding, or another runtime expression.
+The value keeps the target's parameters: a call passes the unset ones positionally, and may still override a preset by name, as `reader("orders", format="csv")` does. That makes local presets the right form when the preset value depends on a function argument, a local binding, or another runtime expression.
 
 ## Method presets
 
@@ -95,6 +101,10 @@ model Cell:
 ```
 
 The generated method has the same receiver behavior as the target. Trait method presets follow the same path as ordinary trait default methods, so adopters receive a generated forwarding method.
+
+## Presets in published libraries
+
+A public top-level preset is exported as a preset, not as an opaque function object. The library's manifest and checked API metadata record its name, its target and the target's kind, each preset's name, type and value, the parameters it projects, its return type and whether it is async. A consumer imports it as an ordinary callable: its presets are defaulted parameters shown like any other default, and the signature has no separate kind of parameter for presets.
 
 ## Presets, aliases, and wrappers
 

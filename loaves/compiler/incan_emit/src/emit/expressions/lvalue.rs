@@ -13,7 +13,8 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
-use incan_ir::expr::{IrExprKind, TypedExpr};
+use crate::ownership::plan_dict_lookup_key;
+use incan_ir::expr::{IrExprKind, TypedExpr, positional_field_index};
 use incan_ir::stmt::AssignTarget;
 use incan_ir::types::IrType;
 
@@ -43,6 +44,21 @@ impl<'a> IrEmitter<'a> {
         };
 
         Ok(quote! { *incan_std_core::collections::list_get_mut(#list_mut, #idx_i64) })
+    }
+
+    /// Emit the member a field place names: a tuple element or tuple-struct field by its position (`.0`), as lowering
+    /// spelled it, and any other field by name.
+    fn emit_place_member(field: &str) -> TokenStream {
+        match positional_field_index(field) {
+            Some(position) => {
+                let position = syn::Index::from(position);
+                quote! { #position }
+            }
+            None => {
+                let name = Self::rust_ident(field);
+                quote! { #name }
+            }
+        }
     }
 
     /// Emit an IR expression in lvalue (assignment-target) context.
@@ -76,6 +92,17 @@ impl<'a> IrEmitter<'a> {
                 if matches!(obj_ty, IrType::List(_)) {
                     return self.emit_list_get_mut_lvalue(object, index, &o);
                 }
+                // A dict value is a place too; `HashMap` has no `IndexMut`, so it is reached through the helper
+                // (#1561).
+                if matches!(obj_ty, IrType::Dict(_, _)) {
+                    let key = plan_dict_lookup_key(&object.ty, &index.ty).apply(self.emit_expr(index)?);
+                    let dict_mut = if matches!(&object.ty, IrType::RefMut(_)) {
+                        quote! { #o }
+                    } else {
+                        quote! { &mut #o }
+                    };
+                    return Ok(quote! { *incan_std_core::collections::dict_get_mut(#dict_mut, #key) });
+                }
 
                 // Fallback for non-list targets: emit direct Rust indexing.
                 // This may panic with Rust-native messages for unsupported/unknown container types.
@@ -84,7 +111,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Field { object, field } => {
                 let o = self.emit_lvalue_expr(object)?;
-                let f = Self::rust_ident(field);
+                let f = Self::emit_place_member(field);
                 // Only parenthesize when needed.
                 //
                 // `emit_lvalue_expr` may emit a leading `*` for list indexing (`*list_get_mut(..)`).
@@ -126,9 +153,9 @@ impl<'a> IrEmitter<'a> {
                 let n = self.rust_static_reference_ident(name, *reference_kind)?;
                 Ok(quote! { #n })
             }
-            AssignTarget::Field { object, field } => {
+            AssignTarget::Field { object, field, .. } => {
                 let o = self.emit_lvalue_expr(object)?;
-                let f = Self::rust_ident(field);
+                let f = Self::emit_place_member(field);
                 // Same precedence rule as in `emit_lvalue_expr`: only parenthesize when the receiver may start with a
                 // unary `*` (e.g. list index lvalues).
                 if matches!(object.kind, IrExprKind::Index { .. }) {

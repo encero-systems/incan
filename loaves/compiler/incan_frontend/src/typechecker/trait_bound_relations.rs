@@ -3,18 +3,38 @@
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
+use super::derive_requirements::DeriveSupport;
+use crate::ast::TypeParam;
+use crate::diagnostics::errors::{self, CallableMarkerRefusal, GenericBoundTarget};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
-use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::interop::{
+    is_rust_callable_capability_bound, is_rust_capability_bound, is_rust_future_capability_bound,
+};
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_capabilities::{
     self, TraitCapabilityId, TraitCapabilityInfo, TraitCapabilityType, TraitCapabilityTypeArg,
 };
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
+
+/// Which declaration's type parameters [`TypeChecker::refuse_unsupported_callable_markers`] is reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::typechecker) enum CallableMarkerOwner<'a> {
+    /// A function or method: a call site exists to determine a marker's return type.
+    Callable,
+    /// A model, class, enum, trait, newtype or type alias, named by its declaration keyword and name.
+    Nominal {
+        /// The declaration keyword as the source spells it.
+        kind: &'a str,
+        /// The declaration's name.
+        name: &'a str,
+    },
+}
 
 impl TypeChecker {
     /// Render a type-parameter bound with call-site substitutions applied.
@@ -35,13 +55,54 @@ impl TypeChecker {
         format!("{}[{}]", bound.name, args)
     }
 
+    /// Classify what a `with` bound names, for the remedy a bound-violation diagnostic offers (#1373).
+    ///
+    /// Anything the checker can satisfy as a trait — a source trait, a builtin trait, an imported Rust trait, or a
+    /// Rust capability marker — is a trait target. A name that resolves to a declared or builtin type is a type
+    /// target, because no type argument can satisfy it. An active type-parameter placeholder and an unresolvable
+    /// name keep the trait wording, which is the only actionable one for them.
+    pub(in crate::typechecker) fn generic_bound_target(&self, bound: &str) -> GenericBoundTarget {
+        if bound.starts_with("::")
+            || is_rust_capability_bound(bound)
+            || builtin_traits::from_str(bound).is_some()
+            || self.lookup_semantic_trait_info(bound).is_some()
+        {
+            return GenericBoundTarget::Trait;
+        }
+        match self.foreign_trait_bound_requires_native_check(bound) {
+            Some(true) => return GenericBoundTarget::Trait,
+            Some(false) => return GenericBoundTarget::Type,
+            None => {}
+        }
+        let is_active_type_param = self
+            .current_type_param_bound_details
+            .iter()
+            .any(|frame| frame.contains_key(bound));
+        if !is_active_type_param && self.lookup_type_info(bound).is_some() {
+            return GenericBoundTarget::Type;
+        }
+        GenericBoundTarget::Trait
+    }
+
     /// Return whether a type satisfies one explicit bound, including generic trait arguments.
+    ///
+    /// An `Eq` or `Hash` bound the checker inferred from a callable's body (#1758) holds unless the derive relation
+    /// knows the type lacks the derive.
     pub fn type_satisfies_explicit_bound_info(
         &self,
         ty: &ResolvedType,
         bound: &TypeBoundInfo,
         bindings: &HashMap<String, ResolvedType>,
     ) -> bool {
+        if Self::function_value_misses_future_bound(ty, &bound.name) {
+            return false;
+        }
+        // An inferred `Eq` or `Hash` bound (#1758) holds unless the type is known to lack the derive.
+        if bound.inferred
+            && let Some(derive) = derives::from_str(&bound.name)
+        {
+            return !matches!(self.derive_support(ty, derive), DeriveSupport::Missing(_));
+        }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(&bound.name) {
             return defer;
         }
@@ -60,6 +121,9 @@ impl TypeChecker {
         if let Some(satisfies) = self.function_type_satisfies_callable_bound(ty, bound, bindings) {
             return satisfies;
         }
+        if let Some(satisfies) = self.function_type_satisfies_callable_marker(ty, bound, bindings) {
+            return satisfies;
+        }
         if let Some(capability) = self.temporary_trait_capability_for_bound_info(bound, bindings)
             && let Some(satisfies) = self.temporary_trait_capability_supports_type(capability, ty)
         {
@@ -76,6 +140,13 @@ impl TypeChecker {
             .iter()
             .map(|arg| substitute_resolved_type(arg, bindings))
             .collect::<Vec<_>>();
+        // RFC 088 gives builtin collections and generators the `Iterable[T]` protocol without a source-level
+        // adoption entry. Reuse the assignment relation that owns those protocol conversions so a generic bound sees
+        // the same iterable set as a parameter or return annotation.
+        if builtin_traits::from_str(&bound.name) == Some(TraitId::Iterable) && expected_args.len() == 1 {
+            let expected = ResolvedType::Generic(builtin_traits::as_str(TraitId::Iterable).to_string(), expected_args);
+            return self.types_compatible(ty, &expected);
+        }
         if builtin_traits::from_str(&bound.name).is_some() {
             return self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args);
         }
@@ -112,6 +183,89 @@ impl TypeChecker {
         Some(params_match && self.types_compatible(return_type, &expected[arity]))
     }
 
+    /// Match a function value against the parameter list of an RFC 041 `Fn`-family capability marker.
+    ///
+    /// `Fn[int]`, `FnMut[int]` and `FnOnce[int]` name the callable's parameters and nothing else: the return type is
+    /// whatever the value passed returns. The generated Rust asks for exactly that shape (the canonical `CallableN`
+    /// bound with a free return type, #1716), so a function whose arity or parameter types do not match the marker is
+    /// refused here rather than by rustc. A value that is not a function answers `None`: a nominal type can satisfy
+    /// the callable requirement through its own `__call__` adoption, which the marker cannot see.
+    fn function_type_satisfies_callable_marker(
+        &self,
+        ty: &ResolvedType,
+        bound: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Option<bool> {
+        if !is_rust_callable_capability_bound(&bound.name) {
+            return None;
+        }
+        let ResolvedType::Function(params, _) = ty else {
+            return None;
+        };
+        if params.len() != bound.type_args.len() {
+            return Some(false);
+        }
+        let params_match = params
+            .iter()
+            .zip(&bound.type_args)
+            .all(|(actual, expected)| self.types_compatible(&actual.ty, &substitute_resolved_type(expected, bindings)));
+        Some(params_match)
+    }
+
+    /// Refuse the RFC 041 `Fn`-family markers a declaration's type parameters carry where no bound can stand for
+    /// them (#1716).
+    ///
+    /// A marker lowers to the canonical `CallableN` bound by its parameter count, with the return type left to the
+    /// call that passes the value. Two shapes have no such bound: a marker naming more parameters than the callable
+    /// vocabulary spells ([`callables::max_arity`]), on any declaration, and a marker on a nominal declaration's
+    /// type parameter (`model Holder[F with Fn[int]]`), whose return type no call can determine. Both are refused
+    /// at the declaration, before a call is checked against them, with the alternative to write in the message.
+    /// The count is checked first, so a nominal owner hears about the count when both apply.
+    pub(in crate::typechecker) fn refuse_unsupported_callable_markers(
+        &mut self,
+        type_params: &[TypeParam],
+        owner: CallableMarkerOwner<'_>,
+    ) {
+        let limit = callables::max_arity();
+        for type_param in type_params {
+            for bound in &type_param.bounds {
+                if !is_rust_callable_capability_bound(&bound.name) {
+                    continue;
+                }
+                let parameter_types = bound
+                    .type_args
+                    .iter()
+                    .map(|arg| arg.node.to_string())
+                    .collect::<Vec<_>>();
+                let marker = if parameter_types.is_empty() {
+                    bound.name.clone()
+                } else {
+                    format!("{}[{}]", bound.name, parameter_types.join(", "))
+                };
+                let refusal = if parameter_types.len() > limit {
+                    CallableMarkerRefusal::ParameterCount {
+                        count: parameter_types.len(),
+                        limit,
+                    }
+                } else if let CallableMarkerOwner::Nominal { kind, name } = owner {
+                    CallableMarkerRefusal::NominalOwner {
+                        owner_kind: kind,
+                        owner_name: name,
+                    }
+                } else {
+                    continue;
+                };
+                self.errors.push(errors::callable_marker_not_supported(
+                    &marker,
+                    &type_param.name,
+                    &parameter_types,
+                    refusal,
+                    type_param.span,
+                ));
+            }
+        }
+    }
+
     /// Resolve a checked bound to the canonical source callable trait registry.
     pub(in crate::typechecker) fn callable_trait_for_bound(
         &self,
@@ -129,8 +283,33 @@ impl TypeChecker {
             .flatten()
     }
 
+    /// Return whether a bound names a capability marker that requires a future (`RuntimeFuture`), under any spelling.
+    ///
+    /// A bound read from a provider's checked signature may carry a module or Rust path, so the marker is matched by
+    /// its last path segment.
+    pub(in crate::typechecker) fn bound_requires_future(bound: &str) -> bool {
+        let marker = bound
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(bound);
+        is_rust_future_capability_bound(marker)
+    }
+
+    /// Return whether `ty` is a function value checked against a bound that requires a future (#1772).
+    ///
+    /// Every other type is admitted at a Rust capability marker and left to the build, because the checker gives an
+    /// `async def` call's result its output type and cannot tell it from a plain value of that type. A function value
+    /// is never a future, whatever it returns, so it is refused here: this runs before the foreign-trait deferral so
+    /// that a marker imported from `rust::` in a provider's own scope cannot hide it.
+    fn function_value_misses_future_bound(ty: &ResolvedType, bound: &str) -> bool {
+        matches!(ty, ResolvedType::Function(_, _)) && Self::bound_requires_future(bound)
+    }
+
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
     pub(in crate::typechecker) fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        if Self::function_value_misses_future_bound(ty, bound) {
+            return false;
+        }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(bound) {
             return defer;
         }
@@ -144,6 +323,22 @@ impl TypeChecker {
             && let Some(satisfies) = self.temporary_trait_capability_supports_type(capability, ty)
         {
             return satisfies;
+        }
+        // A `Display` bound asks for the display rule's `Display`, which a `__str__`, an enum's declared values,
+        // `@derive(Display)` or an `Error` adoption provides (#1748).
+        if builtin_traits::from_str(bound) == Some(TraitId::Display)
+            && let Some(satisfies) = self.display_bound_satisfied(ty)
+        {
+            return satisfies;
+        }
+        // A builtin derive (`Clone`, `Copy`, `Eq`, `Ord`, ...) is answered by the derive relation wherever it knows the
+        // type, automatic and implied derives included (#1870); an unknown answer keeps the fallbacks below.
+        if let Some(derive) = self.builtin_derive_bound(bound) {
+            match self.derive_support(ty, derive) {
+                DeriveSupport::Supported => return true,
+                DeriveSupport::Missing(_) => return false,
+                DeriveSupport::Unknown => {}
+            }
         }
         if builtin_traits::from_str(bound).is_none() && self.lookup_semantic_trait_info(bound).is_some() {
             return self.type_satisfies_nominal_trait_bound(ty, bound);
@@ -197,6 +392,34 @@ impl TypeChecker {
         }
     }
 
+    /// Return the builtin derive a bound or trait adoption names, when its spelling reaches the builtin trait.
+    ///
+    /// The builtin traits are the `std.derives.*` traits the stdlib registry records, `Copy` included although it has
+    /// no builtin trait identity of its own. An imported trait that merely shares a builtin's name (`from unrelated
+    /// import Eq`) is not the builtin; an import alias of the builtin (`from std.derives.comparison import Eq as
+    /// Equality`) is.
+    pub(in crate::typechecker) fn builtin_derive_bound(&self, bound: &str) -> Option<DeriveId> {
+        let names_builtin_trait = |name: &str| stdlib::trait_method_module_segments(name).is_some();
+        let path = match self.import_binding_path(bound) {
+            Some(path) => path.to_vec(),
+            // A module-qualified spelling (`comparison.Ord` after `from std.derives import comparison`) names the
+            // trait through its module's import (#1561).
+            None => match bound.rsplit_once('.') {
+                Some((module_spelling, trait_name)) => {
+                    let mut path = self.module_path_for_imported_name(module_spelling)?;
+                    path.push(trait_name.to_string());
+                    path
+                }
+                None => return derives::from_str(bound).filter(|_| names_builtin_trait(bound)),
+            },
+        };
+        let (trait_name, module_path) = path.split_last()?;
+        let derive = derives::from_str(trait_name).filter(|_| names_builtin_trait(trait_name))?;
+        stdlib::trait_method_module_segments(trait_name)
+            .is_some_and(|builtin_module| builtin_module == module_path)
+            .then_some(derive)
+    }
+
     /// Keep imported Rust bounds at the native validation boundary rather than requiring an Incan trait adoption.
     ///
     /// Rust decides whether the lowered scalar, container, or model implements the foreign trait. This does not
@@ -232,8 +455,59 @@ impl TypeChecker {
             .then_some(name.as_str())
     }
 
+    /// Whether the checker sees every method the bounds of the active type parameter `placeholder_name` give it: each
+    /// bound names a trait whose declaration it has, or a `CallableN` trait (#1561).
+    ///
+    /// A bound on a Rust trait, or on a trait the checker cannot resolve, may declare methods the checker does not
+    /// know, so a method call through such a parameter is left to the Rust compiler.
+    pub(in crate::typechecker) fn active_type_param_bounds_are_visible(&self, placeholder_name: &str) -> bool {
+        let Some(bounds) = self
+            .current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(placeholder_name))
+        else {
+            return false;
+        };
+        bounds.iter().all(|bound| {
+            self.lookup_trait_adoption_info(bound).is_some() || self.callable_trait_for_bound(bound).is_some()
+        })
+    }
+
+    /// Whether a trait a bound of the active type parameter `placeholder_name` names, or one of its supertraits,
+    /// declares a member called `member`: a method, a method alias or a property (#1561).
+    ///
+    /// A method call through such a bound that does not resolve failed for a reason reported where it arises (two
+    /// supertraits that disagree on the member), not because no bound declares it.
+    pub(in crate::typechecker) fn active_type_param_bound_declares_member(
+        &self,
+        placeholder_name: &str,
+        member: &str,
+    ) -> bool {
+        let Some(bounds) = self
+            .current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(placeholder_name))
+        else {
+            return false;
+        };
+        let declares = |info: &crate::symbols::TraitInfo| {
+            info.methods.contains_key(member)
+                || info.method_aliases.contains_key(member)
+                || info.properties.contains_key(member)
+        };
+        bounds.iter().any(|bound| {
+            self.lookup_trait_adoption_info(bound).is_some_and(declares)
+                || self
+                    .semantic_supertrait_closure(&bound.name)
+                    .iter()
+                    .any(|(name, _)| self.lookup_semantic_trait_info(name).is_some_and(declares))
+        })
+    }
+
     /// Check whether an active generic placeholder already carries the bound required by a nested generic call.
-    fn active_type_param_satisfies_bound_info(
+    pub(in crate::typechecker) fn active_type_param_satisfies_bound_info(
         &self,
         placeholder_name: &str,
         required: &TypeBoundInfo,
@@ -253,12 +527,52 @@ impl TypeChecker {
         false
     }
 
+    /// Return whether an active type parameter explicitly or transitively carries one builtin trait bound.
+    pub(in crate::typechecker) fn active_type_param_satisfies_builtin_bound(
+        &self,
+        placeholder_name: &str,
+        required: TraitId,
+    ) -> bool {
+        let required = TypeBoundInfo {
+            name: builtin_traits::as_str(required).to_string(),
+            source_name: None,
+            type_args: Vec::new(),
+            module_path: None,
+            implementation_type_params: Vec::new(),
+            inferred: false,
+        };
+        self.active_type_param_satisfies_bound_info(placeholder_name, &required, &HashMap::new())
+    }
+
     /// Return the resolved source trait item name for a bound, falling back to the visible spelling.
     pub(in crate::typechecker) fn type_bound_source_name(bound: &TypeBoundInfo) -> &str {
         bound
             .source_name
             .as_deref()
             .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(bound.name.as_str()))
+    }
+
+    /// Return whether a checked bound names the builtin trait `trait_id`: the stdlib declaration, imported under any
+    /// spelling, or the builtin's own name with no import or local trait claiming it.
+    pub(in crate::typechecker) fn bound_is_builtin_trait(&self, bound: &TypeBoundInfo, trait_id: TraitId) -> bool {
+        let is_builtin_name = |name: &str| builtin_traits::from_str(name) == Some(trait_id);
+        if let Some(module_path) = &bound.module_path {
+            return is_builtin_name(Self::type_bound_source_name(bound))
+                && module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT);
+        }
+        match self.import_binding_path(&bound.name) {
+            Some(path) => {
+                path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+                    && path.last().is_some_and(|name| is_builtin_name(name))
+            }
+            None => {
+                is_builtin_name(Self::type_bound_source_name(bound))
+                    && !matches!(
+                        self.lookup_symbol(&bound.name).map(|symbol| &symbol.kind),
+                        Some(SymbolKind::Trait(_))
+                    )
+            }
+        }
     }
 
     /// Return the canonical source identity for a checked trait bound when it can be resolved.
@@ -313,6 +627,9 @@ impl TypeChecker {
         if self.type_bound_names_match(active, required) && self.type_bound_args_match(active, required, bindings) {
             return true;
         }
+        if self.builtin_comparison_bound_implies(active, required) {
+            return true;
+        }
 
         let Some(active_trait) = self.lookup_semantic_trait_info(&active.name) else {
             return false;
@@ -339,10 +656,47 @@ impl TypeChecker {
                         .collect(),
                     module_path,
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 };
                 self.type_bound_names_match(&candidate, required)
                     && self.type_bound_args_match(&candidate, required, bindings)
             })
+    }
+
+    /// Whether a bound on the builtin `Eq` or `Ord` implies the builtin bound `required`, as Rust's `Eq: PartialEq` and
+    /// `Ord: Eq + PartialOrd` do (#1561).
+    ///
+    /// A module that names the builtin without importing it binds a stub that declares no supertraits, so `T with Ord`
+    /// did not meet a callee's `T with Eq`, although the generated Rust bound does. The relation is the one the derive
+    /// table records for `@derive(Eq)` and `@derive(Ord)`, which bring exactly those traits with them.
+    fn builtin_comparison_bound_implies(&self, active: &TypeBoundInfo, required: &TypeBoundInfo) -> bool {
+        let Some(active_derive) = [TraitId::Eq, TraitId::Ord]
+            .into_iter()
+            .find(|trait_id| self.bound_names_builtin_trait(active, *trait_id))
+            .and_then(|trait_id| derives::from_str(builtin_traits::as_str(trait_id)))
+        else {
+            return false;
+        };
+        derives::implied_derives(active_derive).iter().any(|implied| {
+            builtin_traits::from_str(derives::as_str(*implied))
+                .is_some_and(|trait_id| self.bound_names_builtin_trait(required, trait_id))
+        })
+    }
+
+    /// Whether a checked bound names the builtin trait `trait_id` (see [`Self::bound_is_builtin_trait`]), the
+    /// builtin's own stub that a module binds without importing it included.
+    fn bound_names_builtin_trait(&self, bound: &TypeBoundInfo, trait_id: TraitId) -> bool {
+        if self.bound_is_builtin_trait(bound, trait_id) {
+            return true;
+        }
+        bound.module_path.is_none()
+            && self.import_binding_path(&bound.name).is_none()
+            && builtin_traits::from_str(Self::type_bound_source_name(bound)) == Some(trait_id)
+            && self
+                .symbols
+                .lookup(&bound.name)
+                .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+                .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin)
     }
 
     /// Check whether `ty` satisfies a nominal trait bound `bound_trait` under RFC 042 semantics.
@@ -539,51 +893,68 @@ impl TypeChecker {
             return satisfies;
         }
 
+        // Every exact-width numeric type provides what its Rust primitive does: each one clones, copies, displays,
+        // debugs, defaults and compares, and the integer types also have total equality, ordering and hashing, which
+        // `f32` lacks as `float` does. A value that displays satisfies `Display` (see the display rule).
+        let exact_numeric = matches!(ty, ResolvedType::Numeric(_));
+        let exact_integer = matches!(ty, ResolvedType::Numeric(id) if numerics::is_integer(*id));
         match builtin_traits::from_str(bound) {
-            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::Default) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
+            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
+            Some(TraitId::Default) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
             Some(TraitId::Awaitable) => self.type_satisfies_awaitable_bound(ty, None),
-            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::PartialEq | TraitId::PartialOrd) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
+            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => {
+                exact_integer
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
+            Some(TraitId::PartialEq | TraitId::PartialOrd) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
             _ => false,
         }
     }
@@ -832,6 +1203,7 @@ impl TypeChecker {
                     .collect(),
             ),
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         adoptions
             .iter()

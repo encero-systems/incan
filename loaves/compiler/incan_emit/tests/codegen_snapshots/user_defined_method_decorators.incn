@@ -7,10 +7,10 @@ class Box:
     def label(self, value: int) -> str:
         return "value"
 
-def parse(box: &Box, value: int) -> int:
+def parse(box: Box, value: int) -> int:
     return value
 
-def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
     return parse
 
 def run(box: Box) -> int:

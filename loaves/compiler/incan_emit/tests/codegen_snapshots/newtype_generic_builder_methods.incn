@@ -10,4 +10,5 @@ type Box[T] = newtype T:
 
 def main() -> None:
     boxed = Box.wrap(42)
-    print(boxed.duplicate())
+    pair = boxed.duplicate()
+    print(pair[0], pair[1])

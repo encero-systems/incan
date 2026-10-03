@@ -16,6 +16,7 @@
 //! assert_eq!(L.len(), 3);
 //! ```
 
+use core::borrow::Borrow;
 use core::fmt;
 
 /// Represent an immutable string baked into the binary.
@@ -58,7 +59,7 @@ impl FrozenStr {
 
 impl fmt::Debug for FrozenStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenStr").field(&self.0).finish()
+        fmt::Debug::fmt(&self.0, f)
     }
 }
 
@@ -70,6 +71,15 @@ impl fmt::Display for FrozenStr {
 
 impl AsRef<str> for FrozenStr {
     fn as_ref(&self) -> &str {
+        self.0
+    }
+}
+
+/// Let a `FrozenStr`-keyed frozen dict answer a lookup by a borrowed `str` probe.
+///
+/// Equality and ordering compare the wrapped text, so borrowing as `str` agrees with them.
+impl Borrow<str> for FrozenStr {
+    fn borrow(&self) -> &str {
         self.0
     }
 }
@@ -215,21 +225,16 @@ impl<T: 'static> core::ops::Deref for FrozenList<T> {
 }
 
 impl<T: fmt::Debug> fmt::Debug for FrozenList<T> {
+    /// Format the items as a list, like the `list` a frozen list was baked from.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenList").field(&self.data).finish()
+        f.debug_list().entries(self.data).finish()
     }
 }
 
-impl<T: fmt::Display> fmt::Display for FrozenList<T> {
+impl<T: fmt::Debug> fmt::Display for FrozenList<T> {
+    /// Print a frozen list as its `Debug` form, the printed form a `list` has.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("[")?;
-        for (i, item) in self.data.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            write!(f, "{}", item)?;
-        }
-        f.write_str("]")
+        fmt::Debug::fmt(self, f)
     }
 }
 
@@ -272,10 +277,13 @@ impl<T: 'static> IntoIterator for FrozenList<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::FrozenList;
+    use super::{FrozenDict, FrozenList, FrozenSet, FrozenStr};
     use crate::collections::__private::{list_max_copy, list_min_copy};
 
     static NUMS: [i64; 3] = [3, 1, 4];
+    static NAMES: [FrozenStr; 2] = [FrozenStr::new("a"), FrozenStr::new("b")];
+    static FLOATS: [f64; 1] = [100.0];
+    static ENTRIES: [(FrozenStr, f64); 1] = [(FrozenStr::new("n"), 100.0)];
 
     #[test]
     fn frozen_list_coerces_to_slice_for_runtime_helpers() {
@@ -284,6 +292,32 @@ mod tests {
         assert_eq!(numbers.as_ref(), &[3, 1, 4]);
         assert_eq!(list_min_copy(&numbers), 1);
         assert_eq!(list_max_copy(&numbers), 4);
+    }
+
+    /// A text-keyed frozen dict answers a `str` probe of any lifetime, whether its keys are `&'static str` or
+    /// `FrozenStr`, and a stored-key probe still works (#1757).
+    #[test]
+    fn frozen_dict_lookups_accept_borrowed_text_probes() {
+        const NAMES: FrozenDict<&'static str, i64> = FrozenDict::new(&[("alpha", 1), ("beta", 2)]);
+        const CODES: FrozenDict<FrozenStr, i64> = FrozenDict::new(&[(FrozenStr::new("a"), 10)]);
+        let runtime_probe = String::from("beta");
+
+        assert_eq!(NAMES.get(runtime_probe.as_str()), Some(&2));
+        assert!(NAMES.contains_key("alpha"));
+        assert!(!NAMES.contains_key("gamma"));
+        assert!(NAMES.contains_key(&"alpha"));
+        assert_eq!(CODES.get("a"), Some(&10));
+        assert!(CODES.contains_key(&FrozenStr::new("a")));
+    }
+
+    #[test]
+    fn frozen_values_match_mutable_display_shapes_issue1838() {
+        assert_eq!(format!("{:?}", FrozenStr::new("x")), "\"x\"");
+        assert_eq!(format!("{:?}", Some(FrozenStr::new("x"))), "Some(\"x\")");
+        assert_eq!(format!("{}", FrozenList::new(&NAMES)), "[\"a\", \"b\"]");
+        assert_eq!(format!("{}", FrozenList::new(&FLOATS)), "[100.0]");
+        assert_eq!(format!("{}", FrozenSet::new(&NAMES)), "{\"a\", \"b\"}");
+        assert_eq!(format!("{}", FrozenDict::new(&ENTRIES)), "{\"n\": 100.0}");
     }
 }
 
@@ -342,21 +376,16 @@ impl<T: 'static> FrozenSet<T> {
 }
 
 impl<T: fmt::Debug> fmt::Debug for FrozenSet<T> {
+    /// Format the items as a set, like the `set` a frozen set was baked from.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenSet").field(&self.data).finish()
+        f.debug_set().entries(self.data).finish()
     }
 }
 
-impl<T: fmt::Display> fmt::Display for FrozenSet<T> {
+impl<T: fmt::Debug> fmt::Display for FrozenSet<T> {
+    /// Print a frozen set as its `Debug` form, the printed form a `set` has.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("{")?;
-        for (i, item) in self.data.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            write!(f, "{}", item)?;
-        }
-        f.write_str("}")
+        fmt::Debug::fmt(self, f)
     }
 }
 
@@ -401,19 +430,24 @@ impl<K: 'static, V: 'static> FrozenDict<K, V> {
     }
 
     /// Return the value for `key`, if present (linear scan).
-    pub fn get(&self, key: &K) -> Option<&'static V>
+    ///
+    /// Like `HashMap::get`, the probe may be any form the stored key type borrows as, so a `&'static str`- or
+    /// `FrozenStr`-keyed dict answers a borrowed `str` probe that is not itself `'static`.
+    pub fn get<Q>(&self, key: &Q) -> Option<&'static V>
     where
-        K: PartialEq,
+        K: Borrow<Q>,
+        Q: PartialEq + ?Sized,
     {
         self.data
             .iter()
-            .find_map(|(k, v)| if k == key { Some(v) } else { None })
+            .find_map(|(k, v)| if k.borrow() == key { Some(v) } else { None })
     }
 
-    /// Return true if `key` exists.
-    pub fn contains_key(&self, key: &K) -> bool
+    /// Return true if `key` exists; the probe follows the same borrowing rule as [`Self::get`].
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
-        K: PartialEq,
+        K: Borrow<Q>,
+        Q: PartialEq + ?Sized,
     {
         self.get(key).is_some()
     }
@@ -425,20 +459,17 @@ impl<K: 'static, V: 'static> FrozenDict<K, V> {
 }
 
 impl<K: fmt::Debug, V: fmt::Debug> fmt::Debug for FrozenDict<K, V> {
+    /// Format the entries as a map, like the `dict` a frozen dict was baked from.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenDict").field(&self.data).finish()
+        f.debug_map()
+            .entries(self.data.iter().map(|(key, value)| (key, value)))
+            .finish()
     }
 }
 
-impl<K: fmt::Display, V: fmt::Display> fmt::Display for FrozenDict<K, V> {
+impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for FrozenDict<K, V> {
+    /// Print a frozen dict as its `Debug` form, the printed form a `dict` has.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("{")?;
-        for (i, (k, v)) in self.data.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            write!(f, "{}: {}", k, v)?;
-        }
-        f.write_str("}")
+        fmt::Debug::fmt(self, f)
     }
 }

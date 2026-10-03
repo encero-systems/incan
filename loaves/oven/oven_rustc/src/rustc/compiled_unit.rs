@@ -14,15 +14,16 @@ use serde::Serialize;
 use super::{
     OvenRustcError, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
     OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
     ValidatedOvenSelectedRustFacetGraph, digest_bytes,
 };
 
 /// Domain separator for a compiled unit identity.
 ///
-/// Version 2 drops the selection-global root feature set from the identity. The two schemes name different things,
-/// so the separator moves with them rather than letting a v1 identity be mistaken for a v2 one.
-pub const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-rust-unit/2";
+/// The separator moves whenever the compiler-visible identity vocabulary changes, so outputs from distinct schemes
+/// cannot be mistaken for each other.
+pub const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-rust-unit/3";
 
 /// Content address of one direct-Rustc compilation unit.
 ///
@@ -46,7 +47,7 @@ struct CompiledUnitIdentityInput<'a> {
     profile: &'a str,
     purpose: super::OvenSelectedRustFacetPurpose,
     compilation_target: &'a str,
-    target_spec_digest: Option<&'a str>,
+    target_spec: Option<&'a OvenSelectedRustFacetTargetSpec>,
     crate_name: &'a str,
     crate_kind: OvenSelectedRustFacetCrateKind,
     role: OvenSelectedRustFacetUnitRole,
@@ -56,12 +57,13 @@ struct CompiledUnitIdentityInput<'a> {
     source_members: &'a [super::OvenSelectedRustFacetSourceMember],
     root_module: &'a str,
     features: &'a [String],
-    default_features: bool,
     cfg: &'a [String],
+    sysroot_externs: &'a [String],
     environment: BTreeMap<&'a str, CompiledEnvironmentValue<'a>>,
     include_dirs: Vec<CompiledPath<'a>>,
     exclude_dirs: Vec<CompiledPath<'a>>,
     generated_inputs: Vec<CompiledGeneratedInput<'a>>,
+    linked_libraries: Vec<CompiledLinkedLibrary<'a>>,
     dependencies: Vec<CompiledDependency<'a>>,
 }
 
@@ -79,7 +81,9 @@ enum CompiledPath<'a> {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum CompiledEnvironmentValue<'a> {
     Text { value: &'a str },
+    CapturedText { value: &'a str },
     Path { value: CompiledPath<'a> },
+    OutDir { relative: &'a str },
     SensitiveDigest { hmac_sha256: &'a str },
 }
 
@@ -88,6 +92,32 @@ struct CompiledGeneratedInput<'a> {
     name: &'a str,
     source: CompiledPath<'a>,
     digest: &'a str,
+    members: &'a [super::OvenSelectedRustFacetSourceMember],
+}
+
+#[derive(Serialize)]
+#[serde(tag = "input", rename_all = "snake_case")]
+enum CompiledLinkedLibrary<'a> {
+    Archive {
+        name: &'a str,
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        artifact: CompiledPath<'a>,
+        digest: &'a str,
+    },
+    Provider {
+        name: &'a str,
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        provider: &'a str,
+        target: &'a str,
+        capability: &'a str,
+        receipt_identity: &'a str,
+        provenance: CompiledPath<'a>,
+        provenance_digest: &'a str,
+        search_root: CompiledPath<'a>,
+        artifact: CompiledPath<'a>,
+        digest: &'a str,
+        members: &'a [super::OvenSelectedRustFacetSourceMember],
+    },
 }
 
 #[derive(Serialize)]
@@ -212,11 +242,11 @@ fn compiled_unit_identity_input<'a>(
     compiler_closure_digest: &'a str,
     dependencies: Vec<CompiledDependency<'a>>,
 ) -> CompiledUnitIdentityInput<'a> {
-    let (compilation_target, target_spec_digest) = match unit.domain {
+    let (compilation_target, target_spec) = match unit.domain {
         OvenSelectedRustFacetDomain::Host => (graph.selection.host.as_str(), None),
         OvenSelectedRustFacetDomain::Target => (
             graph.selection.intent.target.as_str(),
-            Some(graph.selection.target_spec.digest.as_str()),
+            Some(&graph.selection.target_spec),
         ),
     };
     CompiledUnitIdentityInput {
@@ -226,7 +256,7 @@ fn compiled_unit_identity_input<'a>(
         profile: &graph.selection.intent.profile,
         purpose: graph.selection.purpose,
         compilation_target,
-        target_spec_digest,
+        target_spec,
         crate_name: &unit.crate_name,
         crate_kind: unit.crate_kind,
         role: unit.role,
@@ -236,8 +266,8 @@ fn compiled_unit_identity_input<'a>(
         source_members: &unit.source_members,
         root_module: &unit.root_module,
         features: &unit.features,
-        default_features: unit.default_features,
         cfg: &unit.cfg,
+        sysroot_externs: &unit.sysroot_externs,
         environment: unit
             .environment
             .iter()
@@ -249,6 +279,11 @@ fn compiled_unit_identity_input<'a>(
             .generated_inputs
             .iter()
             .map(|input| compiled_generated_input(input, unit))
+            .collect(),
+        linked_libraries: unit
+            .linked_libraries
+            .iter()
+            .map(|library| compiled_linked_library(library, unit))
             .collect(),
         dependencies,
     }
@@ -276,9 +311,13 @@ fn compiled_environment_value<'a>(
 ) -> CompiledEnvironmentValue<'a> {
     match value {
         OvenSelectedRustFacetEnvironmentValue::Text { value } => CompiledEnvironmentValue::Text { value },
+        OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
+            CompiledEnvironmentValue::CapturedText { value }
+        }
         OvenSelectedRustFacetEnvironmentValue::Path { value } => CompiledEnvironmentValue::Path {
             value: compiled_path(value, unit),
         },
+        OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => CompiledEnvironmentValue::OutDir { relative },
         OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { hmac_sha256 } => {
             CompiledEnvironmentValue::SensitiveDigest { hmac_sha256 }
         }
@@ -294,6 +333,41 @@ fn compiled_generated_input<'a>(
         name: &input.name,
         source: compiled_path(&input.source, unit),
         digest: &input.digest,
+        members: &input.members,
+    }
+}
+
+/// Project one admitted linked-library fact into the compiler-visible identity vocabulary.
+fn compiled_linked_library<'a>(
+    library: &'a OvenSelectedRustFacetLinkedLibrary,
+    unit: &'a OvenSelectedRustFacetUnit,
+) -> CompiledLinkedLibrary<'a> {
+    match library {
+        OvenSelectedRustFacetLinkedLibrary::Archive {
+            name,
+            kind,
+            artifact,
+            digest,
+        } => CompiledLinkedLibrary::Archive {
+            name,
+            kind: *kind,
+            artifact: compiled_path(artifact, unit),
+            digest,
+        },
+        OvenSelectedRustFacetLinkedLibrary::Provider { details } => CompiledLinkedLibrary::Provider {
+            name: &details.name,
+            kind: details.kind,
+            provider: &details.provider,
+            target: &details.target,
+            capability: &details.capability,
+            receipt_identity: &details.receipt_identity,
+            provenance: compiled_path(&details.provenance, unit),
+            provenance_digest: &details.provenance_digest,
+            search_root: compiled_path(&details.search_root, unit),
+            artifact: compiled_path(&details.artifact, unit),
+            digest: &details.digest,
+            members: &details.members,
+        },
     }
 }
 
@@ -303,7 +377,8 @@ mod tests {
 
     use super::*;
     use crate::rustc::{
-        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
+        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
         OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPurpose,
         OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
         OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, selected_graph_sha256,
@@ -327,19 +402,29 @@ mod tests {
         }
     }
 
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "debug".to_string(),
-                features: vec!["root-feature".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
+            host_cfg: cfg_snapshot("aarch64", "macos"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: true,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),
@@ -391,8 +476,11 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: members,
             features: vec!["feature_a".to_string()],
-            default_features: true,
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment,
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.clone(),
@@ -401,6 +489,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(&selection, &unit)?;
         let identity = unit.identity.clone();
@@ -418,22 +507,56 @@ mod tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner(),
+                },
+            )]),
         }
         .validated()?)
     }
 
-    /// Build the fixture graph with the selection mutated, leaving every unit fact this unit compiles with intact.
-    ///
-    /// The unit keeps its own features, default-feature choice, cfg, source, environment and dependencies; only the
-    /// selection-global root feature set changes. Nothing in the `rustc` command for this unit depends on it.
+    /// Build one consumer graph whose linked archive is already an admitted asset-side product.
+    fn graph_with_link_product(
+        archive_digest: &str,
+    ) -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
+        let baseline = graph("0.1.0", false)?;
+        let mut graph = baseline.into_graph();
+        let product_owner = selected_graph_sha256(b"publisher product asset");
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: product_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture graph has no unit")?;
+        unit.linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "native".to_string(),
+            kind: OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: product_owner,
+                path: "lib/libnative.a".to_string(),
+            },
+            digest: archive_digest.to_string(),
+        }];
+        unit.identity = selected_graph_unit_identity(&graph.selection, unit)?;
+        let identity = unit.identity.clone();
+        graph
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph has no exposed root")?
+            .unit = identity;
+        Ok(graph.validated()?)
+    }
+
+    /// Build the fixture graph with one root request mutated, leaving every unit fact this unit compiles with intact.
     fn graph_with_root_selection(
         root_features: &[&str],
         root_default_features: bool,
     ) -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
-        let mut selection = selection();
-        selection.intent.features = root_features.iter().map(|feature| (*feature).to_string()).collect();
-        selection.default_features = root_default_features;
+        let selection = selection();
         let members = vec![source_member("src/lib.rs", b"pub fn marker() -> u8 { 7 }\n")];
         let owner = source_owner();
         let mut unit = OvenSelectedRustFacetUnit {
@@ -455,8 +578,11 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: members,
             features: vec!["feature_a".to_string()],
-            default_features: true,
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.clone(),
@@ -465,6 +591,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(&selection, &unit)?;
         let identity = unit.identity.clone();
@@ -482,7 +609,15 @@ mod tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: root_features.iter().map(|feature| (*feature).to_string()).collect(),
+                    default_features: root_default_features,
+                    intent_owner: toolchain_owner(),
+                },
+            )]),
         }
         .validated()?)
     }
@@ -540,7 +675,15 @@ mod tests {
             .first()
             .map(|unit| unit.identity.clone())
             .ok_or("fixture graph has no unit")?;
-        widened.exposed_roots = BTreeMap::from([("fixture".to_string(), exposed)]);
+        widened.exposed_roots = BTreeMap::from([(
+            "fixture".to_string(),
+            crate::rustc::OvenSelectedRustFacetRoot {
+                unit: exposed,
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner(),
+            },
+        )]);
         let widened = widened.validated()?;
 
         let identity_of = |graph: &ValidatedOvenSelectedRustFacetGraph| {
@@ -581,8 +724,11 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: dependency_members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: dependency_owner.clone(),
@@ -591,6 +737,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         dependency.identity = selected_graph_unit_identity(&selection, &dependency)?;
 
@@ -618,8 +765,14 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: root_members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments: vec![OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "fixture_dependency".to_string(),
+                metadata: false,
+            }],
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: root_owner.clone(),
@@ -631,6 +784,7 @@ mod tests {
                 unit: dependency.identity.clone(),
             }],
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         root.identity = selected_graph_unit_identity(&selection, &root)?;
         let root_identity = root.identity.clone();
@@ -652,7 +806,15 @@ mod tests {
                 },
             ],
             units: vec![root, dependency],
-            exposed_roots: BTreeMap::from([("fixture_parent".to_string(), root_identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture_parent".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: root_identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner(),
+                },
+            )]),
         }
         .validated()?)
     }
@@ -681,6 +843,23 @@ mod tests {
         let first = graph("0.1.0", true)?;
         let second = graph("0.2.0", true)?;
         assert_ne!(only_identity(&first)?, only_identity(&second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_link_tool_identity_changes_with_admitted_product_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let first = graph_with_link_product(&selected_graph_sha256(b"first archive"))?;
+        let second = graph_with_link_product(&selected_graph_sha256(b"second archive"))?;
+        assert_ne!(first.graph().units[0].identity, second.graph().units[0].identity);
+        assert_ne!(only_identity(&first)?, only_identity(&second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn selected_link_tool_identity_retains_admitted_link_products() -> Result<(), Box<dyn std::error::Error>> {
+        let first = graph_with_link_product(&selected_graph_sha256(b"first archive"))?;
+        let second = graph_with_link_product(&selected_graph_sha256(b"second archive"))?;
+        assert_ne!(first.graph().units[0].identity, second.graph().units[0].identity);
         Ok(())
     }
 

@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 use crate::errors::{raise, raise_value_error};
+use crate::frozen::FrozenDict;
 use incan_lang::errors::{IncanError, key_not_found_in_dict};
 use incan_lang::indexing::normalize_slice_bounds;
 
@@ -360,6 +361,44 @@ where
     }
 }
 
+/// Get a mutable dict value by key, the place `d[key]` names when a method call, an assignment or a loop changes the
+/// stored value in place.
+///
+/// The probe borrows the way [`dict_get`]'s does.
+///
+/// ## Panics
+/// - `KeyError: '{key}' not found in dict` if missing.
+#[inline]
+pub fn dict_get_mut<'a, K, Q, V>(map: &'a mut HashMap<K, V>, key: &Q) -> &'a mut V
+where
+    K: Borrow<Q> + Eq + Hash,
+    Q: Eq + Hash + Display + ?Sized,
+{
+    match map.get_mut(key) {
+        Some(v) => v,
+        None => raise(key_not_found_in_dict(key)),
+    }
+}
+
+/// Get a frozen dict value by key (Python-style `d[key]` on a `const` `FrozenDict`).
+///
+/// The probe borrows the way [`dict_get`]'s does, so string-keyed frozen dicts accept literal and runtime `str`
+/// probes alike.
+///
+/// ## Panics
+/// - `KeyError: '{key}' not found in dict` if missing.
+#[inline]
+pub fn frozen_dict_get<K, Q, V>(map: &FrozenDict<K, V>, key: &Q) -> &'static V
+where
+    K: Borrow<Q>,
+    Q: PartialEq + Display + ?Sized,
+{
+    match map.get(key) {
+        Some(v) => v,
+        None => raise(key_not_found_in_dict(key)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,6 +591,22 @@ mod tests {
     }
 
     #[test]
+    fn dict_get_mut_changes_the_stored_value_in_place() {
+        let mut m: HashMap<String, Vec<i64>> = HashMap::new();
+        m.insert("a".to_string(), vec![1]);
+        dict_get_mut(&mut m, "a").push(2);
+        assert_eq!(m.get("a"), Some(&vec![1, 2]));
+    }
+
+    #[test]
+    #[should_panic(expected = "KeyError: 'b' not found in dict")]
+    fn dict_get_mut_missing_panics_with_key_error() {
+        let mut m: HashMap<String, i64> = HashMap::new();
+        m.insert("a".to_string(), 1);
+        let _ = dict_get_mut(&mut m, "b");
+    }
+
+    #[test]
     fn list_count_returns_occurrence_count() {
         let v = vec![1, 2, 1, 3, 1];
         assert_eq!(list_count(&v, &1), 3);
@@ -600,5 +655,22 @@ mod tests {
     fn list_index_missing_panics_with_value_error() {
         let v = vec![1, 2, 3];
         let _ = list_index(&v, &9);
+    }
+
+    const TABLE: FrozenDict<&'static str, i64> = FrozenDict::new(&[("names", 2), ("empty", 0)]);
+
+    /// `table[key]` on a `const` `FrozenDict` reads the value through a `str` probe of any lifetime (#1757).
+    #[test]
+    fn frozen_dict_get_reads_the_value_for_a_text_probe() {
+        let probe = String::from("names");
+        assert_eq!(*frozen_dict_get(&TABLE, probe.as_str()), 2);
+        assert_eq!(*frozen_dict_get(&TABLE, "empty"), 0);
+    }
+
+    /// A missing key raises the same `KeyError` a dict lookup raises (#1757).
+    #[test]
+    #[should_panic(expected = "KeyError")]
+    fn frozen_dict_get_missing_key_raises_key_error() {
+        let _ = frozen_dict_get(&TABLE, "missing");
     }
 }

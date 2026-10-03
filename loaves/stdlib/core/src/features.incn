@@ -1,10 +1,10 @@
 """
-Typed standard-library capability catalogue.
+Typed standard-library capability catalog.
 
 This module is the source authority for the generated feature inventory. Its runtime registry contains the entries
 from this module when loaded; tools use the compiler-checked projection for complete package discovery.
 
-The catalogue is deliberately module-private: it documents Incan's public surface without creating a second runtime API
+The catalog is deliberately module-private: it documents Incan's public surface without creating a second runtime API
 that applications would need to support or keep in sync.
 """
 
@@ -88,7 +88,7 @@ static namespaced_stdlib: RegistryEntry[FeatureId, FeatureDescriptor] = features
         references=namespaced_stdlib_references,
     ),
 )
-const rust_interop_boundary_forms: FrozenList[str] = ["from rust import uuid", "from rust::std::time import Instant", "type UserId = rusttype i64"]
+const rust_interop_boundary_forms: FrozenList[str] = ["from rust::uuid import Uuid", "from rust::std::time import Instant", "type UserId = rusttype i64"]
 const rust_interop_boundary_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Rust interop",
     path="../how-to/rust_interop.md",
@@ -1227,7 +1227,7 @@ static std_tempfile: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
         references=std_tempfile_references,
     ),
 )
-const std_datetime_forms: FrozenList[str] = ["Date.utc_today()", "DateTime.utc_now()", "TimeDelta(days=1)"]
+const std_datetime_forms: FrozenList[str] = ["from std.datetime import Date, DateTime, TimeDelta", "Date.utc_today()", "DateTime.utc_now()", "TimeDelta.days(1)"]
 const std_datetime_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="std.datetime",
     path="stdlib/datetime.md",
@@ -1694,7 +1694,7 @@ static std_registry: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("StdRegistry"),
-        name="`std.registry` typed declaration catalogues",
+        name="`std.registry` typed declaration catalogs",
         category=FeatureCategory.Stdlib,
         since="0.5",
         rfc="RFC 113",

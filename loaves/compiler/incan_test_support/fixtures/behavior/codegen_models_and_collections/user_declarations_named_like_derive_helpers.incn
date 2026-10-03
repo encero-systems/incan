@@ -1,0 +1,18 @@
+# behavior: a program may declare its own IncanClass model beside an ordinary model without colliding with the model's built-in derives
+# retires: loaves/compiler/incan_emit/src/codegen.rs::built_in_derive_macros_are_path_qualified
+# expect-stdout:
+#   Ada
+#   1
+
+model User:
+    name: str
+
+
+model IncanClass:
+    rank: int
+
+
+def main() -> None:
+    let user = User(name="Ada")
+    println(user.name)
+    println(IncanClass(rank=1).rank)

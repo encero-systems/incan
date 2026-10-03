@@ -155,35 +155,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Recursively lower one source `ast::Pattern` node into a [`bir::Pattern`], declaring a fresh local in
-    /// `arm_scope` the first time a bound name is encountered and reusing it for any later `Or`-alternative occurrence
-    /// of the same name (`seen`) -- Incan's typechecker (RFC 071) requires every alternative of an `A(x) | B(x)`
-    /// pattern to bind an identical name/type set, so Rust's own single shared binding slot per name is the correct
-    /// target shape, not one local per occurrence. `saved_bindings` accumulates `(name, previous_local)` pairs so
-    /// [`Self::lower_match`] can restore `self.bindings` to the enclosing scope once this arm's guard/body have both
-    /// been lowered, the same save/restore shape [`Self::lower_closure`] already uses around its own params/captures.
-    ///
-    /// Both `match` arms and `assert value is P` (RFC 018) lower their patterns here, so "arm" below means
-    /// whichever construct owns this pattern. The two differ in binding lifetime, and `arm_scope`/`reads` are the
-    /// two knobs that express the difference: an arm binds into its own fresh scope and is read only within that
-    /// arm, while an assertion binds into the enclosing block's scope and is read by the statements that follow it
-    /// (see [`PatternReadScope`]). An assertion also keeps its bindings afterwards rather than restoring
-    /// `saved_bindings`, which is [`Self::lower_assert`]'s decision to make, not this method's.
-    ///
-    /// `place` is the (possibly already-projected) scrutinee place this pattern node corresponds to; each
-    /// recursive call into a `Tuple`/`Struct`/`Enum` sub-pattern extends it with one more
-    /// [`bir::PlaceElem::Field`] projection -- named for a struct field, or the zero-based positional index as a
-    /// string for a tuple/enum-variant positional field, mirroring [`Self::lower_tuple_unpack`]'s own tuple-element
-    /// projection convention (`.0`/`.1` Rust tuple-field-access spelling) rather than inventing a second one.
-    ///
-    /// `expected_ty` is the best available type for this pattern node: propagated through [`Self::lower_match`]'s own
-    /// `Self::resolve_ty` call on the scrutinee for the root pattern, and through [`tuple_element_types`] for `Tuple`
-    /// sub-patterns (both already-established sources elsewhere in this file); a `Struct`/`Enum` constructor pattern's
-    /// own fields fall back to [`IncanType::Unknown`] per field, since resolving a model/class/enum-variant's real
-    /// field types would mean rebuilding the existing Rust-emission backend's own field-type-projection machinery
-    /// (`constructor_field_types_for_pattern` in `loaves/compiler/incan_ir/src/lower/expr/patterns.rs`), which this
-    /// bucket deliberately does not mirror -- see [`bir::Pattern`]'s own docs.
-    #[allow(clippy::too_many_arguments)]
     /// Lower one pattern arm whose body is a statement block, restoring the enclosing bindings afterwards.
     ///
     /// Shared by the `if let` and `while let` desugarings (#1161), which both need the same three steps: test a
@@ -240,8 +211,38 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // Carries one recursive pattern-lowering context; see the arm helper above.
-    /// Lower one checked source pattern while retaining canonical binding and ownership facts.
+    /// Recursively lower one source `ast::Pattern` node into a [`bir::Pattern`], declaring a fresh local in
+    /// `arm_scope` the first time a bound name is encountered and reusing it for any later `Or`-alternative occurrence
+    /// of the same name (`seen`) -- Incan's typechecker (RFC 071) requires every alternative of an `A(x) | B(x)`
+    /// pattern to bind an identical name/type set, so Rust's own single shared binding slot per name is the correct
+    /// target shape, not one local per occurrence. `saved_bindings` accumulates `(name, previous_local)` pairs so
+    /// [`Self::lower_match`] can restore `self.bindings` to the enclosing scope once this arm's guard/body have both
+    /// been lowered, the same save/restore shape [`Self::lower_closure`] already uses around its own params/captures.
+    ///
+    /// `match` arms, `if let`/`while let` (through [`Self::lower_statement_pattern_arm`]) and `assert value is P`
+    /// (RFC 018) all lower their patterns here, so "arm" below means whichever construct owns this pattern. They
+    /// differ in binding lifetime, and `arm_scope`/`reads` are the two knobs that express the difference: an arm
+    /// binds into its own fresh scope and is read only within that arm, while an assertion binds into the enclosing
+    /// block's scope and is read by the statements that follow it (see [`PatternReadScope`]). An assertion also
+    /// keeps its bindings afterwards rather than restoring `saved_bindings`, which is [`Self::lower_assert`]'s
+    /// decision to make, not this method's.
+    ///
+    /// `place` is the (possibly already-projected) scrutinee place this pattern node corresponds to; each
+    /// recursive call into a `Tuple`/`Struct`/`Enum` sub-pattern extends it with one more
+    /// [`bir::PlaceElem::Field`] projection -- named for a struct field, or the zero-based positional index as a
+    /// string for a tuple/enum-variant positional field, mirroring [`Self::lower_tuple_unpack`]'s own tuple-element
+    /// projection convention (`.0`/`.1` Rust tuple-field-access spelling) rather than inventing a second one.
+    ///
+    /// The type a node is lowered against comes from two sources, and the checker's wins. `TypeChecker::check_pattern`
+    /// records the checked type of every pattern node at that node's span (#1245), so a constructor payload -- an
+    /// `Option`'s element, a user or imported enum variant's declared payload, a model field, or the borrow-wrapped
+    /// form of any of those -- is read back here rather than re-derived; this is the same fact `for` patterns
+    /// carry (#1125), and it is what a binding's [`bir::OwnershipFact`] follows from. `expected_ty` is the threaded
+    /// fallback for a node the checker recorded no type for: [`Self::lower_match`]'s scrutinee type for the root,
+    /// [`tuple_element_types`] for `Tuple` elements, and [`result_type_parts`] for an intrinsic `Result` payload.
+    /// A generic constructor's sub-patterns thread [`IncanType::Unknown`], because lowering has no payload
+    /// resolution of its own and must not grow one that could disagree with the checker's.
+    #[allow(clippy::too_many_arguments)] // Carries one recursive pattern-lowering context; see the rustdoc above.
     pub(super) fn lower_match_pattern(
         &mut self,
         pattern: &ast::Spanned<ast::Pattern>,
@@ -253,6 +254,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
     ) -> bir::Pattern {
         let span = hir_span(pattern.span);
+
+        // ---- The checker's recorded type for this node outranks the threaded expectation ----
+        let checked_ty = self.resolve_ty(pattern.span);
+        let expected_ty = if matches!(checked_ty, IncanType::Unknown) {
+            expected_ty
+        } else {
+            &checked_ty
+        };
+
         match &pattern.node {
             ast::Pattern::Wildcard => bir::Pattern::Wildcard,
             ast::Pattern::Binding(name) => {

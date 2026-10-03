@@ -1,0 +1,69 @@
+# behavior: a dependency's enums that share variant names (a value enum beside payload enums of other arities, in both declaration orders, and enums imported from a sibling module) each publish their own variants, and a variant whose payload type is declared after its enum publishes that type; the dependency builds and the consumer constructs, matches and prints each (#1561)
+# retires: loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs::a_variant_payload_declared_after_its_enum_publishes_its_type_issue1561
+# retires: loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs::enums_sharing_a_variant_name_publish_each_enums_own_payload_issue1561
+# expect-stdout:
+#   enter intro
+#   leave
+#   enter
+#   leave
+#   entering
+#   leaving
+#   intro at gate 1
+#   gone
+#   north at gate 4
+#   enter 1,2
+#   leave done
+#   start
+#   start
+#   start 4
+#   2
+#   3
+
+from pub::flows import (
+    Action,
+    ActionKind,
+    EnterPayload,
+    Later,
+    Move,
+    Signal,
+    SignalKind,
+    Wrapper,
+    count_of,
+    describe,
+    kind_of,
+    phase_of,
+    route_of,
+    signal_kind,
+)
+from pub::flows.kinds import Phase, Route, route_label
+
+
+def label(action: Action) -> str:
+    match action:
+        Action.Enter(payload) => return f"enter {payload.step}"
+        Action.Leave => return "leave"
+
+
+def main() -> None:
+    enter = Action.Enter(EnterPayload(step="intro"))
+    println(label(enter))
+    println(label(Action.Leave))
+    println(kind_of(enter).value())
+    println(ActionKind.Leave.value())
+    println(phase_of(enter).value())
+    println(Phase.Leave.value())
+    println(route_of(enter))
+    println(route_of(Action.Leave))
+    println(route_label(Route.Enter("north", 4)))
+    println(describe(Move.Enter(1, 2)))
+    println(describe(Move.Leave("done")))
+    println(signal_kind(Signal.Start(3)).value())
+    println(SignalKind.Start.value())
+    match Signal.Start(4):
+        Signal.Start(value) => println(f"start {value}")
+        Signal.Stop => println("stop")
+    held = Wrapper.Holds(Later(count=2))
+    println(count_of(held))
+    match held:
+        Wrapper.Holds(later) => println(later.count + 1)
+        Wrapper.Empty => println("empty")

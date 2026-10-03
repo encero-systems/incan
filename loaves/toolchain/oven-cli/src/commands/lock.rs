@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::{CliError, CliResult, ExitCode};
 use incan_driver::cargo_policy::enforce_project_toolchain_constraint;
-use incan_driver::lock::resolution::collect_and_publish_project_lock;
+use incan_driver::lock::resolution::prepare_sdk_and_publish_project_lock;
 use incan_provider::FeatureSelection;
 use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::ProjectManifest;
@@ -36,7 +36,7 @@ pub fn lock_project(
         cargo_all_features,
     }
     .normalized();
-    let _ = collect_and_publish_project_lock(
+    let _ = prepare_sdk_and_publish_project_lock(
         &manifest,
         entry_file.map(PathBuf::as_path),
         &cargo_features,

@@ -70,3 +70,6 @@ benchmarks/collections/ordinal_map/target/
 # Generated files we do not want to commit
 workspaces/docs-site/docs/_snippets/rfcs_refs.md
 workspaces/docs-site/docs/_snippets/tables/rfcs_index.md
+
+# Test inventory proposals are a reviewer scratch sidecar, never the record.
+scripts/test_inventory/proposals.json

@@ -1,0 +1,55 @@
+# behavior: a trait's default method that calls a method its trait or supertrait declares, on self or on another Self value, uses the declared result: a str it concatenates, measures and upper-cases, and a generic trait's type parameter it collects
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::trait_default_calls_on_self_take_the_declared_signature_issue1561
+# expect-stdout:
+#   x!
+#   6
+#   hi LABEL
+#   [4, 4]
+
+trait Named:
+    def name(self) -> str: ...
+
+
+trait Tag with Named:
+    def tag(self) -> str: ...
+
+    def loud(self) -> str:
+        return self.tag() + "!"
+
+    def size(self) -> int:
+        return len(self.tag()) + len(self.name())
+
+    def greet(self, other: Self) -> str:
+        return "hi " + other.name().upper()
+
+
+trait Holder[T]:
+    def get(self) -> T: ...
+
+    def pair(self) -> list[T]:
+        return [self.get(), self.get()]
+
+
+model Label with Tag:
+    text: str
+
+    def name(self) -> str:
+        return "label"
+
+    def tag(self) -> str:
+        return self.text
+
+
+model Box with Holder[int]:
+    value: int
+
+    def get(self) -> int:
+        return self.value
+
+
+def main() -> None:
+    label = Label(text="x")
+    println(label.loud())
+    println(label.size())
+    println(label.greet(Label(text="y")))
+    println(Box(value=4).pair())

@@ -8,7 +8,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(
-    serde::Serialize,
+    ::serde::Serialize,
     Default,
     Eq,
     Hash,

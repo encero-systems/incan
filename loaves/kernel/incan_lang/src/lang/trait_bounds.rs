@@ -8,7 +8,12 @@
 //! - Lookup via [`incan_to_rust`] is **case-sensitive**.
 //! - This registry only covers traits used as *bounds* on type parameters; the full trait vocabulary is in
 //!   [`crate::lang::traits`].
-//! - Unknown names are passed through as-is during lowering (allowing user-defined trait bounds).
+//! - Names without a registry mapping pass through during lowering; the frontend requires them to resolve as
+//!   user-defined traits.
+//! - Every `@derive(...)` name that is also a source-owned builtin trait (one with a
+//!   [`crate::lang::traits::source_module`]) must have an entry here. A derived implementation is the Rust trait's, so
+//!   a bound spelled with that name has to lower to the same Rust trait; without a mapping the bound lowers to the
+//!   generated `__incan_std` source trait, which no derived type implements (#1374).
 
 use super::registry::{RFC, RfcId, Since, Stability};
 
@@ -19,10 +24,12 @@ pub enum TraitBoundId {
     Ord,
     Hash,
     Clone,
+    Default,
     Debug,
     Display,
     Serialize,
     Deserialize,
+    Awaitable,
 }
 
 /// Metadata for a trait bound mapping entry.
@@ -52,8 +59,8 @@ pub const TRAIT_BOUNDS: &[TraitBoundMapping] = &[
     mapping(
         TraitBoundId::Ord,
         "Ord",
-        "PartialOrd",
-        "Ordering comparison — Incan `Ord` maps to Rust `PartialOrd`.",
+        rust::ORD,
+        "Total ordering — Incan `Ord` maps to Rust `Ord`.",
         RFC::_023,
         Since(0, 2),
     ),
@@ -72,6 +79,14 @@ pub const TRAIT_BOUNDS: &[TraitBoundMapping] = &[
         "Cloning support.",
         RFC::_023,
         Since(0, 2),
+    ),
+    mapping(
+        TraitBoundId::Default,
+        "Default",
+        rust::DEFAULT,
+        "Default value construction — the Rust trait `@derive(Default)` implements.",
+        RFC::_023,
+        Since(0, 6),
     ),
     mapping(
         TraitBoundId::Debug,
@@ -105,6 +120,14 @@ pub const TRAIT_BOUNDS: &[TraitBoundMapping] = &[
         RFC::_023,
         Since(0, 2),
     ),
+    mapping(
+        TraitBoundId::Awaitable,
+        "Awaitable",
+        rust::AWAITABLE,
+        "Awaitable values — the async runtime's realization of RFC 039's `Awaitable[T]`; a bound only, never adopted.",
+        RFC::_039,
+        Since(0, 6),
+    ),
 ];
 
 // ============================================================================
@@ -119,11 +142,16 @@ pub mod rust {
     // Comparison
     pub const PARTIAL_EQ: &str = "PartialEq";
     pub const PARTIAL_ORD: &str = "PartialOrd";
+    pub const ORD: &str = "Ord";
     pub const EQ: &str = "Eq";
     pub const HASH: &str = "std::hash::Hash";
 
-    // Cloning
+    // Cloning and construction
     pub const CLONE: &str = "Clone";
+    /// The method of Rust's `Clone` trait: a `.clone()` call on a value that holds a type parameter requires [`CLONE`]
+    /// of it.
+    pub const CLONE_METHOD: &str = "clone";
+    pub const DEFAULT: &str = "std::default::Default";
 
     // Formatting
     pub const DEBUG: &str = "std::fmt::Debug";
@@ -138,6 +166,8 @@ pub mod rust {
 
     // Async
     pub const FUTURE: &str = "std::future::Future";
+    /// The runtime trait a `with Awaitable[T]` bound lowers to (`IntoFuture<Output = T>` behind a blanket impl).
+    pub const AWAITABLE: &str = "incan_std_async::task::Awaitable";
 
     // Compiler-provided Incan reflection capabilities
     pub const INCAN_CLASS_NAME: &str = "incan_std_core::reflection::HasClassName";

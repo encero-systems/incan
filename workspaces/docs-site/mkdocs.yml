@@ -163,6 +163,7 @@ nav:
           - Workspaces: language/how-to/workspaces.md
           - Testing: language/how-to/testing_stdlib.md
           - Typed registries: language/how-to/typed_registries.md
+          - Decorators and callables: language/how-to/decorators.md
           - String processing: language/how-to/string_processing.md
           - Regular expressions: language/how-to/regular_expressions.md
           - Working with UUIDs: language/how-to/working_with_uuids.md
@@ -174,6 +175,7 @@ nav:
           - Language reference (generated): language/reference/language.md
           - Feature inventory (generated): language/reference/feature_inventory.md
           - Code style guide: language/reference/code_style.md
+          - Assignments: language/reference/assignments.md
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
@@ -183,7 +185,9 @@ nav:
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
           - Static storage: language/reference/static_storage.md
+          - Frozen collections: language/reference/frozen_collections.md
           - Numeric semantics: language/reference/numeric_semantics.md
+          - Match patterns: language/reference/match_patterns.md
           - Project lifecycle: language/reference/project_lifecycle.md
           - Strings and Bytes: language/reference/strings.md
           - Reflection: language/reference/reflection.md
@@ -237,10 +241,11 @@ nav:
           - Why not just Rust?: language/explanation/why_not_just_rust.md
           - How Incan works: language/explanation/how_incan_works.md
           - Compile time and runtime: language/explanation/compile_time_and_runtime.md
-          - Checked catalogues and loaded registries: language/explanation/checked_and_loaded_registries.md
+          - Checked catalogs and loaded registries: language/explanation/checked_and_loaded_registries.md
           - Checked C interop: language/explanation/checked_c_interop.md
           - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md
+          - Functions and calls: language/explanation/functions_and_calls.md
           - Callable presets: language/explanation/callable_presets.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
@@ -331,6 +336,7 @@ nav:
           - Architecture: contributing/explanation/architecture.md
           - Duckborrowing: contributing/explanation/duckborrowing.md
           - Generated Rust quality: contributing/explanation/generated_rust_quality.md
+          - Rust-source backend deprecation: contributing/explanation/rust_source_backend_deprecation.md
           - Layering rules: contributing/explanation/layering.md
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md
@@ -340,9 +346,10 @@ nav:
       - Reference:
           - Backend behavior inventory: contributing/reference/backend_behavior_inventory.md
           - Replacement compatibility inventory: contributing/reference/replacement_compatibility_inventory.md
+          - Test corpus inventory: contributing/reference/test_corpus_inventory.md
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
-          - Rust-source backend deprecation policy: contributing/reference/rust_source_backend_deprecation.md
+          - Rust-source backend migration notes and freeze: contributing/reference/rust_source_backend_deprecation.md
   - Release notes:
       - Overview: release_notes/index.md
       - Release 0.6 (development): release_notes/0_6.md

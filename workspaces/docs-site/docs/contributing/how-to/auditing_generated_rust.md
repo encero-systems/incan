@@ -81,3 +81,41 @@ Marker counts are literal occurrence scans for review prompts. They are not find
 3. Save Markdown or JSON output with `--output` if the review needs an artifact.
 4. Fill in the clone, allocation, and eager-collection notes during manual review.
 5. Attach the report or summarize its objective statuses in the implementation handoff.
+
+## Review a backend change
+
+Review a compiler or backend change against the [Rust-source backend deprecation](../explanation/rust_source_backend_deprecation.md) policy and the [backend behavior inventory](../reference/backend_behavior_inventory.md) with these questions:
+
+1. Is this behavior documented, tested, and intentionally supported?
+2. Does the patch change source behavior or only generated artifact shape?
+3. If it changes source behavior, is the behavior recorded before backend emission?
+4. If it changes generated Rust, is the generated Rust a consumer of semantic facts or the source of the decision? Does the change add semantic authority to old Rust-source lowering/emission?
+5. Which evidence lane proves it outside the local file path? Does the test cover the boundary that can observe the behavior: direct, import, facade/reexport, package consumer, test batch, vocab, generated project, or downstream lane?
+6. If it is a compatibility fix or touches old backend compatibility, where is the [migration note](../reference/rust_source_backend_deprecation.md#migration-note), and does it state a retirement condition?
+7. Which stable ID, semantic fact, HIR, Body IR, ABI metadata, runtime-service fact, or diagnostic should own the behavior next?
+8. Is there a concrete existing anchor in the inventory's [repo anchors](../reference/backend_behavior_inventory.md#representative-repo-anchors), or does the change need a new focused fixture?
+9. Does it preserve the current Rust-source backend without making replacement harder?
+
+Use more than one [evidence lane](../reference/backend_behavior_inventory.md#evidence-lanes) when a behavior can cross boundaries.
+
+The inventory's repo anchors are starting points for reviewers. They are not exhaustive, and new backend work should add tighter tests when a behavior lacks a direct anchor.
+
+Before adding a new broad regression lane, check whether the repository already has a compact [guardrail](../reference/rust_source_backend_deprecation.md#guardrails) for the boundary.
+
+## Update the stdlib coverage inventory
+
+The [generated Rust stdlib coverage inventory](../reference/generated_rust_stdlib_coverage.md) has one row per `std.*` module. A change that alters a module's coverage updates its row, and a new stdlib module gets a row in its component's section.
+
+1. List the stdlib modules (every `.incn` file under a component's `src/`, apart from its `lib.incn` provider entrypoint):
+
+    ```sh
+    rg --files loaves/stdlib | rg '/src/.*\.incn$' | rg -v '/lib\.incn$'
+    ```
+
+2. Find the tests and fixtures that reach a module:
+
+    ```sh
+    rg -n 'std_|from std\.|import std' loaves/toolchain/incan-cli/tests loaves/compiler/incan_emit/tests loaves/compiler/incan_test_support/fixtures loaves/stdlib/core/rust/tests
+    ```
+
+3. Pick the row's coverage label from the inventory's label table, and name the tests or fixtures that prove it in the evidence column.

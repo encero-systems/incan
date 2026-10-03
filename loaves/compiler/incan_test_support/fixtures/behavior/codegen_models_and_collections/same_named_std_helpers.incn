@@ -1,0 +1,27 @@
+# behavior: std.testing's timeout marker and std.async.time's timeout are distinct functions that import side by side, and the async one races a task against its limit
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_same_named_stdlib_helpers_do_not_contaminate_nested_module_signatures
+# expect-stdout:
+#   7
+#   timed out
+
+import std.async
+from std.testing import timeout
+from std.async.time import sleep, timeout as async_timeout
+
+
+async def quick() -> int:
+    return 7
+
+
+async def slow() -> int:
+    await sleep(0.5)
+    return 8
+
+
+async def main() -> None:
+    match await async_timeout(1.0, quick()):
+        Ok(value) => println(value)
+        Err(_) => println("timed out")
+    match await async_timeout(0.01, slow()):
+        Ok(value) => println(value)
+        Err(_) => println("timed out")

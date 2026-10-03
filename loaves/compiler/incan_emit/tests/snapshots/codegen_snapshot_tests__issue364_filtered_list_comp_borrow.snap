@@ -72,10 +72,8 @@ impl incan_std_core::reflection::HasFieldValueReflection for StoredNode {
     }
 }
 fn store_nodes(store_id: i64, stored_nodes: Vec<StoredNode>) -> Vec<String> {
-    return (stored_nodes)
-        .iter()
+    return ((stored_nodes).into_iter())
         .filter_map(|stored| {
-            let stored = (*stored).clone();
             if stored.store_id_raw == store_id { Some(stored.node) } else { None }
         })
         .collect::<Vec<_>>();

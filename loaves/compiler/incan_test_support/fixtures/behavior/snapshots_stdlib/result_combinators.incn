@@ -1,0 +1,78 @@
+# behavior: Result map and and_then take named functions, inspect takes a callable object or a named function over a non-Copy payload, and unwrap reads an Ok payload inside a function generic over an unbounded error type, so no Debug on the error is needed (RFC 070)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc070_result_combinators_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc070_result_unwrap_codegen_does_not_require_debug_err
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc070_result_inspect_non_copy_observer_borrows_payload
+# expect-stdout:
+#   observer 6
+#   ok 6
+#   not positive
+#   9
+#   payload orders
+#   observer orders
+#   ok orders
+
+from std.traits.callable import Callable1
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def keep_positive(value: int) -> Result[int, str]:
+    if value > 0:
+        return Ok(value)
+    return Err("not positive")
+
+
+model Observer with Callable1[int, None]:
+    def __call__(self, value: int) -> None:
+        println(f"observer {value}")
+
+
+def pipeline(result: Result[int, str]) -> Result[int, str]:
+    observer = Observer()
+    return result.map(double).and_then(keep_positive).inspect(observer)
+
+
+model PlainError:
+    message: str
+
+
+pub def direct[E](result: Result[int, E]) -> int:
+    return result.unwrap()
+
+
+model Payload:
+    name: str
+
+
+def observe_payload(payload: Payload) -> None:
+    println(f"payload {payload.name}")
+
+
+model PayloadObserver with Callable1[Payload, None]:
+    def __call__(self, payload: Payload) -> None:
+        println(f"observer {payload.name}")
+
+
+pub def transform(result: Result[Payload, str]) -> Result[Payload, str]:
+    return result.inspect(observe_payload)
+
+
+pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload, str]:
+    observer = PayloadObserver()
+    return result.inspect(observer)
+
+
+def main() -> None:
+    match pipeline(Ok(3)):
+        Ok(value) => println(f"ok {value}")
+        Err(error) => println(error)
+    match pipeline(Ok(-3)):
+        Ok(value) => println(f"ok {value}")
+        Err(error) => println(error)
+    plain: Result[int, PlainError] = Ok(9)
+    println(direct(plain))
+    match transform_with_observer(transform(Ok(Payload(name="orders")))):
+        Ok(payload) => println(f"ok {payload.name}")
+        Err(error) => println(error)

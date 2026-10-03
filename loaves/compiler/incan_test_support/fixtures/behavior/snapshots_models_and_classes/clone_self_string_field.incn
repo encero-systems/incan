@@ -1,0 +1,19 @@
+# behavior: a class method named clone that rebuilds the instance from its str and int fields returns an independent copy (#366)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue366_clone_self_string_field_codegen
+# expect-stdout:
+#   orders
+#   orders 1
+
+pub class ActiveRegistration:
+    pub logical_name: str
+    pub rank: int
+
+    def clone(self) -> Self:
+        return ActiveRegistration(logical_name=self.logical_name, rank=self.rank)
+
+
+def main() -> None:
+    reg = ActiveRegistration(logical_name="orders", rank=1)
+    copied = reg.clone()
+    println(copied.logical_name)
+    println(f"{reg.logical_name} {copied.rank}")

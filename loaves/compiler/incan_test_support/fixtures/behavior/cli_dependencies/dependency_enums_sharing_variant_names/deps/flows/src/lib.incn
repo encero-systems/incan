@@ -1,0 +1,83 @@
+from kinds import Phase, Route, route_label
+
+
+@derive(Clone, Eq)
+pub enum ActionKind(str):
+    Enter = "enter"
+    Leave = "leave"
+
+
+@derive(Clone)
+pub model EnterPayload:
+    pub step: str
+
+
+@derive(Clone)
+pub enum Action:
+    Enter(EnterPayload)
+    Leave
+
+
+@derive(Clone)
+pub enum Move:
+    Enter(int, int)
+    Leave(str)
+
+
+@derive(Clone)
+pub enum Signal:
+    Start(int)
+    Stop
+
+
+@derive(Clone, Eq)
+pub enum SignalKind(str):
+    Start = "start"
+    Stop = "stop"
+
+
+@derive(Clone)
+pub enum Wrapper:
+    Holds(Later)
+    Empty
+
+
+@derive(Clone)
+pub model Later:
+    pub count: int
+
+
+pub def kind_of(action: Action) -> ActionKind:
+    match action:
+        Action.Enter(_) => return ActionKind.Enter
+        Action.Leave => return ActionKind.Leave
+
+
+pub def phase_of(action: Action) -> Phase:
+    match action:
+        Action.Enter(_) => return Phase.Enter
+        Action.Leave => return Phase.Leave
+
+
+pub def route_of(action: Action) -> str:
+    match action:
+        Action.Enter(payload) => return route_label(Route.Enter(payload.step, 1))
+        Action.Leave => return route_label(Route.Leave)
+
+
+pub def describe(step: Move) -> str:
+    match step:
+        Move.Enter(x, y) => return f"enter {x},{y}"
+        Move.Leave(reason) => return f"leave {reason}"
+
+
+pub def signal_kind(signal: Signal) -> SignalKind:
+    match signal:
+        Signal.Start(_) => return SignalKind.Start
+        Signal.Stop => return SignalKind.Stop
+
+
+pub def count_of(wrapper: Wrapper) -> int:
+    match wrapper:
+        Wrapper.Holds(later) => return later.count
+        Wrapper.Empty => return 0

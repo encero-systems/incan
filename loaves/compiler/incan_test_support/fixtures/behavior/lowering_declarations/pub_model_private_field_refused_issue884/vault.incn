@@ -1,0 +1,6 @@
+pub model Vault:
+    secret: str = "sealed"
+    pub label: str
+
+    def reveal(self) -> str:
+        return self.secret

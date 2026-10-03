@@ -105,6 +105,8 @@ It does *not* necessarily mean “multiple functions with the same name and diff
 
 In Incan, most extensibility is intended to flow through traits and explicit, checkable contracts.
 
+Adopting one trait several times with different type arguments is how a type offers more than one statically checked shape of the same syntax. A table that adopts `Index[str, str]` and `Index[int, str]` answers `table["name"]` and `table[0]`, and the key's type picks the `__getitem__` at check time, with no dispatch at run time. That is not general method overloading: two same-name hooks from unrelated trait families are still refused, because nothing would say which one a call means.
+
 ## A concrete mental model
 
 You can think of hook traits as giving user-defined types the same “surface ergonomics” that built-in types have.
@@ -119,6 +121,26 @@ That’s why the stdlib defines traits for:
 - awaitability (`await obj`)
 - operators (`+`, `-`, `*`, `/`, etc.)
 - conversions (`from`, `into`, `try_from`, `try_into`)
+
+## Hooks and protocol traits
+
+Dunder hooks are the implementation methods of a protocol. Explicit trait adoption names the capability when a bound, diagnostic, or reference page needs stable vocabulary.
+
+## Iterator adapters
+
+The standard library provides default Incan implementations of the iterator adapters and terminals. The compiler may recognize the canonical methods and lower them through backend-native iterator chains when the generated behavior is equivalent.
+
+## Truthiness
+
+`Bool` is available for types whose domain has a clear truth value. It should not replace explicit checks for optionality, errors, emptiness, or named state. Prefer patterns such as `value is Some(x)`, `result is Ok(x)`, `len(items) > 0`, `name != ""`, or `connection.is_open` when those are what the code actually means.
+
+## The `std.traits` families
+
+The conversion traits split by whether a conversion can fail. `From[T]` is for a conversion that always succeeds, so `from` returns `Self`; `TryFrom[T]` is for a conversion that can fail, so `try_from` returns `Result[Self, str]`. `Into[T]` and `TryInto[T]` declare the same two kinds of conversion as methods of the source value, `into` and `try_into`.
+
+`Index` and `IndexMut` in `std.traits.indexing` are the canonical names for indexed reads and writes. `GetItem` and `SetItem` in `std.traits.ops` remain from the older operator vocabulary; they name the same `__getitem__` and `__setitem__` hooks, and new code and documentation name `Index` and `IndexMut` instead.
+
+The root module `std.traits` gathers the most common traits, so a single import brings in the conversion, arithmetic, error, indexing and callable traits without naming each submodule. The exact list is in the [`std.traits` reference](../reference/stdlib/traits.md).
 
 ## See also
 

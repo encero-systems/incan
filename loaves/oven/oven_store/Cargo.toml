@@ -15,6 +15,7 @@ path = "src/lib.rs"
 test_support = []
 
 [dependencies]
+ar_archive_writer = { workspace = true }
 hex = "0.4.3"
 oven_model = { workspace = true }
 serde = { workspace = true }

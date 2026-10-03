@@ -1,0 +1,16 @@
+# behavior: a for loop, a comprehension or a pattern that changes the items of a static through a local bound to it, declared mut or not, is refused at check time like one over the static itself
+# expect-diagnostic: INCAN-T0001
+
+static ROWS: list[list[int]] = [[1]]
+
+
+def main() -> None:
+    mut live = ROWS
+    live.append([2])
+    for row in live:
+        row.append(2)
+    let fixed = ROWS
+    for row in fixed:
+        row.append(3)
+    popped = [row.pop() for row in live]
+    println(len(popped))

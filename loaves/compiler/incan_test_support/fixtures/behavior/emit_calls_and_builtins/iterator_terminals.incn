@@ -1,0 +1,49 @@
+# behavior: the collect, count, reduce, fold, any, all, find, for_each and sum terminals over a list iterator each produce the expected result
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::known_iterator_terminal_methods_emit_incan_next_loops_except_source_owned_sum
+# expect-stdout:
+#   3
+#   3
+#   6
+#   16
+#   true
+#   false
+#   found 2
+#   none
+#   seen 1
+#   seen 2
+#   seen 3
+#   6
+
+def add(acc: int, n: int) -> int:
+    return acc + n
+
+
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+
+def is_big(n: int) -> bool:
+    return n > 5
+
+
+def show(n: int) -> None:
+    println(f"seen {n}")
+
+
+def main() -> None:
+    xs: list[int] = [1, 2, 3]
+    collected: list[int] = xs.iter().collect()
+    println(len(collected))
+    println(xs.iter().count())
+    println(xs.iter().reduce(0, add))
+    println(xs.iter().fold(10, add))
+    println(xs.iter().any(is_even))
+    println(xs.iter().all(is_even))
+    match xs.iter().find(is_even):
+        Some(value) => println(f"found {value}")
+        None => println("none")
+    match xs.iter().find(is_big):
+        Some(value) => println(f"found {value}")
+        None => println("none")
+    xs.iter().for_each(show)
+    println(xs.iter().sum())

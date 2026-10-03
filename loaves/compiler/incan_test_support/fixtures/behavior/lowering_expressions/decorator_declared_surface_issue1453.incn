@@ -1,0 +1,51 @@
+# behavior: a decorator declared after the function it decorates and a factory decorator both keep the decorated function's declared union surface, and an undecorated function is untouched (#1453)
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::decorator_declared_result_type_follows_the_resolved_declaration_issue1453
+# expect-stdout:
+#   preserve wrapped
+#   configure wrapped
+#   preserve wrapped
+#   echo int 42
+#   echo str hello
+#   twice int 7
+#   plain 3
+
+type Answer = int | str
+
+
+@preserve
+def echo(value: Answer) -> Answer:
+    return value
+
+
+@configure()
+def twice(value: Answer) -> Answer:
+    return value
+
+
+def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer):
+    println("preserve wrapped")
+    return func
+
+
+def configure() -> (((Answer) -> Answer) -> ((Answer) -> Answer)):
+    println("configure wrapped")
+    return preserve
+
+
+def plain(value: int) -> int:
+    return value + 1
+
+
+def show(label: str, value: Answer) -> None:
+    match value:
+        case int(number):
+            println(f"{label} int {number}")
+        case str(text):
+            println(f"{label} str {text}")
+
+
+def main() -> None:
+    show("echo", echo(42))
+    show("echo", echo("hello"))
+    show("twice", twice(7))
+    println(f"plain {plain(2)}")

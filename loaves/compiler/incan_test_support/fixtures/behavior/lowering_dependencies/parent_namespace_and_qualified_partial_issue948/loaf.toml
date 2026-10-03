@@ -1,0 +1,9 @@
+[project]
+name = "parent_namespace_and_qualified_partial_issue948"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+modulelib = { path = "deps/modulelib" }

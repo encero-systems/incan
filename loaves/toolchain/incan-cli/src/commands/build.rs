@@ -569,6 +569,7 @@ pub fn run_file(
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     release: bool,
+    program_args: Vec<String>,
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&cargo_policy, None)?;
     incan_driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
@@ -596,6 +597,7 @@ pub fn run_file(
         let mut command = Command::new(&selected.native_output);
         command.current_dir(project_root);
         clear_inherited_cargo_environment(&mut command);
+        command.args(&program_args);
         let status = command.status().map_err(|error| {
             CliError::failure(format!(
                 "failed to run selected Oven project-output Loaf {}: {error}",
@@ -618,7 +620,7 @@ pub fn run_file(
         None,
         &BackendSelectionOptions::default(),
     )?;
-    run_oven_prepared_project(prepared, profile)
+    run_oven_prepared_project(prepared, profile, &program_args)
 }
 
 /// Build and run inline Incan source from `incan run -c`.
@@ -632,6 +634,7 @@ pub fn run_inline_source(
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     release: bool,
+    program_args: Vec<String>,
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&cargo_policy, None)?;
     let wrapped_source = wrap_inline_command_source(source);
@@ -677,17 +680,22 @@ pub fn run_inline_source(
         None,
         &BackendSelectionOptions::default(),
     )
-    .and_then(|prepared| run_oven_prepared_project(prepared, if release { "release" } else { "debug" }));
+    .and_then(|prepared| run_oven_prepared_project(prepared, if release { "release" } else { "debug" }, &program_args));
     let _ = fs::remove_file(&source_path);
     result
 }
 
 /// Run a receipt-selected native Oven executable while retaining its entry lease for the full process lifetime.
-fn run_oven_prepared_project(prepared: OvenPreparedProject, profile: &str) -> CliResult<ExitCode> {
+fn run_oven_prepared_project(
+    prepared: OvenPreparedProject,
+    profile: &str,
+    program_args: &[String],
+) -> CliResult<ExitCode> {
     let bake = bake_oven_project(&prepared, profile, None)?;
     let mut command = Command::new(&bake.output);
     command.current_dir(&prepared.project_root);
     clear_inherited_cargo_environment(&mut command);
+    command.args(program_args);
     let status = command
         .status()
         .map_err(|error| CliError::failure(format!("failed to run Oven binary {}: {error}", bake.output.display())))?;
@@ -717,10 +725,82 @@ mod tests {
     use incan_frontend::library_manifest::LibraryManifest;
     use incan_provider::FeatureSelection;
     use oven_model::lock::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
+
     #[cfg(feature = "rust_inspect")]
     use rust_inspect::Inspector;
     #[cfg(feature = "rust_inspect")]
     use rust_inspect::InspectorConfig;
+
+    /// Copy a source tree into an isolated component fixture without following symlinks.
+    fn copy_source_tree(from: &Path, to: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        fs::create_dir_all(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let source = entry.path();
+            let destination = to.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                copy_source_tree(&source, &destination)?;
+            } else if entry.file_type()?.is_file() {
+                fs::copy(source, destination)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// #1976: SDK prewarm cache hits must not be the only check of `std.async`; its complete source graph must pass a
+    /// fresh source check with an isolated SDK home.
+    #[test]
+    fn std_async_component_sources_typecheck_from_source_issue1976() -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "INCAN_TEST_1976_STDLIB_SOURCE_CHILD";
+        const ENTRY: &str = "INCAN_TEST_1976_STDLIB_SOURCE_ENTRY";
+        if env::var_os(CHILD).is_some() {
+            let entry = env::var(ENTRY)?;
+            crate::commands::diagnostics::check_path(
+                Path::new(&entry),
+                crate::commands::diagnostics::DiagnosticOutputFormat::Text,
+            )?;
+            return Ok(());
+        }
+
+        let root = incan_test_support::repo_root();
+        let state = tempfile::tempdir()?;
+        let stdlib = state.path().join("stdlib");
+        copy_source_tree(&root.join("loaves/stdlib"), &stdlib)?;
+        let component = stdlib.join("async");
+        let component_manifest = fs::read_to_string(component.join("loaf.toml"))?;
+        let sdk_profile = component_manifest
+            .find("\n[sdk]\n")
+            .ok_or("async component manifest has no SDK profile")?;
+        fs::write(component.join("loaf.toml"), &component_manifest[..sdk_profile])?;
+        fs::write(
+            component.join("rust/Cargo.toml"),
+            "[package]\nname = \"incan_std_async\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\ntokio = { version = \"1\", features = [\"rt-multi-thread\", \"macros\", \"time\", \"sync\", \"net\"] }\n",
+        )?;
+        let entry = component.join("src/lib.incn");
+        let child = std::process::Command::new(env::current_exe()?)
+            .args([
+                "--exact",
+                "commands::build::tests::std_async_component_sources_typecheck_from_source_issue1976",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env(ENTRY, &entry)
+            .env("INCAN_SOURCE_ROOT", &root)
+            .env("INCAN_STDLIB", &stdlib)
+            .env("INCAN_STDLIB_DIR", &stdlib)
+            .env("INCAN_HOME", state.path().join("home"))
+            .env(incan_provider::SDK_PROVIDER_BUILD_ENV, "stdlib-async")
+            .env_remove(incan_provider::inventory::SDK_INVENTORY_OVERRIDE_ENV)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            child.status.success(),
+            "the std.async source-check child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(stdout.contains("1 passed"), "the child ran no exact test:\n{stdout}");
+        Ok(())
+    }
 
     #[test]
     fn completed_output_reuse_requires_the_implicit_default_backend_selection() {
@@ -1256,7 +1336,7 @@ pub def normalize(value: str) -> str:
     -> Result<(), Box<dyn std::error::Error>> {
         // The replacement path owes Body IR a desugared program. This is what "owes" means concretely: a vocab
         // declaration whose library is unavailable stops here, with the resolution failure the desugar pass already
-        // reports, rather than travelling on to become a lowering refusal at the same span.
+        // reports, rather than traveling on to become a lowering refusal at the same span.
         let program = incan_frontend::ast::Program {
             declarations: vec![undesugared_vocab_declaration()],
             ..Default::default()

@@ -1,0 +1,49 @@
+# behavior: filtered and plain comprehensions over lists of strings and ints, a comprehension over a mut list parameter, and list() over a list, a mut parameter, a str, a frozen list, a frozen set and a dict each produce the expected items while their sources stay intact
+# retires: loaves/compiler/incan_emit/src/ownership.rs::filtered_list_comprehension_uses_filter_map_clone_plan
+# retires: loaves/compiler/incan_emit/src/ownership.rs::copy_list_comprehension_uses_copy_iteration_plans
+# retires: loaves/compiler/incan_emit/src/ownership.rs::list_constructor_source_plans_follow_loop_iteration
+# expect-stdout:
+#   ["ab", "def"] 3
+#   [3, 1, 2] 9 4
+#   [4, 2]
+#   ["ab", "c", "def"] ["ab", "c", "def", "z"] 4
+#   ["h", "e", "y"]
+#   ["x", "y"] 2 2
+
+const FROZEN_TEXT: FrozenList[str] = ["x", "y"]
+const FROZEN_NUMBERS: FrozenSet[int] = {7, 8}
+
+
+def doubled(mut items: list[int]) -> list[int]:
+    items.append(1)
+    return [x * 2 for x in items]
+
+
+def copied(items: list[str]) -> list[str]:
+    return list(items)
+
+
+def from_mut_param(mut items: list[str]) -> list[str]:
+    items.append("z")
+    return list(items)
+
+
+def main() -> None:
+    names = ["ab", "c", "def"]
+    long_names = [name for name in names if len(name) > 1]
+    println(f"{long_names:?} {len(names)}")
+    ints = [3, 1, 2]
+    same = [x for x in ints]
+    squares = {x: x * x for x in ints if x > 1}
+    three = squares[3]
+    two = squares[2]
+    println(f"{same:?} {three} {two}")
+    println(f"{doubled([2]):?}")
+    mut words = ["ab", "c", "def"]
+    before = copied(words)
+    after = from_mut_param(words)
+    println(f"{before:?} {after:?} {len(words)}")
+    letters = list("hey")
+    println(f"{letters:?}")
+    keyed: dict[str, int] = {"k": 1, "j": 2}
+    println(f"{list(FROZEN_TEXT):?} {len(list(FROZEN_NUMBERS))} {len(list(keyed))}")

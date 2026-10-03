@@ -66,6 +66,8 @@ make release
 ./target/release/incan --version
 ```
 
+Leave `INCAN_STDLIB` unset unless the compiler cannot find its standard library; when it is set, it replaces the detected standard-library directory.
+
 ## Rust backend provisioning fails
 
 The direct installer and pipx adapter provision the release's pinned Rust 1.98.0 toolchain through `rustup` when `rustup`, `cargo`, or `rustc` are missing, then run `rustup target add wasm32-wasip1`. The npm adapter does not run lifecycle scripts or bootstrap Rust during package installation. If installer-backed provisioning fails on a fresh machine, check whether your network can reach the rustup bootstrap script and Rust distribution servers:
@@ -106,3 +108,5 @@ xcode-select --install
 ## Still stuck?
 
 If you’re still stuck, please [open an issue](https://github.com/encero-systems/incan/issues) and include your OS, architecture, exact commands, and full error output.
+
+`incan tools doctor --format json` prints the same toolchain report in machine-readable form; attach it to an issue, or read it from an editor integration or a CI preflight.

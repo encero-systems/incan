@@ -1,0 +1,50 @@
+# behavior: a value of a type parameter is passed where its bound names the expected trait, calls its bound's method, is cloned, is returned as an Option of it and is passed to a callee's own type parameter
+# retires: loaves/compiler/incan_emit/src/tests/generic_call_arguments.rs::type_parameter_values_build_where_a_bound_makes_them_the_expected_type_issue1561
+# expect-stdout:
+#   18
+#   c
+#   4
+#   5
+
+trait Shape:
+    def area(self) -> int
+
+
+model Square with Shape:
+    side: int
+
+    def area(self) -> int:
+        return self.side * self.side
+
+
+def measure(shape: Shape) -> int:
+    return shape.area()
+
+
+def doubled[T with Shape](value: T) -> int:
+    return measure(value) + value.area()
+
+
+def copied[T](value: T) -> T:
+    return value.clone()
+
+
+def wrapped[T](value: T) -> Option[T]:
+    return value
+
+
+def ident[U](value: U) -> U:
+    return value
+
+
+def forwarded[T](value: T) -> T:
+    return ident(value)
+
+
+def main() -> None:
+    println(doubled(Square(side=3)))
+    println(copied("c"))
+    match wrapped(4):
+        Some(v) => println(v)
+        None => println("none")
+    println(forwarded(5))

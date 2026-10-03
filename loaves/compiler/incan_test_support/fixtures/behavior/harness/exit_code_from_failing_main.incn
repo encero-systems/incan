@@ -1,0 +1,8 @@
+# behavior: a main that returns Err prints what came before and ends with a non-zero exit code
+# expect-stdout:
+#   before failure
+# expect-exit: 1
+
+def main() -> Result[None, str]:
+    println("before failure")
+    return Err("failed on purpose")

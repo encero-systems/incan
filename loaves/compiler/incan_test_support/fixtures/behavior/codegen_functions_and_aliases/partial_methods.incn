@@ -1,0 +1,24 @@
+# behavior: a trait's partial over its own default method calls that method with the preset argument on an adopting model
+# retires: loaves/compiler/incan_emit/src/codegen.rs::trait_method_partial_codegen_emits_default_method_wrapper
+# expect-stdout:
+#   name
+#   other
+
+trait Named:
+    def label(self, prefix: str) -> str:
+        return prefix
+
+    short = partial label(prefix="name")
+
+
+model User with Named:
+    name: str
+
+
+pub def use(user: User) -> str:
+    return user.short()
+
+
+def main() -> None:
+    println(use(User(name="Ada")))
+    println(User(name="Ada").label("other"))

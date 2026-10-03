@@ -1,0 +1,38 @@
+# behavior: a mut self method called on a list element, on a list element of a field, on an element counted from the end, on a field of a list element and on a dict value changes the stored value in its collection
+# retires: loaves/compiler/incan_emit/src/tests/dict_value_places.rs::mut_self_call_on_a_list_element_changes_it_in_place_issue1561
+# retires: loaves/compiler/incan_ir/src/lower/tests/mut_self_receiver_places.rs::mut_self_receiver_through_an_element_is_borrowed_as_a_place_issue1561
+# expect-stdout:
+#   1
+#   2
+#   1
+#   1
+
+class Counter:
+    pub count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+
+class Holder:
+    pub counters: list[Counter]
+
+
+class Wrap:
+    pub inner: Counter
+
+
+def main() -> None:
+    mut counters = [Counter(count=0)]
+    counters[0].bump()
+    mut holder = Holder(counters=[Counter(count=0)])
+    holder.counters[0].bump()
+    holder.counters[-1].bump()
+    mut wraps = [Wrap(inner=Counter(count=0))]
+    wraps[0].inner.bump()
+    mut table: dict[str, Counter] = {"a": Counter(count=0)}
+    table["a"].bump()
+    println(counters[0].count)
+    println(holder.counters[0].count)
+    println(wraps[0].inner.count)
+    println(table["a"].count)

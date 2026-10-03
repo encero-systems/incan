@@ -14,11 +14,19 @@
 //! | `+`                         | `std::ops::Add<Output = T>`    |
 //! | `-`                         | `std::ops::Sub<Output = T>`    |
 //! | `*`                         | `std::ops::Mul<Output = T>`    |
-//! | `/`                         | `std::ops::Div<Output = T>`    |
-//! | `%`                         | `std::ops::Rem<Output = T>`    |
 //! | `clone()`                   | `Clone`                        |
 //! | used as `Dict` key          | `Eq + Hash`                    |
 //! | used as `Set` element       | `Eq + Hash`                    |
+//!
+//! A type parameter is used as a `Dict` key or `Set` element wherever the callable holds a value of such a type: a
+//! parameter, the return type, a local, or any expression of it (#1758). Every method a Rust `HashMap` or `HashSet`
+//! offers for inserting or looking up requires the bound, and the typechecker infers the same requirement for the
+//! callable's callers (`hash_key_inference`).
+//!
+//! `/`, `//`, `%` and `**` between values of a type parameter never reach this pass: the typechecker refuses them
+//! (`INCAN-T0109`, #1715) because their Python-shaped numeric semantics are provided by the runtime for the concrete
+//! numeric types only, so no bound a type argument could satisfy exists for them. The `Div` and `Rem` rows of
+//! `binop_to_trait_bound` remain as RFC 023 wrote them; no checked program reaches them.
 //!
 //! ## Transitive inference
 //!
@@ -27,21 +35,34 @@
 
 use std::collections::{HashMap, HashSet};
 
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::{magic_methods, trait_bounds::rust as tb};
 
+use crate::emit::IrEmitter;
+
+use crate::conversions::Conversion as OwnershipPlan;
 use crate::ownership::{
-    RegularMethodArgumentContext, ValueUseSite, list_index_assignment_element_type, regular_method_argument_use_site,
+    RegularMethodArgumentContext, ValueUseSite, collection_element_type, dict_entry_types, list_constructor_item_type,
+    list_index_assignment_element_type, plan_consumed_option_receiver, plan_consumed_receiver,
+    plan_list_constructor_source, regular_method_argument_use_site, result_unwrap_or_default_use_site,
     value_use_requires_clone_bound, value_use_site_target_ty,
 };
 use incan_ir::IrProgram;
 use incan_ir::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
 use incan_ir::expr::{
-    BinOp, BuiltinFn, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry,
-    MethodCallArgPolicy, VarRefKind,
+    BinOp, BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause,
+    IrListEntry, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
 };
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::{IrType, SetConstructorIteration};
+
+mod inherent_method_calls;
+use inherent_method_calls::{
+    InherentMethodIndex, MethodCallParts, collect_method_implementation_bound_requirements, nominal_names_match,
+    nominal_receiver_type,
+};
 
 /// Bound-bearing local trait implementation that a generic caller can select through checked method dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +145,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     // We iterate until a fixed point is reached (no new bounds added). Clone-per-iteration avoids borrow conflicts
     // between reading callee bounds and writing caller bounds.
     let max_iterations = 20; // safety cap
+    let inherent_methods = InherentMethodIndex::from_programs(program, &[]);
     for _ in 0..max_iterations {
         let mut changed = false;
         let snapshot = function_bounds.clone();
@@ -131,6 +153,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
             snapshot: &snapshot,
             function_params: &function_params,
             implementation_requirements: &[],
+            inherent_methods: &inherent_methods,
         };
 
         for decl in &program.declarations {
@@ -202,6 +225,9 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     // Trait dispatch selects an impl header rather than an ordinary generic function. Re-run transitive inference with
     // those exact checked selections after backend-owned bounds have reached the impl headers.
     propagate_local_implementation_bounds(program);
+
+    // ---- Pass 6: trait slots admit what their implementations require ----
+    merge_implementation_method_bounds_into_trait_declarations(program);
 }
 
 /// Infer `Clone` bounds required by backend-inserted ownership materialization.
@@ -232,11 +258,21 @@ fn infer_backend_clone_bounds(program: &mut IrProgram) {
                         .get(&impl_block.target_type)
                         .unwrap_or(&unknown_impl_clone_params),
                 );
-                for method in &impl_block.methods {
+                for method in &mut impl_block.methods {
                     augment_callable_type_params_for_backend_return_clones(
                         &mut impl_block.type_params,
                         &method.body,
                         self_clone_params,
+                        &clone_context,
+                    );
+                    // A method's own type parameters need the same treatment as a free function's: a planned clone
+                    // of a `T` the method introduced must bind `T: Clone` on the method header, which the owner-level
+                    // pass above never sees. They are the callable's own, so `None` keeps the owner fallbacks off:
+                    // neither `self` nor a concrete nominal can carry them (#1489).
+                    augment_callable_type_params_for_backend_return_clones(
+                        &mut method.type_params,
+                        &method.body,
+                        None,
                         &clone_context,
                     );
                 }
@@ -257,11 +293,12 @@ fn callable_inference_type_params(func: &IrFunction, owner_type_params: Option<&
     type_params
 }
 
-/// Propagate bounds from exact local trait implementations into the generic callers that select them.
+/// Propagate bounds from exact local implementations into the generic callers that select them.
 ///
 /// Backend ownership inference can add an impl-only bound after ordinary call propagation has reached its first fixed
-/// point. This bounded outer loop rebuilds implementation requirements after every write-back, so an impl method that
-/// itself gains a transitive requirement can expose the updated header to its callers on the next iteration.
+/// point. This bounded outer loop rebuilds implementation requirements and the method index after every write-back, so
+/// an impl header that gains a bound, through checked trait dispatch or an ordinary method call (#1779), exposes it to
+/// its callers on the next iteration.
 fn propagate_local_implementation_bounds(program: &mut IrProgram) {
     let external_bounds = HashMap::new();
     let external_params = HashMap::new();
@@ -269,9 +306,14 @@ fn propagate_local_implementation_bounds(program: &mut IrProgram) {
 
     for _ in 0..max_iterations {
         let requirements = collect_local_implementation_bound_requirements(program);
-        if requirements.is_empty()
-            || !propagate_trait_bounds_from_signature_maps(program, &external_bounds, &external_params, &requirements)
-        {
+        let inherent_methods = InherentMethodIndex::from_programs(program, &[]);
+        if !propagate_trait_bounds_from_signature_maps(
+            program,
+            &external_bounds,
+            &external_params,
+            &requirements,
+            &inherent_methods,
+        ) {
             break;
         }
     }
@@ -318,24 +360,28 @@ pub fn propagate_trait_bounds_from_programs(program: &mut IrProgram, externals: 
         collect_current_callable_signature_maps(external, &mut external_bounds, &mut external_params);
         implementation_requirements.extend(collect_local_implementation_bound_requirements(external));
     }
+    let inherent_methods = InherentMethodIndex::from_programs(program, externals);
     let _ = propagate_trait_bounds_from_signature_maps(
         program,
         &external_bounds,
         &external_params,
         &implementation_requirements,
+        &inherent_methods,
     );
 }
 
 /// Propagate generic bounds using local callable signatures plus externally supplied callable signatures.
 ///
 /// The current program supplies the mutable destination signatures, while `external_bounds` and `external_params`
-/// provide already-inferred signatures for imported call targets that may appear in this program's call graph. The pass
-/// iterates to a fixed point because generic functions can forward type parameters through chains of calls.
+/// provide already-inferred signatures for imported call targets that may appear in this program's call graph, and
+/// `inherent_methods` the impl methods an ordinary method call can reach. The pass iterates to a fixed point because
+/// generic functions can forward type parameters through chains of calls.
 fn propagate_trait_bounds_from_signature_maps(
     program: &mut IrProgram,
     external_bounds: &HashMap<String, Vec<IrTypeParam>>,
     external_params: &HashMap<String, Vec<FunctionParam>>,
     implementation_requirements: &[ImplementationBoundRequirement],
+    inherent_methods: &InherentMethodIndex,
 ) -> bool {
     let mut function_bounds: HashMap<String, Vec<IrTypeParam>> = HashMap::new();
     let mut function_params: HashMap<String, Vec<FunctionParam>> = HashMap::new();
@@ -362,6 +408,7 @@ fn propagate_trait_bounds_from_signature_maps(
             snapshot: &snapshot,
             function_params: &function_params,
             implementation_requirements,
+            inherent_methods,
         };
 
         for decl in &program.declarations {
@@ -474,7 +521,8 @@ fn free_function_callable_key(program: &IrProgram, registry_name: &str) -> Strin
 ///
 /// The propagation pass needs two parallel maps: type-parameter bounds for each generic callable, and parameter types
 /// for mapping callee type parameters back to caller type parameters at call sites. Impl methods are keyed by their
-/// owner and method identity because multiple impl blocks can contain same-named methods.
+/// owner and method identity because multiple impl blocks can contain same-named methods, and carry both the impl's
+/// and the method's own type parameters, so a generic method of a non-generic owner can receive bounds too.
 fn collect_current_callable_signature_maps(
     program: &IrProgram,
     function_bounds: &mut HashMap<String, Vec<IrTypeParam>>,
@@ -497,8 +545,12 @@ fn collect_current_callable_signature_maps(
                     function_params.insert(key, method.params.clone());
                 }
             }
-            IrDeclKind::Impl(impl_block) if !impl_block.type_params.is_empty() => {
+            IrDeclKind::Impl(impl_block) => {
                 for (index, method) in impl_block.methods.iter().enumerate() {
+                    let type_params = callable_inference_type_params(method, Some(&impl_block.type_params));
+                    if type_params.is_empty() {
+                        continue;
+                    }
                     let key = format!(
                         "impl:{}:{}:{}:{}",
                         impl_block.target_type,
@@ -506,7 +558,7 @@ fn collect_current_callable_signature_maps(
                         index,
                         method.name
                     );
-                    function_bounds.insert(key.clone(), impl_block.type_params.clone());
+                    function_bounds.insert(key.clone(), type_params);
                     function_params.insert(key, method.params.clone());
                 }
             }
@@ -637,6 +689,8 @@ struct BackendCloneInferenceContext {
 struct BackendCallCloneContext<'a> {
     callable_signature: Option<&'a incan_ir::FunctionSignature>,
     in_return: bool,
+    /// The call expression's own type, which names the payload slot of an `Ok`/`Err` construction.
+    result_ty: &'a IrType,
 }
 
 impl BackendCloneInferenceContext {
@@ -775,6 +829,7 @@ fn collect_backend_clone_bounds_in_stmt(
                     BackendCallCloneContext {
                         callable_signature: callable_signature.as_ref(),
                         in_return: true,
+                        result_ty: &expr.ty,
                     },
                     type_param_names,
                     self_clone_params,
@@ -828,10 +883,31 @@ fn collect_backend_clone_bounds_in_stmt(
             );
         }
         IrStmtKind::Assign {
-            target: AssignTarget::Index { object, .. },
+            target: AssignTarget::Index { object, index },
             value,
         } => {
-            if let Some(target_ty) = list_index_assignment_element_type(&object.ty) {
+            if matches!(&object.ty, IrType::Unknown) || dict_entry_types(&object.ty).is_some() {
+                // Mirror the dict entry write, `d.insert(key, value)`: the key and the value are both owned elements
+                // of the dict, so a borrowed one is cloned.
+                let (key_ty, value_ty) =
+                    dict_entry_types(&object.ty).map_or((None, None), |(key, value)| (Some(key), Some(value)));
+                collect_backend_clone_bounds_for_value_use(
+                    index,
+                    ValueUseSite::CollectionElement { target_ty: key_ty },
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+                collect_backend_clone_bounds_for_value_use(
+                    value,
+                    ValueUseSite::CollectionElement { target_ty: value_ty },
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            } else if let Some(target_ty) = list_index_assignment_element_type(&object.ty) {
                 collect_backend_clone_bounds_for_value_use(
                     value,
                     ValueUseSite::Assignment {
@@ -880,7 +956,27 @@ fn collect_backend_clone_bounds_in_stmt(
                 clone_params,
             );
         }
-        IrStmtKind::While { body, .. } | IrStmtKind::Loop { body, .. } => {
+        IrStmtKind::While { condition, body, .. } => {
+            // A loop condition is an ordinary expression: a planned clone inside it, such as a predicate call on a
+            // non-Copy local, needs the same bound as one in the body.
+            collect_backend_clone_bounds_in_expr(
+                condition,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            for stmt in body {
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            }
+        }
+        IrStmtKind::Loop { body, .. } => {
             for stmt in body {
                 collect_backend_clone_bounds_in_stmt(
                     stmt,
@@ -903,10 +999,19 @@ fn collect_backend_clone_bounds_in_stmt(
             }
         }
         IrStmtKind::If {
+            condition,
             then_branch,
             else_branch,
-            ..
         } => {
+            // The condition was skipped until #1489: `if f(item):` plans `item.clone()` for the call, and the `T:
+            // Clone` bound that clone needs only appeared when another clone of `item` happened to demand it.
+            collect_backend_clone_bounds_in_expr(
+                condition,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             for stmt in then_branch {
                 collect_backend_clone_bounds_in_stmt(
                     stmt,
@@ -1182,6 +1287,24 @@ fn collect_backend_clone_bounds_in_call(
     clone_context: &BackendCloneInferenceContext,
     clone_params: &mut HashSet<String>,
 ) {
+    if let Some(payload_ty) = result_constructor_payload_slot(func, call_context.result_ty) {
+        // `Ok(x)` / `Err(x)` store `x` into the `Result`: emission plans the payload as a struct-field slot of the
+        // declared payload type (`IrEmitter::emit_result_payload`), so the bound follows that plan, not a call's.
+        if let Some(arg) = args.first() {
+            let target_ty = (!IrEmitter::is_unresolved_type(payload_ty)).then_some(payload_ty);
+            if value_use_requires_clone_bound(&arg.expr, ValueUseSite::StructField { target_ty }) {
+                add_backend_clone_bounds_for_cloned_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+            }
+            collect_backend_clone_bounds_in_expr(
+                &arg.expr,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
+        return;
+    }
     if call_args_use_incan_clone_policy(func) {
         for (idx, arg) in args.iter().enumerate() {
             let sig_param = call_context.callable_signature.and_then(|sig| sig.params.get(idx));
@@ -1197,7 +1320,17 @@ fn collect_backend_clone_bounds_in_call(
                     in_return: call_context.in_return,
                 },
             );
-            if requires_clone {
+            let mut_parameter_copy = sig_param
+                .is_some_and(|param| matches!(param.mutability, incan_ir::types::Mutability::Mutable))
+                && !matches!(arg.expr.ty, IrType::RefMut(_))
+                && !matches!(
+                    arg.expr.kind,
+                    IrExprKind::Var {
+                        access: VarAccess::BorrowMut,
+                        ..
+                    }
+                );
+            if requires_clone || mut_parameter_copy {
                 add_backend_clone_bounds_for_cloned_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
             }
             collect_backend_clone_bounds_in_expr(
@@ -1233,12 +1366,18 @@ fn collect_backend_clone_bounds_in_expr(
     match &expr.kind {
         IrExprKind::MethodCall {
             receiver,
+            method,
             args,
             arg_policy,
             callable_signature,
             dispatch,
             ..
         } => {
+            // `unwrap` and `unwrap_or` consume an `Option` receiver; the copy planned for a receiver that stays usable
+            // demands the same bound here (#1561).
+            if plan_consumed_option_receiver(receiver, method) == OwnershipPlan::Clone {
+                add_backend_clone_bounds_for_cloned_expr(receiver, type_param_names, self_clone_params, clone_params);
+            }
             let callable_signature = callable_signature.as_ref();
             for (idx, arg) in args.iter().enumerate() {
                 let sig_param = callable_signature.and_then(|sig| sig.params.get(idx));
@@ -1285,7 +1424,7 @@ fn collect_backend_clone_bounds_in_expr(
                 clone_params,
             );
         }
-        IrExprKind::KnownMethodCall { receiver, args, .. } => {
+        IrExprKind::KnownMethodCall { receiver, kind, args } => {
             collect_backend_clone_bounds_in_expr(
                 receiver,
                 type_param_names,
@@ -1293,6 +1432,50 @@ fn collect_backend_clone_bounds_in_expr(
                 clone_context,
                 clone_params,
             );
+            // A `Result` method consumes its receiver; the copy planned for a receiver that stays usable demands the
+            // same bound here (#1561).
+            if matches!(kind, MethodKind::Result(_)) && plan_consumed_receiver(receiver) == OwnershipPlan::Clone {
+                add_backend_clone_bounds_for_cloned_expr(receiver, type_param_names, self_clone_params, clone_params);
+            }
+            // So does the copy planned for an `unwrap_or` default the program reads again.
+            if matches!(kind, MethodKind::Result(ResultMethodId::UnwrapOr))
+                && let Some(default) = args.first()
+                && value_use_requires_clone_bound(&default.expr, result_unwrap_or_default_use_site(&receiver.ty))
+            {
+                add_backend_clone_bounds_for_cloned_expr(
+                    &default.expr,
+                    type_param_names,
+                    self_clone_params,
+                    clone_params,
+                );
+            }
+            // Storing into a builtin collection is an owned-element sink. Mirror the sites collection-method
+            // emission uses so a clone planned for `items.append(item)` demands the same bound here (#1489).
+            let element_sites: Vec<(usize, Option<&IrType>)> = match kind {
+                MethodKind::Collection(CollectionMethodKind::Add | CollectionMethodKind::Append) => {
+                    vec![(0, collection_element_type(&receiver.ty))]
+                }
+                MethodKind::Collection(CollectionMethodKind::Insert) => {
+                    let (key_ty, value_ty) = match dict_entry_types(&receiver.ty) {
+                        Some((key_ty, value_ty)) => (Some(key_ty), Some(value_ty)),
+                        None => (None, None),
+                    };
+                    vec![(0, key_ty), (1, value_ty)]
+                }
+                _ => Vec::new(),
+            };
+            for (index, target_ty) in element_sites {
+                if let Some(arg) = args.get(index)
+                    && value_use_requires_clone_bound(&arg.expr, ValueUseSite::CollectionElement { target_ty })
+                {
+                    add_backend_clone_bounds_for_cloned_expr(
+                        &arg.expr,
+                        type_param_names,
+                        self_clone_params,
+                        clone_params,
+                    );
+                }
+            }
             for arg in args {
                 collect_backend_clone_bounds_in_expr(
                     &arg.expr,
@@ -1314,6 +1497,7 @@ fn collect_backend_clone_bounds_in_expr(
             BackendCallCloneContext {
                 callable_signature: callable_signature.as_ref(),
                 in_return: false,
+                result_ty: &expr.ty,
             },
             type_param_names,
             self_clone_params,
@@ -1321,7 +1505,7 @@ fn collect_backend_clone_bounds_in_expr(
             clone_params,
         ),
         IrExprKind::BuiltinCall {
-            func: BuiltinFn::CollectionConstructor(CollectionTypeId::Set),
+            func: BuiltinFn::CollectionConstructor(CollectionTypeId::Set | CollectionTypeId::List),
             args,
         } => {
             for arg in args {
@@ -1824,6 +2008,21 @@ fn receiver_ref_kind(receiver: &IrExpr) -> Option<VarRefKind> {
     }
 }
 
+/// Return the declared payload type when `func` is the `Ok` or `Err` constructor of a `Result`-typed call.
+///
+/// Mirrors the emitter's constructor seeding: the `Ok` side reads the result's success type and the `Err` side its
+/// error type. Any other callee, or a call whose type is not a recorded `Result`, is an ordinary call.
+fn result_constructor_payload_slot<'a>(func: &IrExpr, result_ty: &'a IrType) -> Option<&'a IrType> {
+    let IrExprKind::Var { name, .. } = &func.kind else {
+        return None;
+    };
+    match result_ty {
+        IrType::Result(ok_ty, _) if name == constructors::as_str(ConstructorId::Ok) => Some(ok_ty),
+        IrType::Result(_, err_ty) if name == constructors::as_str(ConstructorId::Err) => Some(err_ty),
+        _ => None,
+    }
+}
+
 /// Return whether a call expression targets an Incan callable rather than an external Rust symbol.
 fn call_args_use_incan_clone_policy(func: &IrExpr) -> bool {
     !matches!(
@@ -1893,9 +2092,11 @@ struct CloneExpressionDependencies {
 
 /// Record generic type parameters that need `Clone` because `expr` is cloned by backend ownership planning.
 ///
-/// `self` is special: cloning `self` can imply all or a subset of the impl's type parameters, depending on the derived
-/// `Clone` implementation for the receiver type. For erased borrowed method results, inspect the borrowed inner type in
-/// addition to the expression's outer type.
+/// `self_clone_params` says whose parameters are being inferred. `Some` means the owner's: cloning `self` can imply
+/// all or a subset of them, depending on the derived `Clone` implementation for the receiver type, and an erased
+/// nominal local may hide them too. `None` means a callable's own parameters, which neither `self` nor a concrete
+/// nominal can carry; only a value whose type was lost entirely keeps the conservative fallback there. For erased
+/// borrowed method results, inspect the borrowed inner type in addition to the expression's outer type.
 fn add_backend_clone_bounds_for_cloned_expr(
     expr: &IrExpr,
     type_param_names: &HashSet<&str>,
@@ -1903,14 +2104,15 @@ fn add_backend_clone_bounds_for_cloned_expr(
     clone_params: &mut HashSet<String>,
 ) {
     if matches!(&expr.kind, IrExprKind::Var { name, .. } if name == "self") {
+        // `self` is typed by the owner alone. Cloning it binds the owner parameters its derived `Clone` depends on --
+        // every one of them when that set is unknown -- and never a callable's own parameters, which is what `None`
+        // denotes (a free function's, or a method's own, see `infer_backend_clone_bounds`).
         if let Some(self_clone_params) = self_clone_params {
             if self_clone_params.is_empty() {
                 clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
             } else {
                 clone_params.extend(self_clone_params.iter().cloned());
             }
-        } else {
-            clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
         }
         if matches!(expr.ty, IrType::SelfType) {
             return;
@@ -2106,6 +2308,7 @@ struct CallableBoundPropagationContext<'a> {
     snapshot: &'a HashMap<String, Vec<IrTypeParam>>,
     function_params: &'a HashMap<String, Vec<FunctionParam>>,
     implementation_requirements: &'a [ImplementationBoundRequirement],
+    inherent_methods: &'a InherentMethodIndex,
 }
 
 /// Propagate bounds for a callable by transitive inference from called generic functions.
@@ -2124,13 +2327,7 @@ fn propagate_bounds_for_callable(
         return;
     }
 
-    let required_bounds = collect_propagated_bound_requirements(
-        func,
-        type_params,
-        context.snapshot,
-        context.function_params,
-        context.implementation_requirements,
-    );
+    let required_bounds = collect_propagated_bound_requirements(func, type_params, context);
     if let Some(current_bounds) = function_bounds.get_mut(key) {
         for (source_bounds, type_arg_mapping) in &required_bounds {
             if propagate_transitive_bounds(current_bounds, source_bounds, type_arg_mapping) {
@@ -2155,6 +2352,11 @@ fn infer_function_bounds(func: &IrFunction, type_params: &[IrTypeParam]) -> Vec<
         scan_stmt_for_bounds(stmt, &type_param_names, &func.params, &mut bounds_map);
     }
 
+    // A parameter or return type that hashes a type parameter needs its bound whatever the body does with it.
+    for ty in func.params.iter().map(|param| &param.ty).chain([&func.return_type]) {
+        add_hashed_key_bounds(ty, &type_param_names, &mut bounds_map);
+    }
+
     // Rebuild type params with combined bounds.
     type_params
         .iter()
@@ -2177,9 +2379,20 @@ fn scan_stmt_for_bounds(
 ) {
     match &stmt.kind {
         IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => scan_expr_for_bounds(expr, type_params, params, bounds_map),
-        IrStmtKind::Let { value, .. } => scan_expr_for_bounds(value, type_params, params, bounds_map),
-        IrStmtKind::Assign { value, .. } => scan_expr_for_bounds(value, type_params, params, bounds_map),
-        IrStmtKind::CompoundAssign { value, .. } => {
+        IrStmtKind::Let {
+            ty,
+            type_annotation,
+            value,
+            ..
+        } => {
+            add_hashed_key_bounds(ty, type_params, bounds_map);
+            if let Some(annotation) = type_annotation {
+                add_hashed_key_bounds(annotation, type_params, bounds_map);
+            }
+            scan_expr_for_bounds(value, type_params, params, bounds_map);
+        }
+        IrStmtKind::Assign { target, value } | IrStmtKind::CompoundAssign { target, value, .. } => {
+            scan_assign_target_for_bounds(target, type_params, params, bounds_map);
             scan_expr_for_bounds(value, type_params, params, bounds_map);
         }
         IrStmtKind::Return(Some(expr)) => scan_expr_for_bounds(expr, type_params, params, bounds_map),
@@ -2244,6 +2457,88 @@ fn scan_stmt_for_bounds(
     }
 }
 
+/// Scan the expressions an assignment target reads: the object of a field write, and the object and index of an index
+/// write, whose dict type (`d[x] = v`) hashes its key.
+fn scan_assign_target_for_bounds(
+    target: &AssignTarget,
+    type_params: &HashSet<&str>,
+    params: &[incan_ir::decl::FunctionParam],
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+) {
+    match target {
+        AssignTarget::Var { ty, .. } => add_hashed_key_bounds(ty, type_params, bounds_map),
+        AssignTarget::Field { object, .. } => scan_expr_for_bounds(object, type_params, params, bounds_map),
+        AssignTarget::Index { object, index } => {
+            // Emission writes a dict entry with `insert`, as it does for an object of unknown type, so the key's type
+            // parameters are hashed even when the dict's own key type is not known yet (`d = {}` then `d[x] = v`).
+            if matches!(&object.ty, IrType::Unknown) || dict_entry_types(&object.ty).is_some() {
+                add_hashed_argument_bounds(&index.ty, type_params, bounds_map);
+            }
+            scan_expr_for_bounds(object, type_params, params, bounds_map);
+            scan_expr_for_bounds(index, type_params, params, bounds_map);
+        }
+        AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
+    }
+}
+
+/// Require `Eq` and `Hash` of every type parameter a value hashed as a set element or dict key mentions.
+fn add_hashed_argument_bounds(
+    key_ty: &IrType,
+    type_params: &HashSet<&str>,
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+) {
+    let mut key_type_params = HashSet::new();
+    collect_generic_type_param_names(key_ty, type_params, &mut key_type_params);
+    for tp_name in key_type_params {
+        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
+        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+    }
+}
+
+/// Require `Eq` and `Hash` of every type parameter `ty` hashes: each one mentioned by the key of a `Dict` or the
+/// element of a `Set` anywhere inside it (#1758).
+///
+/// Such a value is a Rust `HashMap` or `HashSet`, whose inserting and lookup methods all require their key to be
+/// `Eq + Hash`, so a callable that holds one bounds the type parameter whatever it does with the value.
+fn add_hashed_key_bounds(
+    ty: &IrType,
+    type_params: &HashSet<&str>,
+    bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
+) {
+    let hashed_key = match ty {
+        IrType::Dict(key, _) => Some(key.as_ref()),
+        IrType::Set(element) => Some(element.as_ref()),
+        _ => None,
+    };
+    if let Some(key) = hashed_key {
+        add_hashed_argument_bounds(key, type_params, bounds_map);
+    }
+    match ty {
+        IrType::List(inner)
+        | IrType::Set(inner)
+        | IrType::Option(inner)
+        | IrType::Ref(inner)
+        | IrType::RefMut(inner)
+        | IrType::TypeToken(inner) => add_hashed_key_bounds(inner, type_params, bounds_map),
+        IrType::Dict(first, second) | IrType::Result(first, second) => {
+            add_hashed_key_bounds(first, type_params, bounds_map);
+            add_hashed_key_bounds(second, type_params, bounds_map);
+        }
+        IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+            for item in items {
+                add_hashed_key_bounds(item, type_params, bounds_map);
+            }
+        }
+        IrType::Function { params, ret } => {
+            for param in params {
+                add_hashed_key_bounds(param, type_params, bounds_map);
+            }
+            add_hashed_key_bounds(ret, type_params, bounds_map);
+        }
+        _ => {}
+    }
+}
+
 /// Return the trait bound implied by a value-level reflection magic method.
 fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
     match magic_methods::from_str(method) {
@@ -2272,6 +2567,9 @@ fn scan_expr_for_bounds(
     params: &[incan_ir::decl::FunctionParam],
     bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
 ) {
+    // ---- A value whose dict or set type hashes a type parameter ----
+    add_hashed_key_bounds(&expr.ty, type_params, bounds_map);
+
     match &expr.kind {
         // ---- Binary operations: check if either operand is a type parameter ----
         IrExprKind::BinOp { op, left, right } => {
@@ -2324,7 +2622,7 @@ fn scan_expr_for_bounds(
                 }
             );
             if let Some(tp_name) = expr_type_param_name(receiver, type_params, params) {
-                if method == "clone" && !receiver_is_type_name {
+                if method == tb::CLONE_METHOD && !receiver_is_type_name {
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
                 let reflection_bound = if receiver_is_type_name {
@@ -2340,12 +2638,32 @@ fn scan_expr_for_bounds(
                 && let Some(bound) = type_reflection_magic_trait_bound(method)
             {
                 add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
-            } else if method == "clone"
+            } else if method == tb::CLONE_METHOD
                 && matches!(receiver.ty, IrType::Unknown)
                 && matches!(&receiver.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
             {
                 for tp_name in type_params {
                     add_bound(bounds_map, tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            } else if method == tb::CLONE_METHOD && !receiver_is_type_name && args.is_empty() {
+                // A copy of a collection of the type parameter (`items.clone()` for a spread that must leave `items`
+                // as it was, #1852) copies each item, so every type parameter the collection holds is `Clone`.
+                let mut held_type_params = HashSet::new();
+                collect_generic_type_param_names(&receiver.ty, type_params, &mut held_type_params);
+                for tp_name in held_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
+            // `.cloned()` over the entry an in-place lookup finds (`Option<&V>`) copies the `V`, so every type
+            // parameter in `V` must be `Clone`; lowering completes a `dict.get` whose result is kept this way.
+            if method == "cloned"
+                && let IrType::Option(found) = &receiver.ty
+                && let IrType::Ref(value) = found.as_ref()
+            {
+                let mut value_type_params = HashSet::new();
+                collect_generic_type_param_names(value, type_params, &mut value_type_params);
+                for tp_name in value_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
             }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
@@ -2362,8 +2680,33 @@ fn scan_expr_for_bounds(
             }
         }
 
-        // ---- Known method calls: recurse ----
-        IrExprKind::KnownMethodCall { receiver, args, .. } => {
+        // ---- Known method calls: a keyed dict method hashes its key; recurse ----
+        IrExprKind::KnownMethodCall { receiver, kind, args } => {
+            if matches!(
+                kind,
+                MethodKind::Collection(
+                    CollectionMethodKind::Get | CollectionMethodKind::Contains | CollectionMethodKind::Insert
+                )
+            ) && let Some(key_ty) = dict_key_type(&receiver.ty)
+            {
+                add_hashed_argument_bounds(key_ty, type_params, bounds_map);
+            }
+            // A keyed method of a set or dict hashes its first argument, the element or key, also while the
+            // receiver's own element or key type is not known yet (`s = set()` then `s.add(x)`).
+            if matches!(
+                kind,
+                MethodKind::Collection(
+                    CollectionMethodKind::Add
+                        | CollectionMethodKind::Contains
+                        | CollectionMethodKind::Get
+                        | CollectionMethodKind::Insert
+                        | CollectionMethodKind::Remove
+                )
+            ) && is_hashed_collection(&receiver.ty)
+                && let Some(key) = args.first()
+            {
+                add_hashed_argument_bounds(&key.expr.ty, type_params, bounds_map);
+            }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
             for arg in args {
                 scan_expr_for_bounds(&arg.expr, type_params, params, bounds_map);
@@ -2386,6 +2729,40 @@ fn scan_expr_for_bounds(
                             add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                         }
                     }
+                }
+                scan_expr_for_bounds(arg, type_params, params, bounds_map);
+            }
+        }
+
+        // ---- List construction: recurse and require `Clone` where the source plan clones its items ----
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::CollectionConstructor(CollectionTypeId::List),
+            args,
+        } => {
+            for arg in args {
+                if plan_list_constructor_source(&arg.ty).clones_items()
+                    && let Some(item_ty) = list_constructor_item_type(&arg.ty)
+                {
+                    let mut item_type_params = HashSet::new();
+                    collect_generic_type_param_names(item_ty, type_params, &mut item_type_params);
+                    for tp_name in item_type_params {
+                        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                    }
+                }
+                scan_expr_for_bounds(arg, type_params, params, bounds_map);
+            }
+        }
+
+        // ---- `sorted(values)`: the sorted list is a copy of `values`, so its item type parameters are `Clone` ----
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Sorted,
+            args,
+        } => {
+            for arg in args {
+                let mut item_type_params = HashSet::new();
+                collect_generic_type_param_names(&arg.ty, type_params, &mut item_type_params);
+                for tp_name in item_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
                 scan_expr_for_bounds(arg, type_params, params, bounds_map);
             }
@@ -2447,9 +2824,18 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(operand, type_params, params, bounds_map);
         }
 
-        // ---- Field/Index: recurse ----
+        // ---- Field: recurse ----
         IrExprKind::Field { object, .. } => scan_expr_for_bounds(object, type_params, params, bounds_map),
+
+        // ---- Element read: `items[i]` produces its own copy of the element, which requires `Clone` (#1756) ----
         IrExprKind::Index { object, index } => {
+            if let Some(element_ty) = index_read_copied_element_type(&object.ty) {
+                let mut dependencies = CloneExpressionDependencies::default();
+                collect_clone_expression_dependencies(element_ty, type_params, &mut dependencies);
+                for tp_name in dependencies.explicit_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
             scan_expr_for_bounds(object, type_params, params, bounds_map);
             scan_expr_for_bounds(index, type_params, params, bounds_map);
         }
@@ -2568,12 +2954,20 @@ fn scan_expr_for_bounds(
         }
 
         // ---- Slice: recurse ----
+        // ---- List slice: `items[a:b]` copies the selected elements, which requires `Clone` (#1756) ----
         IrExprKind::Slice {
             target,
             start,
             end,
             step,
         } => {
+            if let Some(element_ty) = slice_copied_element_type(&target.ty) {
+                let mut dependencies = CloneExpressionDependencies::default();
+                collect_clone_expression_dependencies(element_ty, type_params, &mut dependencies);
+                for tp_name in dependencies.explicit_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
             scan_expr_for_bounds(target, type_params, params, bounds_map);
             if let Some(s) = start {
                 scan_expr_for_bounds(s, type_params, params, bounds_map);
@@ -2643,6 +3037,89 @@ fn scan_expr_for_bounds(
         | IrExprKind::FieldsList(_)
         | IrExprKind::SerdeToJson
         | IrExprKind::SerdeFromJson(_) => {}
+    }
+}
+
+/// Return the element type an index read copies out of its collection, or `None` when the read copies nothing.
+///
+/// `items[i]` on a `list[T]` and `table[key]` on a `dict[K, V]` are values in their own right: Incan has no shared
+/// element reads, so the generated program duplicates a non-`Copy` element as it looks it up (`list_get(..).clone()`,
+/// `dict_get(..).clone()` in the Rust-source backend's index emission). A duplicated value of a type parameter needs
+/// that parameter to be `Clone` (RFC 023 section 6: a clone implies a `Clone` bound), which an unbounded
+/// `def first[K](items: list[K]) -> K` never states (#1756). The shape mirrors that emission exactly: one level of
+/// reference is looked through, only lists and dicts duplicate, and a `Copy` element is copied without a bound.
+fn index_read_copied_element_type(object_ty: &IrType) -> Option<&IrType> {
+    let object_ty = match object_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+        other => other,
+    };
+    let element_ty = match object_ty {
+        IrType::List(element) => element.as_ref(),
+        IrType::Dict(_, value) => value.as_ref(),
+        _ => return None,
+    };
+    (!element_ty.is_copy()).then_some(element_ty)
+}
+
+/// Return the element type a list slice copies into its new list, or `None` when the slice copies no list elements.
+///
+/// `items[a:b]` builds a new list from the selected elements (`list_slice` in the Rust-source backend), so a
+/// non-`Copy` element of a type parameter needs that parameter to be `Clone`, as an element read does. Strings slice
+/// to strings and copy nothing of a type parameter.
+fn slice_copied_element_type(target_ty: &IrType) -> Option<&IrType> {
+    let target_ty = match target_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+        other => other,
+    };
+    match target_ty {
+        IrType::List(element) if !element.is_copy() => Some(element.as_ref()),
+        _ => None,
+    }
+}
+
+/// Merge each trait implementation method's inferred generic bounds into the same trait method's declaration.
+///
+/// A trait slot is declared without a body, so bound inference sees only the implementations' bodies: an expanded
+/// default or an override that reads a `list[K]` element infers `K: Clone`, and Rust refuses an implementation whose
+/// method generics are stricter than the trait's (E0276). The declaration takes the union of its local
+/// implementations' bounds, position by position, which every implementation then satisfies (#1756).
+fn merge_implementation_method_bounds_into_trait_declarations(program: &mut IrProgram) {
+    let mut required: HashMap<(String, String), Vec<Vec<IrTraitBound>>> = HashMap::new();
+    for decl in &program.declarations {
+        let IrDeclKind::Impl(impl_block) = &decl.kind else {
+            continue;
+        };
+        let Some(trait_name) = impl_block.trait_name.as_deref() else {
+            continue;
+        };
+        for method in &impl_block.methods {
+            let entry = required
+                .entry((trait_name.to_string(), method.name.clone()))
+                .or_insert_with(|| vec![Vec::new(); method.type_params.len()]);
+            if entry.len() != method.type_params.len() {
+                continue;
+            }
+            for (bounds, type_param) in entry.iter_mut().zip(&method.type_params) {
+                bounds.extend(type_param.bounds.iter().cloned());
+            }
+        }
+    }
+    for decl in &mut program.declarations {
+        let IrDeclKind::Trait(trait_decl) = &mut decl.kind else {
+            continue;
+        };
+        for method in &mut trait_decl.methods {
+            let Some(bounds) = required.get(&(trait_decl.name.clone(), method.name.clone())) else {
+                continue;
+            };
+            if bounds.len() != method.type_params.len() {
+                continue;
+            }
+            for (type_param, extra) in method.type_params.iter_mut().zip(bounds) {
+                type_param.bounds.extend(extra.iter().cloned());
+                type_param.bounds = deduplicate_bounds(std::mem::take(&mut type_param.bounds));
+            }
+        }
     }
 }
 
@@ -2734,6 +3211,8 @@ fn collect_type_param_mapping(
             collect_type_param_mapping(callee_key, caller_key, caller_type_params, mapping);
             collect_type_param_mapping(callee_value, caller_value, caller_type_params, mapping);
         }
+        (IrType::NamedGeneric(callee_name, _), IrType::NamedGeneric(caller_name, _))
+            if !nominal_names_match(callee_name, caller_name) => {}
         (IrType::Tuple(callee_items), IrType::Tuple(caller_items))
         | (IrType::NamedGeneric(_, callee_items), IrType::NamedGeneric(_, caller_items))
             if callee_items.len() == caller_items.len() =>
@@ -2791,6 +3270,25 @@ fn binop_to_trait_bound(op: &BinOp, tp_name: &str) -> Option<IrTraitBound> {
         | BinOp::BitXor
         | BinOp::Shl
         | BinOp::Shr => None,
+    }
+}
+
+/// Whether a receiver is a Rust `HashMap` or `HashSet`: a dict or a set, looking through the reference wrapper of a
+/// `mut` parameter, whatever its key or element type.
+fn is_hashed_collection(ty: &IrType) -> bool {
+    match ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_hashed_collection(inner),
+        IrType::Dict(_, _) | IrType::Set(_) => true,
+        _ => false,
+    }
+}
+
+/// Return the key type of a dict receiver, looking through the reference wrapper of a `mut` parameter.
+fn dict_key_type(ty: &IrType) -> Option<&IrType> {
+    match ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => dict_key_type(inner),
+        IrType::Dict(key, _) => Some(key.as_ref()),
+        _ => None,
     }
 }
 
@@ -3024,22 +3522,22 @@ fn substitute_ir_type(ty: &IrType, subst: &HashMap<&str, &IrType>) -> IrType {
 
 /// Collect bound-bearing call targets and their type-parameter mappings.
 ///
-/// Ordinary generic calls contribute their callable signature. Checked trait dispatch also contributes the exact local
-/// implementation header selected for its receiver. Each mapping connects the source requirement's type parameters to
-/// caller parameters when the receiver or argument is a direct generic pass-through.
+/// Ordinary generic calls contribute their callable signature. Checked trait dispatch contributes the exact local
+/// implementation header selected for its receiver, and a method call the impl method it reaches (#1779). Each mapping
+/// connects the source requirement's type parameters to caller parameters when the receiver or argument is a direct
+/// generic pass-through.
 fn collect_propagated_bound_requirements(
     func: &IrFunction,
     type_params: &[IrTypeParam],
-    function_bounds: &HashMap<String, Vec<IrTypeParam>>,
-    function_params: &HashMap<String, Vec<FunctionParam>>,
-    implementation_requirements: &[ImplementationBoundRequirement],
+    propagation: &CallableBoundPropagationContext<'_>,
 ) -> Vec<(Vec<IrTypeParam>, HashMap<String, String>)> {
     let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
     let context = BoundCollectionContext {
         type_params: &type_param_names,
-        function_bounds,
-        function_params,
-        implementation_requirements,
+        function_bounds: propagation.snapshot,
+        function_params: propagation.function_params,
+        implementation_requirements: propagation.implementation_requirements,
+        inherent_methods: propagation.inherent_methods,
     };
     let mut result = Vec::new();
 
@@ -3061,6 +3559,7 @@ struct BoundCollectionContext<'context, 'type_name> {
     function_bounds: &'context HashMap<String, Vec<IrTypeParam>>,
     function_params: &'context HashMap<String, Vec<FunctionParam>>,
     implementation_requirements: &'context [ImplementationBoundRequirement],
+    inherent_methods: &'context InherentMethodIndex,
 }
 
 /// Add the exact local implementation requirement selected by one checked trait-method dispatch.
@@ -3125,66 +3624,6 @@ fn collect_implementation_bound_requirements(
             .collect();
         result.push((source_bounds, mapping));
     }
-}
-
-/// Return the exact nominal receiver and its concrete generic arguments after removing borrow wrappers.
-fn nominal_receiver_type(ty: &IrType) -> Option<(&str, &[IrType])> {
-    match ty {
-        IrType::Ref(inner) | IrType::RefMut(inner) => nominal_receiver_type(inner),
-        IrType::NamedGeneric(name, type_args) => Some((name.as_str(), type_args)),
-        IrType::Struct(name) | IrType::Enum(name) => Some((name.as_str(), &[])),
-        _ => None,
-    }
-}
-
-/// Collect implementation-header requirements without widening every recursive expression-scan frame.
-fn collect_method_implementation_bound_requirements(
-    receiver: &IrExpr,
-    dispatch: Option<&incan_ir::expr::IrMethodDispatch>,
-    context: &BoundCollectionContext<'_, '_>,
-    result: &mut Vec<PropagatedBoundRequirement>,
-) {
-    let Some(
-        incan_ir::expr::IrMethodDispatch::Trait(dispatch)
-        | incan_ir::expr::IrMethodDispatch::SourceProjection(dispatch),
-    ) = dispatch
-    else {
-        return;
-    };
-    let trait_source_name = &dispatch.trait_source_name;
-    let trait_module_path = &dispatch.trait_module_path;
-    let implementation_type_params = &dispatch.implementation_type_params;
-    let trait_type_args = &dispatch.type_args;
-
-    if !implementation_type_params.is_empty()
-        && let Some((target_type, _)) = nominal_receiver_type(&receiver.ty)
-    {
-        let checked_requirement = ImplementationBoundRequirement {
-            target_type: target_type.to_string(),
-            type_params: implementation_type_params.clone(),
-            trait_source_name: trait_source_name.clone(),
-            trait_module_path: trait_module_path.clone(),
-            trait_type_args: trait_type_args.clone(),
-        };
-        collect_implementation_bound_requirements(
-            receiver,
-            trait_source_name,
-            trait_module_path.as_deref(),
-            trait_type_args,
-            context.type_params,
-            std::slice::from_ref(&checked_requirement),
-            result,
-        );
-    }
-    collect_implementation_bound_requirements(
-        receiver,
-        trait_source_name,
-        trait_module_path.as_deref(),
-        trait_type_args,
-        context.type_params,
-        context.implementation_requirements,
-        result,
-    );
 }
 
 /// Recursively collect generic function calls from a statement.
@@ -3268,6 +3707,32 @@ fn collect_calls_in_stmt(
 }
 
 /// Recursively collect generic function calls from an expression.
+/// Collect what displaying one value requires of the caller's type parameters.
+///
+/// A value of a source nominal type displays through the `Display` the emitter implements from the type's `__str__`, a
+/// declared one or the one lowering gives a type with a derived `Display` or an `Error` adopter. That implementation
+/// holds under the header of the impl block holding `__str__`, so a caller that forwards its own type parameter into
+/// the value's type arguments needs the header's bounds, as a call of `__str__` does. Any other value adds nothing.
+fn collect_display_requirements(
+    value: &IrExpr,
+    context: &BoundCollectionContext<'_, '_>,
+    result: &mut Vec<PropagatedBoundRequirement>,
+) {
+    collect_method_implementation_bound_requirements(
+        MethodCallParts {
+            receiver: value,
+            method: magic_methods::as_str(magic_methods::MagicMethodId::Str),
+            dispatch: None,
+            type_args: &[],
+            args: &[],
+        },
+        context,
+        result,
+    );
+}
+
+/// Collect the requirements the calls, method calls and displayed values of one expression put on the caller's type
+/// parameters.
 fn collect_calls_in_expr(
     expr: &IrExpr,
     context: &BoundCollectionContext<'_, '_>,
@@ -3360,11 +3825,23 @@ fn collect_calls_in_expr(
         }
         IrExprKind::MethodCall {
             receiver,
+            method,
             dispatch,
+            type_args,
             args,
             ..
         } => {
-            collect_method_implementation_bound_requirements(receiver, dispatch.as_ref(), context, result);
+            collect_method_implementation_bound_requirements(
+                MethodCallParts {
+                    receiver,
+                    method,
+                    dispatch: dispatch.as_ref(),
+                    type_args,
+                    args,
+                },
+                context,
+                result,
+            );
             recurse_expr(receiver, result);
             for arg in args {
                 recurse_expr(&arg.expr, result);
@@ -3374,6 +3851,15 @@ fn collect_calls_in_expr(
             recurse_expr(receiver, result);
             for arg in args {
                 recurse_expr(&arg.expr, result);
+            }
+        }
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Print | BuiltinFn::Str,
+            args,
+        } => {
+            for arg in args {
+                collect_display_requirements(arg, context, result);
+                recurse_expr(arg, result);
             }
         }
         IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) | IrExprKind::Set(args) => {
@@ -3430,7 +3916,10 @@ fn collect_calls_in_expr(
         }
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr { expr, .. } = part {
+                if let FormatPart::Expr { expr, style } = part {
+                    if !style.emits_rust_debug(&expr.ty) {
+                        collect_display_requirements(expr, context, result);
+                    }
                     recurse_expr(expr, result);
                 }
             }
@@ -3762,6 +4251,94 @@ mod tests {
         assert_eq!(bounds, HashSet::from(["T".to_string()]));
     }
 
+    /// `None` names a callable's own parameters, which `self` cannot carry: cloning `self` inside a generic method
+    /// binds nothing on the method's own `T` (#1489).
+    #[test]
+    fn self_clone_binds_no_callable_own_parameters() {
+        let parameters = HashSet::from(["T"]);
+        let expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: "self".to_string(),
+                access: VarAccess::Borrow,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("Codec".to_string()),
+        );
+        let mut bounds = HashSet::new();
+        add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
+    /// An `Ok`/`Err` payload is planned as the `Result`'s field slot, so a field moved out of a last-use local binds
+    /// nothing while a cloned loop binding binds the callable's own parameter (#1489).
+    #[test]
+    fn result_payload_bounds_follow_the_struct_field_plan() {
+        let parameters = HashSet::from(["T"]);
+        let clone_context = BackendCloneInferenceContext {
+            incan_nominal_names: HashSet::new(),
+            rusttype_alias_names: HashSet::new(),
+        };
+        let ok_call = |payload: TypedExpr| {
+            TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(TypedExpr::new(
+                        IrExprKind::Var {
+                            name: constructors::as_str(ConstructorId::Ok).to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    )),
+                    type_args: Vec::new(),
+                    args: vec![IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: payload,
+                    }],
+                    callable_signature: None,
+                    canonical_path: None,
+                },
+                IrType::Result(Box::new(IrType::Generic("T".to_string())), Box::new(IrType::String)),
+            )
+        };
+        let moved_field = TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "decoded".to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("Decoded".to_string(), vec![IrType::Generic("T".to_string())]),
+                )),
+                field: "value".to_string(),
+            },
+            IrType::Generic("T".to_string()),
+        );
+        let loop_binding = TypedExpr::new(
+            IrExprKind::Var {
+                name: "item".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Generic("T".to_string()),
+        );
+        for (payload, expected) in [
+            (moved_field, HashSet::new()),
+            (loop_binding, HashSet::from(["T".to_string()])),
+        ] {
+            let mut bounds = HashSet::new();
+            collect_backend_clone_bounds_in_stmt(
+                &IrStmt::new(IrStmtKind::Return(Some(ok_call(payload)))),
+                &parameters,
+                None,
+                &clone_context,
+                &mut bounds,
+            );
+            assert_eq!(bounds, expected);
+        }
+    }
+
     fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
         IrFunction {
             name: name.to_string(),
@@ -3798,6 +4375,7 @@ mod tests {
             uses_checked_c_strings: false,
             uses_scoped_c_string_views: false,
             uses_checked_c_span_buffers: false,
+            unbound_nominal_type_paths: std::collections::HashMap::new(),
         }
     }
 
@@ -3858,6 +4436,7 @@ mod tests {
             uses_checked_c_strings: false,
             uses_scoped_c_string_views: false,
             uses_checked_c_span_buffers: false,
+            unbound_nominal_type_paths: std::collections::HashMap::new(),
         };
 
         infer_trait_bounds(&mut program);

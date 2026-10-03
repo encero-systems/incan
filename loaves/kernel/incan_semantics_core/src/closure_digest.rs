@@ -401,8 +401,8 @@ mod tests {
     #[test]
     fn an_unrelated_declaration_does_not_move_a_digest_by_shifting_component_indices() {
         let alone = closure_digests(&graph(&[("target", "d", &[])]));
-        let with_earlier_neighbour = closure_digests(&graph(&[("0_sorts_first", "other", &[]), ("target", "d", &[])]));
-        assert_eq!(alone.get("target"), with_earlier_neighbour.get("target"));
+        let with_earlier_neighbor = closure_digests(&graph(&[("0_sorts_first", "other", &[]), ("target", "d", &[])]));
+        assert_eq!(alone.get("target"), with_earlier_neighbor.get("target"));
     }
 
     /// A digest must not be able to forge a second member out of its own text.

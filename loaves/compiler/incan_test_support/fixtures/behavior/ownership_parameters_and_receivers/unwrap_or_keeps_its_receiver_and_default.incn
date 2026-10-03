@@ -1,0 +1,66 @@
+# behavior: an Option local, field, generic value, mut parameter and static read again after unwrap or unwrap_or stays usable, in a loop too, and an unwrap_or default is a value of the payload type: a str literal default of a Result[str, str] runs, and a default local read again stays usable
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::option_and_result_unwrap_or_keep_their_values_issue1561
+# expect-stdout:
+#   a
+#   a
+#   a
+#   a
+#   a
+#   z
+#   dflt
+#   dflt
+#   4
+#   hr
+#   hh
+#   4
+#   nn
+#   mm
+
+static NAME: Option[str] = Some("n")
+
+
+model Holder:
+    o: Option[str]
+    r: Result[str, str]
+
+    def first(self) -> str:
+        head = self.o.unwrap_or("none")
+        tail = self.r.unwrap_or("z")
+        return f"{head}{tail}"
+
+
+def both[T](o: Option[T], r: Result[T, int], d: T) -> list[T]:
+    return [o.unwrap_or(d), o.unwrap(), r.unwrap_or(d), d]
+
+
+def twice(mut o: Option[str]) -> str:
+    first = o.unwrap_or("b")
+    return f"{first}{o.unwrap()}"
+
+
+def main() -> None:
+    o: Option[str] = Some("a")
+    println(o.unwrap_or("b"))
+    println(o.unwrap_or("b"))
+    println(o.unwrap())
+    for i in range(2):
+        println(o.unwrap_or("c"))
+    r: Result[str, str] = Err("e")
+    println(r.unwrap_or("z"))
+    d = "dflt"
+    println(r.unwrap_or(d))
+    println(d)
+    items: Option[list[int]] = None
+    fallback = [1, 2]
+    println(len(items.unwrap_or(fallback)) + len(fallback))
+    h = Holder(o=Some("h"), r=Ok("r"))
+    println(h.first())
+    held = h.o.unwrap_or("x")
+    println(f"{held}{h.o.unwrap()}")
+    failed: Result[str, int] = Err(1)
+    println(len(both(Some("s"), failed, "t")))
+    named = NAME.unwrap_or("x")
+    again = NAME.unwrap_or("y")
+    println(f"{named}{again}")
+    mut m: Option[str] = Some("m")
+    println(twice(m))

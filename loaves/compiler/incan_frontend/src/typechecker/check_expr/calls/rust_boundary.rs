@@ -627,8 +627,19 @@ impl TypeChecker {
         Self::rust_type_metadata_implements_trait(&metadata, trait_path, trait_definition.as_deref())
     }
 
-    /// Reject an immutable source binding when a planned Rust boundary borrow is exclusive.
-    fn validate_rust_borrow_mutability(&mut self, kind: RustArgCoercionKind, arg_expr: &Spanned<Expr>) -> bool {
+    /// Reject an immutable source binding when a planned Rust boundary borrow is exclusive, and record the exclusive
+    /// use of a caller-visible `mut` parameter as a change to it.
+    pub(in crate::typechecker) fn validate_rust_borrow_mutability(
+        &mut self,
+        kind: RustArgCoercionKind,
+        arg_expr: &Spanned<Expr>,
+    ) -> bool {
+        if matches!(
+            kind,
+            RustArgCoercionKind::Borrow { mutable: true } | RustArgCoercionKind::TraitObjectBorrow { mutable: true }
+        ) {
+            self.note_mut_param_exclusive_use(arg_expr);
+        }
         if matches!(
             kind,
             RustArgCoercionKind::Borrow { mutable: true } | RustArgCoercionKind::TraitObjectBorrow { mutable: true }
@@ -748,6 +759,7 @@ impl TypeChecker {
                     kind: ParamKind::Normal,
                     has_default: false,
                     is_partial_preset: false,
+                    is_mut: false,
                 }
             })
             .collect();
@@ -774,6 +786,7 @@ impl TypeChecker {
                     kind: ParamKind::Normal,
                     has_default: false,
                     is_partial_preset: false,
+                    is_mut: false,
                 }
             })
             .collect();
@@ -1327,6 +1340,38 @@ mod validate_rust_function_call_tests {
                 .map(|coercion| coercion.kind),
             Some(RustArgCoercionKind::Borrow { mutable: true })
         );
+    }
+
+    /// #1561: a `mut` parameter or local belongs to the body that declares it. Once a module whose function declares a
+    /// `mut header` parameter and a `mut` local is checked, neither name is mutable anywhere else, so an immutable
+    /// `header` passed to a Rust `&mut` parameter is still refused.
+    #[test]
+    fn mutable_bindings_of_one_body_do_not_reach_another_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def first(mut header: list[int]) -> None:\n    mut local: list[int] = [1]\n    local.append(1)\n    header.append(1)\n\nclass Writer:\n    lines: list[int]\n\n    def write(mut self, mut header: list[int]) -> None:\n        header.append(1)\n        self.lines.append(1)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("the module must check: {errors:?}"))?;
+        assert!(
+            checker.mutable_bindings.is_empty(),
+            "each body's `mut` bindings end with the body, got {:?}",
+            checker.mutable_bindings
+        );
+
+        let span = Span::new(10, 16);
+        let header = ResolvedType::RustPath("demo::Header".to_string());
+        let argument = Spanned::new(Expr::Ident("header".to_string()), span);
+        checker.validate_rust_boundary_value("demo::Writer", "&mut demo::Header", &argument, &header, false);
+        assert!(
+            checker.errors.iter().any(|error| error
+                .message
+                .contains("Rust parameter requires a mutable borrow of 'header'")),
+            "another body's `mut header` does not make this `header` mutable, got {:?}",
+            checker.errors
+        );
+        Ok(())
     }
 
     #[test]

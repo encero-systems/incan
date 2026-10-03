@@ -1,0 +1,23 @@
+# behavior: a source static and a source function spelled like the decorator machinery's generated names are refused at check time, so neither can collide with a decorated function's generated items
+# expect-diagnostic: INCAN-T0111
+
+pub static __incan_decorated_target: int = 41
+
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+
+@preserve()
+pub def target() -> int:
+    return 1
+
+
+pub def __incan_original_target() -> int:
+    return 41
+
+
+def main() -> None:
+    println(target())
+    println(__incan_decorated_target)
+    println(__incan_original_target())

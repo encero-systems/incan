@@ -18,12 +18,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use oven_model::oven_interop::{
-    InteropArtifactKind, InteropArtifactOrigin, InteropShimLanguage, InteropTargetPlatform, LockedInteropInput,
-    LockedInteropTarget, ToolchainRequirement, ios_target_kind, is_interop_native_library_name,
+    InteropArtifactKind, InteropShimLanguage, InteropTargetPlatform, LockedInteropInput, LockedInteropTarget,
+    ToolchainRequirement, interop_execution_receipt_identity, ios_target_kind, is_interop_native_library_name,
     locked_interop_target_identity,
 };
-pub use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
+pub use oven_model::oven_interop::{
+    OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_INPUT,
+    OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION, OVEN_INTEROP_PLAN_SCHEMA_INPUT, OvenInteropBakedArchive,
+    OvenInteropBakedBundle, OvenInteropCapabilitySelection, OvenInteropExecutionProvenance,
+    OvenInteropExecutionReceipt,
+};
 use oven_rustc::loaf::LoafTemporaryDirectory;
+use oven_rustc::plan::selection::select_receipt_project_extension_execution_plan;
 use oven_rustc::rustc::{
     OvenRustcArtifactManifest, OvenRustcSupportingArtifact, select_direct_rustc_plan_for_execution,
 };
@@ -31,14 +37,7 @@ use oven_store::process::{isolate_process_group, terminate_process_group};
 use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
 use oven_store::{OvenBuildIntent, OvenReceipt, digest_bytes, receipt_with_build_unit_input};
 
-/// Compatibility version for one selected Oven interop execution receipt.
-pub const OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION: u32 = 1;
-/// Compatibility version for the stored native-archive provenance bound to one direct-Rustc plan.
-pub const OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION: u32 = 3;
-/// Current immutable final-plan materialization contract.
-///
-/// Version 5 records native directories beneath the loader-safe immutable store layout. A plan baked before the
-/// current directory encoding can embed a split ELF `RUNPATH`, so it must not be reused.
+/// Version 5 uses loader-safe immutable store paths; older paths can split ELF RUNPATH entries.
 const OVEN_INTEROP_PLAN_SCHEMA: &str = "5";
 /// Store-owned directory containing static archives baked from declared interop shims or artifacts.
 pub const OVEN_INTEROP_NATIVE_DIRECTORY: &str = "interop-native";
@@ -57,92 +56,6 @@ const OVEN_INTEROP_ADAPTER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 /// cross-toolchain invocation while ensuring a child compiler, linker, or build helper cannot retain the Oven
 /// publisher indefinitely. The isolated process group is terminated on expiry.
 const OVEN_INTEROP_BAKE_COMMAND_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-/// One concrete compiler or SDK capability selected by Oven for a locked interop target.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropCapabilitySelection {
-    /// Stable capability vocabulary required by the lock.
-    pub capability: String,
-    /// Concrete selected version checked against the locked semantic-version requirement.
-    pub version: String,
-    /// Content-derived identity of the selected tool or SDK provider.
-    pub identity: String,
-}
-
-/// Selected native-execution facts that join one locked target to an immutable Oven artifact plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropExecutionReceipt {
-    /// Wire-schema version for this selected-execution contract.
-    pub schema_version: u32,
-    /// Content identity of the locked target requirements and declared package inputs.
-    pub locked_target_identity: String,
-    /// Exact Rust/C target triple selected for the native shim and consumer link plan.
-    pub target: String,
-    /// Selected compiler capability, if required by the locked target.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toolchain: Option<OvenInteropCapabilitySelection>,
-    /// Selected SDK capability, if required by the locked target.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sdk: Option<OvenInteropCapabilitySelection>,
-    /// Content identity of this selected execution contract.
-    pub identity: String,
-}
-
-/// One static archive compiled or selected by the explicit interop baker.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropBakedArchive {
-    /// Locked package-local shim or artifact name used as the Rust native link name.
-    pub name: String,
-    /// Store-owned path below [`OVEN_INTEROP_NATIVE_DIRECTORY`].
-    pub relative_path: String,
-    /// Content identity of the exact retained archive bytes.
-    pub digest: String,
-    /// Declared third-party origin retained beside the exact archive digest, when the package supplied one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<InteropArtifactOrigin>,
-}
-
-/// One declared dynamic library or framework file staged for a target-native packaging adapter.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropBakedBundle {
-    /// Locked logical artifact name.
-    pub name: String,
-    /// Store-owned path below [`OVEN_INTEROP_BUNDLED_DIRECTORY`].
-    pub relative_path: String,
-    /// Content identity of the exact retained runtime file.
-    pub digest: String,
-    /// Runtime loader name retained for the target adapter.
-    pub runtime_name: String,
-    /// Logical adapter placement; never an absolute destination path.
-    pub placement: String,
-    /// Declared minimum platform version for the staged runtime.
-    pub minimum_platform: String,
-    /// Declared third-party origin retained beside the exact bundled-file digest, when the package supplied one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<InteropArtifactOrigin>,
-}
-
-/// Portable provenance copied into the immutable plan beside the baked native archives.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropExecutionProvenance {
-    /// Wire-schema version of this provenance record.
-    pub schema_version: u32,
-    /// Selected toolchain/SDK contract that authorized this native archive set.
-    pub receipt: OvenInteropExecutionReceipt,
-    /// Every archive available to direct Rustc through the plan's one native search directory.
-    pub archives: Vec<OvenInteropBakedArchive>,
-    /// Every bundled runtime file retained for receipt-bound direct execution or a target-native packaging adapter.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub bundles: Vec<OvenInteropBakedBundle>,
-    /// Explicit target-native capabilities selected from the locked declaration without a package file hand-off.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub system_capabilities: Vec<String>,
-}
 
 /// Supported caller-owned native packaging layouts for an already baked interop plan.
 ///
@@ -534,8 +447,8 @@ pub fn bind_interop_native_archives(
 ///
 /// The returned plan is deliberately complete: its verified materializations begin with the selected base runtime
 /// closure and then add package-owned static archives, compiled C/C++ shims, and the selected-execution provenance.
-/// The base selection lease remains held until publication completes, which prevents policy pruning from replacing a
-/// trusted runtime input between validation and final immutable publication.
+/// The base may be a self-contained plan or an exact installed Loaf plus its project extension. Both constituent
+/// leases remain held until publication completes, preventing pruning between validation and immutable publication.
 pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Result<OvenInteropNativeBake, String> {
     validate_interop_bake_request(&request)?;
     let final_receipt = final_interop_plan_receipt(request.base_receipt, request.execution_receipt)?;
@@ -568,24 +481,39 @@ pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Re
             reused: true,
         });
     }
-    let selected = select_direct_rustc_plan_for_execution(request.store, request.base_receipt)
-        .map_err(|error| format!("could not select base Oven runtime plan: {error}"))?
-        .ok_or_else(|| {
+    let extension = select_receipt_project_extension_execution_plan(request.store, request.base_receipt, None)
+        .map_err(|error| format!("could not select base Oven runtime extension: {error}"))?;
+    let selected = if extension.is_none() {
+        select_direct_rustc_plan_for_execution(request.store, request.base_receipt)
+            .map_err(|error| format!("could not select base Oven runtime plan: {error}"))?
+    } else {
+        None
+    };
+    let (base_plan, base_files) = if let Some(extension) = &extension {
+        let files = extension
+            .materialized_artifacts()
+            .map_err(|error| format!("selected base Oven runtime extension is invalid: {error}"))?;
+        (extension.artifacts.clone(), files)
+    } else {
+        let selected = selected.as_ref().ok_or_else(|| {
             "Oven interop bake has no compatible base direct-Rustc runtime plan; prepare the sealed runtime Loaf before baking native interop"
                 .to_string()
         })?;
-    let base_manifest = selected.manifest;
-    if base_manifest.kind != OvenArtifactKind::DirectRustcPlan
-        || base_manifest.build_unit_identity != request.base_receipt.build_unit_identity
-        || base_manifest.intent != request.base_receipt.intent
-    {
-        return Err("selected base Oven entry is not authorized by the runtime receipt".to_string());
-    }
-    let base_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload)
-        .map_err(|error| format!("selected base Oven runtime payload is not a direct-Rustc plan: {error}"))?;
-    let mut materialized_files = base_plan
-        .materialized_artifacts(&selected.artifact_root, &request.base_receipt.intent)
-        .map_err(|error| format!("selected base Oven runtime plan is invalid: {error}"))?
+        let base_manifest = &selected.manifest;
+        if base_manifest.kind != OvenArtifactKind::DirectRustcPlan
+            || base_manifest.build_unit_identity != request.base_receipt.build_unit_identity
+            || base_manifest.intent != request.base_receipt.intent
+        {
+            return Err("selected base Oven entry is not authorized by the runtime receipt".to_string());
+        }
+        let plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload)
+            .map_err(|error| format!("selected base Oven runtime payload is not a direct-Rustc plan: {error}"))?;
+        let files = plan
+            .materialized_artifacts(&selected.artifact_root, &request.base_receipt.intent)
+            .map_err(|error| format!("selected base Oven runtime plan is invalid: {error}"))?;
+        (plan, files)
+    };
+    let mut materialized_files = base_files
         .into_iter()
         .map(|artifact| OvenArtifactMaterializedFile {
             source_path: artifact.source_path,
@@ -695,6 +623,7 @@ pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Re
             kind: OvenArtifactKind::DirectRustcPlan,
             payload,
             materialized_files,
+            materialized_directories: Vec::new(),
         })
         .map_err(|error| format!("could not publish final Oven interop direct-Rustc plan: {error}"))?;
     Ok(OvenInteropNativeBake {
@@ -1668,35 +1597,16 @@ pub fn receipt_interop_execution(
     let toolchain = validate_selected_capability("toolchain", target.toolchain.as_ref(), toolchain)?;
     let sdk = validate_selected_capability("SDK", target.sdk.as_ref(), sdk)?;
     let locked_target_identity = locked_interop_target_identity(target)?;
-    let identity = digest_serialized(
-        &OvenInteropExecutionReceiptIdentity {
-            schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
-            locked_target_identity: &locked_target_identity,
-            target: &target.target,
-            toolchain: toolchain.as_ref(),
-            sdk: sdk.as_ref(),
-        },
-        "selected Oven interop execution receipt",
-    )?;
-    Ok(OvenInteropExecutionReceipt {
+    let mut receipt = OvenInteropExecutionReceipt {
         schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
         locked_target_identity,
         target: target.target.clone(),
         toolchain,
         sdk,
-        identity,
-    })
-}
-
-/// Canonical identity fields excluding the self-referential receipt identity.
-#[derive(Serialize)]
-#[serde(rename_all = "kebab-case")]
-struct OvenInteropExecutionReceiptIdentity<'a> {
-    schema_version: u32,
-    locked_target_identity: &'a str,
-    target: &'a str,
-    toolchain: Option<&'a OvenInteropCapabilitySelection>,
-    sdk: Option<&'a OvenInteropCapabilitySelection>,
+        identity: String::new(),
+    };
+    receipt.identity = interop_execution_receipt_identity(&receipt)?;
+    Ok(receipt)
 }
 
 /// Check that one concrete selection satisfies the exact locked capability requirement.
@@ -2116,6 +2026,7 @@ mod tests {
                 source_path: runtime,
                 relative_path: "runtime/runtime.bin".to_string(),
             }],
+            materialized_directories: Vec::new(),
         })?;
 
         let archive_path = project.path().join("libfixture.a");
@@ -2233,6 +2144,7 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let bundled = project.path().join("libfixture_runtime.so");
@@ -2348,6 +2260,7 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let runtime = project.path().join("libfixture_runtime.dylib");
         fs::write(&runtime, b"fixture iOS simulator runtime")?;
@@ -2604,6 +2517,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -2750,6 +2664,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let shim_source = "#include <Accelerate/Accelerate.h>\nfloat incan_accelerate_sum(const float *values, size_t value_count) { float output = 0.0f; vDSP_sve(values, 1, &output, value_count); return output; }\n";
         let target = LockedInteropTarget {
@@ -3006,6 +2921,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3202,6 +3118,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3407,6 +3324,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3709,6 +3627,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3982,6 +3901,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: "aarch64-apple-ios-sim".to_string(),
@@ -4286,6 +4206,7 @@ Java_dev_incan_interop_probe_MainActivity_nativeProbe(JNIEnv *environment, jclas
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let mut target = LockedInteropTarget {
             target: "aarch64-linux-android".to_string(),

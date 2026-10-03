@@ -55,7 +55,7 @@ class Square with Shape, Drawable:
 
 # Another trait
 trait Resizable:
-    def resize(self, factor: float) -> None
+    def resize(mut self, factor: float) -> None
 
 # Class with mutable trait implementation
 class Carton with Resizable:
@@ -63,7 +63,7 @@ class Carton with Resizable:
     height: float
     depth: float
     
-    def resize(self, factor: float) -> None:
+    def resize(mut self, factor: float) -> None:
         self.width *= factor
         self.height *= factor
         self.depth *= factor

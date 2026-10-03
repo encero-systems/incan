@@ -1,0 +1,33 @@
+# behavior: a `mut` scalar parameter of a trait method, abstract or with a default body and also through a type alias, is the method's own copy: the method changes it and prints the changed value, and the caller's value is unchanged
+# retires: loaves/compiler/incan_emit/src/tests/trait_slot_mut_parameters.rs::trait_slots_declare_mut_scalar_parameters_without_a_binding
+# expect-stdout:
+#   3
+#   2.5
+#   1
+#   1.5
+
+type Count = int
+
+
+trait Stepper:
+    def step(self, mut n: Count) -> int
+
+    def bumped(self, mut x: float) -> float:
+        x += 1.0
+        return x
+
+
+class Walker with Stepper:
+    def step(self, mut n: Count) -> int:
+        n += 2
+        return n
+
+
+def main() -> None:
+    walker = Walker()
+    count: Count = 1
+    ratio = 1.5
+    println(walker.step(count))
+    println(walker.bumped(ratio))
+    println(count)
+    println(ratio)

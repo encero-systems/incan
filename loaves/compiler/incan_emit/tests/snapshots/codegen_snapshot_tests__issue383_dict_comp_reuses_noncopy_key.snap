@@ -8,9 +8,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn lengths(names: Vec<String>) -> std::collections::HashMap<String, i64> {
-    return names
-        .iter()
-        .cloned()
+    return ((names).into_iter())
         .map(|name| (name.clone(), incan_std_core::strings::str_len(&(name))))
         .collect::<std::collections::HashMap<_, _>>();
 }

@@ -456,8 +456,13 @@ impl Formatter {
                         FStringPart::Expr { expr, format } => {
                             self.writer.write("{");
                             self.format_expr(&expr.node);
-                            if matches!(format, FStringFormat::Debug) {
-                                self.writer.write(":?");
+                            match format {
+                                FStringFormat::Display => {}
+                                FStringFormat::Debug => self.writer.write(":?"),
+                                FStringFormat::Unsupported(spec) => {
+                                    self.writer.write(":");
+                                    self.writer.write(spec);
+                                }
                             }
                             self.writer.write("}");
                         }
@@ -941,6 +946,10 @@ impl Formatter {
             }
             Type::RefMut(inner) => {
                 self.writer.write("&mut ");
+                self.format_type(&inner.node);
+            }
+            Type::MutParam(inner) => {
+                self.writer.write("mut ");
                 self.format_type(&inner.node);
             }
             Type::SelfType => self.writer.write("Self"),

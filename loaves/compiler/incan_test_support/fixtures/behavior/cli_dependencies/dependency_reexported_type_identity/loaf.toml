@@ -1,0 +1,9 @@
+[project]
+name = "dependency_reexported_type_identity"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+recall = { path = "deps/recall" }

@@ -75,6 +75,7 @@ Rules:
     - A field **without** a default is required at construction time.
     - A field **with** a default may be omitted (the default is used).
 - **Type checking**: default expressions must be compatible with the field type.
+- **Declaration order**: a field type or a method signature may name a model, class, enum, trait or type alias declared further down the same module; a method returning a model declared after its owner gives callers that model's fields like any other.
 
 ### Field visibility on a public model
 
@@ -258,6 +259,8 @@ If a field has an alias, that alias is used as the JSON key (wire name). This le
 
 `private` controls Incan source access; it is not a secrecy, redaction, or wire-omission marker. Serialization and other explicitly adopted derives still operate over the model's complete data shape. Use a redacting value such as `SecretStr`, or a dedicated public wire model, when a field must not be disclosed.
 
+`@derive(json)` gives a model both directions through one import, `from std.serde import json`, which also names the traits for bounds such as `T with json.Serialize`. When a model only needs one side, such as a response that is written but never read back, import `Serialize` or `Deserialize` from `std.serde.json` and derive just that one.
+
 See: [Derives: Serialization (Reference)](../../reference/derives/serialization.md).
 
 ## Validation (`@derive(Validate)`)
@@ -269,6 +272,23 @@ If you derive `Validate` on a model, you opt into validated construction:
 - raw construction via `TypeName(...)` is a compile-time error
 
 This is the "data shape + invariant" pattern: the type stays easy to pass around, but construction becomes explicit and fallible so invariants can't be bypassed by accident.
+
+Additional constructors are helper functions or static methods on the model that call `TypeName.new(...)`. They go through validation like any other caller: direct construction is refused inside the model's own methods too.
+
+```incan
+@derive(Validate)
+model EmailUser:
+    email: str
+
+    def validate(self) -> Result[EmailUser, str]:
+        if "@" not in self.email:
+            return Err("invalid email")
+        return Ok(self)
+
+    @staticmethod
+    def for_name(name: str) -> Result[EmailUser, str]:
+        return EmailUser.new(email=f"{name}@example.com")
+```
 
 See: [Derives: Validation (Reference)](../../reference/derives/validation.md).
 
@@ -287,6 +307,8 @@ def describe(a: Account) -> str:
 You can use canonical field names or aliases in destructuring keys (when aliases are identifier/keyword-shaped).
 
 Private fields may only appear in a destructuring pattern inside methods declared on the owning model. External patterns cannot use either the canonical name or an alias to expose them.
+
+An external pattern names public fields only, and the fields it leaves unnamed, private ones included, match whatever they hold. Over the `SealedEnvelope` model above, `SealedEnvelope(envelope_id="a1") =>` selects its arm for an envelope with that id and any `body`, both in the declaring module and in a module that imports the model.
 
 ## Reflection helpers
 

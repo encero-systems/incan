@@ -1,0 +1,67 @@
+# behavior: a generic value, a list element, a callable, a str and a list of callables stay usable through the original binding after being bound to an alias
+# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::generic_alias_assignment_infers_clone_bound_for_later_source_use
+# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::generic_list_index_assignment_infers_clone_bound_for_later_source_use
+# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::generic_alias_assignment_does_not_bind_an_unrelated_type_parameter
+# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::callable_alias_clone_does_not_bind_callable_type_parameters
+# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::concrete_string_alias_clone_does_not_bind_enclosing_generic_parameter
+# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::callable_list_alias_clone_does_not_bind_callable_type_parameters
+# expect-stdout:
+#   ab:ab
+#   z:z:z
+#   cd:cd
+#   4:4
+#   abab
+#   1:6
+
+pub def preserve_generic_alias[T](value: T) -> tuple[T, T]:
+    alias = value
+    return (value, alias)
+
+
+pub def replace_first_then_preserve[T](mut items: list[T], value: T) -> T:
+    items[0] = value
+    return value
+
+
+pub def preserve_generic_alias_without_unrelated_bound[T, U](value: T) -> tuple[T, T]:
+    alias = value
+    return (value, alias)
+
+
+pub def preserve_callable_alias[T, U](mapper: (T) -> U) -> tuple[(T) -> U, (T) -> U]:
+    alias = mapper
+    return (mapper, alias)
+
+
+pub def preserve_text_alias[T](text: str) -> str:
+    alias = text
+    return alias + text
+
+
+pub def preserve_callable_list_alias[T, U](mapper: (T) -> U) -> list[(T) -> U]:
+    mappers = [mapper]
+    alias = mappers
+    marker = len(mappers)
+    return alias
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def main() -> None:
+    pair = preserve_generic_alias("ab")
+    println(f"{pair[0]}:{pair[1]}")
+    mut items = ["x", "y"]
+    replaced = replace_first_then_preserve(items, "z")
+    println(f"{replaced}:{items[0]}:{replaced}")
+    other = preserve_generic_alias_without_unrelated_bound[str, int]("cd")
+    println(f"{other[0]}:{other[1]}")
+    callables = preserve_callable_alias(double)
+    first_callable = callables[0]
+    second_callable = callables[1]
+    println(f"{first_callable(2)}:{second_callable(2)}")
+    println(preserve_text_alias[int]("ab"))
+    mappers = preserve_callable_list_alias(double)
+    first_mapper = mappers[0]
+    println(f"{len(mappers)}:{first_mapper(3)}")

@@ -18,7 +18,7 @@
 //! - [`crate::emit::expressions`]
 //! - [`crate::emit::statements`]
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -287,6 +287,40 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         }
     }
 
+    /// Record one method a reachable body calls, revisiting its owner's impls when they were already scanned.
+    ///
+    /// An impl is scanned when its owner becomes reachable, and only the methods known to be used by then have their
+    /// bodies scanned. A use found later, in a function scanned after the owner, used to retain the called method
+    /// without ever scanning its body, so a method it calls in turn was dropped from the impl. Queuing the owner again
+    /// scans the newly used body. A use found while the owner's own impls are being scanned needs no queuing: that
+    /// scan repeats until no new method of the owner is used. A method is recorded once, so the revisits end.
+    ///
+    /// Migration note (rust_source_backend_deprecation.md):
+    /// - Compatibility issue: #1765 -- `pub def use_it(user: User) -> str: return user.short()` retained `User.short`
+    ///   but not the method its body calls (`label`, or any method a method calls), because `User`'s impl was scanned
+    ///   before `use_it`'s body recorded the call (E0599).
+    /// - Behavior evidence: behavior fixtures `cli/method_partial_over_model_method.incn` and
+    ///   `cli/method_called_through_a_helper_keeps_its_callees.incn`, and the emitter test
+    ///   `method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765` in
+    ///   `tests/method_reachability_codegen_tests.rs`.
+    /// - Semantic owner: the checked call graph, which records every method a reachable body calls; retention of
+    ///   generated Rust items is then a plain reachability query over it.
+    /// - Retirement condition: the Rust-source backend is deleted (#654); the replacement route does not prune
+    ///   generated Rust items.
+    fn mark_used_method(&mut self, type_name: String, method: &str) {
+        let newly_used = self
+            .analysis
+            .used_methods
+            .insert((type_name.clone(), method.to_string()));
+        if newly_used
+            && self.current_impl_target.as_deref() != Some(type_name.as_str())
+            && self.analysis.reachable_items.contains(&type_name)
+            && self.impls_by_target.contains_key(&type_name)
+        {
+            self.pending.push(type_name);
+        }
+    }
+
     /// Mark a top-level generated type declaration as semantically reachable without retaining a Rust `use` binding.
     ///
     /// Type annotations keep local declarations alive. Imported type names still need their Rust `use` binding because
@@ -495,6 +529,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Module derives retain source paths such as `codec.Encode`; Rust bounds may already use `codec::Encode`.
     /// Both require the leading import binding. Absolute Rust paths bypass local imports and must not retain an
     /// unrelated alias with the same crate spelling.
+    ///
+    /// Compatibility issue: #1434. Generated-use pruning dropped an import whose only use was the trait module named
+    /// by a module derive's `impl module::Trait for T`; for a compiled SDK bundle the bare spelling then resolved to
+    /// an external crate. Behavior evidence: `module_derive_retains_its_trait_module_import` (source through
+    /// emission) and `qualified_trait_impl_retains_projected_sdk_module_import` (provider-projected IR); the SDK
+    /// facade routing of the same report is `std_root_module_derive_retains_sdk_facade_import`. Semantic owner: the
+    /// import-usage fact belongs beside the checked import bindings and the adoption identity that lowering records on
+    /// the impl (`trait_module_path`), not to a scan of emitted trait spellings. Retirement condition: the Body IR
+    /// backend derives its `use` items from those facts and this analyzer is deleted with #654.
     fn mark_trait_path_binding(&mut self, trait_path: &str) {
         self.mark_reachable_item(trait_path);
         if !trait_path.starts_with("::")
@@ -612,7 +655,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_pattern(item);
                 }
             }
-            Pattern::Struct { name, fields } => {
+            Pattern::Struct { name, fields, .. } => {
                 self.mark_reachable_item(name);
                 for (_, pattern) in fields {
                     self.scan_pattern(pattern);
@@ -646,13 +689,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 function_name,
             } => {
                 self.mark_reachable_item(type_name);
-                self.analysis
-                    .used_methods
-                    .insert((type_name.clone(), function_name.clone()));
+                self.mark_used_method(type_name.clone(), function_name);
                 if let Some(original_name) = function_name.strip_suffix("_adapter") {
-                    self.analysis
-                        .used_methods
-                        .insert((type_name.clone(), original_name.to_string()));
+                    self.mark_used_method(type_name.clone(), original_name);
                 }
             }
             IrExprKind::FunctionItem { name, type_args } => {
@@ -722,14 +761,14 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 self.scan_expr(receiver);
                 self.mark_rust_extension_trait_imports(receiver, method, dispatch.as_ref());
                 if let Some(type_name) = self.object_nominal_type_name(receiver) {
-                    self.analysis.used_methods.insert((type_name, method.clone()));
+                    self.mark_used_method(type_name, method);
                 } else if let IrExprKind::Var {
                     name,
                     ref_kind: VarRefKind::TypeName,
                     ..
                 } = &receiver.kind
                 {
-                    self.analysis.used_methods.insert((name.clone(), method.clone()));
+                    self.mark_used_method(name.clone(), method);
                 }
                 for ty in type_args {
                     self.scan_type(ty);
@@ -818,6 +857,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 }
             }
             IrExprKind::List(items) => {
+                // Empty lists emit `Vec::<T>::new()` when destination typing supplies `T`, so unlike an ordinary
+                // inferred expression type this one is textual Rust and any imported nominal in it must stay bound.
+                if items.is_empty() {
+                    self.scan_type(&expr.ty);
+                }
                 for item in items {
                     match item {
                         IrListEntry::Element(value) | IrListEntry::Spread(value) => self.scan_expr(value),
@@ -1142,23 +1186,28 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         method: &str,
         dispatch: Option<&IrMethodDispatch>,
     ) {
-        let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch else {
+        let Some(IrMethodDispatch::RustExtensionTraitImport { bindings }) = dispatch else {
             if self.receiver_can_use_rust_extension_trait(receiver) {
                 self.mark_unambiguous_rust_extension_trait_import(method);
             }
             return;
         };
-        if self.rust_extension_trait_imports.contains_key(binding) {
-            self.analysis.used_extension_trait_imports.insert(binding.clone());
+        for binding in bindings {
+            if self.rust_extension_trait_imports.contains_key(binding) {
+                self.analysis.used_extension_trait_imports.insert(binding.clone());
+            }
         }
     }
 
     /// Mark a trait import for metadata-free fallback only when the method has one possible imported trait.
+    ///
+    /// Only imports with a declared method surface take part; an unknown-surface import is retained solely through
+    /// the candidates the typechecker recorded on the call.
     fn mark_unambiguous_rust_extension_trait_import(&mut self, method: &str) {
         let mut matches = self
             .rust_extension_trait_imports
             .iter()
-            .filter(|(_, import)| import.methods.iter().any(|candidate| candidate == method))
+            .filter(|(_, import)| import.methods_known && import.methods.iter().any(|candidate| candidate == method))
             .map(|(binding, _)| binding.clone());
         let Some(binding) = matches.next() else {
             return;
@@ -3436,19 +3485,33 @@ impl<'a> IrEmitter<'a> {
         let name = ty.union_type_name()?;
         let members = ty.union_members()?;
         let name_ident = format_ident!("{}", name);
-        let variants: Vec<TokenStream> = members
+        let variant_specs: Vec<(Ident, TokenStream)> = members
             .iter()
             .enumerate()
             .map(|(index, member)| {
                 let variant = format_ident!("{}", IrType::union_variant_name(index));
                 let member_ty = self.emit_generated_union_member_type(member);
-                quote! { #variant(#member_ty) }
+                (variant, member_ty)
             })
             .collect();
+        let variants = variant_specs
+            .iter()
+            .map(|(variant, member_ty)| quote! { #variant(#member_ty) });
+        let debug_arms = variant_specs
+            .iter()
+            .map(|(variant, _)| quote! { Self::#variant(value) => ::core::fmt::Debug::fmt(value, formatter) });
         Some(quote! {
-            #[derive(Debug, Clone)]
+            #[derive(Clone)]
             pub enum #name_ident {
                 #(#variants),*
+            }
+
+            impl ::core::fmt::Debug for #name_ident {
+                fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        #(#debug_arms),*
+                    }
+                }
             }
         })
     }
@@ -3473,8 +3536,10 @@ impl<'a> IrEmitter<'a> {
                     .emit_dependency_type_path(name)
                     .or_else(|| self.emit_public_dependency_type_path(name))
                     .unwrap_or_else(|| {
-                        let ident = Self::rust_ident(name);
-                        quote! { #ident }
+                        // Lowering spells a generic member that two modules of the crate declare by its declaring
+                        // module's path (`crate::first::Holder`), so the base is a path of one or more segments.
+                        let segments = name.split("::").map(Self::rust_ident).collect::<Vec<_>>();
+                        quote! { #(#segments)::* }
                     });
                 let args: Vec<_> = args
                     .iter()
@@ -3579,6 +3644,27 @@ impl<'a> IrEmitter<'a> {
         }
         self.iterator_sum_used.replace(false);
         self.const_bindings.clear();
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1795 -- a `FieldInfo` or `ValidationError` a program imports from one of its own
+        //   modules was spelled as the runtime surface type, because only the declaring module counted as the owner.
+        // - Behavior evidence: the `user_types_named_like_stdlib_types` behavior fixture.
+        // - Semantic owner: the checked import identity (`imports_project_module_type` in `incan_ir`); this set only
+        //   records which names the program's own declarations and project imports bind.
+        // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves nominal
+        //   types through their canonical identities and has no bare-name spellings.
+        let imported_project_types = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.kind {
+                IrDeclKind::Import { path, items, .. } => Some((path, items)),
+                _ => None,
+            })
+            .flat_map(|(path, items)| {
+                items
+                    .iter()
+                    .filter(move |item| incan_ir::decl::imports_project_module_type(path, item))
+            })
+            .map(|item| item.source_binding_name().to_string());
         self.local_nominal_type_names = program
             .declarations
             .iter()
@@ -3593,7 +3679,18 @@ impl<'a> IrEmitter<'a> {
                 | IrDeclKind::Import { .. }
                 | IrDeclKind::Impl(_) => None,
             })
+            .chain(imported_project_types)
             .collect();
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1561 -- `Decision(ids=[])` in a module that imports `Decision` but not the
+        //   `EvidenceId` of its `list[EvidenceId]` field spelled `Vec::<EvidenceId>::new()` there (E0425).
+        // - Behavior evidence: the `constructor_arguments_name_field_types_the_module_does_not_import` behavior
+        //   fixture.
+        // - Semantic owner: lowering's `unbound_nominal_type_paths`, which places each such type at its declaring
+        //   module; `emit_type` only spells the path it records.
+        // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves nominal
+        //   types through their canonical identities and has no bare-name spellings.
+        self.unbound_nominal_type_paths = program.unbound_nominal_type_paths.clone();
         // RFC 023: propagate rust.module() path from IR to emitter for @rust.extern delegation.
         if self.rust_module_path.is_none() {
             self.rust_module_path = program.rust_module_path.clone();
@@ -4303,6 +4400,7 @@ mod tests {
             derives: Vec::new(),
             visibility: Visibility::Public,
             type_params: Vec::new(),
+            phantom_type_params: Vec::new(),
             derive_rust_modules: HashMap::new(),
             lint_allows: Vec::new(),
         })));
@@ -4467,6 +4565,32 @@ mod tests {
         assert!(
             rendered.contains("Envelope < provider :: public_types :: ProviderPayload >"),
             "expected nested public provider payloads to stay qualified: {rendered}"
+        );
+        Ok(())
+    }
+
+    /// #1833: a generated union's Debug form is its active member's form, without the compiler-owned variant name.
+    #[test]
+    fn generated_union_debug_delegates_to_member_issue1833() -> Result<(), String> {
+        let program = IrProgram::new();
+        let emitter = IrEmitter::new(&program.function_registry);
+        let rendered = emitter
+            .emit_generated_union_type(&union(vec![IrType::Int, IrType::String]))
+            .ok_or("expected an anonymous union definition")?
+            .to_string();
+        let compact = rendered
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+
+        assert!(
+            !compact.contains("derive(Debug"),
+            "variant names must not leak through derived Debug: {rendered}"
+        );
+        assert!(
+            compact.contains("Self::V0(value)=>::core::fmt::Debug::fmt(value,formatter)")
+                && compact.contains("Self::V1(value)=>::core::fmt::Debug::fmt(value,formatter)"),
+            "each generated variant must delegate Debug to its member: {rendered}"
         );
         Ok(())
     }

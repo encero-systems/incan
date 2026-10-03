@@ -1,0 +1,23 @@
+# behavior: a dependency whose public surface carries a native union is read from its admitted artifact, where a model the package root re-exports from a submodule, and reached only as a list or option field of a function's result, keeps its declaration's fields and methods (#1561)
+# expect-stdout:
+#   2 1 100
+#   50
+#   best 1
+#   7
+
+from pub::hyper import exact_query, weigh
+
+
+def main() -> None:
+    match exact_query(2):
+        case Ok(result):
+            println(f"{len(result.nominations)} {result.nominations[0].rank} {result.nominations[1].relevance_bps}")
+            println(result.nominations[0].score())
+            match result.best:
+                case Some(best):
+                    println(f"best {best.rank}")
+                case None:
+                    println("none")
+            println(weigh(7))
+        case Err(message):
+            println(message)

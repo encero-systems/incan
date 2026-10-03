@@ -151,6 +151,57 @@ sample: i16 = 500
 clipped: i8 = sample.saturating_resize()
 ```
 
+## Convert before mixing integer widths
+
+Arithmetic on two values of one integer type keeps that type, and an integer literal takes the type of the value beside it:
+
+```incan
+n: i8 = 10
+next: i8 = n + 1
+```
+
+Arithmetic on two different integer types is refused. Convert one operand to the other's type first, with `resize()` when the conversion is lossless and `try_resize()` when the value may not fit:
+
+```incan
+small: i8 = 10
+total: i16 = 300
+widened: i16 = small.resize()
+sum: i16 = widened + total
+```
+
+The refusal of mixed-width arithmetic (`INCAN-T0001`) carries a hint that names both conversions, `resize()` and `try_resize()`.
+
+## Write numeric helpers over concrete types
+
+`/`, `//`, `%` and `**` are refused between two values of a type parameter (`INCAN-T0109`). Write such a helper over `int` or `float`:
+
+```incan
+def modulo(a: int, b: int) -> int:
+    return a % b
+```
+
+For a helper over your own types, bound the type parameter with a trait that declares the operator's method (`__div__`, `__floordiv__`, `__mod__` or `__pow__`), so the operator resolves through that trait:
+
+```incan
+trait Remainder:
+    def __mod__(self, other: Self) -> Self: ...
+
+def modulo[T with Remainder](a: T, b: T) -> T:
+    return a % b
+```
+
+## Raise a negative value to a power
+
+`**` binds tighter than a prefix `-` on its left, so `-x ** 2` negates the square of `x`. Parenthesize the base when you mean to raise the negated value:
+
+```incan
+x = 3
+negated_square = -x ** 2          # -9
+square_of_negative = (-x) ** 2    # 9
+```
+
+The same holds for prefix `~`. For the full precedence order, see the [operator table](../reference/language.md#operators).
+
 ## Avoid unsigned integers as validation
 
 Unsigned types describe representation. They are not a replacement for checking user input or business rules.

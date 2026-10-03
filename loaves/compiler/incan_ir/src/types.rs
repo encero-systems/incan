@@ -33,6 +33,12 @@ pub enum SetConstructorIteration {
     IntoOwnedItems,
     /// Iterate over an immutable collection and clone each borrowed element.
     CloneBorrowedItems,
+    /// Collect an owned runtime generator (`Generator[T]`) through the `Iterator` trait, named in full.
+    ///
+    /// The runtime wrapper keeps an inherent `collect(self) -> Vec<T>` with no type parameter (the shape a
+    /// source-level `gen.collect()` relies on), and on an owned receiver that inherent method shadows the trait's, so
+    /// the method-call spelling with a turbofish is refused. `list(generator)` takes the same route (#1464, #1744).
+    CollectOwnedIterator,
 }
 
 /// Mutability of a binding
@@ -183,24 +189,72 @@ pub enum IrType {
     Unknown,
 }
 
-/// Return the shared exact binary-float type when both operands have the same exact width.
+/// Return `f32` when both operands are `f32`, the one exact binary-float type distinct from `float`.
 ///
-/// The general numeric policy deliberately collapses exact integers and floats into broad promotion classes. Native
-/// lowering and emission must consult this narrower identity first so an `f32` or `f64` arithmetic result does not
-/// silently become ordinary `float` between the typechecker and a finite-only runtime boundary.
+/// The general numeric policy deliberately collapses floats into one broad promotion class. Native lowering and
+/// emission must consult this narrower identity first so an `f32` arithmetic result does not silently become `float`
+/// between the typechecker and the finite-only `f32` runtime boundary. `f64` is `float` itself (RFC 009), so it has no
+/// narrower identity to keep.
 pub fn same_exact_binary_float_type(left: &IrType, right: &IrType) -> Option<IrType> {
     match (left, right) {
-        (IrType::Numeric(left), IrType::Numeric(right))
-            if left == right && matches!(left, NumericTypeId::F32 | NumericTypeId::F64) =>
-        {
-            Some(IrType::Numeric(*left))
+        (IrType::Numeric(NumericTypeId::F32), IrType::Numeric(NumericTypeId::F32)) => {
+            Some(IrType::Numeric(NumericTypeId::F32))
         }
         _ => None,
     }
 }
 
+/// Return the exact-width integer type an integer arithmetic operation keeps, when one operand has one.
+///
+/// RFC 009: same-type integer arithmetic yields that type. The typechecker has already refused operands of two
+/// different integer types and given an integer literal beside an exact-width integer that integer's type, so an
+/// exact-width operand still paired with `int` here stands beside a literal the checker did not reach. `None` means
+/// neither operand is an exact-width integer and the ordinary `int` result applies.
+pub fn exact_integer_arithmetic_type(left: &IrType, right: &IrType) -> Option<IrType> {
+    let exact = |ty: &IrType| matches!(ty, IrType::Numeric(id) if numerics::is_integer(*id));
+    let integer = |ty: &IrType| matches!(ty, IrType::Int) || exact(ty);
+    if exact(left) && integer(right) {
+        Some(left.clone())
+    } else if integer(left) && exact(right) {
+        Some(right.clone())
+    } else {
+        None
+    }
+}
+
 impl IrType {
+    /// Return the IR type of one numeric registry id.
+    ///
+    /// RFC 009 makes `int` an alias of `i64` and `float` an alias of `f64`, and an alias creates no separate type
+    /// identity, so the `i64` id is [`IrType::Int`] and the `f64` id is [`IrType::Float`], whichever spelling names
+    /// them, and generated code treats an `i64` value exactly as an `int` one and an `f64` value as a `float` one.
+    /// Every other numeric id keeps its exact-width type; the registry's `bool` entry is [`IrType::Bool`].
+    pub fn from_numeric_id(id: NumericTypeId) -> IrType {
+        match id {
+            NumericTypeId::I64 => IrType::Int,
+            NumericTypeId::F64 => IrType::Float,
+            NumericTypeId::Bool => IrType::Bool,
+            _ => IrType::Numeric(id),
+        }
+    }
+
+    /// Return the numeric registry id of the Rust carrier this type is: `i64` for `int`, `f64` for `float`, and the
+    /// exact-width type's own id. Every other type, `bool` included, has none.
+    pub fn numeric_carrier_id(&self) -> Option<NumericTypeId> {
+        match self {
+            IrType::Int => Some(NumericTypeId::I64),
+            IrType::Float => Some(NumericTypeId::F64),
+            IrType::Numeric(NumericTypeId::Bool) => None,
+            IrType::Numeric(id) => Some(*id),
+            _ => None,
+        }
+    }
+
     /// Return the canonical element and iteration plan for one accepted `Set` constructor source.
+    ///
+    /// A runtime generator is consumed through the `Iterator` trait rather than its inherent adapters (#1744). A list
+    /// or set reached through a reference, such as a `mut` parameter, is not the constructor's to take apart, so its
+    /// items are cloned into the new set and the source keeps them (#1852).
     pub fn set_constructor_source(&self) -> Option<(&IrType, SetConstructorIteration)> {
         match self {
             Self::List(item) | Self::Set(item) => Some((item, SetConstructorIteration::IntoOwnedItems)),
@@ -211,9 +265,17 @@ impl IrType {
                 Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet) => items
                     .first()
                     .map(|item| (item, SetConstructorIteration::CloneBorrowedItems)),
+                Some(CollectionTypeId::Generator) => items
+                    .first()
+                    .map(|item| (item, SetConstructorIteration::CollectOwnedIterator)),
                 _ => None,
             },
-            Self::Ref(inner) | Self::RefMut(inner) => inner.set_constructor_source(),
+            Self::Ref(inner) | Self::RefMut(inner) => {
+                inner.set_constructor_source().map(|(item, iteration)| match iteration {
+                    SetConstructorIteration::IntoOwnedItems => (item, SetConstructorIteration::CloneBorrowedItems),
+                    other => (item, other),
+                })
+            }
             _ => None,
         }
     }
@@ -289,6 +351,54 @@ impl IrType {
             IrType::Generic(_) => true,
             IrType::RustDisplay(_) => false,
             _ => false,
+        }
+    }
+
+    /// Return whether this type mentions the named type parameter anywhere in its structure.
+    ///
+    /// A parameter lowers as [`IrType::Generic`], but a nominal position can still carry the bare name when a
+    /// declaration type reached lowering without its owner's parameters in scope, so a same-named `Struct`, `Enum`,
+    /// or `Trait` leaf counts as a mention too. Lowering uses this to decide which of a declaration's parameters are
+    /// phantom (#1370); the emitter uses it to decide whether a field type is written in its owner's vocabulary.
+    pub fn mentions_type_param(&self, name: &str) -> bool {
+        match self {
+            IrType::Generic(leaf) | IrType::Struct(leaf) | IrType::Enum(leaf) | IrType::Trait(leaf) => leaf == name,
+            IrType::NamedGeneric(head, args) => head == name || args.iter().any(|arg| arg.mentions_type_param(name)),
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => inner.mentions_type_param(name),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                key.mentions_type_param(name) || value.mentions_type_param(name)
+            }
+            IrType::Tuple(items) => items.iter().any(|item| item.mentions_type_param(name)),
+            IrType::Function { params, ret } => {
+                params.iter().any(|param| param.mentions_type_param(name)) || ret.mentions_type_param(name)
+            }
+            IrType::ExternalUnion { union, .. } => union.mentions_type_param(name),
+            IrType::ImplTrait(bound) => bound
+                .type_args
+                .iter()
+                .chain(bound.assoc_types.iter().map(|(_, ty)| ty))
+                .any(|arg| arg.mentions_type_param(name)),
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
+            | IrType::String
+            | IrType::Bytes
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::RustDisplay(_)
+            | IrType::SelfType
+            | IrType::Unknown => false,
         }
     }
 
@@ -559,7 +669,10 @@ pub fn is_string_storage_type(ty: &IrType) -> bool {
 /// Storage distinctions are native lowering details, so every `str` storage form matches every other form. This
 /// relation is deliberately symmetric; ordinary union-carrier admission remains directional.
 pub fn isinstance_type_matches(value_ty: &IrType, target_ty: &IrType) -> bool {
-    value_ty == target_ty || (is_string_storage_type(value_ty) && is_string_storage_type(target_ty))
+    value_ty == target_ty
+        || (is_string_storage_type(value_ty) && is_string_storage_type(target_ty))
+        || crate_qualified_type_matches(value_ty, target_ty)
+        || crate_qualified_type_matches(target_ty, value_ty)
 }
 
 /// Return every source union variant whose semantic identity satisfies one retained `isinstance` target.
@@ -577,8 +690,94 @@ pub fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &IrType) -
 }
 
 /// Return whether a concrete value type can inhabit a normalized union member type.
+///
+/// A `str` member admits every string storage form. A `FrozenStr` member also admits a `'static` string: that is the
+/// storage of a `const` declared `str`, which carries `FrozenStr` at the source level, and the value converts into the
+/// member without allocating (#1794). Admission stays directional otherwise: an owned `str` is not a `FrozenStr`.
+///
+/// A member spelled by its declaring crate module (see [`crate_qualified_member_local_name`]) is inhabited by a value
+/// spelled by that nominal's module-local name.
 pub fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
-    member == value_ty || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+    member == value_ty
+        || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+        || (matches!(member, IrType::FrozenStr) && matches!(value_ty, IrType::StaticStr))
+        || crate_qualified_type_matches(member, value_ty)
+}
+
+/// Return the module-local name of a union member nominal that lowering spelled by its declaring crate module.
+///
+/// When two modules of one crate declare the same nominal name, lowering spells a union member of that name by the
+/// Rust path of its declaring module (`crate::first::Product`), so each module's union gets its own wrapper and the
+/// wrapper's payload names the right declaration (#1796). Everything else still names that nominal by its
+/// module-local name: the values that inhabit the union and the members a library publishes, whose names the
+/// publication binds to their checked declarations. Standard-library paths (`crate::__incan_std::...`) are Rust
+/// paths the compiler spells itself, never such a member. Returns `None` for every other spelling.
+pub fn crate_qualified_member_local_name(name: &str) -> Option<&str> {
+    let path = name.strip_prefix("crate::")?;
+    if path.split("::").next() == Some(incan_lang::lang::stdlib::INCAN_STD_NAMESPACE) {
+        return None;
+    }
+    path.rsplit("::").next().filter(|local| !local.is_empty())
+}
+
+/// Return whether a union member names the same type as a value once crate-qualified nominals are read by their
+/// module-local names.
+///
+/// Two crate-qualified spellings must be equal. A member spelled by its declaring module matches a value of its
+/// module-local name, and a value spelled by its declaring module (the type of a value whose import alias names a union
+/// member) matches a member of its declaration name, which a member keeps only when no other module of the crate
+/// declares that name.
+fn crate_qualified_type_matches(member: &IrType, value: &IrType) -> bool {
+    if member == value {
+        return true;
+    }
+    let names_match = |member: &str, value: &str| match (
+        crate_qualified_member_local_name(member),
+        crate_qualified_member_local_name(value),
+    ) {
+        (Some(_), Some(_)) => member == value,
+        (Some(member_local), None) => member_local == value,
+        (None, Some(value_local)) => member == value_local,
+        (None, None) => member == value,
+    };
+    let all_match = |members: &[IrType], values: &[IrType]| {
+        members.len() == values.len()
+            && members
+                .iter()
+                .zip(values)
+                .all(|(member, value)| crate_qualified_type_matches(member, value))
+    };
+    match (member, value) {
+        (IrType::Struct(member), IrType::Struct(value)) | (IrType::Enum(member), IrType::Enum(value)) => {
+            names_match(member, value)
+        }
+        (IrType::NamedGeneric(member_name, member_args), IrType::NamedGeneric(value_name, value_args)) => {
+            names_match(member_name, value_name) && all_match(member_args, value_args)
+        }
+        (IrType::List(member), IrType::List(value))
+        | (IrType::Set(member), IrType::Set(value))
+        | (IrType::Option(member), IrType::Option(value))
+        | (IrType::Ref(member), IrType::Ref(value))
+        | (IrType::RefMut(member), IrType::RefMut(value))
+        | (IrType::TypeToken(member), IrType::TypeToken(value)) => crate_qualified_type_matches(member, value),
+        (IrType::Dict(member_key, member_value), IrType::Dict(value_key, value_value))
+        | (IrType::Result(member_key, member_value), IrType::Result(value_key, value_value)) => {
+            crate_qualified_type_matches(member_key, value_key)
+                && crate_qualified_type_matches(member_value, value_value)
+        }
+        (IrType::Tuple(members), IrType::Tuple(values)) => all_match(members, values),
+        (
+            IrType::Function {
+                params: member_params,
+                ret: member_ret,
+            },
+            IrType::Function {
+                params: value_params,
+                ret: value_ret,
+            },
+        ) => all_match(member_params, value_params) && crate_qualified_type_matches(member_ret, value_ret),
+        _ => false,
+    }
 }
 
 /// Compare two physical type trees using only nominal identities retained by the successful checker.
@@ -711,12 +910,17 @@ pub fn ir_type_from_projected_manifest(
             ret: Box::new(child(return_type)),
         },
         TypeRef::Ref { inner } => IrType::Ref(Box::new(child(inner))),
+        // A `mut`-marked function-type parameter is passed so the caller sees the callee's changes (#1790).
+        TypeRef::MutParam { inner } => IrType::RefMut(Box::new(child(inner))),
         TypeRef::TypeToken { inner } => IrType::TypeToken(Box::new(child(inner))),
         _ => ordinary(ty),
     }
 }
 
 /// Convert an IR type used by implementation metadata into its checked manifest representation.
+///
+/// A `RefMut` parameter of a function type is a `mut`-marked parameter and is published as the marker (#1790); any
+/// other shared or mutable reference is published as `Ref`, the one reference form manifests spell.
 pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
     let named = |name: &str| TypeRef::Named {
         origin: None,
@@ -751,8 +955,12 @@ pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
         IrType::Tuple(elements) => applied("Tuple", elements),
         IrType::Option(inner) => applied("Option", std::slice::from_ref(inner.as_ref())),
         IrType::Result(ok, err) => applied("Result", &[ok.as_ref().clone(), err.as_ref().clone()]),
-        IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => Ok(named(name)),
-        IrType::NamedGeneric(name, args) => applied(name, args),
+        // A crate-qualified union member publishes under its module-local name, the name the publication binds to the
+        // member's checked declaration.
+        IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
+            Ok(named(crate_qualified_member_local_name(name).unwrap_or(name)))
+        }
+        IrType::NamedGeneric(name, args) => applied(crate_qualified_member_local_name(name).unwrap_or(name), args),
         IrType::TypeToken(inner) => Ok(TypeRef::TypeToken {
             inner: Box::new(manifest_type_ref_from_ir(inner)?),
         }),
@@ -765,7 +973,13 @@ pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
         IrType::Function { params, ret } => Ok(TypeRef::Function {
             params: params
                 .iter()
-                .map(manifest_type_ref_from_ir)
+                .map(|param| match param {
+                    // A `mut`-marked callable parameter lowers to `RefMut`; publish the marker, not a shared `&`.
+                    IrType::RefMut(inner) => Ok(TypeRef::MutParam {
+                        inner: Box::new(manifest_type_ref_from_ir(inner)?),
+                    }),
+                    other => manifest_type_ref_from_ir(other),
+                })
                 .collect::<Result<Vec<_>, _>>()?,
             return_type: Box::new(manifest_type_ref_from_ir(ret)?),
         }),
@@ -794,6 +1008,48 @@ pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
 mod tests {
     use super::*;
 
+    /// #1796: a union member lowering spelled by its declaring crate module is inhabited by the module-local spelling
+    /// and publishes under it, while standard-library paths and other qualifications keep their exact meaning.
+    #[test]
+    fn crate_qualified_union_members_match_and_publish_by_their_local_name_issue1796() -> Result<(), String> {
+        let member = IrType::Struct("crate::first::Product".to_string());
+        let union = IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![member.clone(), IrType::Int]);
+        assert_eq!(
+            union.union_variant_index_for_member(&IrType::Struct("Product".to_string())),
+            Some(0)
+        );
+        assert_eq!(
+            union.union_variant_index_for_member(&IrType::Struct("Receipt".to_string())),
+            None
+        );
+        assert!(union_member_type_matches(
+            &IrType::List(Box::new(member.clone())),
+            &IrType::List(Box::new(IrType::Struct("Product".to_string())))
+        ));
+        assert!(isinstance_type_matches(&member, &IrType::Struct("Product".to_string())));
+        assert_eq!(crate_qualified_member_local_name("crate::Product"), Some("Product"));
+        assert_eq!(
+            crate_qualified_member_local_name("crate::__incan_std::io::IoError"),
+            None
+        );
+        assert_eq!(crate_qualified_member_local_name("querykit::Product"), None);
+        assert_eq!(
+            manifest_type_ref_from_ir(&member)?,
+            TypeRef::Named {
+                origin: None,
+                name: "Product".to_string(),
+            }
+        );
+        assert_eq!(
+            manifest_type_ref_from_ir(&IrType::Struct("crate::__incan_std::io::IoError".to_string()))?,
+            TypeRef::Named {
+                origin: None,
+                name: "crate::__incan_std::io::IoError".to_string(),
+            }
+        );
+        Ok(())
+    }
+
     #[test]
     fn isinstance_string_storage_identity_is_symmetric_without_widening_union_carriers() {
         let storage_types = [IrType::String, IrType::StaticStr, IrType::StrRef, IrType::FrozenStr];
@@ -805,6 +1061,7 @@ mod tests {
 
         assert!(union_member_type_matches(&IrType::String, &IrType::FrozenStr));
         assert!(!union_member_type_matches(&IrType::FrozenStr, &IrType::String));
+        assert!(!union_member_type_matches(&IrType::FrozenStr, &IrType::StrRef));
 
         let mixed_storage_union = IrType::NamedGeneric(
             IR_UNION_TYPE_NAME.to_string(),
@@ -814,6 +1071,75 @@ mod tests {
             isinstance_union_variant_indices(&mixed_storage_union, &IrType::String),
             Some(vec![0, 1])
         );
+    }
+
+    /// #1794: a `const` declared `str` is stored as a `'static` string and carries `FrozenStr` at the source level, so
+    /// a `FrozenStr` member of a union admits it, whichever position the member takes.
+    #[test]
+    fn frozen_str_union_member_admits_a_static_str_const_issue1794() {
+        assert!(union_member_type_matches(&IrType::FrozenStr, &IrType::StaticStr));
+        let frozen_or_int = IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::Int, IrType::FrozenStr]);
+        assert_eq!(
+            frozen_or_int.union_variant_index_for_member(&IrType::StaticStr),
+            Some(1)
+        );
+        let frozen_or_str =
+            IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::FrozenStr, IrType::String]);
+        assert_eq!(
+            frozen_or_str.union_variant_index_for_member(&IrType::StaticStr),
+            Some(0)
+        );
+        assert_eq!(frozen_or_str.union_variant_index_for_member(&IrType::String), Some(1));
+    }
+
+    /// `set(generator)` collects through the `Iterator` trait, a frozen source clones its borrowed items, and a
+    /// mutable collection is consumed; a borrowed source plans like the value it borrows (#1744).
+    #[test]
+    fn set_constructor_source_plans_a_generator_through_the_iterator_trait_issue1744() {
+        let generator = IrType::NamedGeneric(
+            collections::as_str(CollectionTypeId::Generator).to_string(),
+            vec![IrType::Int],
+        );
+        assert_eq!(
+            generator.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::CollectOwnedIterator))
+        );
+        let borrowed_generator = IrType::RefMut(Box::new(generator.clone()));
+        assert_eq!(
+            borrowed_generator.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::CollectOwnedIterator))
+        );
+        let frozen = IrType::NamedGeneric(
+            collections::as_str(CollectionTypeId::FrozenList).to_string(),
+            vec![IrType::Int],
+        );
+        assert_eq!(
+            frozen.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::CloneBorrowedItems))
+        );
+        let list = IrType::List(Box::new(IrType::Int));
+        assert_eq!(
+            list.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::IntoOwnedItems))
+        );
+    }
+
+    /// #1852: a list or set reached through a reference, such as a `mut` parameter, has its items cloned into the new
+    /// set, and a generator reached that way is still consumed through the `Iterator` trait.
+    #[test]
+    fn set_constructor_source_clones_the_items_of_a_borrowed_collection_issue1852() {
+        for source in [IrType::List(Box::new(IrType::Int)), IrType::Set(Box::new(IrType::Int))] {
+            for borrowed in [
+                IrType::Ref(Box::new(source.clone())),
+                IrType::RefMut(Box::new(source.clone())),
+            ] {
+                assert_eq!(
+                    borrowed.set_constructor_source(),
+                    Some((&IrType::Int, SetConstructorIteration::CloneBorrowedItems)),
+                    "{borrowed:?}"
+                );
+            }
+        }
     }
 
     // ============================================================================

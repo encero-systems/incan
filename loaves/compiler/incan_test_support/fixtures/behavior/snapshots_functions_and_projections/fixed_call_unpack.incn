@@ -1,0 +1,28 @@
+# behavior: list, tuple and dict literals unpack into fixed positional and keyword parameters of functions and methods
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fixed_call_unpack_codegen
+# expect-stdout:
+#   London
+#   Paris
+#   GET /status
+#   11
+
+def combine(a: int, b: str, *rest: int, **labels: str) -> str:
+    return labels["city"]
+
+
+def route(path: str, method: str) -> str:
+    return f"{method} {path}"
+
+
+class Counter:
+    def add(self, left: int, right: int) -> int:
+        return left + right
+
+
+def main() -> None:
+    xy: tuple[int, str, int] = (1, "Ada", 7)
+    counter = Counter()
+    println(combine(*[1, "Ada", 7], **{"city": "London", "name": "Ada"}))
+    println(combine(*xy, **{"city": "Paris", "name": "Grace"}))
+    println(route(**{"path": "/status", "method": "GET"}))
+    println(counter.add(*(5, 6)))

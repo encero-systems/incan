@@ -92,9 +92,28 @@ model Reading:
 
 For the exact alias syntax, supported target kinds, public export rules, and diagnostics, see [Symbol aliases](../reference/symbol_aliases.md).
 
+An alias adds a name, not behavior. A call through a function or method alias compiles to a call of its target, a public alias is re-exported rather than duplicated, and checked metadata keeps it as an alias, so tools see one declaration under two names.
+
+Diagnostics follow the name the source wrote: a diagnostic about a use of an alias names the alias at that use, and may also name its target. A library manifest and its checked API metadata record a public alias as an alias of its target, not as a separate declaration.
+
+That makes the choice between an alias and a wrapper a choice about the API. Use an alias when the new name is the same API as the target; the `alias` marker (`average = alias avg`) can make that intent easier to read among other declarations. Use a wrapper function or method when the new name changes behavior, adapts parameters, adds validation, carries its own docs, or should appear as an independent callable:
+
+```incan
+def avg(x: int, y: int) -> int:
+    return (x + y) // 2
+
+def mean_nonzero(x: int, y: int) -> int:
+    assert x != 0 and y != 0
+    return avg(x, y)
+```
+
+A variant alias suits an enum whose canonical spelling is a compact wire value but which also wants a longer source spelling, such as `WARNING = alias WARN`.
+
+When two imports or declarations claim one name in a scope, the first stays the binding that later references resolve to while the second is reported. Invalid source therefore cannot change what the rest of the module means.
+
 ### Core builtin function names
 
-Core builtin functions such as `len`, `sum`, and `zip` are ambient fallback bindings. A real lexical binding at module scope takes precedence over that fallback, whether it comes from a direct declaration or an explicit import. This is ordinary name resolution, not an error or a special builtin rule. The output functions are deliberately different: `print` and its `println` alias are immutable language bindings and cannot be redefined or replaced by an import.
+Core builtin functions such as `len`, `sum`, and `zip` are ambient fallback bindings. A real lexical binding at module scope takes precedence over that fallback, whether it comes from a direct declaration or an explicit import. This is ordinary name resolution, not an error or a special builtin rule, and it lets a domain library use a natural name such as `sum` without an alias. `std.builtins.<name>` is the explicit way back to the builtin; it exists only in the typechecker, with no source module or generated runtime code, and builtin types such as `int` and `Result[T, E]` stay in the root scope. The output functions are deliberately different: `print` and its `println` alias are immutable language bindings and cannot be redefined or replaced by an import.
 
 ```incan
 def len(value: int) -> int:
@@ -235,6 +254,34 @@ def shadow_vs_reassign() -> int:
     return x  # still returns 11, as the x = 13 was assigned to a new x local to the if-block
 ```
 
+### Assigning several targets
+
+Tuple unpacking and chained assignment follow the same rule as `x = value` for every name they assign: a name that is already bound is reassigned, and a new name is declared. That is what makes a loop like this advance, because each pass updates the `a` and `b` declared before the loop instead of creating fresh ones inside it:
+
+```incan
+def fibonacci(n: int) -> int:
+    mut a = 0
+    mut b = 1
+    for _ in range(n):
+        a, b = (b, a + b)
+    return a
+```
+
+The right side is evaluated once, before any target is written, so `a, b = (b, a)` exchanges the two values, and so does a swap of fields or list elements:
+
+```incan
+model Grid:
+    width: int
+    height: int
+
+    def turn(mut self) -> None:
+        self.width, self.height = (self.height, self.width)
+```
+
+A chained assignment gives each target the value in that target's own type. Over an `int` target and an `Option[int]` target, `x = limit = 5` gives `x` the value `5` and `limit` the value `Some(5)`. A value built only from literals and empty constructors, such as `[]` or `None`, has no type of its own, so it is checked against each target separately and built once for each: `names = counts = []` gives a `list[str]` and a `list[int]` target each their own empty list. Any other value is built once and shared, which is why a chain over targets of different types needs a value whose type is fully known.
+
+A type annotation declares one binding, so it cannot sit on a chain: `x: T = y = value` is refused, since the annotation could apply to only one of its targets. The exact rules are in [Assignments](../reference/assignments.md).
+
 ## Closures and capturing
 
 Incan closures use arrow syntax:
@@ -245,16 +292,16 @@ add1 = (x) => x + 1
 
 Closures introduce their own function scope (parameters are local to the closure body). Names from outer scopes can be **read** by normal lexical lookup.
 
-Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be `mut`). Use `let` for a new immutable closure-local binding or `mut` for a new mutable one.
+A closure body is a single expression, so a closure assigns no names of its own. It reads each outer local it names as the value that local held when the closure was constructed, and a later change to the outer binding does not reach it (see [Closure captures](../reference/functions.md#closure-captures)).
 
 Example:
 
 ```incan
 def closure_capture() -> int:
     mut x = 1
-    inc = () => x = x + 1  # reassigns outer x (so outer x must be mut)
-    inc()
-    return x  # 2
+    read_x = () => x
+    x = 5
+    return read_x()  # 1: the value x held when read_x was constructed
 ```
 
 > Note: Incan does not expose Python-style `global` / `nonlocal` declarations.

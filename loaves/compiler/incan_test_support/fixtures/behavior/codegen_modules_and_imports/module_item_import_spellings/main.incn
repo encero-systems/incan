@@ -1,0 +1,19 @@
+# behavior: a module function imported as `import module::item`, `import module::item as alias`, `from module import item` and `from module import item as alias` is the same callable under each binding
+# retires: loaves/compiler/incan_emit/src/codegen.rs::canonical_module_item_import_keeps_function_projection_for_both_spellings
+# expect-stdout:
+#   42
+#   42
+#   7
+#   7
+
+import helper::value
+from helper import value as answer
+import other::count as total
+from other import count
+
+
+def main() -> None:
+    println(value())
+    println(answer())
+    println(total())
+    println(count())

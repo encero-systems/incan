@@ -1,0 +1,15 @@
+# behavior: list literals spread nested lists and tuples in place, and dict literals spread a dict with later keys overriding
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_collection_literal_spread_codegen
+# expect-stdout:
+#   15
+#   enabled
+#   json 2
+
+def main() -> None:
+    tail: tuple[int, int] = (4, 5)
+    values = [1, *[2, 3], *tail]
+    defaults = {"trace": "disabled", "accept": "json"}
+    merged = {**defaults, "trace": "enabled"}
+    println(values[0] + values[1] + values[2] + values[3] + values[4])
+    println(merged["trace"])
+    println(f"{merged["accept"]} {len(merged)}")

@@ -1,0 +1,35 @@
+# behavior: int, float and bool values pass to functions and remain usable by the caller afterwards, and a str literal is accepted directly as a method argument
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_int_no_conversion
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_float_no_conversion
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_bool_no_conversion
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_method_arg_no_conversion
+# expect-stdout:
+#   43
+#   4.5
+#   false
+#   42 3.5 true
+#   true
+#   false
+
+def bump(value: int) -> int:
+    return value + 1
+
+
+def grow(value: float) -> float:
+    return value + 1.0
+
+
+def flip(value: bool) -> bool:
+    return not value
+
+
+def main() -> None:
+    count = 42
+    ratio = 3.5
+    flag = true
+    println(bump(count))
+    println(grow(ratio))
+    println(flip(flag))
+    println(f"{count} {ratio} {flag}")
+    println("hello".startswith("he"))
+    println("hello".endswith("lo!"))

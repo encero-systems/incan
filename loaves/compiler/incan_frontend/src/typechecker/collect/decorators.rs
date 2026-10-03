@@ -11,6 +11,7 @@ use crate::decorator_resolution;
 use crate::diagnostics::{CompileError, errors};
 use crate::symbols::{ResolvedType, SymbolKind, SymbolTable, TypeInfo};
 use crate::typechecker::TypeChecker;
+use crate::typechecker::derive_requirements::LocalDeriveFacts;
 use crate::typechecker::type_info::{
     CBindingBuffer, CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingOutcome, CBindingParameter,
     CBindingResource, CBindingStruct, CBindingStructField, CBindingSymbol, CBindingType, COutputMode, CResourceAccess,
@@ -75,7 +76,7 @@ pub(in crate::typechecker) fn resolve_decorator_id(dec: &Decorator, symbols: &Sy
 }
 
 /// Find decorators by name.
-pub(super) fn decorators_named<'a>(
+pub(in crate::typechecker) fn decorators_named<'a>(
     decorators: &'a [Spanned<Decorator>],
     symbols: &SymbolTable,
     id: DecoratorId,
@@ -85,15 +86,14 @@ pub(super) fn decorators_named<'a>(
         .filter(move |d| resolve_decorator_id(&d.node, symbols) == Some(id))
 }
 
-/// Extract positional identifier names from decorator arguments.
-pub(super) fn positional_idents(args: &[DecoratorArg]) -> impl Iterator<Item = (&str, Span)> + '_ {
+/// Extract the derive names positional decorator arguments spell, bare or module-qualified
+/// ([`decorator_resolution::derive_argument_name`]).
+pub(in crate::typechecker) fn positional_derive_names(
+    args: &[DecoratorArg],
+) -> impl Iterator<Item = (String, Span)> + '_ {
     args.iter().filter_map(|arg| match arg {
         DecoratorArg::Positional(expr) => {
-            if let Expr::Ident(name) = &expr.node {
-                Some((name.as_str(), expr.span))
-            } else {
-                None
-            }
+            decorator_resolution::derive_argument_name(&expr.node).map(|name| (name, expr.span))
         }
         _ => None,
     })
@@ -1746,11 +1746,7 @@ impl TypeChecker {
             .flat_map(|dec| {
                 dec.node.args.iter().filter_map(|arg| match arg {
                     DecoratorArg::Positional(expr) => {
-                        if let Expr::Ident(name) = &expr.node {
-                            Some((name.clone(), expr.span))
-                        } else {
-                            None
-                        }
+                        decorator_resolution::derive_argument_name(&expr.node).map(|name| (name, expr.span))
                     }
                     DecoratorArg::Named(name, _) => {
                         // Named args not valid for derive, but report error on them.
@@ -1801,8 +1797,8 @@ impl TypeChecker {
     /// Extract derive names from @derive decorators.
     pub fn extract_derive_names(&self, decorators: &[Spanned<Decorator>]) -> Vec<String> {
         decorators_named(decorators, &self.symbols, DecoratorId::Derive)
-            .flat_map(|dec| positional_idents(&dec.node.args))
-            .map(|(name, _)| name.to_string())
+            .flat_map(|dec| positional_derive_names(&dec.node.args))
+            .map(|(name, _)| name)
             .collect()
     }
 
@@ -1812,13 +1808,26 @@ impl TypeChecker {
     /// Its inspected probe expansion can select a candidate Rust generic ABI, so retain the exact resolved macro
     /// namespace without mixing it into [`TypeInfo`](crate::symbols::TypeInfo) derive names. Native rustc
     /// compilation remains authoritative for the real generated declaration.
+    ///
+    /// Every local nominal type also gets its [`LocalDeriveFacts`] here, which the derive relation reads: the builtin
+    /// derives `@rust.derive(...)` spells (`Eq`, `"std::hash::Hash"`), and whether it names a derive macro the compiler
+    /// cannot classify (#1754, #1758).
     pub fn record_local_rust_derive_paths(&mut self, type_name: &str, decorators: &[Spanned<Decorator>]) {
         let mut paths = Vec::new();
+        let mut facts = LocalDeriveFacts::default();
         for decorator in decorators_named(decorators, &self.symbols, DecoratorId::RustDerive) {
             for argument in &decorator.node.args {
                 let DecoratorArg::Positional(expression) = argument else {
                     continue;
                 };
+                match self.classify_rust_derive_arg(&expression.node) {
+                    Some(derive) => {
+                        if !facts.rust_builtin_derives.contains(&derive) {
+                            facts.rust_builtin_derives.push(derive);
+                        }
+                    }
+                    None => facts.has_unclassified_rust_derive = true,
+                }
                 let path = match &expression.node {
                     Expr::Ident(name) => self.rust_import_path_for_local_name(name),
                     Expr::Literal(Literal::String(path)) if self.rust_derive_path_has_declared_crate(path) => {
@@ -1833,11 +1842,40 @@ impl TypeChecker {
                 }
             }
         }
+        self.local_derive_facts.insert(type_name.to_string(), facts);
         if paths.is_empty() {
             self.local_rust_derive_paths.remove(type_name);
         } else {
             self.local_rust_derive_paths.insert(type_name.to_string(), paths);
         }
+    }
+
+    /// Return the builtin derive a `@rust.derive(...)` argument names, or `None` for any other derive macro.
+    ///
+    /// A bare builtin name (`Hash`) or string (`"Hash"`) is Rust's own derive, as is a `std::`/`core::` path whose leaf
+    /// is one (`"std::hash::Hash"`); an identifier bound to such a Rust import counts the same way.
+    fn classify_rust_derive_arg(&self, expr: &Expr) -> Option<derives::DeriveId> {
+        let (path, leaf) = match expr {
+            Expr::Ident(name) => (
+                self.rust_import_path_for_local_name(name),
+                self.rust_derive_leaf_for_ident(name)
+                    .unwrap_or(name.as_str())
+                    .to_string(),
+            ),
+            Expr::Literal(Literal::String(path)) => (
+                path.contains("::").then(|| path.clone()),
+                Self::rust_path_leaf(path)?.to_string(),
+            ),
+            _ => return None,
+        };
+        if !Self::is_builtin_rust_derive(&leaf) {
+            return None;
+        }
+        let from_rust_std = path.as_deref().is_none_or(|path| {
+            let path = path.strip_prefix("rust::").unwrap_or(path);
+            path.starts_with("std::") || path.starts_with("core::")
+        });
+        from_rust_std.then(|| derives::from_str(&leaf)).flatten()
     }
 
     /// Extract `@requires` constraints from decorators as `(name, type)` pairs.
@@ -1887,19 +1925,24 @@ impl TypeChecker {
             return false;
         }
 
-        if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
-            self.define_hidden_trait_symbol(&canonical, info, span);
+        // A module named through another module (`serde.json` after `from std import serde`) derives its traits as
+        // the module imported by name does.
+        if name.contains('.')
+            && let Some(module_path) = self.module_path_for_imported_name(name)
+            && self.lookup_derivable_traits(&module_path).is_some()
+        {
             return true;
         }
 
-        // Allow custom derives imported from stdlib modules backed by rust.module(...).
-        let resolved = self
-            .import_binding_path(name)
-            .map(<[String]>::to_vec)
-            .unwrap_or_else(|| vec![name.to_string()]);
+        // Allow custom derives imported from stdlib modules backed by rust.module(...), whether the trait was imported
+        // by name or is named through its module (`json.Serialize`, #1885).
+        let resolved = self.derive_trait_path(name);
         if resolved.len() >= 2
             && self.imported_trait_is_derivable(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
         {
+            if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
+                self.define_hidden_trait_symbol(&canonical, info, span);
+            }
             return true;
         }
 

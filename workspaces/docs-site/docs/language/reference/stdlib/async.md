@@ -1,147 +1,362 @@
-# std.async (reference)
+# `std.async`
 
-This page documents the `std.async` API surface exposed by the standard library. See the module source files for authoritative behavior:
+`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives in the modules `std.async.time`, `std.async.task`, `std.async.race`, `std.async.channel` and `std.async.sync`. The root module `std.async` re-exports the common surface; `std.async.prelude` names the same module.
 
-- `loaves/stdlib/async/src/async/time.incn`
-- `loaves/stdlib/async/src/async/task.incn`
-- `loaves/stdlib/async/src/async/channel.incn`
-- `loaves/stdlib/async/src/async/sync.incn`
-- `loaves/stdlib/async/src/async/race.incn`
-- `loaves/stdlib/async/src/async/prelude.incn`
+A function of this module that takes a task requires the task's result to have the type its signature declares and to satisfy the `Send` and `Static` bounds shown there.
 
-## Interop notes
+## Importing std.async
 
-`std.async.time` and `std.async.race` use direct Rust interop calls (for example `tokio::time`) for their timer-related operations rather than wrapping stdlib-runtime helper functions. The public signatures listed below remain unchanged. `std.async.task`, `std.async.channel`, `std.async.sync`, and `std.async.prelude` still retain wrapper-style surfaces where behavior depends on native Rust adapter contracts.
-
-`Awaitable[T]` is the Incan-facing async protocol, but user-authored `rusttype ... with Awaitable[T]` bridges are currently gated. Rust `Future` bridge generation needs compiler metadata for safe `Pin` projection and output mapping; until that exists, write the adapter in Rust and expose it through the stdlib/runtime boundary.
-
-## Cancellation vocabulary
-
-Async APIs on this page use these contract terms:
-
-| Term                    | Meaning                                                                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cancel-safe`           | Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation.                            |
-| `cancel-safe-but-lossy` | Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost.                          |
-| `not cancel-safe`       | Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting.                              |
-| `durable once spawned`  | Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result. |
-
-## Module: `std.async.time`
-
-Import with:
+- `async` and `await` are keywords after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`; see [Soft keywords](../imports_and_modules.md#soft-keywords).
+- `from std.async import NAME` imports a name that the root module re-exports; the names are listed under [`std.async` re-exports](#stdasync-re-exports).
+- `std.async.prelude` is the root module under another path: `from std.async.prelude import NAME` imports the same names as `from std.async import NAME`, and `import std.async.prelude` binds `prelude` to the root module.
+- Refused (`INCAN-I0001`): a name that the named module neither declares nor re-exports.
 
 ```incan
-from std.async.time import sleep, timeout, timeout_join, TimeoutError, TimeoutJoinOutcome
+from std.async import spawn, sleep, JoinHandle         # accepted
+from std.async.prelude import spawn, Mutex             # accepted
+from std.async.channel import SenderPermit             # accepted
+from std.async import SenderPermit                     # refused: std.async does not re-export SenderPermit (INCAN-I0001)
 ```
 
-**Functions**:
+## Task arguments
 
-| Function                                                                                    | Returns                   | Cancellation contract                                                                                                                                                                                                                                                                                                      |
-| ------------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sleep(seconds: float) -> None`                                                             | `None`                    | `cancel-safe`                                                                                                                                                                                                                                                                                                              |
-| `sleep_ms(milliseconds: int) -> None`                                                       | `None`                    | `cancel-safe`                                                                                                                                                                                                                                                                                                              |
-| `timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]`       | `Result[T, TimeoutError]` | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future.                                                                                                                                                                                                         |
-| `timeout_ms[T, TaskFuture](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]` | `Result[T, TimeoutError]` | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future.                                                                                                                                                                                                         |
-| `timeout_join[T](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`           | `TimeoutJoinOutcome[T]`   | Stops waiting when the deadline expires and returns the live handle in `TimedOut(handle)`; the task continues running unless explicitly aborted. If the `timeout_join()` wait itself is cancelled by an outer boundary, the helper-owned handle is dropped and the task is detached unless another completion path exists. |
-| `timeout_join_ms[T](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`     | `TimeoutJoinOutcome[T]`   | Millisecond form of `timeout_join`, with the same outer-cancellation caveat.                                                                                                                                                                                                                                               |
+A parameter bounded by `RuntimeFuture[T]` (`task` of `spawn`, `timeout`, `timeout_ms` and `race_timeout`, `awaitable` of `arm`) takes a task: a direct call of an `async def` written as the argument, a `JoinHandle[T]`, or another awaitable value. Any other argument is refused with `INCAN-T0115`, including a function value, a value of a type that is not awaitable, and a name bound to the result of an `async def` call.
 
-**Types**:
+```incan
+import std.async
+from std.async.task import spawn
 
-| Name                 | Description                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| `TimeoutJoinOutcome` | Outcome type returned by durable timeout helpers, including the recovered live handle on timeout. |
-| `TimeoutError`       | Error type returned by canceling timeout helpers when the deadline expires.                       |
-| `Duration`           | Simple duration value object exposed as a convenience type.                                       |
+async def work() -> int:
+    return 41
 
-## Module: `std.async.race`
+def compute() -> int:
+    return 41
 
-Import with:
+async def main() -> None:
+    first = spawn(work())   # accepted
+    second = spawn(work)    # refused: a function value is not a task (INCAN-T0115)
+    third = spawn(compute)  # refused: a function value is not a task (INCAN-T0115)
+    fourth = spawn(41)      # refused: an int is not awaitable (INCAN-T0115)
+    pending = work()
+    fifth = spawn(pending)  # refused: a name bound to a call's result is not a task (INCAN-T0115)
+```
+
+## Cancellation terms
+
+| Term | Contract |
+| --- | --- |
+| Cancel-safe | Cancelling a pending wait does not consume a value or acquire a resource. |
+| Cancel-safe but lossy | Cancelling does not complete the operation, but it can discard an owned value or the waiter's queue position. |
+| Durable once spawned | The task continues after its handle is dropped. Dropping the handle loses the result but does not cancel the task. |
+
+## `std.async.time`
+
+```incan
+from std.async.time import Duration, TimeoutError, TimeoutJoinOutcome
+from std.async.time import sleep, sleep_ms, timeout, timeout_ms, timeout_join, timeout_join_ms
+```
+
+### Functions
+
+| Signature | Contract |
+| --- | --- |
+| `async sleep(seconds: float) -> None` | Suspends for `seconds`. Negative values, NaN, and either infinity are treated as zero. The wait is cancel-safe. |
+| `async sleep_ms(milliseconds: int) -> None` | Suspends for `milliseconds`. Negative values are treated as zero. The wait is cancel-safe. |
+| `async timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]` | Returns `Ok(value)` when `task` finishes before the deadline and `Err(TimeoutError())` when the deadline expires. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops the supplied future. |
+| `async timeout_ms[T with (Send, Static), TaskFuture with RuntimeFuture[T]](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]` | Millisecond form of `timeout`. Negative durations are treated as zero. |
+| `async timeout_join[T with (Send, Static)](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]` | Waits for spawned work without aborting it at the deadline. Negative values, NaN, and either infinity are treated as zero. A timeout returns the live handle. Cancelling this wait drops its owned handle and detaches the task. |
+| `async timeout_join_ms[T with (Send, Static)](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]` | Millisecond form of `timeout_join`. Negative durations are treated as zero. |
+
+A finite `seconds` of `18446744073709551616.0` (2<sup>64</sup>) or more, passed to `sleep`, `timeout`, `timeout_join` or `race_timeout`, panics.
+
+### `Duration`
+
+```incan
+pub model Duration:
+    pub secs: int
+    pub nanos: int
+```
+
+The timing functions take seconds or milliseconds, not a `Duration`.
+
+| Signature | Result |
+| --- | --- |
+| `Duration(secs: int, nanos: int)` | Direct field construction. It does not clamp or normalize either field. |
+| `Duration.from_secs(secs: int) -> Duration` | Returns zero for `secs <= 0`; otherwise returns `(secs, 0)` exactly. |
+| `Duration.from_millis(millis: int) -> Duration` | Returns zero for `millis <= 0`; otherwise returns `secs = millis // 1000` and `nanos = (millis % 1000) * 1_000_000`. |
+| `Duration.from_secs_f64(secs: float) -> Duration` | Returns zero for nonpositive inputs and NaN. A positive input gives the fields below. Positive infinity gives `secs = 9223372036854775807` and `nanos = 9223372036854775807`. |
+
+The integer constructors are exact for every positive `int`. Their results satisfy `secs >= 0` and `0 <= nanos < 1_000_000_000`.
+
+For a positive input, `from_secs_f64` sets `secs` to the input's whole seconds and `nanos` to `(input - float(secs)) * 1_000_000_000`, each converted to `int` and saturated at the `int` range. For a large positive input either value saturates, and `nanos` can fall outside `0 <= nanos < 1_000_000_000`. Positive infinity is not treated as zero.
+
+### `TimeoutError`
+
+`TimeoutError` implements `Error`.
+
+| Method | Returns |
+| --- | --- |
+| `message(self) -> str` | `"operation timed out"` |
+| `source(self) -> Option[str]` | `None` |
+
+### `TimeoutJoinOutcome[T]`
+
+| Variant | Payload | Meaning |
+| --- | --- | --- |
+| `Completed` | `T` | The task returned successfully before the deadline. |
+| `JoinFailed` | `TaskJoinError` | The task finished before the deadline but could not be joined. |
+| `TimedOut` | `JoinHandle[T]` | The deadline expired. The task is still running and the returned handle can be awaited or aborted. |
+
+## `std.async.task`
+
+```incan
+from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yield_now
+```
+
+### Functions
+
+| Signature | Contract |
+| --- | --- |
+| `spawn[T with (Send, Static), TaskFuture with RuntimeFuture[T]](task: TaskFuture) -> JoinHandle[T]` | Starts an async task. The task is durable once spawned. |
+| `spawn_blocking[T with (Send, Static), TaskFn with RuntimeFnOnce[T]](task: TaskFn) -> JoinHandle[T]` | Schedules a no-argument callable on the blocking pool. Once work starts, it cannot be cancelled. |
+| `async yield_now() -> None` | Yields to the runtime scheduler. The wait is cancel-safe. |
+
+### `JoinHandle[T]`
+
+| Operation | Result |
+| --- | --- |
+| `await handle` | `Result[T, TaskJoinError]`: `Ok(value)` when the task returned, `Err(error)` when it panicked or was cancelled. The handle is used up. |
+| `handle.abort() -> None` | Requests cancellation of async work. For `spawn_blocking`, it prevents only work that is still queued. |
+| `await handle` after `handle.abort()` | `Err(error)` with `error.is_cancelled()` true, unless the task had already completed; a completed task gives its ordinary result. |
+| Dropping the handle | Detaches the task. |
+
+`JoinHandle[T]` implements neither `Clone` nor `Debug`. A `model` or `class` field or an `enum` variant payload of this type, directly or inside a `list`, `dict`, `Option`, `Result` or tuple, is refused (`INCAN-T0113`; see [Automatic derives](../derives_and_traits.md#automatic-derives)).
+
+#### Loops over task handles
+
+A `for` loop hands on its handles when each item is a `JoinHandle[T]`, or a tuple or collection that contains one, and the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, puts it in a new tuple, list or set or as a value in a new dict, or iterates it (a list of handles) in a nested `for` loop that hands on its items.
+
+What such a loop iterates decides how it receives the handles:
+
+| Iterable | The loop |
+| --- | --- |
+| A local list binding, a parameter not marked `mut`, or the variable of an enclosing loop that owns its items (that loop takes its items or receives them by value) | Takes the handles out of the list, leaving it empty. |
+| A list literal or comprehension, a `Generator`, a value iterated through an iteration protocol, or the result of an `await`, of a call other than `enumerate(...)` and `zip(...)`, or of a method of a type other than a builtin collection | Receives each handle by value. |
+| Anything else, such as a list element, a field, a `list`, `dict` or `set` method like `values()`, `enumerate(...)`, `zip(...)`, a `mut` parameter, the variable of a loop that reads its items in place, or a static | Refused (`INCAN-T0119`). |
+
+After a loop that takes the handles out of a list binding, these are refused (`INCAN-T0119`):
+
+- a read of the list inside the loop body;
+- a read of the list after the loop, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it;
+- a closure that captured the list before the loop;
+- an enclosing loop that repeats the loop over a list defined outside it, unless each pass assigns the list a new one before the loop, and, when it does, a read of the list in the enclosing loops, their conditions included, that comes before that assignment.
+
+Why a loop takes the items is explained in [Loops that take their items](../../explanation/control_flow.md#loops-that-take-their-items); a worked program is [Await every task in a list](../../how-to/async_programming.md#await-every-task-in-a-list).
+
+```incan
+import std.async
+from std.async.task import spawn
+
+async def work() -> int:
+    return 1
+
+async def main() -> None:
+    handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        match await handle:          # accepted
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    println(len(handles))            # refused: the loop emptied handles (INCAN-T0119)
+```
+
+```incan
+import std.async
+from std.async.task import spawn
+
+async def work() -> int:
+    return 1
+
+async def main() -> None:
+    mut handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        println(len(handles))        # refused: the loop takes the items of handles (INCAN-T0119)
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    handles = [spawn(work())]
+    println(len(handles))            # accepted
+```
+
+```incan
+import std.async
+from std.async.task import JoinHandle, spawn
+
+async def work() -> int:
+    return 1
+
+def launch() -> list[JoinHandle[int]]:
+    return [spawn(work())]
+
+async def main() -> None:
+    for handle in launch():                     # accepted: a call result
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    table = {"a": spawn(work())}
+    for handle in table.values():               # refused: values() reads the dict in place (INCAN-T0119)
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+```
+
+### `TaskJoinError`
+
+| Method | Returns |
+| --- | --- |
+| `message(self) -> str` | The runtime's join failure message. |
+| `source(self) -> Option[str]` | `None` |
+| `is_cancelled(self) -> bool` | Whether cancellation caused the join failure. |
+| `is_panic(self) -> bool` | Whether a panic caused the join failure. |
+
+## `std.async.race`
 
 ```incan
 from std.async.race import RaceArm, arm, race, race_timeout
 ```
 
-**Functions**:
+| Signature | Contract |
+| --- | --- |
+| `arm[T with Send, R with (Send, Static), TaskFuture with RuntimeFuture[T], OnWin with RuntimeRaceCallback[T, R]](awaitable: TaskFuture, on_win: OnWin) -> RaceArm[R]` | Packages one future and a callback. The callback receives the future's value only if this arm wins. |
+| `async race[R with (Send, Static)](*arms: RaceArm[R]) -> R` | Polls arms concurrently and returns the winning callback result. Losing arms are dropped. Ready ties use source order. Called with no arms, it panics. |
+| `async race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]` | Returns `Some(value)` before the deadline or `None` at the deadline. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops `task`. |
 
-| Function                                                                     | Returns     | Cancellation contract                                                                                                                                                 |
-| ---------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `arm[T, R, TaskFuture, OnWin](awaitable: TaskFuture, on_win: OnWin) -> RaceArm[R]` | `RaceArm[R]` | Packages one branch. `on_win` runs only if this branch wins.                                                                                                           |
-| `race[R](*arms: RaceArm[R]) -> R`                                             | `R`         | Polls all arms concurrently; drops losing arms when the first arm completes. Ready ties are resolved by source order.                                                  |
-| `race_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Option[T]` | `Option[T]` | Cancels the supplied future when the deadline wins; cancelling the `race_timeout` wait also drops the supplied future.                                                  |
+`RaceArm[R]` is the packaged branch type consumed by `race`. It implements neither `Clone` nor `Debug`; as a `model` or `class` field or an `enum` variant payload it is refused with `INCAN-T0113`.
 
-**Types**:
+## `std.async.channel`
 
-| Name         | Description                                    |
-| ------------ | ---------------------------------------------- |
-| `RaceArm[R]` | A packaged awaitable branch for `race(*arms)`. |
+```incan
+from std.async.channel import channel, unbounded_channel, oneshot
+from std.async.channel import Receiver, RecvError, Sender, SenderPermit, SendError
+from std.async.channel import OneshotReceiver, OneshotSender
+```
 
-## Module: `std.async.task`
+### Constructors
 
-Exported top-level API:
+| Signature | Returns | Constraints |
+| --- | --- | --- |
+| `channel[T](buffer: int) -> Tuple[Sender[T], Receiver[T]]` | A bounded multi-producer, single-consumer channel. | `buffer <= 0` is normalized to capacity `1`. Sends wait when the buffer is full. |
+| `unbounded_channel[T]() -> Tuple[Sender[T], Receiver[T]]` | An unbounded multi-producer, single-consumer channel. | Producers can grow memory without a capacity limit. |
+| `oneshot[T]() -> Tuple[OneshotSender[T], OneshotReceiver[T]]` | A channel that carries at most one value. | The sender is consumed by its single send operation. |
 
-- `spawn[T, TaskFuture](task: TaskFuture) -> JoinHandle[T]`
-- `spawn_blocking[T, TaskFn](task: TaskFn) -> JoinHandle[T]`
-- `yield_now() -> None`
+Each constructor takes `T` as an explicit type argument, as in `channel[str](4)`, or infers it from the channel's sends, receives or an annotation.
 
-`spawn()` and `spawn_blocking()` create work that is durable once spawned. Dropping a `JoinHandle[T]` detaches the task and loses the result; it does not cancel the task. Use `JoinHandle.abort()` to request cancellation for async tasks. `spawn_blocking()` work cannot be cancelled after it starts running; `abort()` can only prevent queued blocking work from starting.
+### `Sender[T]`
 
-Awaiting a `JoinHandle[T]` returns `Result[T, TaskJoinError]`. A task cancelled through `abort()` reports a join error unless it had already completed.
+`Sender[T]` is cloneable. All clones address the same channel.
 
-## Module: `std.async.channel`
+| Method | Result and errors | Cancellation |
+| --- | --- | --- |
+| `async send(self, value: T) -> Result[None, SendError[T]]` | Returns `SendError` with the unsent value when the receiver is closed. | Cancel-safe but lossy: cancellation while waiting for capacity drops `value`. |
+| `async reserve(self) -> Result[SenderPermit[T], SendError[None]]` | Reserves one bounded slot, or returns an error when the receiver is closed. Unbounded senders return an immediately usable permit. | Cancellation gives up queue position but owns no message value. |
+| `try_send(self, value: T) -> Result[None, SendError[T]]` | Returns immediately. Fails when a bounded channel is full or the receiver is closed. | Synchronous. |
+| `is_closed(self) -> bool` | Whether the receiver side is closed. | Synchronous. |
+| `clone(self) -> Self` | Another sender for the same channel. | Synchronous. |
 
-!!! warning "Current compiler limitation"
-    These declarations are present in the standard library, but the current compiler rejects the documented typed constructor and imported wrapper methods. This section records the intended library contract; it is not presently a verified runnable authoring path.
+### `SenderPermit[T]`
 
-Top-level API:
+| Method | Result and errors |
+| --- | --- |
+| `send(self, value: T) -> Result[None, SendError[T]]` | Uses the reserved slot. An unbounded permit can still return the value if the receiver closes after reservation. A permit is single-use. |
 
-- `channel[T](buffer: int) -> Tuple[Sender[T], Receiver[T]]`
-- `unbounded_channel[T]() -> Tuple[Sender[T], Receiver[T]]`
-- `oneshot[T]() -> Tuple[OneshotSender[T], OneshotReceiver[T]]`
-- `SendError[T]`
-- `RecvError`
-- `Sender[T]`, `SenderPermit[T]`, `Receiver[T]`
-- `OneshotSender[T]`, `OneshotReceiver[T]`
+### `Receiver[T]`
 
-Cancellation contracts:
+`Receiver[T]` does not implement `Clone`, and neither do `OneshotSender[T]` and `OneshotReceiver[T]`; as a `model` or `class` field or an `enum` variant payload each is refused with `INCAN-T0113`.
 
-| API                         | Contract                                                                                                                                                         |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Sender.send(value)`        | `cancel-safe-but-lossy`: if cancelled while waiting for bounded-channel capacity, the message is not sent and the value is dropped.                              |
-| `Sender.reserve()`          | Waits for bounded-channel capacity before a value is committed. Cancelling it does not drop a message value, but it gives up the sender's current wait position. |
-| `SenderPermit.send(value)`  | Immediate single-use send through reserved capacity; either delivers the value or returns it in `SendError[T]`.                                                  |
-| `Sender.try_send(value)`    | Immediate operation; returns the value in `SendError[T]` on failure.                                                                                             |
-| `Receiver.recv()`           | `cancel-safe`: cancelling a pending receive does not remove a message from the channel.                                                                          |
-| `Receiver.try_recv()`       | Immediate operation; no pending wait to cancel.                                                                                                                  |
-| `Receiver.close()`          | Immediate best-effort close from the receiving side. Returns `false` if another cloned receiver is actively waiting in `recv()` and owns the receiver state.     |
-| `OneshotSender.send(value)` | Immediate operation; either delivers the value or returns it.                                                                                                    |
-| `OneshotReceiver.recv()`    | `cancel-safe`: cancelling a pending receive does not consume the one-shot value.                                                                                 |
+| Method | Result | Cancellation |
+| --- | --- | --- |
+| `async recv(self) -> Option[T]` | Returns the next value, or `None` after the channel is closed and drained. | Cancel-safe; cancellation does not remove a message. |
+| `try_recv(self) -> Option[T]` | Returns an available value immediately, otherwise `None`. `None` does not distinguish empty from closed. | Synchronous. |
+| `close(self) -> bool` | Prevents further sends and returns `true`. Returns `false`, closing nothing, while a pending `recv` on this receiver holds the receiver state. | Synchronous. |
 
-## Module: `std.async.sync`
+### One-shot types
 
-Top-level API:
+| Method | Result | Cancellation |
+| --- | --- | --- |
+| `OneshotSender[T].send(self, value: T) -> Result[None, T]` | Delivers the value, or returns it when the receiver is gone. | Synchronous. |
+| `async OneshotReceiver[T].recv(self) -> Result[T, RecvError]` | Returns the value, or `RecvError` when the sender is dropped first. | Cancel-safe; cancellation does not consume the value. |
 
-- `Mutex[T]`, `MutexGuard[T]`
-- `RwLock[T]`, `RwLockReadGuard[T]`, `RwLockWriteGuard[T]`
-- `Semaphore`, `SemaphorePermit`
-- `Barrier`
-- `SemaphoreAcquireError`
+### Channel errors
 
-Cancellation contracts:
+| Type | Public data and methods |
+| --- | --- |
+| `SendError[T]` | `value: T` preserves the unsent value. `message() -> str` returns `"channel send failed"`; `source() -> Option[str]` returns `None`. |
+| `RecvError` | `message() -> str` returns `"channel closed: no more messages"`; `source() -> Option[str]` returns `None`. |
 
-| API                   | Contract                                                                                                                                                                                                                                                                                                                                                             |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Mutex.lock()`        | `cancel-safe-but-lossy`: cancellation does not acquire the lock, but the waiter loses its queue position.                                                                                                                                                                                                                                                            |
-| `RwLock.read()`       | `cancel-safe-but-lossy`: cancellation does not acquire the read lock, but the waiter loses its queue position.                                                                                                                                                                                                                                                       |
-| `RwLock.write()`      | `cancel-safe-but-lossy`: cancellation does not acquire the write lock, but the waiter loses its queue position.                                                                                                                                                                                                                                                      |
-| `Semaphore.acquire()` | `cancel-safe-but-lossy`: cancellation does not acquire a permit, but the waiter loses its queue position.                                                                                                                                                                                                                                                            |
-| `Barrier.wait()`      | `cancellation-aware before release`: cancellation withdraws the pending participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation. The returned slot is unique within a completed generation but is not guaranteed to preserve chronological arrival order after cancellation. |
+## `std.async.sync`
 
-## Module: `std.async.prelude`
+```incan
+from std.async.sync import Barrier, Mutex, RwLock, Semaphore
+from std.async.sync import MutexGuard, RwLockReadGuard, RwLockWriteGuard, SemaphorePermit
+from std.async.sync import SemaphoreAcquireError
+```
 
-`std.async.prelude` re-exports the following:
+`Mutex[T]` and `RwLock[T]` require `T with Clone`; a guard's `get` returns a clone of the guarded value.
 
-- `time`: `sleep`, `sleep_ms`, `timeout`, `timeout_ms`, `timeout_join`, `timeout_join_ms`, `Duration`, `TimeoutError`, `TimeoutJoinOutcome`
-- `task`: `spawn`, `spawn_blocking`, `yield_now`, `JoinHandle`, `TaskJoinError`
-- `channel`: `channel`, `unbounded_channel`, `oneshot`, `Sender`, `Receiver`, `OneshotSender`, `OneshotReceiver`, `SendError`, `RecvError`
-- `sync`: `Mutex`, `MutexGuard`, `RwLock`, `RwLockReadGuard`, `RwLockWriteGuard`, `Semaphore`, `SemaphorePermit`, `SemaphoreAcquireError`, `Barrier`
-- `race`: `RaceArm`, `arm`, `race`, `race_timeout`
+### Mutex
+
+| Method | Result | Cancellation |
+| --- | --- | --- |
+| `Mutex[T].new(value: T) -> Mutex[T]` | Creates a cloneable mutex. | Synchronous. |
+| `async Mutex[T].lock(self) -> MutexGuard[T]` | Waits for exclusive access. The guard releases the lock when dropped. | Cancellation does not acquire the lock, but loses queue position. |
+| `Mutex[T].try_lock(self) -> Option[MutexGuard[T]]` | Returns a guard immediately or `None` when held. | Synchronous. |
+| `MutexGuard[T].get(self) -> T` | Clones the guarded value. | Synchronous. |
+| `MutexGuard[T].set(self, value: T) -> None` | Replaces the guarded value. | Synchronous. |
+
+### Read-write lock
+
+| Method | Result | Cancellation |
+| --- | --- | --- |
+| `RwLock[T].new(value: T) -> RwLock[T]` | Creates a cloneable read-write lock. | Synchronous. |
+| `async RwLock[T].read(self) -> RwLockReadGuard[T]` | Waits for shared read access. | Cancellation loses queue position. |
+| `async RwLock[T].write(self) -> RwLockWriteGuard[T]` | Waits for exclusive write access. | Cancellation loses queue position. |
+| `RwLock[T].try_read(self) -> Option[RwLockReadGuard[T]]` | Returns a read guard immediately or `None`. | Synchronous. |
+| `RwLock[T].try_write(self) -> Option[RwLockWriteGuard[T]]` | Returns a write guard immediately or `None`. | Synchronous. |
+| `RwLockReadGuard[T].get(self) -> T` | Clones the guarded value. | Synchronous. |
+| `RwLockWriteGuard[T].get(self) -> T` | Clones the guarded value. | Synchronous. |
+| `RwLockWriteGuard[T].set(self, value: T) -> None` | Replaces the guarded value. | Synchronous. |
+
+### Semaphore
+
+| Method | Result | Cancellation |
+| --- | --- | --- |
+| `Semaphore.new(permits: int) -> Semaphore` | Creates a cloneable semaphore. Negative values are normalized to zero permits. | Synchronous. |
+| `async Semaphore.acquire(self) -> Result[SemaphorePermit, SemaphoreAcquireError]` | Waits for one permit. The permit is returned automatically when dropped. Returns an error if the semaphore closes. | Cancellation loses queue position but does not acquire a permit. |
+| `Semaphore.try_acquire(self) -> Option[SemaphorePermit]` | Returns a permit immediately or `None`. | Synchronous. |
+| `Semaphore.available_permits(self) -> int` | The number of unreserved permits at the time of the call. | Synchronous. |
+
+`SemaphoreAcquireError.message() -> str` returns `"failed to acquire semaphore permit: semaphore closed"`. Its `source() -> Option[str]` returns `None`.
+
+### Barrier
+
+| Method | Result | Cancellation |
+| --- | --- | --- |
+| `Barrier.new(count: int) -> Barrier` | Creates a cloneable reusable barrier. Counts less than or equal to zero are normalized to one participant. | Synchronous. |
+| `async Barrier.wait(self) -> int` | Waits for the generation to fill and returns a slot in `0..count`, unique within the generation. An arrival takes a slot freed by a cancelled wait of the generation, the most recently freed first; otherwise it takes the next slot in arrival order, starting at `0`. | Cancellation before release withdraws the participant and frees its slot; the remaining participants still need a full active generation. |
+
+## `std.async` re-exports
+
+```incan
+from std.async import sleep, spawn, channel
+```
+
+The root module `std.async` re-exports:
+
+| Module | Names |
+| --- | --- |
+| `std.async.time` | `sleep`, `sleep_ms`, `timeout`, `timeout_ms`, `timeout_join`, `timeout_join_ms`, `Duration`, `TimeoutError`, `TimeoutJoinOutcome` |
+| `std.async.task` | `spawn`, `spawn_blocking`, `yield_now`, `JoinHandle`, `TaskJoinError` |
+| `std.async.channel` | `channel`, `unbounded_channel`, `oneshot`, `Sender`, `Receiver`, `OneshotSender`, `OneshotReceiver`, `SendError`, `RecvError` |
+| `std.async.sync` | `Mutex`, `MutexGuard`, `RwLock`, `RwLockReadGuard`, `RwLockWriteGuard`, `Semaphore`, `SemaphorePermit`, `SemaphoreAcquireError`, `Barrier` |
+| `std.async.race` | `RaceArm`, `arm`, `race`, `race_timeout` |
+
+`SenderPermit` is public in `std.async.channel` but is not re-exported by `std.async`.

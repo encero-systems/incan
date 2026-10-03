@@ -244,6 +244,8 @@ tree = Node(
 )
 ```
 
+Every type parameter an enum declares must appear in at least one variant payload; the payloads are the only place an enum stores a value. An `enum Slot[T]` whose variants are all bare is rejected at `T` with a hint to give a variant a payload that mentions it or to remove the parameter. A parameter that only methods use belongs on a model or class instead.
+
 ---
 
 ## Methods and associated functions
@@ -471,6 +473,23 @@ def describe(temp: Temperature) -> str:
         Fahrenheit(f) if f < 50 => return "Cold (Fahrenheit)"
         Fahrenheit(_) => return "Moderate (Fahrenheit)"
 ```
+
+A guarded arm never counts toward exhaustiveness, which is why each variant above ends with an unguarded arm.
+
+### Payload patterns
+
+A variant counts as handled only when the arms that name it cover every value its payload can hold. `Some(0)` handles one `Some` value, so a match with only `Some(0)` and `None` is missing `Some(_)` and is refused; arms that cover the payload between them handle the variant:
+
+```incan
+def describe(value: Result[Option[int], str]) -> str:
+    match value:
+        Ok(Some(0)) => return "zero"
+        Ok(Some(n)) => return f"{n}"
+        Ok(None) => return "empty"
+        Err(message) => return f"failed: {message}"
+```
+
+A literal in a pattern must have the type of the value it matches: `(0, "a")` against a `tuple[int, int]` value is refused, because `"a"` can never match an `int`. [Match patterns](../reference/match_patterns.md) specifies the literal and coverage rules.
 
 ---
 

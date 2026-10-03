@@ -1,0 +1,11 @@
+# behavior: @derive(Copy) on a model with a str field is refused at check time, since str is not Copy
+# expect-diagnostic: INCAN-T0001
+
+
+@derive(Copy)
+model Label:
+    text: str
+
+
+def main() -> None:
+    println(Label(text="a").text)

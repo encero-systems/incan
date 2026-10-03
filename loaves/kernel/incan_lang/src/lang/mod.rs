@@ -44,6 +44,7 @@ pub mod rust_keywords;
 pub mod stdlib;
 pub mod surface;
 pub mod testing;
+pub mod text_codecs;
 pub mod trait_bounds;
 pub mod trait_capabilities;
 pub mod traits;

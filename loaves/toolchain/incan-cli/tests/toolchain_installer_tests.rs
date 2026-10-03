@@ -153,6 +153,229 @@ fn toolchain_package_archive_script() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/package_archive.sh")
 }
 
+fn release_policy_output_selector() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/select_release_policy_output.sh")
+}
+
+fn release_cargo_resolver() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
+}
+
+fn release_cargo_selector() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
+}
+
+#[test]
+fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = tempfile::tempdir()?;
+    let bin = fixture.path().join("bin");
+    let guard_bin = fixture.path().join("target/guard");
+    let exact_target_bin = fixture.path().join("target");
+    fs::create_dir_all(&bin)?;
+    fs::create_dir_all(&guard_bin)?;
+    let cargo = bin.join("cargo");
+    let pinned = bin.join("cargo-1.98.0");
+    let rustup = bin.join("rustup");
+    let guard_cargo = guard_bin.join("cargo");
+    let exact_target_cargo = exact_target_bin.join("cargo");
+    let log = fixture.path().join("rustup.log");
+    let guard_log = fixture.path().join("guard.log");
+    fs::write(&cargo, "#!/bin/sh\nexit 0\n")?;
+    fs::write(&pinned, "#!/bin/sh\nexit 0\n")?;
+    fs::write(
+        &guard_cargo,
+        format!("#!/bin/sh\nprintf invoked > '{}'\nexit 97\n", guard_log.display()),
+    )?;
+    fs::write(
+        &exact_target_cargo,
+        format!("#!/bin/sh\nprintf invoked > '{}'\nexit 97\n", guard_log.display()),
+    )?;
+    fs::write(
+        &rustup,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{}'\n",
+            log.display(),
+            pinned.display(),
+        ),
+    )?;
+    for path in [&cargo, &pinned, &rustup, &guard_cargo, &exact_target_cargo] {
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+    }
+
+    let selected = Command::new(release_cargo_selector())
+        .env("RUSTUP_TOOLCHAIN", "1.98.0")
+        .env("PATH", format!("{}:{}", guard_bin.display(), bin.display()))
+        .arg("")
+        .output()?;
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert_eq!(String::from_utf8(selected.stdout)?, format!("{}\n", pinned.display()));
+    assert_eq!(fs::read_to_string(&log)?, "which --toolchain 1.98.0 cargo\n");
+    assert!(!guard_log.exists(), "the repository target guard must never execute");
+
+    fs::remove_file(&log)?;
+    let relative_guard = Command::new(release_cargo_selector())
+        .current_dir(fixture.path())
+        .env("RUSTUP_TOOLCHAIN", "1.98.0")
+        .env("PATH", format!("target:target/guard:./target//guard:{}", bin.display()))
+        .arg("")
+        .output()?;
+    assert!(relative_guard.status.success());
+    assert_eq!(
+        String::from_utf8(relative_guard.stdout)?,
+        format!("{}\n", pinned.display())
+    );
+    assert_eq!(fs::read_to_string(&log)?, "which --toolchain 1.98.0 cargo\n");
+    assert!(
+        !guard_log.exists(),
+        "relative and exact target-directory guards must never execute"
+    );
+
+    fs::remove_file(&log)?;
+    let active = Command::new(release_cargo_selector())
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env("PATH", &bin)
+        .arg("")
+        .output()?;
+    assert!(active.status.success());
+    assert_eq!(fs::read_to_string(&log)?, "which cargo\n");
+
+    fs::remove_file(&log)?;
+    let explicit = Command::new(release_cargo_selector())
+        .env("RUSTUP_TOOLCHAIN", "other")
+        .arg(&cargo)
+        .output()?;
+    assert!(explicit.status.success());
+    assert_eq!(String::from_utf8(explicit.stdout)?, format!("{}\n", cargo.display()));
+    assert!(!log.exists(), "explicit Cargo must not invoke ambient Rustup selection");
+
+    let system_bin = fixture.path().join("target-tools");
+    fs::create_dir_all(&system_bin)?;
+    let system_cargo = system_bin.join("cargo");
+    fs::write(&system_cargo, "#!/bin/sh\nexit 0\n")?;
+    let mut permissions = fs::metadata(&system_cargo)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&system_cargo, permissions)?;
+    let system = Command::new(release_cargo_selector())
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env("PATH", &system_bin)
+        .arg("")
+        .output()?;
+    assert!(system.status.success());
+    // The selector reports the physical directory it found Cargo in, and macOS puts `/tmp` behind a symlink.
+    assert_eq!(
+        String::from_utf8(system.stdout)?,
+        format!("{}\n", fs::canonicalize(&system_cargo)?.display())
+    );
+
+    let missing = Command::new(release_cargo_selector())
+        .env("PATH", &guard_bin)
+        .arg("")
+        .output()?;
+    assert!(!missing.status.success(), "a missing default Cargo must fail closed");
+    assert!(
+        !guard_log.exists(),
+        "a rejected guard must not be invoked while refusing"
+    );
+    Ok(())
+}
+
+#[test]
+fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
+    let script = fs::read_to_string(toolchain_package_archive_script())?;
+    let policy_bake = script
+        .find("oven bake \\\n      --project \"workspaces/oven\"")
+        .ok_or("package script does not bake its release policy project")?;
+    let final_release_publish = script
+        .find("--policy-engine-store \"$policy_engine_store\"")
+        .ok_or("package script does not finalize the release envelope with its policy engine")?;
+    assert!(
+        policy_bake < final_release_publish,
+        "package publication must prepare the source-authored policy engine before publishing its release family"
+    );
+    assert_eq!(
+        script.matches("oven legacy-cargo bake-loafs").count(),
+        1,
+        "release packaging must atomically publish one engine-bound release family"
+    );
+    assert!(script.contains(
+        "oven bake \\\n      --project \"workspaces/oven\" \\\n      --target \"$target\" \\\n      --format json"
+    ));
+    assert!(script.contains("select_release_policy_output.sh"));
+    assert!(script.contains("INCAN_SDK_INVENTORY=\"$sdk_seed_root/sdk-inventory.json\""));
+    assert!(script.contains("INCAN_HOME=\"$release_policy_publisher_home\""));
+    assert!(script.contains("policy_toolchain_root=\"$release_policy_publisher_home/toolchain\""));
+    assert!(script.contains("cp \"$package_dir/bin/incan\" \"$policy_toolchain_root/bin/incan\""));
+    assert!(script.contains("[ ! -e \"$policy_toolchain_root/share/incan/oven/loafs/envelope.json\" ]"));
+    assert!(script.contains("INCAN_INTERNAL_OVEN_LOAF_EXECUTION="));
+    assert!(script.contains("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="));
+    assert!(script.contains("\"$policy_toolchain_root/bin/incan\" oven bake"));
+    assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
+    assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\""));
+    assert!(!script.contains("cargo_bin=\"$(command -v cargo)\""));
+    // The explicit-versus-`PATH` decision lives in the resolver the packaging script delegates to.
+    let resolver = fs::read_to_string(release_cargo_resolver())?;
+    assert!(resolver.contains("if [ -n \"$explicit_cargo\" ]; then"));
+    assert!(resolver.contains("*/target/*) continue ;;"));
+    assert!(!resolver.contains("command -v cargo"));
+    assert!(script.contains("--policy-engine-store \"$policy_engine_store\""));
+    assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
+    assert!(script.contains("--policy-engine-target \"$target\""));
+    assert!(script.contains(".release_store_member.artifact_identity"));
+    assert!(script.contains("release_policy_publisher_home=\"$(mktemp -d"));
+    assert!(script.contains("rm -rf \"$release_policy_publisher_home\""));
+    Ok(())
+}
+
+#[test]
+fn release_policy_output_selector_enforces_exact_target_and_cardinality() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let report = fixture.path().join("report.json");
+    fs::write(
+        &report,
+        r#"{"store":"/managed/store","outputs":[
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"aarch64-apple-darwin","artifact_identity":"sha256:arm"},
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"x86_64-apple-darwin","artifact_identity":"sha256:x86"}
+        ]}"#,
+    )?;
+    let selected = Command::new(release_policy_output_selector())
+        .arg(&report)
+        .arg("x86_64-apple-darwin")
+        .output()?;
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert_eq!(String::from_utf8(selected.stdout)?, "/managed/store\tsha256:x86\n");
+
+    let missing = Command::new(release_policy_output_selector())
+        .arg(&report)
+        .arg("wasm32-wasip1")
+        .status()?;
+    assert!(!missing.success());
+
+    fs::write(
+        &report,
+        r#"{"store":"/managed/store","outputs":[
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"x86_64-apple-darwin","artifact_identity":"sha256:first"},
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"x86_64-apple-darwin","artifact_identity":"sha256:second"}
+        ]}"#,
+    )?;
+    let ambiguous = Command::new(release_policy_output_selector())
+        .arg(&report)
+        .arg("x86_64-apple-darwin")
+        .status()?;
+    assert!(!ambiguous.success());
+    Ok(())
+}
+
 fn toolchain_prepare_assets_script() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/prepare_assets.incn")
 }
@@ -1174,7 +1397,19 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         makefile.contains("test-prewarm-oven-release-loafs: test-prewarm-sdk")
             && makefile.contains("--envelope release")
-            && makefile.contains("INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT"),
+            && makefile.contains("INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT")
+            && makefile.contains("select_release_policy_output.sh")
+            && makefile
+                .contains("policy_home=\"$$(mktemp -d \"$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX\")\"")
+            && makefile.contains("trap 'rm -rf \"$$policy_home\"' EXIT HUP INT TERM")
+            && !makefile.contains("rm -rf \"$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)\"")
+            && makefile.contains("policy_toolchain_root=\"$$policy_home/toolchain\"")
+            && makefile.contains("test ! -e \"$$policy_toolchain_root/share/incan/oven/loafs/envelope.json\"")
+            && makefile.contains("INCAN_INTERNAL_OVEN_LOAF_EXECUTION= INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT=")
+            && makefile.contains("\"$$policy_toolchain_root/bin/incan\" oven bake")
+            && makefile.contains("--policy-engine-store \"$$policy_engine_store\"")
+            && makefile.contains("--policy-engine-identity \"$$policy_engine_identity\"")
+            && makefile.contains("--policy-engine-target \"$$target\""),
         "normal-command evidence must use a staged toolchain with the typed release Loaf envelope"
     );
     assert!(
@@ -1184,14 +1419,15 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && makefile.contains("INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0")
             && makefile.contains("INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0")
             && makefile
-                .contains("--cargo \"$$(rustup which --toolchain \"$(INCAN_TEST_PUBLISHER_TOOLCHAIN)\" cargo)\"")
-            && makefile.contains("--rustc \"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
+                .contains("cargo_bin=\"$$(rustup which --toolchain \"$(INCAN_TEST_PUBLISHER_TOOLCHAIN)\" cargo)\"")
+            && makefile.contains("rustc_bin=\"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
         "the named publisher Cargo and direct-rustc consumer toolchains must remain separate"
     );
     assert!(
-        makefile.contains("suite_tmp=\"$$(mktemp -d \"/tmp/incan-oven-suite.XXXXXX\")\"")
-            && makefile.contains("root_tmp=\"$$(mktemp -d \"/tmp/incan-oven-root.XXXXXX\")\""),
-        "Oven suite and one-root diagnostics must own short Unix scratch paths instead of inheriting a deep worktree TMPDIR"
+        makefile.contains("INCAN_TEST_TMP_ROOT ?= /tmp")
+            && makefile.contains("suite_tmp=\"$$(mktemp -d \"$(INCAN_TEST_TMP_ROOT)/incan-oven-suite.XXXXXX\")\"")
+            && makefile.contains("root_tmp=\"$$(mktemp -d \"$(INCAN_TEST_TMP_ROOT)/incan-oven-root.XXXXXX\")\""),
+        "Oven suite and one-root diagnostics must use the managed scratch root, defaulting to short Unix paths"
     );
     let partition_target = makefile
         .split_once(".PHONY: test-oven-partition")
@@ -1317,6 +1553,18 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         !release_workflow.contains("dtolnay/rust-toolchain@stable"),
         "a release rebuild must not drift with Rust's floating stable channel"
+    );
+    assert!(
+        release_workflow.contains("INCAN_SDK_PROVIDER_BUILDER_BIN: target/release/incan"),
+        "cross-target release packaging must pass the host-runnable builder through the environment name consumed by package_archive.sh"
+    );
+    assert!(
+        release_workflow.contains("RUSTUP_TOOLCHAIN: 1.98.0"),
+        "release packaging must pin Cargo selection to the supported Rust release"
+    );
+    assert!(
+        !release_workflow.contains("INCAN_STDLIB_ARTIFACT_BUILDER_BIN"),
+        "the release workflow must not retain the obsolete builder environment name that package_archive.sh ignores"
     );
     let platform_gate = workflow
         .find("oven-platform-smoke:")
@@ -1645,6 +1893,48 @@ fn toolchain_release_assets_can_be_prepared_for_single_host_smoke_without_homebr
     assert!(dist.join("install.sh").exists());
     assert!(dist.join("toolchain-manifest.schema.v1.json").exists());
     assert!(!dist.join("incan.rb").exists());
+    assert!(
+        manifest.get("loaf_registry").is_none(),
+        "a release that packaging did not settle against a registry pins nothing"
+    );
+    Ok(())
+}
+
+/// The manifest pins the incan.pub `index` commit packaging recorded beside the archives, and refuses a value that
+/// is not one full git object id: the compiler opens the registry only at that revision, so a sloppy pin would pin
+/// nothing.
+#[test]
+fn toolchain_release_manifest_pins_the_recorded_loaf_registry_index_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = ToolchainTestStaging::new()?;
+    let dist = tmp.path().join("toolchain");
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+    package_fixture_archive(&dist, "aarch64-apple-darwin", &incan, &incan_lsp)?;
+    let commit = "8d40e1d3e5c43139a11b406dd0ba6e092efac492";
+    fs::write(dist.join("loaf-registry-index-commit.txt"), format!("{commit}\n"))?;
+
+    let output = prepare_toolchain_assets(&dist, "2026-06-06T00:00:00Z", true)?;
+    assert!(
+        output.status.success(),
+        "pinned toolchain asset preparation failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest: serde_json::Value = serde_json::from_str(&fs::read_to_string(dist.join("manifest.json"))?)?;
+    assert_eq!(manifest["loaf_registry"]["index_commit"], commit);
+    assert_eq!(
+        manifest["loaf_registry"]["repository"],
+        "https://github.com/encero-systems/incan.pub"
+    );
+
+    fs::write(dist.join("loaf-registry-index-commit.txt"), "8d40e1d\n")?;
+    let refused = prepare_toolchain_assets(&dist, "2026-06-06T00:00:00Z", true)?;
+    assert!(
+        !refused.status.success()
+            && String::from_utf8_lossy(&refused.stdout).contains("not a full lowercase git object id"),
+        "an abbreviated pin must be refused\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
     Ok(())
 }
 

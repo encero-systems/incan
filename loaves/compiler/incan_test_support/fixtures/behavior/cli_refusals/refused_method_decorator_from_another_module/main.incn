@@ -1,0 +1,16 @@
+# behavior: a decorator imported from another module whose shapes name the receiver of a `self` method is refused at check time
+# expect-diagnostic: INCAN-T0116
+
+from helpers import logged
+
+
+class Box:
+    value: int
+
+    @logged("label")
+    def label(self, value: int) -> str:
+        return f"{value}"
+
+
+def main() -> None:
+    println(Box(value=1).label(2))

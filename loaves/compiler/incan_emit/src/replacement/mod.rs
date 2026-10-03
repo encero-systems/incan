@@ -46,7 +46,7 @@ use incan_lang::{
     lang::surface::iterator_methods::{self, IteratorMethodId},
     lang::types::collections::{self, CollectionTypeId},
     lang::types::numerics::{self, NumericTypeId},
-    numeric_strings::{parse_float_string, parse_int_string},
+    numeric_strings::{float_to_string, parse_float_string, parse_int_string},
     numeric_values::{IntegerBounds, decimal_value_fits, format_decimal_value, integer_bounds},
     python_floor_div_i64, python_mod_i64,
 };
@@ -824,7 +824,9 @@ impl ReplacementValue {
             Self::Int(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),
             Self::Str(value) => value.clone(),
-            Self::Float(value) => value.to_string(),
+            // An ordinary `float` spells itself the way generated code does (#1372): through the shared
+            // `incan_lang` rendering, so an integral value stays visibly a float on both routes.
+            Self::Float(value) => float_to_string(*value),
             Self::Numeric(value) => value.observable_text(),
             Self::Unit => constructor_name(ConstructorId::None).to_string(),
             Self::Range { next, end, step } => format!("range({next}, {end}, {step})"),
@@ -1006,7 +1008,7 @@ pub struct ReplacementExecution {
 /// spelling, a source path, a generated Rust name, or declaration order, which is the property that lets the same
 /// graph serve a local module edge and a package edge without the executor knowing which it crossed.
 ///
-/// The single-module case remains a one-node graph, so the existing #988 behaviour is unchanged and its tests keep
+/// The single-module case remains a one-node graph, so the existing #988 behavior is unchanged and its tests keep
 /// proving the same thing.
 #[derive(Debug, Clone)]
 pub struct ReplacementExecutionGraph<'module> {
@@ -1395,7 +1397,7 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
 /// ability for a frame to execute against the module its callee was resolved to rather than the module the call was
 /// written in.
 ///
-/// A one-node graph is exactly the previous behaviour, which is why
+/// A one-node graph is exactly the previous behavior, which is why
 /// [`prepare_free_function_execution_with_providers`] delegates here rather than duplicating the validation order.
 pub fn prepare_free_function_execution_in_graph<'module, 'args>(
     graph: ReplacementExecutionGraph<'module>,
@@ -2754,7 +2756,7 @@ fn format_interpolation(
         (ReplacementValue::Bool(value), _) => Ok(value.to_string()),
         (ReplacementValue::Str(text), FormatStyle::Display) => Ok(text.clone()),
         (ReplacementValue::Str(text), FormatStyle::Debug) => Ok(format!("{text:?}")),
-        (ReplacementValue::Float(value), FormatStyle::Display) => Ok(value.to_string()),
+        (ReplacementValue::Float(value), FormatStyle::Display) => Ok(float_to_string(*value)),
         (ReplacementValue::Numeric(value), FormatStyle::Display) => Ok(value.observable_text()),
         (other, _) => Err(unsupported(
             format!("f-string interpolation of {}", value_kind(other)),
@@ -4277,7 +4279,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// The source-local profile constructs all race arms before it polls the first source-order arm. A winner error
     /// must therefore close those unpolled losers before it escapes. This helper is intentionally total and only
     /// changes `Constructed` frames: a malformed repeated/running/terminal handle cannot replace the selected
-    /// frame's original diagnostic or be relabelled as cancellation.
+    /// frame's original diagnostic or be relabeled as cancellation.
     fn cancel_constructed_race_losers_after_failure(
         &mut self,
         tasks: &[Rc<RefCell<ReplacementTask>>],
@@ -5216,7 +5218,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 ReplacementValue::Int(value) => Ok(ReplacementValue::Str(value.to_string())),
                 ReplacementValue::Bool(value) => Ok(ReplacementValue::Str(value.to_string())),
                 ReplacementValue::Str(value) => Ok(ReplacementValue::Str(value)),
-                ReplacementValue::Float(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Str(float_to_string(value))),
                 ReplacementValue::Numeric(value) => Ok(ReplacementValue::Str(value.observable_text())),
                 other => Err(unsupported(format!("`str` of {}", value_kind(&other)), span)),
             },

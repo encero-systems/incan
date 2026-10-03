@@ -45,7 +45,7 @@ use incan_frontend::api_metadata::{
 };
 use incan_frontend::library_manifest::{
     ExportIdentityKind, FieldExport, FieldVisibilityExport, LibraryManifest, MethodExport, NewtypeExport,
-    ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport, TypeRef,
+    ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport, TypeParamExport, TypeRef,
     resolved_type_from_manifest_type_ref,
 };
 use incan_frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
@@ -205,6 +205,8 @@ struct SourceConstructorReexport {
 #[derive(Clone)]
 struct ManifestConstructorShape {
     kind: IrStructKind,
+    /// Declared type parameter names in declaration order, so phantom parameters can be recognized (#1370).
+    type_params: Vec<String>,
     fields: Vec<FieldExport>,
 }
 
@@ -228,6 +230,29 @@ pub enum StructConstructorSurface {
     Absent,
 }
 
+/// Rust field that carries a nominal type's phantom type parameters.
+///
+/// A source declaration may use a type parameter only in method signatures; Rust requires every declared parameter
+/// to be mentioned by the struct, so emission adds one marker field typed [`phantom_marker_type`] over the
+/// parameters lowering recorded as phantom. The name is compiler-owned and never appears in source, in the
+/// `__fields__()` and `__field_items__()` reflection built from IR fields, or in serialized output (the field is
+/// `#[serde(skip)]`). It is visible where Rust derives enumerate struct fields: `#[derive(Debug)]` output and the
+/// `incan_derive::FieldInfo` field list. See #1370.
+pub(in crate::emit) const PHANTOM_TYPE_PARAMS_FIELD: &str = "__incan_phantom";
+
+/// Emit the marker type for a declaration's phantom type parameters: `PhantomData<T>` for one parameter and
+/// `PhantomData<(T, U)>` for several, so the field count does not depend on the parameter count.
+pub(in crate::emit) fn phantom_marker_type(phantom_type_params: &[String]) -> TokenStream {
+    let params = phantom_type_params
+        .iter()
+        .map(|param| IrEmitter::rust_ident(param))
+        .collect::<Vec<_>>();
+    match params.as_slice() {
+        [single] => quote! { std::marker::PhantomData<#single> },
+        many => quote! { std::marker::PhantomData<(#(#many),*)> },
+    }
+}
+
 /// Constructor metadata that selects a safe Rust construction shape for one nominal type.
 #[derive(Clone)]
 pub struct StructConstructorMetadata {
@@ -243,10 +268,29 @@ pub struct StructConstructorMetadata {
     /// A field type mentioning one of these is written in the declaration's vocabulary, not the construction
     /// site's, so it must not be used as an emission target until it is substituted. See #1507.
     owner_type_params: HashSet<String>,
+    /// Type parameters that no field type mentions, so the Rust representation carries them in a marker field.
+    ///
+    /// For a source declaration this is `IrStruct::phantom_type_params` as lowering recorded it; for a compiled
+    /// dependency it is the same rule applied to the manifest's recorded type parameters and field types, so a
+    /// consumer's struct literal initializes the marker the provider's crate declared. See #1370.
+    phantom_type_params: Vec<String>,
     constructor_surface: StructConstructorSurface,
 }
 
 impl StructConstructorMetadata {
+    /// The marker-field initializer a Rust struct literal for this type must carry, or none when every type
+    /// parameter is stored by a source field.
+    ///
+    /// A generated constructor function initializes the marker inside its own body, so its call sites pass source
+    /// fields only; this initializer is for the struct-literal surfaces.
+    pub(in crate::emit) fn phantom_marker_initializer(&self) -> Option<TokenStream> {
+        if self.phantom_type_params.is_empty() {
+            return None;
+        }
+        let field = IrEmitter::rust_ident(PHANTOM_TYPE_PARAMS_FIELD);
+        Some(quote! { #field: std::marker::PhantomData })
+    }
+
     /// Whether a declared field type is written in the declaration's own type-parameter vocabulary.
     ///
     /// Such a type cannot be emitted at a construction site: `items: list[Elem]` on a `Holder[Picked](...)` names
@@ -272,6 +316,53 @@ impl StructConstructorMetadata {
                 params.iter().any(|param| self.mentions_own_type_param(param)) || self.mentions_own_type_param(ret)
             }
             _ => false,
+        }
+    }
+
+    /// Whether a declared field type of a compiled dependency names a nominal type by the provider's bare spelling.
+    ///
+    /// A compiled library's manifest records each field type as the provider's own module spells it: `list[EvidenceId]`
+    /// names `EvidenceId` bare, which the consumer's crate binds only when it imported that exact name, so targeting
+    /// it emitted `Vec::<EvidenceId>::new()` for `Card(evidence_ids=[])` (E0425). The supplied value's checked type
+    /// spells the same type from the dependency crate. See #1561.
+    fn names_a_bare_provider_nominal(&self, ty: &IrType) -> bool {
+        matches!(
+            self.provider_identity,
+            Some(ConstructorProviderIdentity::PublicDependency(_))
+        ) && Self::mentions_bare_nominal(ty)
+    }
+
+    /// Whether `ty` names a model, class, enum or newtype by a bare name rather than a path.
+    fn mentions_bare_nominal(ty: &IrType) -> bool {
+        match ty {
+            IrType::Struct(name) | IrType::Enum(name) => !name.contains("::"),
+            IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::Option(inner)
+            | IrType::List(inner)
+            | IrType::Set(inner) => Self::mentions_bare_nominal(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::mentions_bare_nominal(key) || Self::mentions_bare_nominal(value)
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => items.iter().any(Self::mentions_bare_nominal),
+            _ => false,
+        }
+    }
+
+    /// Whether a checked type is known at every position, so it can stand in for a declared target type.
+    fn is_fully_known(ty: &IrType) -> bool {
+        match ty {
+            IrType::Unknown => false,
+            IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::Option(inner)
+            | IrType::List(inner)
+            | IrType::Set(inner) => Self::is_fully_known(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::is_fully_known(key) && Self::is_fully_known(value)
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => items.iter().all(Self::is_fully_known),
+            _ => true,
         }
     }
 
@@ -302,6 +393,7 @@ impl StructConstructorMetadata {
         Self {
             provider_identity: None,
             owner_type_params: s.type_params.iter().map(|param| param.name.clone()).collect(),
+            phantom_type_params: s.phantom_type_params.clone(),
             fields: s.fields.iter().map(|field| field.name.clone()).collect(),
             field_types: s
                 .fields
@@ -361,8 +453,16 @@ impl StructConstructorMetadata {
     /// Build constructor-emission metadata from one compiled-library export.
     ///
     /// Manifest defaults may be intentionally non-materializable to consumers, so their `has_default` flag remains
-    /// authoritative for provider-bridge eligibility even when no serialized expression is available.
-    fn from_manifest_fields(library: &str, kind: IrStructKind, fields: &[FieldExport]) -> Self {
+    /// authoritative for provider-bridge eligibility even when no serialized expression is available. The export's
+    /// type parameters are kept as the owner's, so a supplied field whose declared type names one of them is emitted
+    /// at the type this construction site checked it at rather than at the export's unbound parameter name.
+    fn from_manifest_fields(library: &str, kind: IrStructKind, type_params: &[String], fields: &[FieldExport]) -> Self {
+        let field_types = fields
+            .iter()
+            .map(|field| (field.name.clone(), IrEmitter::manifest_type_ref_to_ir_type(&field.ty)))
+            .collect::<HashMap<_, _>>();
+        let phantom_type_params =
+            incan_ir::decl::phantom_type_params(type_params.iter().map(String::as_str), field_types.values());
         let type_private_fields = fields
             .iter()
             .filter(|field| matches!(field.visibility, FieldVisibilityExport::Private))
@@ -376,12 +476,10 @@ impl StructConstructorMetadata {
         let constructor_surface = Self::external_constructor_surface(kind, &type_private_fields, &default_fields);
         Self {
             provider_identity: Some(ConstructorProviderIdentity::PublicDependency(library.to_string())),
-            owner_type_params: HashSet::new(),
+            owner_type_params: type_params.iter().cloned().collect(),
+            phantom_type_params,
             fields: fields.iter().map(|field| field.name.clone()).collect(),
-            field_types: fields
-                .iter()
-                .map(|field| (field.name.clone(), IrEmitter::manifest_type_ref_to_ir_type(&field.ty)))
-                .collect(),
+            field_types,
             field_defaults: fields
                 .iter()
                 .filter_map(|field| {
@@ -601,6 +699,9 @@ pub struct IrEmitter<'a> {
     type_module_paths: HashMap<String, Vec<String>>,
     /// Nominal declarations owned by the program currently being emitted.
     local_nominal_type_names: HashSet<String>,
+    /// Crate paths of the nominal types the program being emitted names without binding them, from lowering's
+    /// `IrProgram::unbound_nominal_type_paths` (#1561).
+    unbound_nominal_type_paths: HashMap<String, String>,
     /// Provider module paths owned by linked compiled SDK providers.
     ///
     /// These paths do not use the consumer-only `__incan_std` namespace, so generated support fast paths need an
@@ -766,6 +867,7 @@ impl<'a> IrEmitter<'a> {
             const_bindings: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
             local_nominal_type_names: HashSet::new(),
+            unbound_nominal_type_paths: HashMap::new(),
             compiled_sdk_module_paths: HashSet::new(),
             compiled_sdk_type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
@@ -834,8 +936,24 @@ impl<'a> IrEmitter<'a> {
             // substitution this site made, so it is preferred whenever the declared type does not. See #1507.
             let declared_ty = metadata.field_types.get(field_name);
             let value = if let Some(value) = provided.get(field_name.as_str()) {
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1561 -- `Card(evidence_ids=[])` in a consumer that imports `Card` from a
+                //   compiled library but not `EvidenceId` spelled `Vec::<EvidenceId>::new()` from the manifest's field
+                //   type (E0425).
+                // - Behavior evidence: the `dependency_model_built_with_empty_fields_of_unimported_types` behavior
+                //   fixture.
+                // - Semantic owner: the checker, whose type for the supplied value spells a dependency's type from its
+                //   crate; this arm only prefers that type over the provider's bare spelling.
+                // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves
+                //   nominal types through their canonical identities and has no bare-name spellings.
                 let target_ty = match declared_ty {
                     Some(declared) if metadata.mentions_own_type_param(declared) => Some(&value.ty),
+                    Some(declared)
+                        if metadata.names_a_bare_provider_nominal(declared)
+                            && StructConstructorMetadata::is_fully_known(&value.ty) =>
+                    {
+                        Some(&value.ty)
+                    }
                     other => other,
                 };
                 let value = self.emit_expr_for_use(value, crate::ownership::ValueUseSite::StructField { target_ty })?;
@@ -2030,7 +2148,12 @@ impl<'a> IrEmitter<'a> {
                 if let Some(shape) = Self::manifest_constructor_shape_for_public_name(manifest, &public_name) {
                     self.pub_dependency_constructor_metadata.insert(
                         (library.clone(), vec![public_name.clone()]),
-                        StructConstructorMetadata::from_manifest_fields(&library, shape.kind, &shape.fields),
+                        StructConstructorMetadata::from_manifest_fields(
+                            &library,
+                            shape.kind,
+                            &shape.type_params,
+                            &shape.fields,
+                        ),
                     );
                     *counts.entry(public_name).or_default() += 1;
                 }
@@ -2054,7 +2177,12 @@ impl<'a> IrEmitter<'a> {
                             public_path.push(name.to_string());
                             self.pub_dependency_constructor_metadata.insert(
                                 (library.clone(), public_path),
-                                StructConstructorMetadata::from_manifest_fields(&library, shape.kind, &shape.fields),
+                                StructConstructorMetadata::from_manifest_fields(
+                                    &library,
+                                    shape.kind,
+                                    &shape.type_params,
+                                    &shape.fields,
+                                ),
                             );
                         }
                         *counts.entry(name.to_string()).or_default() += 1;
@@ -2092,7 +2220,13 @@ impl<'a> IrEmitter<'a> {
                 if counts.get(&public_name).copied().unwrap_or_default() == 1
                     && let Some(shape) = Self::manifest_constructor_shape_for_public_name(manifest, &public_name)
                 {
-                    self.register_manifest_constructor_metadata(&library, &public_name, shape.kind, &shape.fields);
+                    self.register_manifest_constructor_metadata(
+                        &library,
+                        &public_name,
+                        shape.kind,
+                        &shape.type_params,
+                        &shape.fields,
+                    );
                 }
             }
         }
@@ -2109,20 +2243,33 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Project exported type parameters to their names, in declaration order.
+    fn type_param_export_names(type_params: &[TypeParamExport]) -> Vec<String> {
+        type_params.iter().map(|param| param.name.clone()).collect()
+    }
+
     /// Resolve constructor shape for a checked API declaration, following public aliases by exact source path.
     fn manifest_constructor_shape_for_api_declaration(
         api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
         declaration: &ApiDeclaration,
     ) -> Option<ManifestConstructorShape> {
         match declaration {
-            ApiDeclaration::Model(model) => Some(ManifestConstructorShape {
-                kind: IrStructKind::Model,
-                fields: model_export_from_api(model).fields,
-            }),
-            ApiDeclaration::Class(class) => Some(ManifestConstructorShape {
-                kind: IrStructKind::Class,
-                fields: class_export_from_api(class).fields,
-            }),
+            ApiDeclaration::Model(model) => {
+                let export = model_export_from_api(model);
+                Some(ManifestConstructorShape {
+                    kind: IrStructKind::Model,
+                    type_params: Self::type_param_export_names(&export.type_params),
+                    fields: export.fields,
+                })
+            }
+            ApiDeclaration::Class(class) => {
+                let export = class_export_from_api(class);
+                Some(ManifestConstructorShape {
+                    kind: IrStructKind::Class,
+                    type_params: Self::type_param_export_names(&export.type_params),
+                    fields: export.fields,
+                })
+            }
             ApiDeclaration::Alias(alias) => Self::api_declaration_for_target_path(api, &alias.target_path)
                 .and_then(|target| Self::manifest_constructor_shape_for_api_declaration(api, target)),
             _ => None,
@@ -2138,12 +2285,14 @@ impl<'a> IrEmitter<'a> {
         if let Some(model) = manifest.exports.models.iter().find(|model| model.name == public_name) {
             return Some(ManifestConstructorShape {
                 kind: IrStructKind::Model,
+                type_params: Self::type_param_export_names(&model.type_params),
                 fields: model.fields.clone(),
             });
         }
         if let Some(class) = manifest.exports.classes.iter().find(|class| class.name == public_name) {
             return Some(ManifestConstructorShape {
                 kind: IrStructKind::Class,
+                type_params: Self::type_param_export_names(&class.type_params),
                 fields: class.fields.clone(),
             });
         }
@@ -2164,14 +2313,22 @@ impl<'a> IrEmitter<'a> {
             && let Some(declaration) = Self::api_declaration_for_target_path(api, target_path)
         {
             return match declaration {
-                ApiDeclaration::Model(model) => Some(ManifestConstructorShape {
-                    kind: IrStructKind::Model,
-                    fields: model_export_from_api(model).fields,
-                }),
-                ApiDeclaration::Class(class) => Some(ManifestConstructorShape {
-                    kind: IrStructKind::Class,
-                    fields: class_export_from_api(class).fields,
-                }),
+                ApiDeclaration::Model(model) => {
+                    let export = model_export_from_api(model);
+                    Some(ManifestConstructorShape {
+                        kind: IrStructKind::Model,
+                        type_params: Self::type_param_export_names(&export.type_params),
+                        fields: export.fields,
+                    })
+                }
+                ApiDeclaration::Class(class) => {
+                    let export = class_export_from_api(class);
+                    Some(ManifestConstructorShape {
+                        kind: IrStructKind::Class,
+                        type_params: Self::type_param_export_names(&export.type_params),
+                        fields: export.fields,
+                    })
+                }
                 _ => None,
             };
         }
@@ -2179,6 +2336,7 @@ impl<'a> IrEmitter<'a> {
         if let Some(model) = manifest.exports.models.iter().find(|model| &model.name == target_name) {
             return Some(ManifestConstructorShape {
                 kind: IrStructKind::Model,
+                type_params: Self::type_param_export_names(&model.type_params),
                 fields: model.fields.clone(),
             });
         }
@@ -2189,6 +2347,7 @@ impl<'a> IrEmitter<'a> {
             .find(|class| &class.name == target_name)
             .map(|class| ManifestConstructorShape {
                 kind: IrStructKind::Class,
+                type_params: Self::type_param_export_names(&class.type_params),
                 fields: class.fields.clone(),
             })
     }
@@ -2589,6 +2748,7 @@ impl<'a> IrEmitter<'a> {
                 provider_crate,
                 &model.name,
                 IrStructKind::Model,
+                &Self::type_param_export_names(&model.type_params),
                 &model.fields,
             );
             self.register_manifest_method_metadata(&model.name, &model.methods, &model.type_params);
@@ -2598,6 +2758,7 @@ impl<'a> IrEmitter<'a> {
                 provider_crate,
                 &class.name,
                 IrStructKind::Class,
+                &Self::type_param_export_names(&class.type_params),
                 &class.fields,
             );
             self.register_manifest_method_metadata(&class.name, &class.methods, &class.type_params);
@@ -2828,6 +2989,7 @@ impl<'a> IrEmitter<'a> {
                 && existing.default_fields == metadata.default_fields
                 && existing.field_aliases == metadata.field_aliases
                 && existing.type_private_fields == metadata.type_private_fields
+                && existing.phantom_type_params == metadata.phantom_type_params
                 && existing.constructor_surface == metadata.constructor_surface
         }) {
             variants.push(metadata);
@@ -2840,9 +3002,10 @@ impl<'a> IrEmitter<'a> {
         library: &str,
         name: &str,
         kind: IrStructKind,
+        type_params: &[String],
         fields: &[FieldExport],
     ) {
-        let metadata = StructConstructorMetadata::from_manifest_fields(library, kind, fields);
+        let metadata = StructConstructorMetadata::from_manifest_fields(library, kind, type_params, fields);
         self.register_constructor_metadata_variant(name, metadata);
         self.struct_field_names.insert(
             name.to_string(),
@@ -3137,7 +3300,9 @@ impl<'a> IrEmitter<'a> {
         name: &str,
         fields: &[(String, TypedExpr)],
     ) -> Option<&StructConstructorMetadata> {
-        let variants = self.struct_constructor_metadata.get(name)?;
+        let Some(variants) = self.struct_constructor_metadata.get(name) else {
+            return self.crate_path_constructor_metadata(name);
+        };
         if variants.len() == 1 {
             return variants.first();
         }
@@ -3169,6 +3334,31 @@ impl<'a> IrEmitter<'a> {
             return Some(metadata);
         }
         candidates.first().copied().or_else(|| variants.first())
+    }
+
+    /// Select the constructor metadata of a type spelled by its crate path (`crate::a::Card`).
+    ///
+    /// A parameter default that constructs another module's type is spelled through that module (#1843), because the
+    /// bare name can name a different type, or nothing, where the caller expands the default. A declaration name only
+    /// one module declares keeps the metadata of that declaration, so the construction fills the fields the default
+    /// leaves to their own defaults; a name several modules declare takes the metadata of the module the path names.
+    fn crate_path_constructor_metadata(&self, name: &str) -> Option<&StructConstructorMetadata> {
+        let mut segments = name
+            .strip_prefix("crate::")?
+            .split("::")
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let declaration_name = segments.pop()?;
+        if !self.ambiguous_type_names.contains(&declaration_name)
+            && let Some([metadata]) = self
+                .struct_constructor_metadata
+                .get(&declaration_name)
+                .map(Vec::as_slice)
+        {
+            return Some(metadata);
+        }
+        self.source_dependency_constructor_metadata
+            .get(&(segments, declaration_name))
     }
 
     /// Select constructor metadata by exact `pub::<dependency>` identity carried on a lowered canonical call path.
@@ -4020,6 +4210,7 @@ mod tests {
             derives: Vec::new(),
             visibility: Visibility::Public,
             type_params: Vec::new(),
+            phantom_type_params: Vec::new(),
             derive_rust_modules: Default::default(),
             lint_allows: Vec::new(),
         }
@@ -4116,6 +4307,7 @@ mod tests {
             IrExprKind::StaticRead {
                 name: "missing".to_string(),
                 reference_kind: IrStaticReferenceKind::Source,
+                owner_module_path: None,
             },
             IrType::Int,
         ))));
@@ -4286,7 +4478,7 @@ mod tests {
             },
         ];
 
-        let bridge = StructConstructorMetadata::from_manifest_fields("sealed", IrStructKind::Model, &fields);
+        let bridge = StructConstructorMetadata::from_manifest_fields("sealed", IrStructKind::Model, &[], &fields);
         assert_eq!(bridge.constructor_surface, StructConstructorSurface::PublicBridge);
         assert_eq!(
             bridge.constructor_fields().map(String::as_str).collect::<Vec<_>>(),
@@ -4296,17 +4488,128 @@ mod tests {
         let mut required_private_fields = fields;
         required_private_fields[0].has_default = false;
         required_private_fields[0].default = None;
-        let absent =
-            StructConstructorMetadata::from_manifest_fields("sealed", IrStructKind::Model, &required_private_fields);
+        let absent = StructConstructorMetadata::from_manifest_fields(
+            "sealed",
+            IrStructKind::Model,
+            &[],
+            &required_private_fields,
+        );
         assert_eq!(absent.constructor_surface, StructConstructorSurface::Absent);
 
-        let class =
-            StructConstructorMetadata::from_manifest_fields("sealed", IrStructKind::Class, &required_private_fields);
+        let class = StructConstructorMetadata::from_manifest_fields(
+            "sealed",
+            IrStructKind::Class,
+            &[],
+            &required_private_fields,
+        );
         assert_eq!(class.constructor_surface, StructConstructorSurface::PublicAllFields);
         assert_eq!(
             class.constructor_fields().map(String::as_str).collect::<Vec<_>>(),
             ["secret", "label"]
         );
+    }
+
+    /// Issue #1370: a compiled dependency's model with a phantom type parameter is constructed with the marker its
+    /// provider crate declared, and one stored in a field is not.
+    #[test]
+    fn manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370() {
+        use incan_frontend::library_manifest::{FieldExport, FieldVisibilityExport, TypeRef};
+
+        let field = |name: &str, ty: TypeRef| FieldExport {
+            name: name.to_string(),
+            canonical: None,
+            ty,
+            surface_type_name: None,
+            visibility: FieldVisibilityExport::Public,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        };
+        let str_ty = TypeRef::Named {
+            origin: None,
+            name: "str".to_string(),
+        };
+        let type_params = ["T".to_string(), "Stored".to_string()];
+        let fields = vec![
+            field("sql", str_ty),
+            field(
+                "sample",
+                TypeRef::TypeParam {
+                    name: "Stored".to_string(),
+                },
+            ),
+        ];
+
+        let metadata =
+            StructConstructorMetadata::from_manifest_fields("columns", IrStructKind::Model, &type_params, &fields);
+        assert_eq!(metadata.phantom_type_params, vec!["T".to_string()]);
+        assert_eq!(
+            metadata.phantom_marker_initializer().map(|tokens| tokens.to_string()),
+            Some("__incan_phantom : std :: marker :: PhantomData".to_string())
+        );
+
+        let stored_only =
+            StructConstructorMetadata::from_manifest_fields("columns", IrStructKind::Model, &type_params[1..], &fields);
+        assert!(stored_only.phantom_type_params.is_empty());
+        assert!(stored_only.phantom_marker_initializer().is_none());
+    }
+
+    /// Issue #1843: a compiled dependency's generic model constructed through its crate path emits a supplied field at
+    /// the type this site checked it at. The export declares `current: list[Output]`, and `Output` names nothing bound
+    /// where the construction is emitted.
+    #[test]
+    fn manifest_constructor_emits_type_parameter_fields_at_the_supplied_type_issue1843() -> Result<(), String> {
+        use incan_frontend::library_manifest::{FieldExport, FieldVisibilityExport, TypeRef};
+
+        let current = FieldExport {
+            name: "current".to_string(),
+            canonical: None,
+            ty: TypeRef::Applied {
+                name: "list".to_string(),
+                args: vec![TypeRef::TypeParam {
+                    name: "Output".to_string(),
+                }],
+                origin: None,
+            },
+            surface_type_name: None,
+            visibility: FieldVisibilityExport::Public,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        };
+        let metadata = StructConstructorMetadata::from_manifest_fields(
+            "core",
+            IrStructKind::Model,
+            &["Output".to_string()],
+            &[current],
+        );
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter
+            .struct_constructor_metadata
+            .insert("FlatMap".to_string(), vec![metadata]);
+        let supplied_ty = IrType::List(Box::new(IrType::Generic("U".to_string())));
+        let fields = vec![(
+            "current".to_string(),
+            TypedExpr::new(IrExprKind::List(Vec::new()), supplied_ty),
+        )];
+
+        let rendered = emitter
+            .emit_struct_expr(
+                "crate::core::FlatMap",
+                &[IrType::Generic("U".to_string())],
+                &fields,
+                false,
+            )
+            .map_err(|error| format!("expected the dependency construction to emit, got {error:?}"))?
+            .to_string();
+        assert!(
+            !rendered.contains("Output"),
+            "the export's own type parameter must not reach the construction site: {rendered}"
+        );
+        Ok(())
     }
 
     #[test]

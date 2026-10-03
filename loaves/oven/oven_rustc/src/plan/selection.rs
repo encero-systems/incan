@@ -68,6 +68,57 @@ pub fn select_receipt_direct_rustc_execution_plan(
     }))
 }
 
+/// Resolve the direct-Rustc plan published for this exact project receipt.
+///
+/// Ordinary generated projects may reuse one build-unit-compatible closure across clean worktrees. A caller-owned
+/// provider is different: its sealed dependency closure is evidence about that provider, so another project's plan
+/// with the same reusable build-unit identity cannot replace it while checking cross-closure coherence.
+pub fn select_exact_receipt_direct_rustc_execution_plan(
+    store: &OvenStore,
+    receipt: &OvenReceipt,
+) -> OvenPlanResult<Option<OvenStoredDirectRustcExecutionPlan>> {
+    receipt
+        .verify_identity()
+        .map_err(|error| OvenPlanError::selection(format!("invalid caller-owned provider receipt: {error}")))?;
+    let mut selected = store
+        .select_payloads_matching_for_execution(|manifest| {
+            manifest.kind == OvenArtifactKind::DirectRustcPlan
+                && manifest.receipt_identity == receipt.identity
+                && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        })
+        .map_err(|error| OvenPlanError::selection(format!("failed to select caller-owned provider plan: {error}")))?;
+    if selected.len() > 1 {
+        return Err(OvenPlanError::selection(format!(
+            "Oven Alpha found multiple direct-Rustc plans for caller-owned provider receipt `{}`",
+            receipt.identity
+        )));
+    }
+    let Some(selected) = selected.pop() else {
+        return Ok(None);
+    };
+    let (stored_manifest, artifact_root, payload, lease) = selected.into_parts();
+    let plan_identity = &stored_manifest.identity;
+    let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
+        OvenPlanError::selection(format!(
+            "selected caller-owned provider direct-Rustc plan has an invalid payload: {error}"
+        ))
+    })?;
+    let artifact_plan = artifacts.materialize_proven_store(
+        &artifact_root,
+        &receipt.intent,
+        plan_identity,
+        &OvenClosureProof::path(store.root(), plan_identity),
+    )?;
+    Ok(Some(OvenStoredDirectRustcExecutionPlan {
+        identity: stored_manifest.identity,
+        artifacts,
+        artifact_root,
+        artifact_plan,
+        _lease: lease,
+    }))
+}
+
 /// Select one exact direct-plan entry transported by a public package.
 ///
 /// Unlike ordinary receipt selection, package composition carries an immutable entry identity. Requiring that identity

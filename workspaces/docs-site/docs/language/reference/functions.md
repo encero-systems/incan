@@ -1,8 +1,8 @@
 # Functions and Calls
 
-This page defines function signatures, ordinary call binding, rest parameters, call-site unpacking, and collection literal spread.
+This page defines function signatures, function types, ordinary call binding, rest parameters, call-site unpacking, and collection literal spread.
 
-For a step-by-step introduction, see [Functions](../tutorials/book/03_functions.md). For callable traits and callable type sugar, see [Callable objects](stdlib_traits/callable.md).
+For a step-by-step introduction, see [Functions](../tutorials/book/03_functions.md). For the ideas behind rest parameters and defaults, see [Functions and calls explained](../explanation/functions_and_calls.md). For the `Callable0`, `Callable1` and `Callable2` traits, see [Callable objects](stdlib_traits/callable.md). For derived callables, see [Symbol aliases](symbol_aliases.md) and [Callable presets](callable_presets.md).
 
 ## Function Signatures
 
@@ -13,11 +13,190 @@ def add(a: int, b: int) -> int:
     return a + b
 ```
 
-Use `-> None` for a function that does not return a useful value:
+A function declared `-> None` returns no value:
 
 ```incan
 def log(message: str) -> None:
     println(message)
+```
+
+## Function Types
+
+`(A, B) -> R` is the type of a callable that takes an `A` and a `B` and returns an `R`; `() -> R` takes no arguments. A named `def` function and a closure are values of a function type. With `def double(x: int) -> int`:
+
+```incan
+f: (int) -> int = double          # accepted
+g: (int) -> int = (x) => x + 1    # accepted
+h: (str) -> int = double          # refused: INCAN-T0001
+```
+
+A closure's parameters take their types from the function type the closure is checked against: the annotated type of the binding, field, element or return it is assigned to; the function type of the parameter it is passed to, with the callee's type parameters that the other arguments fix substituted; and the callback of an `Iterator[T]` method, whose parameter is `T`, a `fold` or `reduce` callback also taking the type of the first argument as its accumulator. An operation on a parameter that its type does not provide is refused (`INCAN-T0001`).
+
+```incan
+def apply_twice[T](f: (T) -> T, value: T) -> T:
+    return f(f(value))
+
+def main() -> None:
+    names = ["ada", "lin"]
+    shouted = names.iter().map((name) => name.upper()).collect()   # accepted: name is str
+    total = names.iter().fold(0, (acc, name) => acc + len(name))   # accepted: acc is int, name is str
+    four = apply_twice((x) => x + 1, 2)                              # accepted: x is int
+    bad = names.iter().map((name) => name + 1).collect()           # refused: str + int (INCAN-T0001)
+```
+
+### `Callable[Params, R]`
+
+`Callable[Params, R]` is another spelling of a function type; the two spellings are the same type.
+
+| Sugar                 | Arrow form    |
+| --------------------- | ------------- |
+| `Callable[(), R]`     | `() -> R`     |
+| `Callable[A, R]`      | `(A) -> R`    |
+| `Callable[(A, B), R]` | `(A, B) -> R` |
+
+`Callable[...]` with other than two type arguments, and a bracketed parameter list such as `Callable[[A], R]`, are syntax error `INCAN-P0001`.
+
+### Closure captures
+
+A closure reads each outer local it names as the value that local holds when the closure is constructed. A later change to the outer binding does not change the value the closure reads. How a closure captures a local: [Closures](../explanation/closures.md#how-a-closure-captures-outer-locals).
+
+A closure does not change an outer local it reads, a local bound to a static included: a call of a method that changes it, a write to a field or element of it, a loop, comprehension or pattern that changes its items, and passing it to a `mut` parameter the call changes are refused with `INCAN-T0001`, the argument with `INCAN-T0117`. A closure changes a static through the static's own name.
+
+```incan
+def main() -> None:
+    mut items: list[int] = []
+    add = () => items.append(1)         # refused: the closure changes a local it reads (INCAN-T0001)
+    count = () => len(items)            # accepted
+```
+
+### Closures that capture local values
+
+A closure that reads a local of an enclosing function, a parameter or `self`, captures it; a local partial holds its presets. Such a callable, a *capturing callable*, has a type of its own. It is accepted where it is called and where a slot keeps that type; a slot that holds a plain function pointer, which carries no captured values, refuses it with `INCAN-T0001`. A named function and a closure that captures nothing are accepted in every function-typed slot.
+
+These slots call a capturing callable or keep its type:
+
+| Slot | Contract |
+| --- | --- |
+| A new local binding | Accepted, annotated with a function type or not. The local is not reassigned afterwards. |
+| The callee of a call | Accepted. |
+| An argument for a parameter of function type | Accepted when the parameter is declared without `mut` and is not `*args`, and the function or method that declares it only calls it, outside any closure or generator expression, and qualifies (below). |
+| The callback of a `Result` combinator | Accepted: `map`, `map_err`, `and_then`, `or_else`, `inspect` and `inspect_err` call it before they return. |
+| A `return` value | Accepted when the function or method has one `return`, whose value is a closure that reads a parameter or a local of the function and not `self`, or a local partial, and qualifies (below). |
+
+A function qualifies when it is declared in the same module, is neither `pub`, `async`, generic, decorated nor a generator, and is not used as a decorator; its name is only called, never read as a value. A method qualifies when it is declared in a model, class, newtype or enum of the same module, takes `self` or `mut self`, is neither `async`, generic, decorated, overloaded nor a generator, and implements no method of a trait the type adopts; no member read without a call spells its name in the module, and its class neither extends nor is extended by another class.
+
+A function-typed slot that holds a plain function pointer refuses a capturing callable with `INCAN-T0001`, and so does an assignment to a local that holds one.
+
+```incan
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+def keep(f: (int) -> int) -> list[(int) -> int]:
+    return [f]
+
+def make_adder(n: int) -> (int) -> int:
+    return (x) => x + n                 # accepted
+
+def main() -> None:
+    n = 5
+    g: (int) -> int = (x) => x + n      # accepted
+    apply(g, 1)                         # accepted
+    r: Result[int, str] = Ok(1)
+    s = r.map((x) => x + n)             # accepted: map calls it
+    keep((x) => x + n)                  # refused: keep stores its parameter (INCAN-T0001)
+    fs: list[(int) -> int] = [g]        # refused: a list element (INCAN-T0001)
+```
+
+### `mut` parameters
+
+`mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, under any spelling of the type (`i64`, `long` and `bigint` are `int`; `f64`, `double` and `fp64` are `float`) and also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.
+
+| Declaration                                     | Function type                  |
+| ----------------------------------------------- | ------------------------------ |
+| `def grow(mut counter: Counter) -> int`         | `(mut Counter) -> int`         |
+| `def append(mut xs: list[int], x: int) -> None` | `(mut list[int], int) -> None` |
+| `def bump(mut n: int) -> int`                   | `(int) -> int`                 |
+
+| Rule                | Contract |
+| ------------------- | -------- |
+| Where it is written | On a parameter of an arrow-form function type. In a tuple type, a parenthesized type, or the parameter list of `Callable[...]` it is syntax error `INCAN-P0001`. |
+| Copied scalars      | On an `int`, `float` or `bool` parameter of a function type, also through a type alias, the marker is refused with `INCAN-T0001`. |
+| Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`. |
+| `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`. |
+| Parameters without `mut` | The body does not change a parameter declared without `mut`: a field or element write through it, a call of a method that changes it, and a change through the variable of a `for` loop over it are refused with `INCAN-T0001` (see [Assignments](assignments.md#rules)). |
+| Rebinding           | The body does not assign a new value to a marked parameter: `items = []` and `label += "!"` are refused with `INCAN-T0001`. |
+| Holding             | The body does not hold a marked parameter in another name or value. Each form in the table below is refused with `INCAN-T0001`. Passing the parameter as an argument to any other call is accepted, `rows.append(items)` included. |
+| Changing calls      | A call changes a marked parameter in the cases that [Changing calls](#changing-calls) lists. |
+| Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted, except one of those whose type cannot be copied, such as a `Generator`, which is refused with `INCAN-T0117`. |
+| Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked. |
+| Closures            | A closure checked against a function type has each parameter that type marks marked in its own type. |
+
+A marked parameter is held, and refused with `INCAN-T0001`, by each of these:
+
+| Form | Example |
+| --- | --- |
+| A new binding, or an assignment to an existing name | `other = items`, `let other = items`, `mut other: list[int] = items` |
+| A tuple, list, set or dict literal, or a comprehension | `(items, 1)`, `[items]`, `{"k": items}`, `[items for _ in rows]` |
+| A field or element store | `holder.items = items`, `table["k"] = items` |
+| An argument of a model, class, newtype or enum-variant construction, of `Some`, `Ok` or `Err`, or a `partial` preset | `Holder(items=items)`, `Wrap.Held(items)`, `Some(items)`, `partial extend(items=items)` |
+| The value of a `match` arm, an `if` branch, a `break` or a `yield` | `0 => items`, `break items`, `yield items` |
+| A `match` arm pattern that binds the whole value to a name | `match items: xs => ...` |
+| A closure that returns it, changes it, or passes it to a parameter that a call may change | `() => items`, `() => items.append(1)` |
+
+#### Changing calls
+
+A call changes a marked parameter when:
+
+- the body that runs assigns to the parameter's elements or fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self` (declared by the parameter's type, named through a method alias, or provided by a trait the type adopts), a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
+- the parameter is a `Generator`, and the body that runs uses it: iterating it, calling one of its methods and passing it to a call each advance it;
+- the body that runs changes an element through the variable of a `for` loop over the parameter, over a field of it, or over the variable of an enclosing such loop, for a list whose elements are not `int`, `float` or `bool` (`for row in items: row.append(3)`);
+- the body that runs changes a value through a name that a `match`, `if let` or `while let` pattern binds from the parameter, from a field of it, or from such a loop variable or name (`match box: Some(xs) => xs.append(1)`);
+- the call is a method call through a type parameter's bound, on `self` in a trait's default method, or on a trait-typed value;
+- the callee is known only by a function type that marks the parameter, such as a parameter of function type or a function of a compiled library;
+- the call goes through a local bound to a function, and the local is reassigned in the module.
+
+```incan
+def extend(mut items: list[int]) -> None:
+    items.append(9)
+
+def reset(mut items: list[int]) -> None:
+    items = []                          # refused: rebinds a marked parameter (INCAN-T0001)
+
+def keep(mut items: list[int]) -> int:
+    other = items                       # refused: holds a marked parameter in another name (INCAN-T0001)
+    return len(other)
+
+def main() -> None:
+    mut kept: list[int] = [1]
+    fixed: list[int] = [1]
+    extend(kept)                        # accepted
+    extend([1])                         # accepted
+    extend(fixed)                       # refused: fixed is not declared mut (INCAN-T0117)
+```
+
+```incan
+step: (mut Counter) -> int = grow   # accepted
+step: (Counter) -> int = grow       # refused: the function type does not mark the parameter (INCAN-T0001)
+twice: (mut int) -> int = bump      # refused: `mut` cannot mark the `int` parameter (INCAN-T0001)
+```
+
+A `mut self` method's decorators spell the receiver with this marker; see [Method decorators](language.md#method-decorators). A worked program: [Pass a function that changes its argument](../how-to/decorators.md#task-pass-a-function-that-changes-its-argument). The `mut` parameters of trait methods are in [Derives and traits](derives_and_traits.md#mut-parameters-of-trait-methods).
+
+### Rest-aware function values
+
+A function value keeps the rest parameters of the function it names.
+
+| Rule              | Contract                                                                                                                                                                                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `*args: T`        | Through the value, the call accepts extra positional arguments of type `T` and `*list_value` unpacking; inside the function, `args` is a `List[T]`.                                                                     |
+| `**kwargs: T`     | Through the value, the call accepts extra keyword arguments of type `T` and `**dict_value` unpacking; inside the function, `kwargs` is a `Dict[str, T]`.                                                                |
+| Fixed-arity types | A function type written with a trailing `List[T]` or `Dict[str, T]` parameter has no rest parameter: that parameter takes one list or dictionary argument, and extra arguments are refused with `INCAN-T0001`. |
+| Errors            | A call through the value binds like a direct call and is refused in the cases [Type Errors](#type-errors) lists.                                                                                                       |
+
+With `def collect(prefix: str, *items: int, **labels: str) -> int` and `f = collect`:
+
+```incan
+f("event", 0, *[1, 2], **{"kind": "demo"})   # accepted
 ```
 
 ## Ordinary Call Binding
@@ -26,108 +205,81 @@ Arguments bind to normal parameters in this order:
 
 1. Positional arguments bind left to right.
 2. Named arguments bind by exact parameter name.
-3. A parameter cannot be bound twice.
-4. Required parameters that remain unbound are reported as missing.
-5. Unknown named arguments are rejected unless the callee declares `**kwargs`.
-6. Extra positional arguments are rejected unless the callee declares `*args`.
+3. Binding a parameter twice is error `INCAN-T0001`.
+4. A required parameter that remains unbound is error `INCAN-T0001`.
+5. A named argument that names no parameter is error `INCAN-T0001`, unless the callee declares `**kwargs`.
+6. A positional argument beyond the positional parameters is error `INCAN-T0001`, unless the callee declares `*args`.
+7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
+8. In a package other than the callable's, a call may leave a defaulted parameter unbound only when the default is one of the following, and is not a preset of a method partial:
+    - a literal, or a negated number literal;
+    - a list or dict whose elements are such defaults;
+    - the name or path of a const, a static or a function, or an enum variant without a payload, such as `LIMIT` or `Mode.Fast`;
+    - a call of a function the package declares, named directly, through a public symbol alias of it or through its module, whose arguments are such defaults;
+    - a construction of a newtype the package declares, or of a model or class the package exports, whose arguments are such defaults.
+
+    Otherwise the parameter is required in that package, and a call there that leaves it unbound is error `INCAN-T0001`.
 
 ```incan
 def connect(host: str, port: int) -> str:
     return f"{host}:{port}"
 
 def main() -> str:
-    a = connect("localhost", 5432)
-    b = connect(host="localhost", port=5432)
-    return a + " " + b
+    a = connect("localhost", 5432)             # accepted
+    b = connect(host="localhost", port=5432)   # accepted
+    c = connect("localhost", host="db")        # refused: INCAN-T0001, host is bound twice
+    return connect("localhost")                # refused: INCAN-T0001, port is unbound
 ```
 
-## Rest Parameter Mental Model
-
-Rest parameters are for APIs that accept "zero or more of the same kind of thing."
-
-The call site stays convenient:
+Defaults that name a private const and call a private function of their module, called from another module. `describe()` in `main.incn` passes `CHUNK` and `_unit()` of `helpers.incn`:
 
 ```incan
-log("started", "listening", "ready")
+# helpers.incn
+const CHUNK: int = 4
+
+def _unit() -> str:
+    return "bytes"
+
+pub def describe(n: int = CHUNK, unit: str = _unit()) -> str:
+    return f"{n} {unit}"
 ```
 
-The callee still receives one ordinary typed value:
-
 ```incan
-def log(*messages: str) -> int:
-    return len(messages)  # messages is List[str]
+# main.incn
+from helpers import describe
+
+def main() -> None:
+    println(describe())   # accepted
+    println(describe(8))  # accepted
 ```
 
-For keyword rest parameters, the caller writes named options and the callee receives a dictionary:
+A default that names an imported const, called from a module that declares a const of the same name. `box_size()` in `main.incn` passes the `SIZE` of `sizes.incn`, which `boxes.incn` imports:
 
 ```incan
-def annotate(**labels: str) -> int:
-    return len(labels)  # labels is Dict[str, str]
-
-def main() -> int:
-    return annotate(source="cli", mode="debug")
+# sizes.incn
+pub const SIZE: int = 3
 ```
 
-!!! tip "Coming from Python?"
-    The spelling follows Python, but the contract is more static.
-
-    - Python `*args` collects a tuple; Incan `*args: T` collects `List[T]`.
-    - Python `**kwargs` collects a dict; Incan `**kwargs: T` collects `Dict[str, T]`.
-    - Python `**kwargs` is often used as an untyped escape hatch; Incan keyword captures are typed.
-    - Python can unpack any iterable or mapping at runtime; Incan only unpacks into fixed parameters when the compiler can prove the length or key set statically.
-    - `*expr` means "positional expansion" and is valid in calls and list literals. `**expr` means "mapping expansion" and is valid in calls and dictionary literals.
-
-## When to Use Rest Parameters
-
-Use `*args` when each extra positional value has the same role and type:
-
 ```incan
-def any_true(*checks: bool) -> bool:
-    for check in checks:
-        if check:
-            return true
-    return false
+# boxes.incn
+from sizes import SIZE
+
+pub def box_size(n: int = SIZE) -> int:
+    return n
 ```
 
-Use `**kwargs` when the API intentionally accepts an open set of same-typed named values:
-
 ```incan
-def metric(name: str, value: int, **tags: str) -> int:
-    return len(tags)
-```
+# main.incn
+from boxes import box_size
 
-Avoid rest parameters when the names are known and required. Use ordinary parameters:
+const SIZE: int = 9
 
-```incan
-def connect(host: str, port: int) -> str:
-    return f"{host}:{port}"
-```
-
-Avoid `**kwargs` when options have different types or need their own documentation. Use a model:
-
-```incan
-model RetryOptions:
-    attempts: int
-    backoff_ms: int
-
-def fetch(url: str, options: RetryOptions) -> int:
-    return options.attempts
-```
-
-If the repeated unit is heterogeneous, package it first and make the packaged unit variadic:
-
-```incan
-model Header:
-    name: str
-    value: str
-
-def request(path: str, *headers: Header) -> int:
-    return len(headers)
+def main() -> None:
+    println(box_size())  # accepted
 ```
 
 ## Rest Positional Parameters
 
-Use `*name: T` to capture extra positional arguments. Inside the function, `name` has type `List[T]`.
+A parameter `*name: T` captures the positional arguments beyond the ordinary parameters. Inside the function, `name` has type `List[T]`.
 
 ```incan
 def sum_all(label: str, *values: int) -> int:
@@ -140,9 +292,9 @@ def main() -> int:
     return sum_all("scores", 10, 20, 30)
 ```
 
-The annotation is the element type, not the container type. Write `*values: int`, not `*values: List[int]`.
+The annotation is the element type: `*values: int` captures `List[int]`.
 
-Calling the function with no extra positional arguments is allowed. The binding is an empty list:
+A call with no extra positional arguments binds an empty list:
 
 ```incan
 def count(*items: str) -> int:
@@ -154,7 +306,7 @@ def main() -> int:
 
 ## Rest Keyword Parameters
 
-Use `**name: T` to capture unknown named arguments. Inside the function, `name` has type `Dict[str, T]`.
+A parameter `**name: T` captures the named arguments that name no other parameter. Inside the function, `name` has type `Dict[str, T]`.
 
 ```incan
 def request(path: str, **headers: str) -> int:
@@ -164,9 +316,9 @@ def main() -> int:
     return request("/status", accept="json", trace="enabled")
 ```
 
-The keys are strings derived from the argument names. The annotation is the captured value type, not the container type. Write `**headers: str`, not `**headers: Dict[str, str]`.
+The keys are the argument names. The annotation is the value type: `**headers: str` captures `Dict[str, str]`.
 
-Calling the function with no extra keyword arguments is allowed. The binding is an empty dictionary:
+A call with no extra named arguments binds an empty dictionary:
 
 ```incan
 def request(path: str, **headers: str) -> int:
@@ -199,31 +351,26 @@ Within one parameter list:
 
 - At most one `*name: T` parameter is allowed.
 - At most one `**name: T` parameter is allowed.
-- Normal parameters must appear before any rest parameter.
-- `*name: T`, when present, appears after normal parameters.
-- `**name: T`, when present, must be the last parameter.
+- Every normal parameter comes before the rest parameters.
+- `**name: T`, when present, is the last parameter.
 - Rest parameters cannot have default values.
 
-Valid:
+Breaking one of these rules is error `INCAN-T0001`.
 
 ```incan
-def ok(a: int, b: int, *rest: int, **opts: str) -> int:
+def ok(a: int, b: int, *rest: int, **opts: str) -> int:   # accepted
     return a + b + len(rest) + len(opts)
-```
 
-Invalid:
-
-```incan
-def bad_order(*rest: int, value: int) -> int:
+def bad_order(*rest: int, value: int) -> int:             # refused: INCAN-T0001
     return value
 
-def also_bad(**opts: str, *rest: int) -> int:
+def also_bad(**opts: str, *rest: int) -> int:             # refused: INCAN-T0001
     return len(rest) + len(opts)
 ```
 
 ## Call-Site Unpacking
 
-Use `*expr` at a call site to extend the callee's positional rest parameter from an existing ordinary list value:
+`*expr` at a call site extends the callee's positional rest parameter with the elements of a list:
 
 ```incan
 def sum_all(*values: int) -> int:
@@ -237,9 +384,9 @@ def main() -> int:
     return sum_all(1, *extra, 4)
 ```
 
-The unpacked expression must typecheck as `List[T]` for the callee's `*name: T` parameter.
+For the callee's `*name: T` parameter, the unpacked expression has type `List[T]`.
 
-Use `**expr` to extend the callee's keyword rest parameter from an existing dictionary:
+`**expr` extends the callee's keyword rest parameter with the entries of a dictionary:
 
 ```incan
 def request(path: str, **headers: str) -> int:
@@ -250,9 +397,9 @@ def main() -> int:
     return request("/status", **defaults, trace="enabled")
 ```
 
-The unpacked expression must typecheck as `Dict[str, T]` for the callee's `**name: T` parameter.
+For the callee's `**name: T` parameter, the unpacked expression has type `Dict[str, T]`.
 
-Unpacking can also bind ordinary fixed parameters when the compiler can prove the unpacked value's shape:
+Unpacking also binds ordinary fixed parameters when the unpacked expression's length or key set is known from the expression itself:
 
 ```incan
 def fixed(x: int, y: int) -> int:
@@ -267,9 +414,9 @@ def main() -> int:
     return ok_fixed + ok_rest
 ```
 
-For fixed positional parameters, the minimum shaped values are tuple expressions and inline list literals. A variable with type `List[T]` is still a homogeneous list whose length is not part of the type, so it can feed a `*args` rest parameter but cannot silently satisfy a fixed pair such as `fixed(x: int, y: int)`.
+For fixed positional parameters, the unpacked expression is a tuple expression or an inline list literal. A value of type `List[T]` binds only a positional rest parameter.
 
-For fixed keyword parameters, the minimum shaped value is an inline dictionary literal with string literal keys:
+For fixed keyword parameters, the unpacked expression is an inline dictionary literal with string literal keys:
 
 ```incan
 def route(path: str, method: str) -> str:
@@ -279,11 +426,11 @@ def main() -> str:
     return route(**{"path": "/status", "method": "GET"})
 ```
 
-An ordinary `Dict[str, T]` value can feed `**kwargs`, but it cannot prove that every fixed keyword parameter is present.
+A value of type `Dict[str, T]` binds only a keyword rest parameter.
 
 ## List and Dictionary Literal Spread
 
-Use `*expr` inside a list literal to expand an existing ordinary list value into a new list:
+`*expr` inside a list literal inserts the elements of a list:
 
 ```incan
 def main() -> List[int]:
@@ -293,7 +440,7 @@ def main() -> List[int]:
 
 List spread preserves source order. Direct elements and spread elements must all be compatible with the resulting list element type.
 
-Use `**expr` inside a dictionary literal to expand an existing dictionary-like value into a new dictionary:
+`**expr` inside a dictionary literal inserts the entries of a dictionary:
 
 ```incan
 def main() -> Dict[str, str]:
@@ -301,14 +448,11 @@ def main() -> Dict[str, str]:
     return {**defaults, "trace": "enabled"}
 ```
 
-Dictionary spread preserves source order, and later keys overwrite earlier keys just like ordinary dictionary insertion. That example returns a dictionary whose `"trace"` value is `"enabled"`.
+Dictionary spread preserves source order, and a later key replaces an earlier one. That example returns a dictionary whose `"trace"` value is `"enabled"`.
 
-The destination decides the valid marker:
-
-- `[*xs]` is valid because `*` expands positional values into a sequence destination.
-- `{**xs}` is valid because `**` expands mapping entries into a mapping destination.
-- `[**xs]` is invalid because a list has no keyword or mapping destination.
-- `{*xs}` is invalid for dictionary literals; set literal spread is not part of RFC 038.
+- `[*xs]` and `{**xs}` are accepted.
+- `[**xs]` in a list literal and `{*xs}` in a braced literal are syntax error `INCAN-P0001`.
+- A spread in a const initializer is error `INCAN-T0001`.
 
 ## Source Order and Duplicate Keys
 
@@ -324,7 +468,7 @@ builds a rest list equivalent to:
 [1] + extra + [4]
 ```
 
-Keyword rest values and dictionary spread entries are inserted into a dictionary in source order. Duplicate direct named arguments are rejected, but a duplicate key that arrives through `**dict_value` follows ordinary dictionary insertion behavior: later entries replace earlier entries.
+Keyword rest values and dictionary spread entries are inserted into a dictionary in source order. A named argument written twice is error `INCAN-T0001`; a key that arrives again through `**dict_value` replaces the earlier entry.
 
 ```incan
 def request(path: str, **headers: str) -> int:
@@ -355,54 +499,11 @@ def main() -> int:
 
 ## Function Values
 
-Named functions are first-class values. When a function value originates from a rest-aware function, the callable metadata preserves the rest markers, so direct rest arguments and unpack arguments still work through the variable:
-
-```incan
-def collect(prefix: str, *items: int, **labels: str) -> int:
-    return len(items) + len(labels)
-
-def main() -> int:
-    f = collect
-    xs = [1, 2]
-    labels = {"kind": "demo"}
-    return f("event", 0, *xs, **labels)
-```
-
-A plain fixed-arity function type does not become rest-aware just because one of its parameters is a list or dictionary. Rest behavior comes from rest metadata, not from trailing container types alone.
-
-For module-level alternate names such as `mean = avg`, use a symbol alias instead of a function-local value binding. Symbol aliases are declarations, participate in imports/exports, and preserve alias identity in metadata. See [Symbol aliases](symbol_aliases.md).
-
-For callable specializations such as `get = partial route(method="GET")`, use a callable preset. Presets create a derived callable surface where supplied keywords behave like ordinary defaults. See [Callable presets](callable_presets.md).
-
-## Lowering Model
-
-Rest parameters are compile-time sugar over explicit container parameters:
-
-- `*items: T` lowers to a trailing `List[T]` parameter.
-- `**labels: T` lowers to a trailing `Dict[str, T]` parameter.
-- Direct rest arguments are pushed into the generated list or inserted into the generated dictionary.
-- `*expr` extends the generated list.
-- `**expr` extends the generated dictionary.
-- Fixed-parameter unpacking lowers to an ordinary call after the compiler proves the positional length or keyword key set.
-- List and dictionary literal spread lower to explicit container construction in source order.
-
-For example:
-
-```incan
-collect("event", 1, *xs, kind="demo", **labels)
-```
-
-lowers conceptually to a call with explicit rest containers:
-
-```text
-collect("event", [1] + xs, <dict containing "kind": "demo" plus labels inserted in source order>)
-```
-
-The emitted Rust uses ordinary `Vec` and `HashMap` construction; it does not use runtime reflection or Rust variadics. Collection literal spread is for runtime list and dictionary expressions; const frozen collection initializers still require direct entries.
+Named functions are first-class values of a [function type](#function-types); a value of a rest-aware function keeps its rest parameters ([Rest-aware function values](#rest-aware-function-values)).
 
 ## Type Errors
 
-The compiler reports errors for these cases:
+Each of these is error `INCAN-T0001`:
 
 - Extra positional arguments without `*args`.
 - Unknown named arguments without `**kwargs`.
@@ -417,9 +518,7 @@ The compiler reports errors for these cases:
 - Duplicate direct named arguments.
 - Duplicate fixed bindings across direct and unpacked arguments.
 - Missing required normal parameters.
-- `[**expr]` in a list literal.
-- `{*expr}` in a dictionary literal.
 
 ## Rust Interop
 
-Rest syntax is an Incan call contract. It does not expose C-style variadics and does not automatically apply to arbitrary Rust functions. Rust-backed calls can participate only when the compiler has an Incan-level callable signature that marks the relevant parameter as positional rest or keyword rest.
+A function imported from a Rust crate has no rest parameters.

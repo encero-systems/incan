@@ -1,0 +1,59 @@
+# behavior: an async main bootstraps the runtime, spawned and blocking tasks run to completion, sleep, sleep_ms and yield_now yield, timeout and timeout_ms resolve an awaited value or report expiry through the error's message, and timeout_join_ms hands back the live handle of a task that outlives its deadline
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_task_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_time_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_async_main_runtime_bootstrap_codegen
+# expect-stdout:
+#   async main running
+#   1
+#   2
+#   quick 1
+#   operation timed out
+#   still running
+#   3
+
+import std.async
+from std.async.task import spawn, spawn_blocking, yield_now, JoinHandle
+from std.async.time import sleep, sleep_ms, timeout, timeout_ms, timeout_join_ms, TimeoutError, TimeoutJoinOutcome
+
+
+async def quick() -> int:
+    await sleep(0.01)
+    return 1
+
+
+async def slow() -> int:
+    await sleep_ms(200)
+    await yield_now()
+    return 3
+
+
+def blocking() -> int:
+    return 2
+
+
+def launch() -> JoinHandle[int]:
+    return spawn(quick())
+
+
+async def main() -> None:
+    println("async main running")
+    match await launch():
+        Ok(value) => println(value)
+        Err(error) => println(f"join failed: {error.message()}")
+    match await spawn_blocking(blocking):
+        Ok(value) => println(value)
+        Err(error) => println(f"join failed: {error.message()}")
+    match await timeout(0.25, quick()):
+        Ok(value) => println(f"quick {value}")
+        Err(error) => println(error.message())
+    match await timeout_ms(20, slow()):
+        Ok(value) => println(f"slow {value}")
+        Err(error) => println(error.message())
+    match await timeout_join_ms(20, spawn(slow())):
+        TimeoutJoinOutcome.Completed(value) => println(f"slow {value}")
+        TimeoutJoinOutcome.JoinFailed(error) => println(f"join failed: {error.message()}")
+        TimeoutJoinOutcome.TimedOut(handle) =>
+            println("still running")
+            match await handle:
+                Ok(value) => println(value)
+                Err(error) => println(f"join failed: {error.message()}")

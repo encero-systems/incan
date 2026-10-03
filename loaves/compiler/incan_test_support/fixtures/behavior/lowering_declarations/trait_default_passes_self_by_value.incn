@@ -1,0 +1,23 @@
+# behavior: a trait default that passes self to a method taking the trait's Self compares the adopter with another value of its type
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::trait_default_passes_self_to_a_method_taking_self_issue1561
+# expect-stdout:
+#   true
+#   false
+
+trait Ranked:
+    def less(self, other: Self) -> bool: ...
+
+    def more(self, other: Self) -> bool:
+        return other.less(self)
+
+
+model Level with Ranked:
+    rank: int
+
+    def less(self, other: Self) -> bool:
+        return self.rank < other.rank
+
+
+def main() -> None:
+    println(Level(rank=2).more(Level(rank=1)))
+    println(Level(rank=1).more(Level(rank=2)))

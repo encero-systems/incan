@@ -1,0 +1,14 @@
+pub def greet(name: str) -> str:
+    return f"hi {name}"
+
+
+pub model Greeting:
+    pub text: str
+
+
+pub enum Tone:
+    Warm
+    Cool
+
+
+pub const LOUDNESS: int = 3

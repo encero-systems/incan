@@ -1,0 +1,10 @@
+# behavior: a generator expression that changes the items of a list it reads, directly or through enumerate, is refused at check time, since it holds copies of them, even over a mut list
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    mut rows: list[list[int]] = [[1, 2], [3]]
+    lasts = (row.pop() for row in rows)
+    for last in lasts:
+        println(last)
+    indexed = (row.pop() for i, row in enumerate(rows))
+    println(len(rows))

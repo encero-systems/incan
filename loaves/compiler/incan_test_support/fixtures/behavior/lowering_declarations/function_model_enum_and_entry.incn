@@ -1,0 +1,42 @@
+# behavior: main is the program's entry point; a two-parameter int function returns its sum, a two-field model is constructed and read, and a three-variant enum is matched
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_simple_function
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_model
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_main_entry
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_enum
+# expect-stdout:
+#   entered main
+#   5
+#   Ada 36
+#   green
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+model User:
+    name: str
+    age: int
+
+
+enum Color:
+    Red
+    Green
+    Blue
+
+
+def name_of(color: Color) -> str:
+    match color:
+        case Color.Red:
+            return "red"
+        case Color.Green:
+            return "green"
+        case Color.Blue:
+            return "blue"
+
+
+def main() -> None:
+    println("entered main")
+    println(add(2, 3))
+    user = User(name="Ada", age=36)
+    println(f"{user.name} {user.age}")
+    println(name_of(Color.Green))

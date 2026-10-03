@@ -35,6 +35,8 @@ import rust::std::collections::BTreeMap
 
 For example, if you would use `import std::fs`, this would refer to Incan's stdlib, **not** Rust's!
 
+Using `rust::std` types means working with their Rust behavior; for common file work, `std.fs.Path` is the simpler choice (see [File I/O](file_io.md)). When you pass a `list[T]` to a Rust function or method that expects `Vec<U>`, Incan converts each element with `.into()`, and Rust checks that `U` implements `From<T>`.
+
 > **Note:** `rust::core::...` and `rust::alloc::...` are reserved for future `no_std`/target work and are not yet
 > supported. The compiler will tell you to use `rust::std::...` instead.
 
@@ -110,6 +112,40 @@ stream = device.build_output_stream[f32, _, _](
 ```
 
 Writing `build_output_stream[f32](...)` is an error because the method declares three type parameters. Incan reports the required and supplied arity during typechecking instead of emitting an incomplete Rust turbofish. The `_` entries are deliberate inference slots, not optional trailing arguments.
+
+### Calling a Rust trait method through the trait
+
+When two imported traits both provide a method with the same name, `value.method(...)` is ambiguous for Rust. Spell the call through the trait instead and pass the receiver as the first argument:
+
+```incan
+from rust::sha2 import Digest, Sha256
+from rust::sha3::digest import Update
+
+class Hasher:
+    handle: Sha256
+
+    def absorb(mut self, chunk: bytes) -> None:
+        Update.update(self.handle, chunk.as_slice())
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+```
+
+The receiver is passed like any other argument. The compiler does not guess for a trait it recognizes: when the import is known to be a trait but no signature is available for the method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items. An import the compiler has no metadata for at all is treated as an ordinary associated call, and native compilation remains the authority for it.
+
+### Extension traits stay in scope for the methods they provide
+
+Rust finds a trait method on a value only when the trait is imported. Generated code keeps only the imports it uses, and a trait used through method syntax never appears in the emitted call, so the compiler attributes each method call to the imported trait that provides it and retains that `use`:
+
+```incan
+from rust::std::borrow import Borrow
+from rust::std::path import PathBuf
+
+pub def borrowed(value: &PathBuf) -> &PathBuf:
+    return value.borrow()
+```
+
+With inspected metadata the attribution is exact. Without it the compiler cannot tell which imported item declares `borrow`, so a method call that no inspected surface resolves keeps every imported Rust item whose method surface is unknown, aliases included. A metadata-free import in a module with no such call is still pruned as unused, and an import whose metadata names a non-trait item is never retained on a method call's behalf.
 
 ### Passing callbacks that borrow Rust slices
 
@@ -501,6 +537,27 @@ def run[T with Send, Sync](_value: T) -> None:
 
 These are Incan-syntax bounds that lower to Rust-native predicates in generated code.
 
+The callable markers take the callable's parameter list as their type arguments: `Fn[int]` accepts a callable taking one `int`, `FnMut[int, str]` one taking an `int` and a `str`, and a bare marker one taking nothing. The return type is not part of the marker; it is whatever the value passed at the call site returns. A function whose arity or parameter types differ from the marker is refused by `incan check`.
+
+A marker names at most two parameters, and it bounds a type parameter of a function or method only. `incan check` refuses `Fn[int, int, int]`, and a marker on a model, class, enum, trait, newtype or type alias parameter, with `INCAN-T0106`: for more than two parameters, gather them into one model and write `Fn[ThatModel]`; on a nominal declaration, bound the parameter with `Callable1[int, R]` from `std.traits.callable`, which names the return type, or give the field a function type such as `(int) -> R`.
+
+```incan
+from std.rust import Fn, FnOnce
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+    pass
+
+def run_fn_once[F with FnOnce[int]](_f: F) -> None:
+    pass
+
+def double(value: int) -> int:
+    return value * 2
+
+def main() -> None:
+    run_fn(double)
+    run_fn_once(double)
+```
+
 ## Targeted generated-Rust lint suppression
 
 Use `@rust.allow(...)` when one Incan declaration is expected to generate Rust that triggers a specific rustc or Clippy lint that is legitimate but not avoidable from Incan source. This is narrow Rust-emission metadata: it emits a Rust `#[allow(...)]` on the generated item for that declaration. It is not a general Rust attribute escape hatch, and it is not a way to set project-wide lint policy.
@@ -606,12 +663,12 @@ async def main() -> None:
 ### Using Collections
 
 ```incan
-from rust::std::collections import HashMap, HashSet
+from rust::std::collections import HashMap
 
 def count_words(text: str) -> HashMap[str, int]:
-    counts = HashMap.new()
-    for word in text.split():
-        count = counts.get(word).copied().unwrap_or(0)
+    mut counts = HashMap.new()
+    for word in text.split_whitespace():
+        count = counts.get(word).unwrap_or(0)
         counts.insert(word, count + 1)
     return counts
 ```

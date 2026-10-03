@@ -12,6 +12,10 @@
     "policy": "The toolchain installer provisions this exact Rust release into an Incan-owned rustup home, leaving your own default toolchain untouched, and ensures the wasm32-wasip1 target for packages that ship vocab companions."
   },
   "commands": ["incan", "incan-lsp"],
+  "loaf_registry": {
+    "repository": "https://github.com/encero-systems/incan.pub",
+    "index_commit": "0000000000000000000000000000000000000000"
+  },
   "hosts": {
     "x86_64-unknown-linux-gnu": {
       "archive_url": "https://github.com/encero-systems/incan/releases/download/v0.4.0/incan-v0.4.0-x86_64-unknown-linux-gnu.tar.gz",

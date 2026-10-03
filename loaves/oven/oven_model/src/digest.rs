@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 /// Hash canonical text with Oven's stable `sha256:` rendering.
@@ -18,6 +19,49 @@ pub fn digest_bytes(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
     format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
+/// Serialize JSON identity input with recursively sorted object keys.
+///
+/// The `serde_json/preserve_order` Cargo feature changes the backing object map. Identity bytes must remain the same
+/// when a larger build graph enables that feature, while arrays and scalar spellings retain normal Serde semantics.
+pub fn canonical_json_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    let value = serde_json::to_value(value)?;
+    serde_json::to_vec(&canonical_json_value(value))
+}
+
+/// Serialize JSON identity input as pretty text with recursively sorted object keys.
+pub fn canonical_json_bytes_pretty<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    let value = serde_json::to_value(value)?;
+    serde_json::to_vec_pretty(&canonical_json_value(value))
+}
+
+/// Serialize JSON identity input as canonical text with recursively sorted object keys.
+pub fn canonical_json_string<T: Serialize + ?Sized>(value: &T) -> Result<String, serde_json::Error> {
+    let value = serde_json::to_value(value)?;
+    serde_json::to_string(&canonical_json_value(value))
+}
+
+/// Recursively sort JSON objects while preserving array order and scalar values.
+fn canonical_json_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonical_json_value).collect())
+        }
+        serde_json::Value::Object(values) => canonical_json_object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, canonical_json_value(value)))
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+/// Canonicalize an explicitly ordered JSON object by sorting its entries by key.
+fn canonical_json_object(mut entries: Vec<(String, serde_json::Value)>) -> serde_json::Value {
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    serde_json::Value::Object(entries.into_iter().collect())
 }
 
 /// Failure while hashing a complete generated provider artifact.
@@ -164,11 +208,7 @@ fn digest_cargo_package_inner(
         coverage,
         &mut direct_path_roots,
     )?;
-    let normalized_manifest =
-        toml::to_string(&manifest).map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: manifest_path.clone(),
-            message: error.to_string(),
-        })?;
+    let normalized_manifest = normalized_cargo_manifest_string(&manifest, &manifest_path)?;
 
     let mut hasher = Sha256::new();
     hasher.update(match coverage {
@@ -177,10 +217,7 @@ fn digest_cargo_package_inner(
     });
     hash_named_bytes(&mut hasher, "Cargo.toml", normalized_manifest.as_bytes());
     if let Some(context) = workspace_context {
-        let context = toml::to_string(&context).map_err(|error| ProviderArtifactDigestError::Normalization {
-            path: manifest_path.clone(),
-            message: error.to_string(),
-        })?;
+        let context = normalized_cargo_manifest_string(&context, &manifest_path)?;
         hash_named_bytes(&mut hasher, "workspace-inherited.toml", context.as_bytes());
     }
     match coverage {
@@ -206,6 +243,49 @@ fn digest_cargo_package_inner(
     let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
     resolved_packages.insert(normalized_root, digest.clone());
     Ok(digest)
+}
+
+/// Serialize semantic TOML after recursively sorting every table key.
+///
+/// Cargo feature unification may replace TOML's sorted map with an insertion-order map. Source-closure identity is a
+/// contract over parsed Cargo facts, so the selected map implementation must not change its bytes.
+fn normalized_cargo_manifest_string(
+    value: &toml::Value,
+    manifest_path: &Path,
+) -> Result<String, ProviderArtifactDigestError> {
+    canonical_toml_string(value).map_err(|error| ProviderArtifactDigestError::Normalization {
+        path: manifest_path.to_path_buf(),
+        message: error.to_string(),
+    })
+}
+
+/// Serialize TOML identity input with recursively sorted table keys.
+///
+/// Arrays and scalar spellings retain normal TOML serializer semantics; only the Cargo-feature-sensitive table map
+/// order is replaced with a stable order.
+pub fn canonical_toml_string(value: &toml::Value) -> Result<String, toml::ser::Error> {
+    toml::to_string(&canonical_toml_value(value))
+}
+
+/// Serialize pretty TOML identity input with recursively sorted table keys.
+pub fn canonical_toml_string_pretty(value: &toml::Value) -> Result<String, toml::ser::Error> {
+    toml::to_string_pretty(&canonical_toml_value(value))
+}
+
+/// Recursively sort TOML tables while preserving array order and scalar values.
+fn canonical_toml_value(value: &toml::Value) -> toml::Value {
+    match value {
+        toml::Value::Array(values) => toml::Value::Array(values.iter().map(canonical_toml_value).collect()),
+        toml::Value::Table(values) => toml::Value::Table(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), canonical_toml_value(value)))
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .collect(),
+        ),
+        value => value.clone(),
+    }
 }
 
 /// Replace path dependencies in one Cargo manifest with the source digests of their target packages.
@@ -694,4 +774,62 @@ pub fn hash_named_bytes(hasher: &mut Sha256, name: &str, bytes: &[u8]) {
     hasher.update([0]);
     hasher.update(bytes);
     hasher.update([0xff]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Compiler-suite feature unification must not make package or inherited-workspace table order an identity input.
+    #[test]
+    fn toolchain_source_identity_ignores_toml_table_order_issue1988() -> TestResult {
+        let first = tempfile::tempdir()?;
+        let second = tempfile::tempdir()?;
+        for root in [first.path(), second.path()] {
+            fs::create_dir_all(root.join("support/src"))?;
+            fs::write(root.join("support/src/lib.rs"), "pub fn value() -> i32 { 1 }\n")?;
+        }
+        fs::write(
+            first.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"support\"]\nresolver = \"2\"\n\n[workspace.package]\nlicense = \"MIT\"\nedition = \"2024\"\n\n[workspace.dependencies]\nserde = \"1\"\n",
+        )?;
+        fs::write(
+            second.path().join("Cargo.toml"),
+            "[workspace.dependencies]\nserde = \"1\"\n\n[workspace.package]\nedition = \"2024\"\nlicense = \"MIT\"\n\n[workspace]\nresolver = \"2\"\nmembers = [\"support\"]\n",
+        )?;
+        fs::write(
+            first.path().join("support/Cargo.toml"),
+            "[package]\nname = \"support\"\nversion = \"0.1.0\"\nedition.workspace = true\nlicense.workspace = true\n\n[dependencies]\nserde.workspace = true\n",
+        )?;
+        fs::write(
+            second.path().join("support/Cargo.toml"),
+            "[dependencies]\nserde.workspace = true\n\n[package]\nlicense.workspace = true\nedition.workspace = true\nversion = \"0.1.0\"\nname = \"support\"\n",
+        )?;
+
+        assert_eq!(
+            digest_toolchain_source_tree(&first.path().join("support"))?,
+            digest_toolchain_source_tree(&second.path().join("support"))?
+        );
+        Ok(())
+    }
+
+    /// Canonical JSON identity bytes do not inherit the build graph's `serde_json/preserve_order` map behavior.
+    #[test]
+    fn canonical_json_identity_ignores_object_order_issue1988() -> TestResult {
+        let source = serde_json::Value::String("sha256:source".to_owned());
+        let output = serde_json::Value::String("sha256:output".to_owned());
+        let first = canonical_json_object(vec![
+            ("source_digest".to_owned(), source.clone()),
+            ("output_digest".to_owned(), output.clone()),
+        ]);
+        let second = canonical_json_object(vec![
+            ("output_digest".to_owned(), output),
+            ("source_digest".to_owned(), source),
+        ]);
+
+        assert_eq!(canonical_json_bytes(&first)?, canonical_json_bytes(&second)?);
+        Ok(())
+    }
 }

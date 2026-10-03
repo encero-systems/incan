@@ -1,0 +1,29 @@
+# behavior: consts defined by concatenating earlier str consts concatenate again at use, and bytes and FrozenBytes consts report their lengths (RFC 008)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_const_str_chain_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_const_bytes_codegen
+# expect-stdout:
+#   hello world!
+#   hello world!?
+#   2
+#   2
+
+"""Chained const string concatenation.
+
+Regression test: consts defined via concatenation must still be usable in later concatenations
+without emitting invalid Rust like `B + "!"` for `&'static str`.
+"""
+
+const A: str = "hello"
+const B: str = A + " world"
+const C: str = B + "!"
+
+const RAW: bytes = b"\x00\x01"
+const FROZEN: FrozenBytes = b"\x02\x03"
+
+
+def main() -> None:
+    print(C)
+    # further concatenation should be allowed
+    print(C + "?")
+    print(RAW.len())
+    print(FROZEN.len())

@@ -57,6 +57,8 @@ pub mod string_methods {
         EndsWith,
         Len,
         IsEmpty,
+        /// `text.encode(encoding="utf-8")` returns the UTF-8 bytes of the text (#1668).
+        Encode,
     }
 
     /// One positional argument shape shared by the selected canonical string-helper subset.
@@ -115,7 +117,12 @@ pub mod string_methods {
                     positional_arguments: ONE_STR,
                     required_positional_arguments: 1,
                 }),
-                Self::ToString | Self::SplitWhitespace | Self::StartsWith | Self::EndsWith | Self::IsEmpty => None,
+                Self::ToString
+                | Self::SplitWhitespace
+                | Self::StartsWith
+                | Self::EndsWith
+                | Self::IsEmpty
+                | Self::Encode => None,
             }
         }
     }
@@ -228,6 +235,14 @@ pub mod string_methods {
             RFC::_009,
             Since(0, 1),
         ),
+        info(
+            StringMethodId::Encode,
+            "encode",
+            &[],
+            "Return the text encoded as bytes; only UTF-8 is supported (`encoding=\"utf-8\"` is the default).",
+            RFC::_009,
+            Since(0, 6),
+        ),
     ];
 
     /// Resolve a string method spelling to its stable id.
@@ -321,6 +336,17 @@ pub mod set_methods {
         super::info_for_impl(SET_METHODS, id, "set method info missing")
     }
 
+    /// Whether calling the method changes the set it is called on: `add` does, `contains` only reads it.
+    ///
+    /// The checker reads this one fact wherever it asks whether a call changes its receiver. The match is exhaustive,
+    /// so a new method states its effect.
+    pub const fn changes_receiver(id: SetMethodId) -> bool {
+        match id {
+            SetMethodId::Add => true,
+            SetMethodId::Contains => false,
+        }
+    }
+
     const fn info(
         id: SetMethodId,
         canonical: &'static str,
@@ -395,7 +421,7 @@ pub mod list_methods {
             ListMethodId::Pop,
             "pop",
             &[],
-            "Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list` (Python-compatible).",
+            "Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list`.",
             RFC::_009,
             Since(0, 1),
         ),
@@ -435,7 +461,7 @@ pub mod list_methods {
             ListMethodId::Remove,
             "remove",
             &[],
-            "Remove and return the element at the given index.",
+            "`remove(index) -> None`: remove the element at the given index.",
             RFC::_009,
             Since(0, 1),
         ),
@@ -443,7 +469,7 @@ pub mod list_methods {
             ListMethodId::Count,
             "count",
             &[],
-            "Count occurrences of a value.",
+            "`items.count(value)` returns how many items equal `value`; `items.count()` with no argument is the iterator terminal and returns the number of items. Any other argument count is refused (`INCAN-T0001`).",
             RFC::_009,
             Since(0, 1),
         ),
@@ -473,6 +499,24 @@ pub mod list_methods {
     /// - If the registry is missing an entry for `id` (this indicates a programming error).
     pub fn info_for(id: ListMethodId) -> &'static ListMethodInfo {
         super::info_for_impl(LIST_METHODS, id, "list method info missing")
+    }
+
+    /// Whether calling the method changes the list it is called on: the methods that add, remove or reorder elements,
+    /// or change the list's capacity, do; `clone`, `contains`, `count` and `index` only read it.
+    ///
+    /// The checker reads this one fact wherever it asks whether a call changes its receiver. The match is exhaustive,
+    /// so a new method states its effect.
+    pub const fn changes_receiver(id: ListMethodId) -> bool {
+        match id {
+            ListMethodId::Append
+            | ListMethodId::Extend
+            | ListMethodId::Pop
+            | ListMethodId::Swap
+            | ListMethodId::Reserve
+            | ListMethodId::ReserveExact
+            | ListMethodId::Remove => true,
+            ListMethodId::Clone | ListMethodId::Contains | ListMethodId::Count | ListMethodId::Index => false,
+        }
     }
 
     const fn info(
@@ -508,6 +552,8 @@ pub mod dict_methods {
         Values,
         Get,
         Insert,
+        /// `d.contains_key(key)` answers membership like `FrozenDict.contains_key` (#1668).
+        ContainsKey,
     }
 
     pub type DictMethodInfo = LangItemInfo<DictMethodId>;
@@ -534,7 +580,7 @@ pub mod dict_methods {
             DictMethodId::Get,
             "get",
             &[],
-            "Get a value by key, optionally with a default.",
+            "`get(key)` returns `Some(value)` when the key is present and `None` otherwise; `get(key, default)` returns the value, or `default` when the key is absent. A kept lookup holds its own copy of the stored value, and one whose value type cannot be copied is refused with `INCAN-T0118`; see [Kept and in-place dict lookups](#kept-and-in-place-dict-lookups).",
             RFC::_009,
             Since(0, 1),
         ),
@@ -545,6 +591,14 @@ pub mod dict_methods {
             "Insert or overwrite a key/value pair.",
             RFC::_009,
             Since(0, 1),
+        ),
+        info(
+            DictMethodId::ContainsKey,
+            "contains_key",
+            &[],
+            "Return true if the dict contains a key.",
+            RFC::_009,
+            Since(0, 6),
         ),
     ];
 
@@ -564,6 +618,18 @@ pub mod dict_methods {
     /// - If the registry is missing an entry for `id` (this indicates a programming error).
     pub fn info_for(id: DictMethodId) -> &'static DictMethodInfo {
         super::info_for_impl(DICT_METHODS, id, "dict method info missing")
+    }
+
+    /// Whether calling the method changes the dict it is called on: `insert` does; `keys`, `values`, `get` and
+    /// `contains_key` only read it.
+    ///
+    /// The checker reads this one fact wherever it asks whether a call changes its receiver. The match is exhaustive,
+    /// so a new method states its effect.
+    pub const fn changes_receiver(id: DictMethodId) -> bool {
+        match id {
+            DictMethodId::Insert => true,
+            DictMethodId::Keys | DictMethodId::Values | DictMethodId::Get | DictMethodId::ContainsKey => false,
+        }
     }
 
     const fn info(
@@ -811,6 +877,73 @@ pub mod frozen_dict_methods {
         introduced_in_rfc: RfcId,
         since: Since,
     ) -> FrozenDictMethodInfo {
+        LangItemInfo {
+            id,
+            canonical,
+            aliases,
+            description,
+            introduced_in_rfc,
+            since,
+            stability: Stability::Stable,
+            examples: &[],
+        }
+    }
+}
+
+pub mod bytes_methods {
+    //! `bytes` method surface vocabulary.
+    //!
+    //! Runtime `bytes` values expose the text return trip here; byte-level helpers stay on the `FrozenBytes` and
+    //! builtin surfaces.
+
+    use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
+
+    /// Stable identifier for a runtime `bytes` method.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum BytesMethodId {
+        /// `data.decode(encoding="utf-8", errors="strict")` returns the bytes as text (#1668).
+        Decode,
+    }
+
+    pub type BytesMethodInfo = LangItemInfo<BytesMethodId>;
+
+    /// Registry of all runtime `bytes` methods.
+    pub const BYTES_METHODS: &[BytesMethodInfo] = &[info(
+        BytesMethodId::Decode,
+        "decode",
+        &[],
+        "Return `Result[str, ValidationError]`: the bytes decoded as UTF-8 text, or an error whose `code` is `invalid-utf8` (under `errors=\"strict\"`, the default), `unknown-encoding`, or `unknown-errors-policy`; `errors=\"replace\"` substitutes U+FFFD and always succeeds.",
+        RFC::_009,
+        Since(0, 6),
+    )];
+
+    /// Resolve a `bytes` method spelling to its stable id.
+    pub fn from_str(name: &str) -> Option<BytesMethodId> {
+        super::from_str_impl(BYTES_METHODS, name)
+    }
+
+    /// Return the canonical spelling for a `bytes` method.
+    pub fn as_str(id: BytesMethodId) -> &'static str {
+        info_for(id).canonical
+    }
+
+    /// Return the full metadata entry for a `bytes` method.
+    ///
+    /// ## Panics
+    /// - If the registry is missing an entry for `id` (this indicates a programming error).
+    pub fn info_for(id: BytesMethodId) -> &'static BytesMethodInfo {
+        super::info_for_impl(BYTES_METHODS, id, "bytes method info missing")
+    }
+
+    /// Build one stable `bytes` method registry entry; every entry is `Stable` and carries no examples yet.
+    const fn info(
+        id: BytesMethodId,
+        canonical: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        introduced_in_rfc: RfcId,
+        since: Since,
+    ) -> BytesMethodInfo {
         LangItemInfo {
             id,
             canonical,
@@ -1090,6 +1223,8 @@ pub mod option_methods {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum OptionMethodId {
+        /// Borrow the payload mutably without consuming the option.
+        AsMut,
         Copied,
         UnwrapOr,
         Unwrap,
@@ -1098,6 +1233,14 @@ pub mod option_methods {
     pub type OptionMethodInfo = LangItemInfo<OptionMethodId>;
 
     pub const OPTION_METHODS: &[OptionMethodInfo] = &[
+        info(
+            OptionMethodId::AsMut,
+            "as_mut",
+            &[],
+            "Borrow the contained value mutably without consuming the option.",
+            RFC::_000,
+            Since(0, 6),
+        ),
         info(
             OptionMethodId::Copied,
             "copied",
@@ -1215,7 +1358,7 @@ pub mod result_methods {
             ResultMethodId::Inspect,
             "inspect",
             &[],
-            "Observe an Ok payload by implicit borrow while preserving the original Result.",
+            "Pass the Ok payload to a callback and return the original Result unchanged.",
             RFC::_070,
             Since(0, 3),
         ),
@@ -1223,7 +1366,7 @@ pub mod result_methods {
             ResultMethodId::InspectErr,
             "inspect_err",
             &[],
-            "Observe an Err payload by implicit borrow while preserving the original Result.",
+            "Pass the Err payload to a callback and return the original Result unchanged.",
             RFC::_070,
             Since(0, 3),
         ),

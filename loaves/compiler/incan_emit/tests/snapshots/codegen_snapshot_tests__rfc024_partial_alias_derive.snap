@@ -9,7 +9,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::serde::json::Serialize as JsonSerialize;
 #[derive(
-    serde::Serialize,
+    ::serde::Serialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,
@@ -81,8 +81,8 @@ impl Payload {
         <Self as JsonSerialize>::to_json(self)
     }
 }
-fn encode<T: JsonSerialize>(value: T) -> String {
-    return crate::__incan_std::serde::json::JsonSerialize::to_json(&value);
+fn encode<T: JsonSerialize + ::serde::Serialize>(value: T) -> String {
+    return crate::__incan_std::serde::json::Serialize::to_json(&value);
 }
 fn main() {
     std::panic::set_hook(

@@ -1,0 +1,11 @@
+# behavior: rebinding a mut list parameter, whose changes reach the caller, to a new list is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+def reset(mut items: list[int]) -> None:
+    items = [0]
+
+
+def main() -> None:
+    mut items: list[int] = [1, 2]
+    reset(items)
+    println(len(items))

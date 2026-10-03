@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use semver::VersionReq;
+use semver::{Comparator, Op, VersionReq};
 use serde::{Deserialize, Serialize};
 use toml_edit::{Array as EditArray, Document, DocumentMut, Item, Table, Value as EditValue};
 
@@ -154,6 +154,158 @@ impl DependencySpec {
         self.features.sort();
         self.features.dedup();
         self
+    }
+
+    /// Return the typed requirement this spec declares, or `None` when it names no version.
+    pub fn version_requirement(&self) -> Result<Option<RustVersionRequirement>, String> {
+        self.version.as_deref().map(RustVersionRequirement::parse).transpose()
+    }
+
+    /// Whether both specs admit the same versions.
+    ///
+    /// See [`rust_version_requirements_match`]; every other identity field still compares structurally.
+    pub fn same_version_requirement(&self, other: &DependencySpec) -> bool {
+        rust_version_requirements_match(self.version.as_deref(), other.version.as_deref())
+    }
+}
+
+// ============================================================================
+// Rust version requirements
+// ============================================================================
+
+/// One release version boundary of a canonical requirement range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct ReleaseVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl ReleaseVersion {
+    const ZERO: Self = Self {
+        major: 0,
+        minor: 0,
+        patch: 0,
+    };
+
+    const fn new(major: u64, minor: u64, patch: u64) -> Self {
+        Self { major, minor, patch }
+    }
+}
+
+/// The canonical admitted set of one requirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AdmittedVersions {
+    /// Every release version `v` with `lower <= v` and, when `upper` is present, `v < upper`.
+    Range {
+        lower: ReleaseVersion,
+        upper: Option<ReleaseVersion>,
+    },
+    /// Comparators that contradict each other admit nothing, however they are spelled.
+    Empty,
+    /// A requirement naming a pre-release keeps its parsed comparators and compares structurally.
+    Prerelease(VersionReq),
+}
+
+/// One Cargo version requirement compared by the versions it admits rather than by its spelling.
+///
+/// Cargo treats `"1"`, `"1.0"` and `"^1.0.0"` as one requirement and unifies a graph that declares all three;
+/// comparing their text would refuse that same agreement as a conflict. The canonical form is the half-open
+/// release-version range `[lower, upper)` the requirement admits, which is exact for every requirement without a
+/// pre-release tag because such a requirement never admits a pre-release. A requirement that names a pre-release
+/// admits a set that is not a plain range, so it keeps its parsed comparators and compares structurally: the
+/// fail-closed answer for that rare spelling. The declared text is still what reaches a generated Cargo manifest;
+/// this type only decides whether two declarations agree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustVersionRequirement(AdmittedVersions);
+
+impl RustVersionRequirement {
+    /// Parse one Cargo requirement into its canonical admitted set.
+    pub fn parse(requirement: &str) -> Result<Self, String> {
+        let parsed = VersionReq::parse(requirement)
+            .map_err(|error| format!("invalid Cargo SemVer requirement `{requirement}`: {error}"))?;
+        if parsed.comparators.iter().any(|comparator| !comparator.pre.is_empty()) {
+            return Ok(Self(AdmittedVersions::Prerelease(parsed)));
+        }
+        let mut lower = ReleaseVersion::ZERO;
+        let mut upper: Option<ReleaseVersion> = None;
+        for comparator in &parsed.comparators {
+            let Some((comparator_lower, comparator_upper)) = comparator_release_range(comparator) else {
+                // A comparator this canonical form does not model compares structurally rather than by guess.
+                return Ok(Self(AdmittedVersions::Prerelease(parsed)));
+            };
+            lower = lower.max(comparator_lower);
+            upper = match (upper, comparator_upper) {
+                (Some(current), Some(next)) => Some(current.min(next)),
+                (current, next) => current.or(next),
+            };
+        }
+        if upper.is_some_and(|upper| upper <= lower) {
+            return Ok(Self(AdmittedVersions::Empty));
+        }
+        Ok(Self(AdmittedVersions::Range { lower, upper }))
+    }
+}
+
+/// The release-version range one comparator admits, following Cargo's documented expansion of each operator.
+fn comparator_release_range(comparator: &Comparator) -> Option<(ReleaseVersion, Option<ReleaseVersion>)> {
+    let major = comparator.major;
+    let minor = comparator.minor;
+    let patch = comparator.patch;
+    let next = |value: u64| value.saturating_add(1);
+    let floor = ReleaseVersion::new(major, minor.unwrap_or(0), patch.unwrap_or(0));
+    // The first release version above the named prefix: `I.J.K` -> `I.J.(K+1)`, `I.J` -> `I.(J+1).0`, `I` ->
+    // `(I+1).0.0`.
+    let after_prefix = match (minor, patch) {
+        (Some(minor), Some(patch)) => ReleaseVersion::new(major, minor, next(patch)),
+        (Some(minor), None) => ReleaseVersion::new(major, next(minor), 0),
+        (None, _) => ReleaseVersion::new(next(major), 0, 0),
+    };
+    // The first release version above the named minor line: `I.J[.K]` -> `I.(J+1).0`, `I` -> `(I+1).0.0`.
+    let after_minor = match minor {
+        Some(minor) => ReleaseVersion::new(major, next(minor), 0),
+        None => ReleaseVersion::new(next(major), 0, 0),
+    };
+    Some(match comparator.op {
+        Op::Exact => (floor, Some(after_prefix)),
+        Op::Greater => (after_prefix, None),
+        Op::GreaterEq => (floor, None),
+        Op::Less => (ReleaseVersion::ZERO, Some(floor)),
+        Op::LessEq => (ReleaseVersion::ZERO, Some(after_prefix)),
+        Op::Tilde => (floor, Some(after_minor)),
+        Op::Caret => {
+            let upper = if major > 0 {
+                ReleaseVersion::new(next(major), 0, 0)
+            } else {
+                match (minor, patch) {
+                    (Some(minor), _) if minor > 0 => ReleaseVersion::new(0, next(minor), 0),
+                    (Some(_), Some(patch)) => ReleaseVersion::new(0, 0, next(patch)),
+                    (Some(_), None) => ReleaseVersion::new(0, 1, 0),
+                    (None, _) => ReleaseVersion::new(1, 0, 0),
+                }
+            };
+            (floor, Some(upper))
+        }
+        Op::Wildcard => (floor, Some(after_minor)),
+        _ => return None,
+    })
+}
+
+/// Whether two optional requirement texts admit the same versions.
+///
+/// Two absent requirements agree; an absent and a present one never do. A text that does not parse compares by its
+/// exact spelling, so an invalid declaration can only ever agree with itself.
+pub fn rust_version_requirements_match(left: Option<&str>, right: Option<&str>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => match (
+            RustVersionRequirement::parse(left),
+            RustVersionRequirement::parse(right),
+        ) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        },
+        _ => false,
     }
 }
 
@@ -343,12 +495,469 @@ pub struct VocabSection {
 /// A Loaf whose Rust unit sits beside Incan sources names the Rust root explicitly; a conventional Rust-only Loaf
 /// needs no table and keeps `src/`. The root is relative to the project directory and must not overlap the Incan
 /// source root. Declaring it is honest today — a standard library component says where its `incan_std_<component>`
-/// crate lives — and Oven's Rust planner reads it once it plans facets without a neighbouring `Cargo.toml`.
+/// crate lives — and Oven's Rust planner reads it once it plans facets without a neighboring `Cargo.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustSourceSection {
     /// Directory holding the Rust unit, relative to the project root (`rust` for a stdlib component).
     pub root: String,
+}
+
+/// One binary build role of this Loaf's Rust unit, from `[[rust.bin]]` (RFC 119, #1698).
+///
+/// A conventional Rust Loaf declares nothing for `src/main.rs`: that binary takes the project's name. A binary whose
+/// name or root departs from the convention is declared here the way Cargo's `[[bin]]` names it — the `incan`
+/// command is a binary of the `incan-cli` Loaf, so its name cannot be derived. A role is a build of the Loaf's own
+/// unit: it selects which stored direct-rustc plan `incan build` bakes for this Loaf and never declares a second
+/// crate, which RFC 119 makes a sibling Loaf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustBinaryRole {
+    /// Executable name, also the crate name after `-` becomes `_`; unique among this Loaf's binaries.
+    pub name: String,
+    /// The binary's root source, relative to the project directory and below the Rust root (`src/main.rs` for the
+    /// conventional binary, `<rust.source root>/src/bin/<name>.rs` for a mixed Loaf).
+    pub path: String,
+}
+
+/// One RFC 119 declared-fact record: the build facts of this Loaf's Rust unit for one exact selection.
+///
+/// A build script is inert source inventory; what it would have discovered is declared here instead. A probe's
+/// answer is a constant only under one toolchain, target, profile and feature set, so every record binds all four
+/// and a consumer applies a record only when its own selection equals that binding exactly. Script-emitted
+/// environment is either retained as exact text or rebound below the record's retained `OUT_DIR` tree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactRecord {
+    /// Exact compiler identity the answers were derived under (`rustc -vV` first line).
+    pub toolchain: String,
+    /// Target triple.
+    pub target: String,
+    /// `release` or `debug`.
+    pub profile: String,
+    /// Complete enabled Cargo feature set, sorted, including `default` when enabled.
+    #[serde(default)]
+    pub features: Vec<String>,
+    /// `--cfg` answers, sorted; an empty list is a stated fact rather than an omission.
+    #[serde(default)]
+    pub cfg: Vec<String>,
+    /// Committed generated inputs that replace ambient `OUT_DIR` output.
+    #[serde(default)]
+    pub out: Vec<RustFactOut>,
+    /// Compile-time `cargo:rustc-env` values, sorted by unique environment name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<RustFactCompileEnvironment>,
+    /// Publisher-side native-link declarations; finished archives are registry assets.
+    #[serde(default)]
+    pub link: Vec<RustFactLink>,
+    /// Publisher-side generator declarations; finished products are registry assets.
+    #[serde(default)]
+    pub tool: Vec<RustFactTool>,
+    /// The compatibility receipt identity whose capture proposed this record.
+    #[serde(rename = "harvested-from", default)]
+    pub harvested_from: Option<String>,
+}
+
+/// One declared compile-time environment value emitted by a build script.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactCompileEnvironment {
+    /// Environment variable name supplied to rustc.
+    pub name: String,
+    /// Exact portable non-path text; exactly one of `literal` and `out` is required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub literal: Option<String>,
+    /// Portable path relative to the private `OUT_DIR`; `.` names the directory itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<String>,
+}
+
+/// One committed generated input named by a [`RustFactRecord`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactOut {
+    /// Plain path relative to the `OUT_DIR` namespace; comparable to a tool output `path`.
+    pub name: String,
+    /// Committed file, relative to the manifest directory.
+    pub path: String,
+    /// `sha256:` digest of the committed bytes.
+    pub digest: String,
+}
+
+/// Whether one declared artifact is a single file or a complete directory tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RustFactArtifactKind {
+    /// One regular file with no member catalog.
+    File,
+    /// One directory whose complete regular-file catalog is carried in `members`.
+    Tree,
+}
+
+/// One regular file in a declared tree artifact.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactArtifactMember {
+    /// Portable path relative to the tree root.
+    pub path: String,
+    /// Exact member byte identity.
+    pub digest: String,
+}
+
+/// One named producer input or output beneath its immutable owner.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactArtifact {
+    /// Stable invocation-local name referenced by typed arguments and environment entries.
+    pub name: String,
+    /// Whether this artifact is one file or a complete tree.
+    pub kind: RustFactArtifactKind,
+    /// Owner-relative portable path.
+    pub path: String,
+    /// Exact file digest or canonical complete-tree digest.
+    pub digest: String,
+    /// Complete sorted tree member catalog; forbidden for a file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<RustFactArtifactMember>,
+}
+
+/// One named producer output contract whose bytes and digest live in the admitted asset.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactOutput {
+    /// Stable invocation-local name referenced by typed arguments.
+    pub name: String,
+    /// Whether the produced artifact is one file or a complete tree.
+    pub kind: RustFactArtifactKind,
+    /// Portable path relative to the asset product root.
+    pub path: String,
+}
+
+/// Relocation-independent identity of the exact executable selected by a publisher.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactExecutable {
+    /// Stable argv-zero and selection name.
+    pub name: String,
+    /// Immutable toolchain or provider owner identity.
+    pub owner: String,
+    /// Executable path relative to that owner.
+    pub path: String,
+    /// Exact executable byte identity.
+    pub digest: String,
+}
+
+/// One ordered producer argument without a physical path.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum RustFactArgument {
+    /// Literal argument bytes.
+    Literal { literal: String },
+    /// Reference to one named declared input.
+    Input { input: String },
+    /// Reference to one named declared output.
+    Output { output: String },
+    /// Portable path below the executable's immutable owner root.
+    Owner { owner: String },
+}
+
+/// One named producer environment entry.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactEnvironment {
+    /// Environment variable name, unique and sorted within one producer record.
+    pub name: String,
+    /// Explicit non-path text; exactly one of `literal` and `input` is required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub literal: Option<String>,
+    /// Declared input whose materialized path becomes the value; exactly one value form is required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+}
+
+/// Source language accepted by a native-link producer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RustFactLinkLanguage {
+    /// C source.
+    C,
+    /// C++ source.
+    Cpp,
+    /// Assembly source.
+    Assembly,
+}
+
+/// One explicit native object compilation performed before the Oven writes the archive.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactLinkObject {
+    /// Portable relative object-file name and archive member name.
+    pub name: String,
+    /// Source language accepted by the declared compiler for this invocation.
+    pub language: RustFactLinkLanguage,
+    /// Ordered compiler arguments, including exactly one typed reference to this object's output name.
+    #[serde(default)]
+    pub arguments: Vec<RustFactArgument>,
+}
+
+/// Linker-visible archive kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RustFactLibraryKind {
+    /// Static archive.
+    Static,
+    /// Shared library.
+    Dynamic,
+}
+
+/// Linker-visible library produced by one native-link declaration.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactLibrary {
+    /// Linker-visible library name without platform prefix or suffix.
+    pub name: String,
+    /// Static or dynamic linkage.
+    pub kind: RustFactLibraryKind,
+}
+
+/// One publisher-side C, C++, or assembly declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct RustFactLink {
+    /// Stable producer name, unique among simultaneously active link and tool records.
+    pub name: String,
+    /// Exact target triple or `cfg(...)` predicate evaluated from selected target evidence.
+    pub target: String,
+    /// Exact portable executable identity.
+    pub executable: RustFactExecutable,
+    /// Sorted explicit object compilations performed with the declared executable.
+    #[serde(default)]
+    pub objects: Vec<RustFactLinkObject>,
+    /// Sorted explicit environment; ambient values are unavailable.
+    #[serde(default)]
+    pub environment: Vec<RustFactEnvironment>,
+    /// Sorted complete source closure.
+    #[serde(default)]
+    pub sources: Vec<RustFactArtifact>,
+    /// Linker-visible library the declared sources produce.
+    pub library: RustFactLibrary,
+}
+
+/// One publisher-side generator declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct RustFactTool {
+    /// Stable producer name, unique among simultaneously active link and tool records.
+    pub name: String,
+    /// Exact target triple or `cfg(...)` predicate evaluated from selected target evidence.
+    pub target: String,
+    /// Exact portable executable identity.
+    pub executable: RustFactExecutable,
+    /// Ordered invocation arguments.
+    #[serde(default)]
+    pub arguments: Vec<RustFactArgument>,
+    /// Sorted explicit environment; ambient values are unavailable.
+    #[serde(default)]
+    pub environment: Vec<RustFactEnvironment>,
+    /// Sorted complete input closure.
+    #[serde(default)]
+    pub inputs: Vec<RustFactArtifact>,
+    /// Sorted complete output contract; product bytes and digests live in the admitted asset.
+    #[serde(default)]
+    pub outputs: Vec<RustFactOutput>,
+}
+
+/// Publisher work class supplied by an observation before admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RustFactProducerRole {
+    /// Native compilation and archive production.
+    Link,
+    /// Generator execution and generated-product publication.
+    Tool,
+}
+
+/// Model-owned observation DTO consumed by the public fail-closed admission boundary.
+///
+/// Compatibility harvesters map raw observations into this type. Optional fields represent role-specific evidence
+/// that capture may not have obtained; conversion refuses them instead of guessing executable or library identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactWorkObservation {
+    /// Publisher work class observed by the compatibility boundary.
+    pub role: RustFactProducerRole,
+    /// Stable logical work name.
+    pub name: String,
+    /// Exact target triple or `cfg(...)` predicate.
+    pub target: String,
+    /// Complete relocation-independent executable identity.
+    pub executable: Option<RustFactExecutable>,
+    /// Link object compilations; tool work must leave this empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<RustFactLinkObject>,
+    /// Ordered portable arguments; link work must leave this empty.
+    pub arguments: Vec<RustFactArgument>,
+    /// Set-like environment declarations; conversion canonicalizes them by name.
+    pub environment: Vec<RustFactEnvironment>,
+    /// Link sources or tool inputs; conversion canonicalizes them by name.
+    pub inputs: Vec<RustFactArtifact>,
+    /// Tool output contract; link work must leave this empty.
+    pub outputs: Vec<RustFactOutput>,
+    /// Link library contract; tool work must leave this absent.
+    pub library: Option<RustFactLibrary>,
+}
+
+/// Fully validated typed publisher work returned to compatibility harvesters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RustFactWorkRecord {
+    /// Complete link work.
+    Link(RustFactLink),
+    /// Complete generator work.
+    Tool(RustFactTool),
+}
+
+/// Why a raw publisher observation cannot become an admitted fact.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("publisher observation is incomplete or invalid: {message}")]
+pub struct RustFactWorkConversionError {
+    message: String,
+}
+
+/// The selection one consumer asks a [`RustFactRecord`] to bind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustFactSelection {
+    pub toolchain: String,
+    pub target: String,
+    pub profile: String,
+    /// Enabled features, in any order; compared as a sorted set.
+    pub features: Vec<String>,
+}
+
+impl RustFactRecord {
+    /// Whether this record's binding equals the selection exactly.
+    pub fn binds(&self, selection: &RustFactSelection) -> bool {
+        let mut features = selection.features.clone();
+        features.sort();
+        features.dedup();
+        self.toolchain == selection.toolchain
+            && self.target == selection.target
+            && self.profile == selection.profile
+            && self.features == features
+    }
+}
+
+impl RustFactWorkRecord {
+    /// Convert one compatibility observation into admitted typed publisher work without inferring missing evidence.
+    ///
+    /// The conversion sorts set-like collections into their canonical wire order, then applies the same closure,
+    /// path, digest, reference, and role validation used for authored manifests. Ordered arguments are never sorted.
+    pub fn try_from_observation(mut observation: RustFactWorkObservation) -> Result<Self, RustFactWorkConversionError> {
+        observation
+            .environment
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        observation.objects.sort_by(|left, right| left.name.cmp(&right.name));
+        observation.inputs.sort_by(|left, right| left.name.cmp(&right.name));
+        observation.outputs.sort_by(|left, right| left.name.cmp(&right.name));
+        for artifact in &mut observation.inputs {
+            artifact.members.sort_by(|left, right| left.path.cmp(&right.path));
+        }
+        let executable = observation
+            .executable
+            .ok_or_else(|| conversion_error("missing executable identity"))?;
+        match observation.role {
+            RustFactProducerRole::Link => {
+                if !observation.arguments.is_empty() || !observation.outputs.is_empty() {
+                    return Err(conversion_error(
+                        "link work declares object compilations, sources and a library, not shared arguments or product outputs",
+                    ));
+                }
+                let link = RustFactLink {
+                    name: observation.name,
+                    target: observation.target,
+                    executable,
+                    objects: observation.objects,
+                    environment: observation.environment,
+                    sources: observation.inputs,
+                    library: observation
+                        .library
+                        .ok_or_else(|| conversion_error("link work has no library"))?,
+                };
+                validate_rust_fact_link(&link).map_err(conversion_error)?;
+                Ok(Self::Link(link))
+            }
+            RustFactProducerRole::Tool => {
+                if !observation.objects.is_empty() || observation.library.is_some() {
+                    return Err(conversion_error(
+                        "tool work cannot declare link objects or library metadata",
+                    ));
+                }
+                let tool = RustFactTool {
+                    name: observation.name,
+                    target: observation.target,
+                    executable,
+                    arguments: observation.arguments,
+                    environment: observation.environment,
+                    inputs: observation.inputs,
+                    outputs: observation.outputs,
+                };
+                validate_rust_fact_tool(&tool).map_err(conversion_error)?;
+                Ok(Self::Tool(tool))
+            }
+        }
+    }
+}
+
+impl From<RustFactLink> for RustFactWorkObservation {
+    /// Recover the complete observation represented by one admitted link record.
+    fn from(link: RustFactLink) -> Self {
+        Self {
+            role: RustFactProducerRole::Link,
+            name: link.name,
+            target: link.target,
+            executable: Some(link.executable),
+            objects: link.objects,
+            arguments: Vec::new(),
+            environment: link.environment,
+            inputs: link.sources,
+            outputs: Vec::new(),
+            library: Some(link.library),
+        }
+    }
+}
+
+impl From<RustFactTool> for RustFactWorkObservation {
+    /// Recover the complete observation represented by one admitted tool record.
+    fn from(tool: RustFactTool) -> Self {
+        Self {
+            role: RustFactProducerRole::Tool,
+            name: tool.name,
+            target: tool.target,
+            executable: Some(tool.executable),
+            objects: Vec::new(),
+            arguments: tool.arguments,
+            environment: tool.environment,
+            inputs: tool.inputs,
+            outputs: tool.outputs,
+            library: None,
+        }
+    }
+}
+
+/// Construct one conversion error at the public harvest-to-model boundary.
+fn conversion_error(message: impl Into<String>) -> RustFactWorkConversionError {
+    RustFactWorkConversionError {
+        message: message.into(),
+    }
+}
+
+/// `[source]`: the registry publication this manifest describes, present only on a registry-published manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistrySourceSection {
+    /// The registry index the package comes from.
+    pub registry: String,
+    /// `sha256:` digest of the published archive, as the lock records it.
+    pub checksum: String,
 }
 
 /// Tool-owned configuration namespace from `[tool]`.
@@ -524,6 +1133,12 @@ pub struct ProjectManifest {
     pub interop: Option<InteropSection>,
     /// `[rust.source]`: where a mixed Loaf keeps its Rust facet (optional).
     pub rust_source: Option<RustSourceSection>,
+    /// `[[rust.facts]]`: RFC 119 declared build facts of the Rust unit, one record per bound selection.
+    pub rust_facts: Vec<RustFactRecord>,
+    /// `[[rust.bin]]`: the binary build roles of the Rust unit whose name or root departs from convention.
+    pub rust_bins: Vec<RustBinaryRole>,
+    /// `[source]`: the registry publication this manifest describes (registry-published manifests only).
+    pub source: Option<RegistrySourceSection>,
     /// `[workspace]` topology metadata when this manifest is a workspace root.
     pub workspace: Option<WorkspaceSection>,
     /// `[dependencies]` (Incan library dependencies).
@@ -641,6 +1256,14 @@ impl ProjectManifest {
     /// Dev-only Rust dependencies from the manifest.
     pub fn rust_dev_dependencies(&self) -> &HashMap<String, DependencySpec> {
         &self.rust_dev_dependencies
+    }
+
+    /// The `[[rust.bin]]` roles this Loaf declares for its Rust unit, in declaration order.
+    ///
+    /// Empty for a Loaf without a Rust facet and for a conventional Rust Loaf whose one binary is `src/main.rs`
+    /// under the project's name; a declared role is what `incan build` selects a stored binary plan by.
+    pub fn rust_binary_roles(&self) -> &[RustBinaryRole] {
+        &self.rust_bins
     }
 
     /// Explicit Incan library dependencies inherited from an active workspace root.
@@ -795,7 +1418,7 @@ pub enum DiscoveredManifest {
 /// Report which project manifest `dir` holds, without walking upward and without reading either file.
 ///
 /// `loaf.toml` wins when both are present: RFC 117 rule 13 makes a directory containing the Loaf manifest a Loaf
-/// project, and a neighbouring legacy file there is ignored rather than merged.
+/// project, and a neighboring legacy file there is ignored rather than merged.
 pub fn discovered_manifest_kind(dir: &Path) -> DiscoveredManifest {
     let loaf = dir.join(LOAF_MANIFEST_FILENAME);
     if loaf.is_file() {
@@ -908,6 +1531,8 @@ struct RawManifest {
     legacy_dev_dependencies: Option<DependencyTable>,
     #[serde(default)]
     rust: Option<RustTables>,
+    #[serde(default)]
+    source: Option<RegistrySourceSection>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -919,6 +1544,10 @@ struct RustTables {
     dev_dependencies: Option<DependencyTable>,
     #[serde(default)]
     source: Option<RustSourceSection>,
+    #[serde(default)]
+    facts: Vec<RustFactRecord>,
+    #[serde(default)]
+    bin: Vec<RustBinaryRole>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -1033,6 +1662,636 @@ fn manifest_parse_error<E: TomlSpanError>(path: &Path, content: &str, error: E) 
         location: ManifestLocationDisplay::from_span(content, error.span()),
         message: error.message().to_string(),
     }
+}
+
+/// Whether one text is a canonical `sha256:` identity.
+pub fn is_sha256_identity(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
+}
+
+/// Refuse `[[rust.bin]]` roles that could not select exactly one binary of this Loaf's own Rust unit.
+///
+/// A role names an executable and its root source. The name must be usable as a file name and a crate name; the
+/// path must be a plain relative path to a `.rs` file inside the project and, when `[rust.source]` names the Rust
+/// root, below that root — a binary outside the Rust root would belong to another unit, which RFC 119 makes a
+/// sibling Loaf rather than a role of this one. Names and paths are unique across roles so a selection by either is
+/// unambiguous.
+fn validate_rust_binary_roles(
+    roles: &[RustBinaryRole],
+    rust_source: Option<&RustSourceSection>,
+    path: &Path,
+    spans: &ManifestSpans,
+) -> Result<(), ManifestError> {
+    let invalid = |index: usize, message: String| {
+        manifest_invalid(
+            path,
+            spans.table_location(&["rust", "bin"]),
+            format!("[[rust.bin]][{index}] {message}"),
+        )
+    };
+    let mut names = HashSet::new();
+    let mut paths = HashSet::new();
+    for (index, role) in roles.iter().enumerate() {
+        let name = role.name.trim();
+        if name.is_empty()
+            || name != role.name
+            || !name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        {
+            return Err(invalid(
+                index,
+                format!(
+                    "name `{}` must be a non-empty executable name made of ASCII letters, digits, `-` and `_`",
+                    role.name
+                ),
+            ));
+        }
+        let relative = Path::new(&role.path);
+        let plain = !role.path.trim().is_empty()
+            && role.path.trim() == role.path
+            && relative.is_relative()
+            && relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+            && relative.extension().is_some_and(|extension| extension == "rs");
+        if !plain {
+            return Err(invalid(
+                index,
+                format!(
+                    "path `{}` must be a plain relative path to a `.rs` file inside the project directory",
+                    role.path
+                ),
+            ));
+        }
+        if let Some(rust_source) = rust_source
+            && !relative.starts_with(rust_source.root.trim())
+        {
+            return Err(invalid(
+                index,
+                format!(
+                    "path `{}` must lie below the declared Rust root `{}`; a binary outside it is another unit, \
+                     which is a sibling Loaf rather than a role of this one",
+                    role.path, rust_source.root
+                ),
+            ));
+        }
+        if !names.insert(name) {
+            return Err(invalid(index, format!("name `{name}` is declared twice")));
+        }
+        if !paths.insert(role.path.as_str()) {
+            return Err(invalid(index, format!("path `{}` is declared twice", role.path)));
+        }
+    }
+    Ok(())
+}
+
+/// Require one portable owner-relative path with no host-specific or traversal spelling.
+fn validate_rust_fact_path(value: &str, field: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    let drive_qualified = value.as_bytes().get(1) == Some(&b':');
+    let uri_shaped = value.contains("://") || value.starts_with("file:");
+    if value.trim().is_empty()
+        || value.trim() != value
+        || path.is_absolute()
+        || value.starts_with('~')
+        || value.starts_with("//")
+        || value.starts_with("\\\\")
+        || drive_qualified
+        || uri_shaped
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("{field} `{value}` must be a plain owner-relative path"));
+    }
+    Ok(())
+}
+
+/// Validate an artifact path, reserving `.` for a complete tree rooted at the source owner.
+fn validate_rust_fact_artifact_path(artifact: &RustFactArtifact, field: &str) -> Result<(), String> {
+    if artifact.kind == RustFactArtifactKind::Tree && artifact.path == "." {
+        return Ok(());
+    }
+    validate_rust_fact_path(&artifact.path, field)
+}
+
+/// Require one stable portable name used by producer-local references.
+fn validate_rust_fact_name(value: &str, field: &str) -> Result<(), String> {
+    if value.trim().is_empty()
+        || value.trim() != value
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(format!(
+            "{field} `{value}` must use ASCII letters, digits, `.`, `-`, or `_`"
+        ));
+    }
+    Ok(())
+}
+
+/// Admit the settled exact-triple-or-`cfg(...)` target predicate spelling.
+fn validate_rust_fact_target(value: &str) -> Result<(), String> {
+    let exact_triple = value.split('-').count() >= 3
+        && !value.bytes().any(|byte| byte.is_ascii_whitespace())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    let cfg_predicate = value
+        .strip_prefix("cfg(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .is_some_and(|inner| !inner.trim().is_empty() && !inner.contains('\n') && !inner.contains('\r'));
+    if exact_triple || cfg_predicate {
+        Ok(())
+    } else {
+        Err(format!(
+            "target `{value}` must be an exact target triple or one `cfg(...)` predicate"
+        ))
+    }
+}
+
+/// Require one executable identity to be complete and relocation-independent.
+fn validate_rust_fact_executable(executable: &RustFactExecutable) -> Result<(), String> {
+    validate_rust_fact_name(&executable.name, "executable name")?;
+    validate_rust_fact_path(&executable.path, "executable path")?;
+    if !is_sha256_identity(&executable.owner) {
+        return Err("executable owner must be a `sha256:` identity".to_string());
+    }
+    if !is_sha256_identity(&executable.digest) {
+        return Err("executable digest must be a `sha256:` identity".to_string());
+    }
+    Ok(())
+}
+
+/// Return whether two portable artifact paths collide by equality or containment.
+fn rust_fact_paths_overlap(left: &str, right: &str) -> bool {
+    let left = Path::new(left);
+    let right = Path::new(right);
+    left == right || left.starts_with(right) || right.starts_with(left)
+}
+
+/// Validate one sorted complete artifact closure and return its names and paths.
+///
+/// Inputs may overlap because a declared include tree can contain separately declared compiled files. Callers use
+/// the returned paths to refuse overlap with outputs, while output-to-output overlap remains independently invalid.
+fn validate_rust_fact_artifacts<'a>(
+    artifacts: &'a [RustFactArtifact],
+    field: &str,
+) -> Result<(HashSet<&'a str>, Vec<&'a str>), String> {
+    if artifacts.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err(format!("{field} must be sorted by unique name"));
+    }
+    let mut names = HashSet::new();
+    let mut paths: Vec<&str> = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        validate_rust_fact_name(&artifact.name, &format!("{field} name"))?;
+        validate_rust_fact_artifact_path(artifact, &format!("{field} `{}` path", artifact.name))?;
+        if !is_sha256_identity(&artifact.digest) {
+            return Err(format!(
+                "{field} `{}` digest must be a `sha256:` identity",
+                artifact.name
+            ));
+        }
+        match artifact.kind {
+            RustFactArtifactKind::File if !artifact.members.is_empty() => {
+                return Err(format!("file {field} `{}` cannot declare tree members", artifact.name));
+            }
+            RustFactArtifactKind::Tree => {
+                if artifact.members.windows(2).any(|pair| pair[0].path >= pair[1].path) {
+                    return Err(format!(
+                        "tree {field} `{}` members must be sorted and unique",
+                        artifact.name
+                    ));
+                }
+                for member in &artifact.members {
+                    validate_rust_fact_path(&member.path, &format!("tree {field} `{}` member", artifact.name))?;
+                    if !is_sha256_identity(&member.digest) {
+                        return Err(format!(
+                            "tree {field} `{}` member `{}` digest must be a `sha256:` identity",
+                            artifact.name, member.path
+                        ));
+                    }
+                }
+            }
+            RustFactArtifactKind::File => {}
+        }
+        names.insert(artifact.name.as_str());
+        paths.push(artifact.path.as_str());
+    }
+    Ok((names, paths))
+}
+
+/// Validate one sorted output contract and return its logical names and portable paths.
+fn validate_rust_fact_outputs(outputs: &[RustFactOutput]) -> Result<(HashSet<&str>, Vec<&str>), String> {
+    if outputs.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("outputs must be sorted by unique name".to_string());
+    }
+    let mut names = HashSet::new();
+    let mut paths: Vec<&str> = Vec::with_capacity(outputs.len());
+    for output in outputs {
+        validate_rust_fact_name(&output.name, "outputs name")?;
+        validate_rust_fact_path(&output.path, &format!("outputs `{}` path", output.name))?;
+        if paths
+            .iter()
+            .any(|existing| rust_fact_paths_overlap(existing, &output.path))
+        {
+            return Err(format!("outputs path `{}` overlaps another declared path", output.path));
+        }
+        names.insert(output.name.as_str());
+        paths.push(output.path.as_str());
+    }
+    Ok((names, paths))
+}
+
+/// Validate the shared executable invocation and complete input/output contract of one producer record.
+fn validate_rust_fact_work(
+    name: &str,
+    target: &str,
+    executable: &RustFactExecutable,
+    arguments: &[RustFactArgument],
+    environment: &[RustFactEnvironment],
+    inputs: &[RustFactArtifact],
+    outputs: &[RustFactOutput],
+) -> Result<(), String> {
+    validate_rust_fact_name(name, "producer name")?;
+    validate_rust_fact_target(target)?;
+    validate_rust_fact_executable(executable)?;
+    let (input_names, input_paths) = validate_rust_fact_artifacts(inputs, "inputs")?;
+    let (output_names, output_paths) = validate_rust_fact_outputs(outputs)?;
+    if let Some(name) = input_names.intersection(&output_names).next() {
+        return Err(format!("logical name `{name}` is claimed as both an input and output"));
+    }
+    if input_paths
+        .iter()
+        .any(|input| output_paths.iter().any(|output| rust_fact_paths_overlap(input, output)))
+    {
+        return Err("input and output paths must not overlap".to_string());
+    }
+    for argument in arguments {
+        match argument {
+            RustFactArgument::Literal { literal } if literal.contains('\0') => {
+                return Err("literal arguments cannot contain NUL".to_string());
+            }
+            RustFactArgument::Input { input } if !input_names.contains(input.as_str()) => {
+                return Err(format!("argument references undeclared input `{input}`"));
+            }
+            RustFactArgument::Output { output } if !output_names.contains(output.as_str()) => {
+                return Err(format!("argument references undeclared output `{output}`"));
+            }
+            RustFactArgument::Owner { owner } => {
+                validate_rust_fact_path(owner, "owner argument")?;
+            }
+            _ => {}
+        }
+    }
+    if environment.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("environment must be sorted by unique name".to_string());
+    }
+    for entry in environment {
+        if entry.name.is_empty()
+            || entry.name.contains('=')
+            || !entry
+                .name
+                .bytes()
+                .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+        {
+            return Err(format!("environment name `{}` is invalid", entry.name));
+        }
+        match (&entry.literal, &entry.input) {
+            (Some(literal), None) if literal.contains('\0') => {
+                return Err(format!("environment `{}` literal cannot contain NUL", entry.name));
+            }
+            (Some(_), None) => {}
+            (None, Some(input)) if !input_names.contains(input.as_str()) => {
+                return Err(format!(
+                    "environment `{}` references undeclared input `{input}`",
+                    entry.name
+                ));
+            }
+            (None, Some(_)) => {}
+            _ => {
+                return Err(format!(
+                    "environment `{}` must declare exactly one of literal or input",
+                    entry.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate one native-link declaration without admitting archive bytes into the fact record.
+fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
+    if link.sources.is_empty() {
+        return Err("sources must declare the complete non-empty source closure".to_string());
+    }
+    if link.objects.is_empty() {
+        return Err("objects must declare at least one object compilation".to_string());
+    }
+    if link.objects.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("objects must be sorted by unique name".to_string());
+    }
+    if link.library.kind == RustFactLibraryKind::Dynamic {
+        return Err("dynamic libraries are not supported by publisher link records".to_string());
+    }
+    for object in &link.objects {
+        validate_rust_fact_path(&object.name, "object name")?;
+        if Path::new(&object.name).components().count() != 1 || !object.name.ends_with(".o") {
+            return Err(format!(
+                "object name `{}` must be one portable `.o` file name",
+                object.name
+            ));
+        }
+        if link.sources.iter().any(|source| source.name == object.name) {
+            return Err(format!(
+                "logical name `{}` is claimed as both a source and object",
+                object.name
+            ));
+        }
+    }
+    let object_outputs = link
+        .objects
+        .iter()
+        .map(|object| RustFactOutput {
+            name: object.name.clone(),
+            kind: RustFactArtifactKind::File,
+            path: object.name.clone(),
+        })
+        .collect::<Vec<_>>();
+    validate_rust_fact_work(
+        &link.name,
+        &link.target,
+        &link.executable,
+        &[],
+        &link.environment,
+        &link.sources,
+        &object_outputs,
+    )?;
+    let input_names = link
+        .sources
+        .iter()
+        .map(|source| source.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut referenced_inputs = HashSet::new();
+    for object in &link.objects {
+        let mut object_inputs = HashSet::new();
+        let mut object_outputs = Vec::new();
+        for argument in &object.arguments {
+            match argument {
+                RustFactArgument::Literal { literal } if literal.contains('\0') => {
+                    return Err("literal arguments cannot contain NUL".to_string());
+                }
+                RustFactArgument::Literal { literal } if literal == &object.name => {
+                    return Err(format!(
+                        "object `{}` output must use an output reference, not a literal",
+                        object.name
+                    ));
+                }
+                RustFactArgument::Input { input } if !input_names.contains(input.as_str()) => {
+                    return Err(format!("argument references undeclared input `{input}`"));
+                }
+                RustFactArgument::Output { output } => {
+                    object_outputs.push(output.as_str());
+                }
+                RustFactArgument::Owner { owner } => {
+                    validate_rust_fact_path(owner, "owner argument")?;
+                }
+                RustFactArgument::Input { input } => {
+                    object_inputs.insert(input.as_str());
+                    referenced_inputs.insert(input.as_str());
+                }
+                RustFactArgument::Literal { .. } => {}
+            }
+        }
+        if object_outputs.len() != 1 {
+            return Err(format!(
+                "object `{}` arguments must contain exactly one output reference",
+                object.name
+            ));
+        }
+        if object_outputs[0] != object.name {
+            return Err(format!(
+                "object `{}` output reference `{}` must equal its name",
+                object.name, object_outputs[0]
+            ));
+        }
+        if object_inputs.is_empty() {
+            return Err(format!("object `{}` must reference at least one source", object.name));
+        }
+    }
+    if let Some(source) = link
+        .sources
+        .iter()
+        .find(|source| !referenced_inputs.contains(source.name.as_str()))
+    {
+        return Err(format!(
+            "declared source `{}` is not referenced by any object",
+            source.name
+        ));
+    }
+    validate_rust_fact_name(&link.library.name, "library link name")?;
+    Ok(())
+}
+
+/// Validate one admitted generator record.
+fn validate_rust_fact_tool(tool: &RustFactTool) -> Result<(), String> {
+    if tool.outputs.is_empty() {
+        return Err("outputs must declare the complete non-empty output contract".to_string());
+    }
+    validate_rust_fact_work(
+        &tool.name,
+        &tool.target,
+        &tool.executable,
+        &tool.arguments,
+        &tool.environment,
+        &tool.inputs,
+        &tool.outputs,
+    )
+}
+
+/// Refuse a declared-fact record set that is not closed, sorted, bound once, and free of reserved or foreign keys.
+///
+/// `out.name` and each tool output `path` are paths in the same `OUT_DIR`-relative namespace, so equality or
+/// containment between them would assign one generated path to two producers and is refused.
+fn validate_rust_fact_records(
+    records: &[RustFactRecord],
+    path: &Path,
+    spans: &ManifestSpans,
+) -> Result<(), ManifestError> {
+    let location = || spans.table_location(&["rust", "facts"]);
+    let invalid = |index: usize, message: String| {
+        manifest_invalid(path, location(), format!("[[rust.facts]][{index}] {message}"))
+    };
+    let sorted_unique = |values: &[String]| values.windows(2).all(|pair| pair[0] < pair[1]);
+    let mut bindings = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        validate_rust_fact_record_selection(record, &sorted_unique).map_err(|message| invalid(index, message))?;
+        validate_rust_fact_compile_environment(record).map_err(|message| invalid(index, message))?;
+        validate_rust_fact_outputs_and_work(record).map_err(|message| invalid(index, message))?;
+        let binding = (
+            record.toolchain.as_str(),
+            record.target.as_str(),
+            record.profile.as_str(),
+            record.features.as_slice(),
+        );
+        if bindings.contains(&binding) {
+            return Err(invalid(
+                index,
+                "binds the same selection as an earlier record".to_string(),
+            ));
+        }
+        bindings.push(binding);
+    }
+    Ok(())
+}
+
+/// Validate the compiler selection and optional harvest receipt bound by one fact record.
+fn validate_rust_fact_record_selection(
+    record: &RustFactRecord,
+    sorted_unique: &impl Fn(&[String]) -> bool,
+) -> Result<(), String> {
+    if record.toolchain.trim().is_empty() || record.target.trim().is_empty() {
+        return Err("must bind a toolchain and a target".to_string());
+    }
+    if !matches!(record.profile.as_str(), "release" | "debug") {
+        return Err("profile must be `release` or `debug`".to_string());
+    }
+    if !sorted_unique(&record.features) {
+        return Err("features must be sorted and unique".to_string());
+    }
+    if !sorted_unique(&record.cfg) || record.cfg.iter().any(|cfg| cfg.trim().is_empty()) {
+        return Err("cfg must be sorted, unique and non-empty answers".to_string());
+    }
+    if let Some(harvested) = record.harvested_from.as_deref()
+        && !is_sha256_identity(harvested)
+    {
+        return Err("harvested-from must be a `sha256:` receipt identity".to_string());
+    }
+    Ok(())
+}
+
+/// Validate identity-bound compile-time environment values and their generated-output references.
+fn validate_rust_fact_compile_environment(record: &RustFactRecord) -> Result<(), String> {
+    if record.environment.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("environment must be sorted by unique name".to_string());
+    }
+    for environment in &record.environment {
+        if environment.name.is_empty()
+            || environment.name.contains('=')
+            || !environment
+                .name
+                .bytes()
+                .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+        {
+            return Err(format!("environment name `{}` is invalid", environment.name));
+        }
+        match (&environment.literal, &environment.out) {
+            (Some(literal), None) if literal.contains('\0') => {
+                return Err(format!("environment `{}` literal cannot contain NUL", environment.name));
+            }
+            (Some(_), None) => {}
+            (None, Some(relative)) if relative == "." && !record.out.is_empty() => {}
+            (None, Some(relative)) if relative == "." => {
+                return Err(format!(
+                    "environment `{}` references an absent OUT_DIR tree",
+                    environment.name
+                ));
+            }
+            (None, Some(relative)) => {
+                validate_rust_fact_path(relative, "environment OUT_DIR path")?;
+                let prefix = format!("{relative}/");
+                if !record
+                    .out
+                    .iter()
+                    .any(|output| output.name == *relative || output.name.starts_with(&prefix))
+                {
+                    return Err(format!(
+                        "environment `{}` references absent OUT_DIR path `{relative}`",
+                        environment.name
+                    ));
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "environment `{}` must declare exactly one of literal or out",
+                    environment.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate generated outputs, native links, and tools in one fact record without overlapping work names.
+fn validate_rust_fact_outputs_and_work(record: &RustFactRecord) -> Result<(), String> {
+    let mut names = HashSet::new();
+    let mut out_names = Vec::with_capacity(record.out.len());
+    if record.out.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("out must be sorted by unique name".to_string());
+    }
+    for out in &record.out {
+        let relative = Path::new(&out.path);
+        if validate_rust_fact_path(&out.name, "out name").is_err()
+            || out.path.trim().is_empty()
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(format!(
+                "out `{}` must name a committed file by a plain relative path",
+                out.name
+            ));
+        }
+        if !is_sha256_identity(&out.digest) {
+            return Err(format!("out `{}` digest must be a `sha256:` identity", out.name));
+        }
+        if !names.insert(out.name.as_str()) {
+            return Err(format!("out `{}` is declared twice", out.name));
+        }
+        out_names.push(out.name.as_str());
+    }
+    validate_rust_fact_publisher_work(record, &out_names)
+}
+
+/// Validate native links and tools while enforcing their shared publisher-work namespace.
+fn validate_rust_fact_publisher_work(record: &RustFactRecord, out_names: &[&str]) -> Result<(), String> {
+    let mut work_names = HashSet::new();
+    if record.link.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("link must be sorted by unique name".to_string());
+    }
+    for link in &record.link {
+        validate_rust_fact_link(link).map_err(|message| format!("link `{}` {message}", link.name))?;
+        if !work_names.insert(link.name.as_str()) {
+            return Err(format!("publisher work name `{}` is declared twice", link.name));
+        }
+    }
+    if record.tool.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("tool must be sorted by unique name".to_string());
+    }
+    for tool in &record.tool {
+        validate_rust_fact_tool(tool).map_err(|message| format!("tool `{}` {message}", tool.name))?;
+        if let Some(output) = tool.outputs.iter().find(|output| {
+            out_names
+                .iter()
+                .any(|out_name| rust_fact_paths_overlap(out_name, &output.path))
+        }) {
+            return Err(format!(
+                "tool output `{}` overlaps an out member in the shared OUT_DIR namespace",
+                output.path
+            ));
+        }
+        if !work_names.insert(tool.name.as_str()) {
+            return Err(format!("publisher work name `{}` is declared twice", tool.name));
+        }
+    }
+    Ok(())
 }
 
 /// Construct one semantic manifest error with an optional source location.
@@ -1187,6 +2446,32 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         }
     }
 
+    let rust_facts = raw.rust.as_ref().map(|rust| rust.facts.clone()).unwrap_or_default();
+    validate_rust_fact_records(&rust_facts, path, &spans)?;
+    let rust_bins = raw.rust.as_ref().map(|rust| rust.bin.clone()).unwrap_or_default();
+    validate_rust_binary_roles(
+        &rust_bins,
+        raw.rust.as_ref().and_then(|rust| rust.source.as_ref()),
+        path,
+        &spans,
+    )?;
+    if let Some(source) = raw.source.as_ref() {
+        if source.registry.trim().is_empty() {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["source"], "registry"),
+                "[source].registry must name the registry index the package comes from",
+            ));
+        }
+        if !is_sha256_identity(&source.checksum) {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["source"], "checksum"),
+                "[source].checksum must be `sha256:` followed by 64 lowercase hexadecimal digits",
+            ));
+        }
+    }
+
     Ok(ProjectManifest {
         path: path.to_path_buf(),
         project: raw.project,
@@ -1196,6 +2481,9 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         sdk: raw.sdk,
         interop: raw.interop,
         rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
+        rust_facts,
+        rust_bins,
+        source: raw.source,
         workspace: raw.workspace,
         library_dependencies: library_dependencies.specs,
         rust_dependencies: rust_dependencies.specs,
@@ -2291,7 +3579,7 @@ mod tests {
     }
 
     #[test]
-    fn loaf_manifest_wins_over_a_neighbouring_legacy_manifest() -> TestResult {
+    fn loaf_manifest_wins_over_a_neighboring_legacy_manifest() -> TestResult {
         let dir = tempfile::tempdir()?;
         fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
         fs::write(
@@ -2925,6 +4213,120 @@ toml = "0.9"
     }
 
     #[test]
+    fn a_rust_loaf_declares_the_binaries_convention_cannot_name() -> TestResult {
+        let content = r#"
+[project]
+name = "incan-cli"
+
+[[rust.bin]]
+name = "incan"
+path = "src/main.rs"
+
+[[rust.bin]]
+name = "incan-probe"
+path = "src/bin/probe.rs"
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
+        let roles = manifest.rust_binary_roles();
+        assert_eq!(
+            roles,
+            [
+                RustBinaryRole {
+                    name: "incan".to_string(),
+                    path: "src/main.rs".to_string(),
+                },
+                RustBinaryRole {
+                    name: "incan-probe".to_string(),
+                    path: "src/bin/probe.rs".to_string(),
+                },
+            ]
+        );
+        let mixed = ProjectManifest::from_str(
+            "[project]\nname = \"incan_stdlib_web\"\n\n[rust.source]\nroot = \"rust\"\n\n[[rust.bin]]\nname = \"web-tool\"\npath = \"rust/src/bin/tool.rs\"\n",
+            Path::new("loaf.toml"),
+        )?;
+        assert_eq!(mixed.rust_binary_roles().len(), 1);
+        let conventional = ProjectManifest::from_str("[project]\nname = \"plain\"\n", Path::new("loaf.toml"))?;
+        assert!(conventional.rust_binary_roles().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_rust_binary_role_must_select_one_binary_of_this_loaf_s_own_unit() {
+        for (body, expected) in [
+            (
+                "name = \"\"\npath = \"src/main.rs\"",
+                "must be a non-empty executable name",
+            ),
+            (
+                "name = \"in can\"\npath = \"src/main.rs\"",
+                "must be a non-empty executable name",
+            ),
+            (
+                "name = \"bin/incan\"\npath = \"src/main.rs\"",
+                "must be a non-empty executable name",
+            ),
+            ("name = \"incan\"\npath = \"\"", "plain relative path to a `.rs` file"),
+            (
+                "name = \"incan\"\npath = \"/abs/main.rs\"",
+                "plain relative path to a `.rs` file",
+            ),
+            (
+                "name = \"incan\"\npath = \"../elsewhere/main.rs\"",
+                "plain relative path to a `.rs` file",
+            ),
+            (
+                "name = \"incan\"\npath = \"src/main.incn\"",
+                "plain relative path to a `.rs` file",
+            ),
+            (
+                "name = \"incan\"\npath = \"src/main.rs\"\n\n[[rust.bin]]\nname = \"incan\"\npath = \"src/bin/other.rs\"",
+                "name `incan` is declared twice",
+            ),
+            (
+                "name = \"incan\"\npath = \"src/main.rs\"\n\n[[rust.bin]]\nname = \"other\"\npath = \"src/main.rs\"",
+                "path `src/main.rs` is declared twice",
+            ),
+        ] {
+            let content = format!("[project]\nname = \"demo\"\n\n[[rust.bin]]\n{body}\n");
+            let rendered = match ProjectManifest::from_str(&content, Path::new("loaf.toml")) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("expected `{body}` to be refused"),
+            };
+            assert!(rendered.contains("[[rust.bin]]"), "`{body}`: {rendered}");
+            assert!(rendered.contains(expected), "`{body}`: {rendered}");
+        }
+        let outside_rust_root = ProjectManifest::from_str(
+            "[project]\nname = \"incan_stdlib_web\"\n\n[rust.source]\nroot = \"rust\"\n\n[[rust.bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n",
+            Path::new("loaf.toml"),
+        );
+        let rendered = match outside_rust_root {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("expected a binary outside the Rust root to be refused"),
+        };
+        assert!(
+            rendered.contains("must lie below the declared Rust root `rust`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("sibling Loaf"), "{rendered}");
+    }
+
+    #[test]
+    fn a_rust_binary_role_declares_both_its_name_and_its_path() {
+        for (body, expected) in [
+            ("name = \"incan\"", "missing field `path`"),
+            ("path = \"src/main.rs\"", "missing field `name`"),
+        ] {
+            let content = format!("[project]\nname = \"demo\"\n\n[[rust.bin]]\n{body}\n");
+            let rendered = match ProjectManifest::from_str(&content, Path::new("loaf.toml")) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("expected `{body}` to be refused"),
+            };
+            assert!(rendered.contains(expected), "`{body}`: {rendered}");
+        }
+    }
+
+    #[test]
     fn parse_vocab_section_rejects_empty_crate() {
         let content = r#"
 [vocab]
@@ -3058,5 +4460,693 @@ exclude-components = ["stdlib-web"]
         assert!(validate_cargo_version_req("~=1.2").is_err()); // PEP 440
         assert!(validate_cargo_version_req("==1.2.*").is_err()); // PEP 440
         assert!(validate_cargo_version_req("!=1.3").is_err()); // PEP 440
+    }
+
+    const LIBM_ADOPTION_MANIFEST: &str = r#"
+[project]
+name = "libm"
+version = "0.2.16"
+
+[source]
+registry = "https://github.com/rust-lang/crates.io-index"
+checksum = "sha256:b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = ["arch", "default"]
+cfg = ["arch_enabled", "optimizations_enabled"]
+
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "debug"
+features = ["arch", "default"]
+cfg = ["arch_enabled"]
+"#;
+
+    #[test]
+    fn declared_fact_records_parse_bind_and_select_exactly() -> TestResult {
+        let manifest = ProjectManifest::from_str(LIBM_ADOPTION_MANIFEST, Path::new("loaf.toml"))?;
+        assert_eq!(manifest.rust_facts.len(), 2);
+        let source = manifest
+            .source
+            .as_ref()
+            .ok_or("adoption manifest must carry [source]")?;
+        assert!(is_sha256_identity(&source.checksum));
+        let selection = RustFactSelection {
+            toolchain: "rustc 1.98.0 (88d9e12ae 2026-08-18)".to_string(),
+            target: "aarch64-apple-darwin".to_string(),
+            profile: "release".to_string(),
+            features: vec!["default".to_string(), "arch".to_string(), "arch".to_string()],
+        };
+        let record = manifest
+            .rust_facts
+            .iter()
+            .find(|record| record.binds(&selection))
+            .ok_or("release record must bind the unordered feature selection")?;
+        assert_eq!(record.cfg, ["arch_enabled", "optimizations_enabled"]);
+        let other_profile = RustFactSelection {
+            profile: "debug".to_string(),
+            ..selection.clone()
+        };
+        let debug = manifest
+            .rust_facts
+            .iter()
+            .find(|record| record.binds(&other_profile))
+            .ok_or("debug record must bind")?;
+        assert_eq!(debug.cfg, ["arch_enabled"]);
+        for changed in [
+            RustFactSelection {
+                toolchain: "rustc 1.99.0 (deadbeef 2026-10-01)".to_string(),
+                ..selection.clone()
+            },
+            RustFactSelection {
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                ..selection.clone()
+            },
+            RustFactSelection {
+                features: vec!["arch".to_string()],
+                ..selection.clone()
+            },
+        ] {
+            assert!(
+                !manifest.rust_facts.iter().any(|record| record.binds(&changed)),
+                "a record must not bind a selection that differs in any key: {changed:?}"
+            );
+        }
+        let ordinary = ProjectManifest::from_str(
+            "[project]\nname = \"plain\"\nversion = \"0.1.0\"\n",
+            Path::new("loaf.toml"),
+        )?;
+        assert!(ordinary.rust_facts.is_empty());
+        assert!(ordinary.source.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_tool_parses_typed_records() -> TestResult {
+        let manifest = ProjectManifest::from_str(
+            &format!(
+                r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = 'cfg(target_arch = "aarch64")'
+executable = {{ name = "clang", owner = "{digest}", path = "bin/clang", digest = "{digest}" }}
+objects = [{{ name = "helper.o", language = "c", arguments = [{{ literal = "-O2" }}, {{ input = "helper-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
+sources = [{{ name = "helper-source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+library = {{ name = "sys_helper", kind = "static" }}
+
+[[rust.facts.tool]]
+name = "bindgen"
+target = 'cfg(target_os = "linux")'
+executable = {{ name = "bindgen", owner = "{digest}", path = "bin/bindgen", digest = "{digest}" }}
+arguments = [{{ input = "header" }}, {{ literal = "--output" }}, {{ output = "bindings" }}]
+environment = [{{ name = "LANG", literal = "C" }}]
+inputs = [{{ name = "header", kind = "file", path = "include/helper.h", digest = "{digest}" }}]
+outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }}]
+"#,
+                digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ),
+            Path::new("loaf.toml"),
+        )?;
+        let record = manifest.rust_facts.first().ok_or("missing fact record")?;
+        assert_eq!(record.link.len(), 1);
+        assert_eq!(record.tool.len(), 1);
+        assert_eq!(record.link[0].library.name, "sys_helper");
+        assert_eq!(record.tool[0].environment.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_parses_and_round_trips_multiple_objects() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = ProjectManifest::from_str(
+            &format!(
+                r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+environment = []
+sources = [{{ name = "asm-source", kind = "file", path = "c/helper.S", digest = "{digest}" }}, {{ name = "c-source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+objects = [{{ name = "helper-assembly.o", language = "assembly", arguments = [{{ literal = "-isysroot" }}, {{ owner = "SDKs/MacOSX.sdk" }}, {{ literal = "-c" }}, {{ input = "asm-source" }}, {{ literal = "-o" }}, {{ output = "helper-assembly.o" }}] }}, {{ name = "helper.o", language = "c", arguments = [{{ literal = "-c" }}, {{ input = "c-source" }}, {{ literal = "-o" }}, {{ output = "helper.o" }}] }}]
+library = {{ name = "sys_helper", kind = "static" }}
+"#,
+            ),
+            Path::new("loaf.toml"),
+        )?;
+        let link = &manifest.rust_facts.first().ok_or("missing fact record")?.link[0];
+        assert_eq!(link.objects.len(), 2);
+        assert_eq!(link.objects[0].name, "helper-assembly.o");
+        assert_eq!(
+            link.objects[0].arguments[1],
+            RustFactArgument::Owner {
+                owner: "SDKs/MacOSX.sdk".to_string()
+            }
+        );
+        let encoded = serde_json::to_vec(link)?;
+        let decoded: RustFactLink = serde_json::from_slice(&encoded)?;
+        assert_eq!(&decoded, link);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_owner_arguments_refuse_nonportable_paths() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [{{ name = "source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+objects = [{{ name = "helper.o", language = "c", arguments = [{{ owner = "OWNER_PATH" }}, {{ input = "source" }}, {{ output = "helper.o" }}] }}]
+library = {{ name = "sys_helper", kind = "static" }}
+"#,
+        );
+        for path in ["/Library/SDK", "../SDK", "SDK/../SDK"] {
+            let error = ProjectManifest::from_str(&base.replace("OWNER_PATH", path), Path::new("loaf.toml"))
+                .err()
+                .ok_or("nonportable owner argument was accepted")?;
+            assert!(error.to_string().contains("owner argument"), "{path}: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_refuses_invalid_object_contracts() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [{{ name = "source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+{{objects}}
+library = {{ name = "sys_helper", kind = "{{kind}}" }}
+"#,
+        );
+        for (objects, kind, expected) in [
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"unknown\" }] }]",
+                "static",
+                "undeclared input `unknown`",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [] }, { name = \"helper.o\", language = \"cpp\", arguments = [] }]",
+                "static",
+                "objects must be sorted by unique name",
+            ),
+            ("objects = []", "static", "objects must declare"),
+            (
+                "objects = [{ name = \"../helper.o\", language = \"assembly\", arguments = [] }]",
+                "static",
+                "object name",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [] }]",
+                "dynamic",
+                "dynamic libraries are not supported",
+            ),
+        ] {
+            let content = base.replace("{objects}", objects).replace("{kind}", kind);
+            let error = ProjectManifest::from_str(&content, Path::new("loaf.toml"))
+                .err()
+                .ok_or("invalid link object contract was accepted")?;
+            assert!(error.to_string().contains(expected), "{expected}: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_refuses_invalid_object_argument_closure() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [{{sources}}]
+{{objects}}
+library = {{ name = "sys_helper", kind = "static" }}
+"#,
+        );
+        let ordinary_sources = format!(
+            "{{ name = \"source\", kind = \"file\", path = \"c/helper.c\", digest = \"{digest}\" }}, {{ name = \"unused\", kind = \"file\", path = \"c/unused.c\", digest = \"{digest}\" }}"
+        );
+        let colliding_sources =
+            format!("{{ name = \"helper.o\", kind = \"file\", path = \"c/helper.c\", digest = \"{digest}\" }}");
+        for (objects, sources, expected) in [
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { literal = \"helper.o\" }] }]",
+                ordinary_sources.as_str(),
+                "output must use an output reference",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { output = \"helper.o\" }, { output = \"other.o\" }] }]",
+                ordinary_sources.as_str(),
+                "exactly one output",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { output = \"other.o\" }] }]",
+                ordinary_sources.as_str(),
+                "must equal its name",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"helper.o\" }, { output = \"helper.o\" }] }]",
+                colliding_sources.as_str(),
+                "both a source and object",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ literal = \"-c\" }, { output = \"helper.o\" }] }]",
+                ordinary_sources.as_str(),
+                "must reference at least one source",
+            ),
+            (
+                "objects = [{ name = \"helper.o\", language = \"c\", arguments = [{ input = \"source\" }, { output = \"helper.o\" }] }]",
+                ordinary_sources.as_str(),
+                "declared source `unused` is not referenced",
+            ),
+        ] {
+            let content = base.replace("{sources}", sources).replace("{objects}", objects);
+            let error = ProjectManifest::from_str(&content, Path::new("loaf.toml"))
+                .err()
+                .ok_or("invalid link object argument closure was accepted")?;
+            assert!(error.to_string().contains(expected), "{expected}: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_accepts_overlapping_blake3_source_closure() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = ProjectManifest::from_str(
+            &format!(
+                r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "x86_64-unknown-linux-gnu"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "blake3"
+target = "x86_64-unknown-linux-gnu"
+executable = {{ name = "clang", owner = "{digest}", path = "usr/bin/clang", digest = "{digest}" }}
+sources = [
+  {{ name = "avx2-source", kind = "file", path = "c/blake3_avx2.c", digest = "{digest}" }},
+  {{ name = "headers", kind = "tree", path = "c", digest = "{digest}", members = [{{ path = "blake3.h", digest = "{digest}" }}, {{ path = "blake3_avx2.c", digest = "{digest}" }}, {{ path = "blake3_sse2.c", digest = "{digest}" }}] }},
+  {{ name = "sse2-source", kind = "file", path = "c/blake3_sse2.c", digest = "{digest}" }},
+]
+objects = [
+  {{ name = "blake3_avx2.o", language = "c", arguments = [{{ literal = "-mavx2" }}, {{ literal = "-I" }}, {{ input = "headers" }}, {{ literal = "-c" }}, {{ input = "avx2-source" }}, {{ literal = "-o" }}, {{ output = "blake3_avx2.o" }}] }},
+  {{ name = "blake3_sse2.o", language = "c", arguments = [{{ literal = "-msse2" }}, {{ literal = "-I" }}, {{ input = "headers" }}, {{ literal = "-c" }}, {{ input = "sse2-source" }}, {{ literal = "-o" }}, {{ output = "blake3_sse2.o" }}] }},
+]
+library = {{ name = "blake3", kind = "static" }}
+"#,
+            ),
+            Path::new("loaf.toml"),
+        )?;
+        assert_eq!(manifest.rust_facts[0].link[0].objects.len(), 2);
+        Ok(())
+    }
+
+    /// Admit `.` only for a complete tree input, never for file inputs or produced outputs.
+    #[test]
+    fn rust_fact_root_path_is_tree_input_only() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "x86_64-unknown-linux-gnu"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.tool]]
+name = "fixture"
+target = "x86_64-unknown-linux-gnu"
+executable = {{ name = "fixture", owner = "{digest}", path = "bin/fixture", digest = "{digest}" }}
+arguments = [{{ input = "crate" }}, {{ output = "generated" }}]
+inputs = [{{ name = "crate", kind = "tree", path = ".", digest = "{digest}", members = [{{ path = "config.h", digest = "{digest}" }}] }}]
+outputs = [{{ name = "generated", kind = "file", path = "generated/output.rs" }}]
+"#
+        );
+
+        let parsed = ProjectManifest::from_str(&manifest, Path::new("loaf.toml"))?;
+        assert_eq!(parsed.rust_facts[0].tool[0].inputs[0].path, ".");
+
+        let file_root = manifest.replace("kind = \"tree\", path = \".\"", "kind = \"file\", path = \".\"");
+        let file_error = ProjectManifest::from_str(&file_root, Path::new("loaf.toml"))
+            .err()
+            .ok_or("`.` file source was accepted")?;
+        assert!(file_error.to_string().contains("inputs `crate` path `.`"));
+        let output_root = manifest.replace("path = \"generated/output.rs\"", "path = \".\"");
+        let output_error = ProjectManifest::from_str(&output_root, Path::new("loaf.toml"))
+            .err()
+            .ok_or("`.` output was accepted")?;
+        assert!(output_error.to_string().contains("outputs `generated` path `.`"));
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_record_refuses_one_file_as_out_and_tool_output() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+out = [{{ name = "generated/bindings.rs", path = "out/generated/bindings.rs", digest = "{digest}" }}]
+
+[[rust.facts.tool]]
+name = "bindgen"
+target = "aarch64-apple-darwin"
+executable = {{ name = "bindgen", owner = "{digest}", path = "bin/bindgen", digest = "{digest}" }}
+arguments = [{{ output = "bindings" }}]
+outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }}]
+"#
+        );
+        let error = ProjectManifest::from_str(&manifest, Path::new("loaf.toml"))
+            .err()
+            .ok_or("duplicate out/tool producer was accepted")?;
+        assert!(error.to_string().contains("shared OUT_DIR namespace"));
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_tool_conversion_is_fail_closed_and_canonical() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let observation = RustFactWorkObservation {
+            role: RustFactProducerRole::Tool,
+            name: "bindgen".to_string(),
+            target: "aarch64-apple-darwin".to_string(),
+            executable: Some(RustFactExecutable {
+                name: "bindgen".to_string(),
+                owner: digest.to_string(),
+                path: "bin/bindgen".to_string(),
+                digest: digest.to_string(),
+            }),
+            objects: Vec::new(),
+            arguments: vec![RustFactArgument::Input {
+                input: "header".to_string(),
+            }],
+            environment: vec![RustFactEnvironment {
+                name: "LANG".to_string(),
+                literal: Some("C".to_string()),
+                input: None,
+            }],
+            inputs: vec![RustFactArtifact {
+                name: "header".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "include/helper.h".to_string(),
+                digest: digest.to_string(),
+                members: Vec::new(),
+            }],
+            outputs: vec![RustFactOutput {
+                name: "bindings".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "generated/bindings.rs".to_string(),
+            }],
+            library: None,
+        };
+        let admitted = RustFactWorkRecord::try_from_observation(observation)?;
+        assert!(matches!(admitted, RustFactWorkRecord::Tool(_)));
+
+        let incomplete = RustFactWorkObservation {
+            executable: None,
+            ..match admitted {
+                RustFactWorkRecord::Tool(tool) => RustFactWorkObservation::from(tool),
+                RustFactWorkRecord::Link(_) => return Err("tool conversion changed producer role".into()),
+            }
+        };
+        assert!(RustFactWorkRecord::try_from_observation(incomplete).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_link_tool_refuses_escape_unknown_reference_and_overlap() {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.tool]]
+name = "bindgen"
+target = "aarch64-apple-darwin"
+executable = {{ name = "bindgen", owner = "{digest}", path = "bin/bindgen", digest = "{digest}" }}
+arguments = [{{ input = "header" }}]
+inputs = [{{ name = "header", kind = "file", path = "include/helper.h", digest = "{digest}" }}]
+outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }}]
+"#
+        );
+        for (case, invalid) in [
+            ("escaping executable", base.replace("bin/bindgen", "../bin/bindgen")),
+            (
+                "unknown argument",
+                base.replace("input = \"header\"", "input = \"missing\""),
+            ),
+            (
+                "overlapping path",
+                base.replace("generated/bindings.rs", "include/helper.h"),
+            ),
+            (
+                "malformed digest",
+                base.replace(
+                    "digest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+                    "digest = \"not-a-digest\"",
+                ),
+            ),
+            (
+                "reused logical name",
+                base.replace(
+                    "outputs = [{ name = \"bindings\", kind = \"file\", path = \"generated/bindings.rs\" }]",
+                    "outputs = [{ name = \"header\", kind = \"file\", path = \"generated/bindings.rs\" }]",
+                ),
+            ),
+            (
+                "unknown environment field",
+                base.replace(
+                    "inputs = [",
+                    "environment = [{ name = \"LANG\", literal = \"C\", extra = \"no\" }]\ninputs = [",
+                ),
+            ),
+            (
+                "product digest in fact",
+                format!("{base}product-digest = \"{digest}\"\n"),
+            ),
+            ("receipt in fact", format!("{base}receipt = \"{digest}\"\n")),
+        ] {
+            assert!(
+                ProjectManifest::from_str(&invalid, Path::new("loaf.toml")).is_err(),
+                "accepted invalid {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn rust_fact_link_tool_omission_equals_explicit_empty_collections() -> TestResult {
+        let omitted = ProjectManifest::from_str(
+            "[project]\nname = \"plain\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"aarch64-apple-darwin\"\nprofile = \"release\"\nfeatures = []\ncfg = []\n",
+            Path::new("omitted.toml"),
+        )?;
+        let explicit = ProjectManifest::from_str(
+            "[project]\nname = \"plain\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"aarch64-apple-darwin\"\nprofile = \"release\"\nfeatures = []\ncfg = []\nout = []\nlink = []\ntool = []\n",
+            Path::new("explicit.toml"),
+        )?;
+        assert_eq!(omitted.rust_facts, explicit.rust_facts);
+        Ok(())
+    }
+
+    #[test]
+    fn declared_fact_records_refuse_foreign_reserved_unsorted_and_duplicate_declarations() -> TestResult {
+        let base = LIBM_ADOPTION_MANIFEST;
+        type Mutation = Box<dyn Fn(&str) -> String>;
+        let refusals: [(&str, Mutation); 7] = [
+            (
+                "script-emitted environment",
+                Box::new(|s: &str| format!("{s}env = {{ CFG_OPT_LEVEL = \"3\" }}\n")),
+            ),
+            (
+                "reserved link",
+                Box::new(|s: &str| format!("{s}link = \"static=helper\"\n")),
+            ),
+            (
+                "unsorted cfg",
+                Box::new(|s: &str| {
+                    s.replace(
+                        "cfg = [\"arch_enabled\", \"optimizations_enabled\"]",
+                        "cfg = [\"optimizations_enabled\", \"arch_enabled\"]",
+                    )
+                }),
+            ),
+            (
+                "unsorted features",
+                Box::new(|s: &str| {
+                    s.replace(
+                        "features = [\"arch\", \"default\"]\ncfg = [\"arch_enabled\"]",
+                        "features = [\"default\", \"arch\"]\ncfg = [\"arch_enabled\"]",
+                    )
+                }),
+            ),
+            (
+                "duplicate binding",
+                Box::new(|s: &str| s.replace("profile = \"debug\"", "profile = \"release\"")),
+            ),
+            (
+                "unknown profile",
+                Box::new(|s: &str| s.replace("profile = \"debug\"", "profile = \"bench\"")),
+            ),
+            (
+                "bad out digest",
+                Box::new(|s: &str| {
+                    format!(
+                        "{s}out = [{{ name = \"private.rs\", path = \"out/private.rs\", digest = \"deadbeef\" }}]\n"
+                    )
+                }),
+            ),
+        ];
+        for (label, mutate) in refusals {
+            let text = mutate(base);
+            assert!(
+                ProjectManifest::from_str(&text, Path::new("loaf.toml")).is_err(),
+                "{label} must be refused"
+            );
+        }
+        let escaping = format!(
+            "{base}out = [{{ name = \"x\", path = \"../x.rs\", digest = \"sha256:{}\" }}]\n",
+            "0".repeat(64)
+        );
+        assert!(ProjectManifest::from_str(&escaping, Path::new("loaf.toml")).is_err());
+        let bad_source = base.replace(
+            "sha256:b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+            "b6d2cec3",
+        );
+        assert!(ProjectManifest::from_str(&bad_source, Path::new("loaf.toml")).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn version_requirements_compare_by_admitted_versions_not_spelling() -> TestResult {
+        let same = |left: &str, right: &str| -> Result<bool, String> {
+            Ok(RustVersionRequirement::parse(left)? == RustVersionRequirement::parse(right)?)
+        };
+        for (left, right) in [
+            ("1", "1.0"),
+            ("1", "^1.0.0"),
+            ("1.0", ">=1.0.0, <2.0.0"),
+            ("0.8", "^0.8.0"),
+            ("0.8", ">=0.8, <0.9"),
+            ("0.0.3", ">=0.0.3, <0.0.4"),
+            ("~1.2", ">=1.2.0, <1.3.0"),
+            ("~1.2.3", ">=1.2.3, <1.3.0"),
+            ("=1.3.2", ">=1.3.2, <1.3.3"),
+            ("=1.3", "~1.3"),
+            ("1.*", "^1"),
+            ("1.2.*", "~1.2"),
+            ("*", ">=0.0.0"),
+            (">1.2.3", ">=1.2.4"),
+            (">1.2", ">=1.3.0"),
+            ("<=1.2", "<1.3.0"),
+            (">=2, <1", ">=5, <3"),
+        ] {
+            assert!(same(left, right)?, "`{left}` and `{right}` admit the same versions");
+        }
+        for (left, right) in [
+            ("1", "1.2"),
+            ("1", "2"),
+            ("=1.3.2", "1.3.2"),
+            ("0.8", "0.9"),
+            ("0.8", "0.8.1"),
+            ("~1.2", "^1.2"),
+            (">=1.0", "1.0"),
+            ("1.0.0-alpha", "1.0.0"),
+            ("1.0.0-alpha", "1.0.0-beta"),
+        ] {
+            assert!(!same(left, right)?, "`{left}` and `{right}` admit different versions");
+        }
+        assert!(
+            same("1.0.0-alpha", "1.0.0-alpha")?,
+            "a pre-release requirement still agrees with itself"
+        );
+        assert!(RustVersionRequirement::parse("banana").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_specs_agree_on_version_by_meaning() {
+        assert!(rust_version_requirements_match(Some("1"), Some("1.0")));
+        assert!(rust_version_requirements_match(None, None));
+        assert!(!rust_version_requirements_match(Some("1"), None));
+        assert!(!rust_version_requirements_match(Some("1"), Some("1.1")));
+        // An unparsable declaration can only agree with its own exact spelling.
+        assert!(rust_version_requirements_match(Some("banana"), Some("banana")));
+        assert!(!rust_version_requirements_match(Some("banana"), Some("1")));
+        let spec = |version: &str| DependencySpec {
+            crate_name: "regex".to_string(),
+            version: Some(version.to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        assert!(spec("1").same_version_requirement(&spec("1.0")));
+        assert!(!spec("1").same_version_requirement(&spec("1.2")));
+        assert_eq!(
+            spec("1").version_requirement(),
+            Ok(Some(
+                RustVersionRequirement::parse("^1.0.0").unwrap_or_else(|error| panic!("{error}"))
+            ))
+        );
     }
 }

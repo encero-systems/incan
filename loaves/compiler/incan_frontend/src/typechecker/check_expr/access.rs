@@ -6,34 +6,43 @@
 use std::collections::HashMap;
 
 use crate::ast::*;
+use crate::diagnostics::errors::SelfMutation;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
+use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::helpers::{
-    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
-    option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return, string_method_return,
+    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index,
+    is_str_like, list_ty, option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return,
+    string_method_return,
 };
+use crate::typechecker::receiver_change::ReceiverChange;
 use crate::typechecker::type_info::{
-    CBindingEnumAccess, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse, RustTraitImportInfo,
+    CBindingEnumAccess, ResolvedMethodCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
+    RustMethodTraitImportUse, RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
-    RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustVisibility,
-    metadata_free_method_signature,
+    RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustTraitAssoc,
+    RustTraitInfo, RustVisibility, metadata_free_method_signature,
 };
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::magic_methods;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::string_methods::{self, SelectedStringMethodArgumentKind, StringMethodId};
 use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_lang::lang::surface::{
-    dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    iterator_methods, list_methods, result_methods, set_methods,
+    bytes_methods, dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods,
+    frozen_set_methods, iterator_methods, list_methods, result_methods, set_methods,
 };
+use incan_lang::lang::text_codecs::{self, DecodeErrorsPolicy};
+use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
-use incan_lang::lang::types::numerics::NumericFamily;
+use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, IntegerHelperOperation, NumericFamily};
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
@@ -43,7 +52,13 @@ use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParam
 
 use super::calls::PublicModuleConstructorContext;
 
-use super::TypeChecker;
+use super::{GenericPartialTarget, TypeChecker};
+
+/// The method the stdlib `Hash` trait declares, which no type meeting a `Hash` bound provides (#1822).
+const HASH_DUNDER: &str = "__hash__";
+
+/// The hook `obj[start:end:step]` calls on a user type, which `Sliceable[T]` declares.
+const SLICE_HOOK: &str = "__getslice__";
 
 /// Rust's prelude-provided associated constructor name.
 ///
@@ -99,6 +114,22 @@ struct RustTraitMethodCall<'a> {
     args: &'a [CallArg],
     arg_types: &'a [ResolvedType],
     preserves_lookup_arg_shape: bool,
+    /// What `Self` in the signature denotes. `None` means `rust_path` is the receiver's own type, as for
+    /// `value.method(...)`; a trait-qualified call names the trait in `rust_path`, so it supplies the receiver's
+    /// resolved type instead, or `Unknown` when the call has no receiver and Rust infers `Self` from context.
+    self_type: Option<&'a ResolvedType>,
+    span: Span,
+}
+
+/// A trait-qualified call `Trait.method(receiver, args...)` on an imported Rust trait with inspected metadata.
+struct RustTraitQualifiedCall<'a> {
+    rust_path: &'a str,
+    trait_info: &'a RustTraitInfo,
+    method: &'a str,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+    arg_types: &'a [ResolvedType],
+    preserves_lookup_arg_shape: bool,
     span: Span,
 }
 
@@ -106,6 +137,9 @@ struct RustPathMethodCall<'a> {
     rust_path: &'a str,
     method: &'a str,
     receiver_metadata: Option<&'a RustItemMetadata>,
+    /// The import binding the receiver expression names, when the receiver is a bare imported Rust item such as
+    /// the `Mac` in `Mac.update(handle, data)`; `None` for value receivers.
+    receiver_binding: Option<&'a str>,
     type_args: &'a [Spanned<Type>],
     args: &'a [CallArg],
     arg_types: &'a [ResolvedType],
@@ -155,18 +189,28 @@ impl TypeChecker {
 
     /// Resolve the type of one field on a value typed by a Rust path, as the field is written in Incan source.
     ///
-    /// The path is the value's own `RustPath` spelling; the metadata lookup normalises the `rust::` prefix and any
-    /// type arguments, exactly as a field read does. Field access and field assignment resolve through this one
-    /// lookup, so a field that can be read can also be assigned.
+    /// The path is the value's own `RustPath` spelling; the metadata lookup normalizes the `rust::` prefix and any
+    /// type arguments, exactly as a field read does. A fast cache entry can carry only nominal metadata, so a missing
+    /// field upgrades to complete semantic metadata before the checker rejects it. Field access and field assignment
+    /// resolve through this one lookup, so a field that can be read can also be assigned.
     pub(in crate::typechecker) fn rust_path_field_type(&self, path: &str, field: &str) -> Option<ResolvedType> {
         // Field reads pass the value's path straight to the metadata lookup, which owns the `rust::` and generic
-        // normalisation; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
+        // normalization; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
         let metadata = self.rust_item_metadata_for_path(path)?;
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let rust_field = Self::rust_field_for_source_name(&info.fields, field)?;
-        Some(self.resolved_rust_field_type(path, rust_field))
+        let rust_field = match Self::rust_field_for_source_name(&info.fields, field) {
+            Some(rust_field) => rust_field.clone(),
+            None => {
+                let complete = self.rust_item_metadata_for_complete_type(path)?;
+                let RustItemKind::Type(complete_info) = &complete.kind else {
+                    return None;
+                };
+                Self::rust_field_for_source_name(&complete_info.fields, field)?.clone()
+            }
+        };
+        Some(self.resolved_rust_field_type(path, &rust_field))
     }
 
     /// Resolve a Rust field type from its display string against the owning Rust type.
@@ -417,7 +461,9 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
 
+        self.enter_mut_param_closure();
         let return_ty = self.check_expr_with_expected(body, Some(&signature.return_ty));
+        self.exit_mut_param_closure();
         if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, &signature.return_ty) {
             self.errors.push(errors::type_mismatch(
                 &signature.return_ty.to_string(),
@@ -551,6 +597,361 @@ impl TypeChecker {
         ret
     }
 
+    /// Return the result type the RFC 070 combinator `method` of a `Result[ok, err]` gives its callback, as far as the
+    /// receiver and the call's expected type `expected` fix it (#1561).
+    ///
+    /// `and_then`'s callback returns `Result[U, err]` and `or_else`'s `Result[ok, F]`, where `U` and `F` are the
+    /// call's expected `Result[U, F]` when it has one and open otherwise, so an `Ok(...)` or `Err(...)` the callback
+    /// returns has the side it does not spell. `map`'s and `map_err`'s callbacks return their own result, and an
+    /// observer's result needs no context, so theirs is left open.
+    fn result_callback_expected_output(
+        method: ResultMethodId,
+        ok: &ResolvedType,
+        err: &ResolvedType,
+        expected: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let (expected_ok, expected_err) = match expected {
+            Some(ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 =>
+            {
+                (args[0].clone(), args[1].clone())
+            }
+            _ => (ResolvedType::Unknown, ResolvedType::Unknown),
+        };
+        let result = |ok, err| ResolvedType::Generic("Result".to_string(), vec![ok, err]);
+        match method {
+            ResultMethodId::AndThen => result(expected_ok, err.clone()),
+            ResultMethodId::OrElse => result(ok.clone(), expected_err),
+            ResultMethodId::Map
+            | ResultMethodId::MapErr
+            | ResultMethodId::Inspect
+            | ResultMethodId::InspectErr
+            | ResultMethodId::Unwrap
+            | ResultMethodId::UnwrapOr => ResolvedType::Unknown,
+        }
+    }
+
+    /// Give the side of an `and_then` or `or_else` call's result that its closure's `Ok(...)` or `Err(...)` leaves open
+    /// the type that constructor is built with (#1561).
+    ///
+    /// The closure `(m) => Ok(1)` of `or_else` gives its result no error type, and one of `and_then` that returns only
+    /// `Err(...)` no success type, unless the receiver or the call's expected `Result` type fixes that side. The
+    /// constructor is then built with the side the enclosing function's `Result` return type has, or with `None` when
+    /// that function returns no `Result`, as an `Ok(...)` or `Err(...)` bound to a local is (see
+    /// [`Self::settle_open_constructor_side`]). The call's result says so, so a later use of that side is checked
+    /// against the type it is built with. A callback that is not a closure literal returning such a constructor is left
+    /// as it is.
+    fn settle_open_callback_result_side(
+        &self,
+        method: ResultMethodId,
+        args: &[CallArg],
+        result: ResolvedType,
+    ) -> ResolvedType {
+        let (open_side, unspelled_by) = match method {
+            ResultMethodId::AndThen => (0, ConstructorId::Err),
+            ResultMethodId::OrElse => (1, ConstructorId::Ok),
+            _ => return result,
+        };
+        let Some(CallArg::Positional(callback)) = args.first() else {
+            return result;
+        };
+        let Expr::Closure(_, body) = &callback.node else {
+            return result;
+        };
+        if self.returned_result_constructor(body) != Some(unspelled_by) {
+            return result;
+        }
+        self.settle_result_side(result, open_side)
+    }
+
+    /// Give the side an `Ok(...)` or `Err(...)` bound to a new local leaves open the type that constructor is built
+    /// with (#1561).
+    ///
+    /// `x = Ok(1)` gives `x` no error type unless the enclosing function's `Result` return type gives the constructor
+    /// one; the constructor is then built with `None` there, so the binding's type says so and a later use of that side
+    /// is checked against `None`. The same holds for such a constructor inside a list, set, dict or tuple literal: a
+    /// side no member of the literal fixes is built with that type for every member (`[Ok(1)]` is a
+    /// `List[Result[int, None]]`), and for one that is the value of a `match` arm or of a `loop:` expression's `break`:
+    /// the arms and `break` values have already unified, so only a side none of them fixes is settled. Any other value,
+    /// and a side something fixed, is left as it is.
+    pub(in crate::typechecker) fn settle_open_constructor_side(
+        &self,
+        value: &Spanned<Expr>,
+        ty: ResolvedType,
+    ) -> ResolvedType {
+        match self.returned_result_constructor(value) {
+            Some(ConstructorId::Ok) => return self.settle_result_side(ty, 1),
+            Some(ConstructorId::Err) => return self.settle_result_side(ty, 0),
+            _ => {}
+        }
+        match (&value.node, ty) {
+            (Expr::List(entries), ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1 =>
+            {
+                let elements = entries.iter().filter_map(|entry| match entry {
+                    ListEntry::Element(element) => Some(element),
+                    ListEntry::Spread(_) => None,
+                });
+                let settled = args
+                    .into_iter()
+                    .map(|member_ty| self.settle_open_member_sides(member_ty, elements.clone()));
+                ResolvedType::Generic(name, settled.collect())
+            }
+            (Expr::Set(elements), ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Set) && args.len() == 1 =>
+            {
+                let settled = args
+                    .into_iter()
+                    .map(|member_ty| self.settle_open_member_sides(member_ty, elements.iter()));
+                ResolvedType::Generic(name, settled.collect())
+            }
+            (Expr::Dict(entries), ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
+            {
+                let pairs = entries.iter().filter_map(|entry| match entry {
+                    DictEntry::Pair(key, value) => Some((key, value)),
+                    DictEntry::Spread(_) => None,
+                });
+                let settled = args.into_iter().enumerate().map(|(position, member_ty)| {
+                    let members = pairs
+                        .clone()
+                        .map(move |(key, value)| if position == 0 { key } else { value });
+                    self.settle_open_member_sides(member_ty, members)
+                });
+                ResolvedType::Generic(name, settled.collect())
+            }
+            (Expr::Tuple(elements), ResolvedType::Tuple(items)) if elements.len() == items.len() => {
+                ResolvedType::Tuple(
+                    elements
+                        .iter()
+                        .zip(items)
+                        .map(|(element, item_ty)| self.settle_open_constructor_side(element, item_ty))
+                        .collect(),
+                )
+            }
+            (Expr::Paren(inner), ty) => self.settle_open_constructor_side(inner, ty),
+            (Expr::Match(_, _) | Expr::Loop(_), ty) => branch_values(value)
+                .into_iter()
+                .fold(ty, |ty, branch| self.settle_open_constructor_side(branch, ty)),
+            (_, ty) => ty,
+        }
+    }
+
+    /// Record `settled`, the type a `match` or `loop:` value's open `Result` sides were settled to, as the type of the
+    /// value and, with its open parts filled from it, of each of its arm and `break` values, at any depth (#1561).
+    ///
+    /// Lowering spells each value's recorded type on the `Ok(...)` or `Err(...)` it builds, so the arms of `r = match
+    /// c:` that all build `Ok(...)` build the same `Result[int, None]` the binding has. Any other value records
+    /// nothing.
+    pub(in crate::typechecker) fn record_settled_branch_values(
+        &mut self,
+        value: &Spanned<Expr>,
+        settled: &ResolvedType,
+    ) {
+        match &value.node {
+            Expr::Paren(inner) => self.record_settled_branch_values(inner, settled),
+            Expr::Match(_, _) | Expr::Loop(_) => {
+                self.record_expr_type(value.span, settled.clone());
+                for branch in branch_values(value) {
+                    let Some(mut filled) = self.type_info.expr_type(branch.span).cloned() else {
+                        continue;
+                    };
+                    let recorded = filled.clone();
+                    super::fill_open_result_parts(&mut filled, settled, false);
+                    if filled != recorded {
+                        self.record_expr_type(branch.span, filled.clone());
+                        self.record_settled_branch_values(branch, &filled);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Settle the `Result` sides an `Ok(...)` or `Err(...)` leaves open where the value is used in place, as the
+    /// iterable of a `for` statement or the subject of a `match`, and record the settled type as the value's own
+    /// (#1561).
+    ///
+    /// Nothing binds such a value, so no annotation spells the side the constructor leaves open: it is settled as for a
+    /// constructor bound to a local (see [`Self::settle_open_constructor_side`]), so `Err(m) => println(m)` over
+    /// `match Ok(1):` in a function returning no `Result` is checked against `None`. Lowering spells the recorded type
+    /// on the constructor.
+    pub(in crate::typechecker) fn settle_open_constructor_sides_in_place(
+        &mut self,
+        value: &Spanned<Expr>,
+        ty: ResolvedType,
+    ) -> ResolvedType {
+        let settled = self.settle_open_constructor_side(value, ty.clone());
+        if settled != ty {
+            self.record_expr_type(value.span, settled.clone());
+            self.record_settled_branch_values(value, &settled);
+        }
+        settled
+    }
+
+    /// Settle the open `Result` sides of the member type `member_ty` that one collection literal's `members` share,
+    /// each member in turn (see [`Self::settle_open_constructor_side`]).
+    fn settle_open_member_sides<'a>(
+        &self,
+        member_ty: ResolvedType,
+        members: impl Iterator<Item = &'a Spanned<Expr>>,
+    ) -> ResolvedType {
+        members.fold(member_ty, |member_ty, member| {
+            self.settle_open_constructor_side(member, member_ty)
+        })
+    }
+
+    /// Give the side of a closure literal's `Result` return type that the `Ok(...)` or `Err(...)` its body returns
+    /// leaves open, and that its expected return type does not fix, the type that constructor is built with (#1561).
+    ///
+    /// `f = () => Ok(1)` gives `f` a result with no error type. As for an `Ok(...)` bound to a local (see
+    /// [`Self::settle_open_constructor_side`]), that side is the enclosing function's `Result` side, or `None` when
+    /// that function returns no `Result`, so a call of `f` has a complete `Result` type. A side the expected return
+    /// type fixes, such as the error side of an `and_then` callback's `Ok(...)`, which is the receiver's, stays
+    /// open for the call to fix; an unknown or still-to-be-inferred expected side fixes nothing.
+    pub(in crate::typechecker) fn settle_open_closure_result_side(
+        &self,
+        body: &Spanned<Expr>,
+        return_ty: ResolvedType,
+        expected_ret: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let open_side = match self.returned_result_constructor(body) {
+            Some(ConstructorId::Ok) => 1,
+            Some(ConstructorId::Err) => 0,
+            _ => return self.settle_open_constructor_side(body, return_ty),
+        };
+        if let Some(ResolvedType::Generic(name, sides)) = expected_ret
+            && collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+            && sides.len() == 2
+            && !matches!(
+                sides[open_side],
+                ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer
+            )
+        {
+            return return_ty;
+        }
+        self.settle_result_side(return_ty, open_side)
+    }
+
+    /// Fill side `side` (0 for success, 1 for error) of the `Result` type `ty` when it is open, with the type an open
+    /// constructor side is built with: that side of the enclosing function's `Result` return type, or `None` when the
+    /// function returns no `Result`.
+    fn settle_result_side(&self, ty: ResolvedType, side: usize) -> ResolvedType {
+        match ty {
+            ResolvedType::Generic(name, mut sides)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+                    && sides.len() == 2
+                    && matches!(sides[side], ResolvedType::Unknown) =>
+            {
+                sides[side] = self.open_result_side_type(side);
+                ResolvedType::Generic(name, sides)
+            }
+            other => other,
+        }
+    }
+
+    /// The type an open side `side` (0 for success, 1 for error) of an `Ok(...)` or `Err(...)` is built with when
+    /// nothing fixes it: that side of the enclosing function's `Result` return type, or `None` when the function
+    /// returns no `Result` (#1561).
+    pub(in crate::typechecker) fn open_result_side_type(&self, side: usize) -> ResolvedType {
+        match self.symbols.enclosing_declared_return_type() {
+            Some(ResolvedType::Generic(returned, returned_sides))
+                if collection_type_id(returned.as_str()) == Some(CollectionTypeId::Result)
+                    && returned_sides.len() == 2 =>
+            {
+                returned_sides[side].clone()
+            }
+            _ => ResolvedType::Unit,
+        }
+    }
+
+    /// Return the `Ok` or `Err` constructor `expr` produces: a call of it, in parentheses, or as the value of an `if`
+    /// with an `else` (the first branch that produces one), as lowering finds the constructor a closure returns.
+    pub(in crate::typechecker) fn returned_result_constructor(&self, expr: &Spanned<Expr>) -> Option<ConstructorId> {
+        match &expr.node {
+            Expr::Paren(inner) => self.returned_result_constructor(inner),
+            Expr::Call(callee, type_args, call_args) if type_args.is_empty() && call_args.len() == 1 => {
+                let Expr::Ident(name) = &callee.node else {
+                    return None;
+                };
+                self.result_constructor_named(name)
+            }
+            Expr::Constructor(name, call_args) if call_args.len() == 1 => self.result_constructor_named(name),
+            Expr::If(if_expr) => {
+                let else_body = if_expr.else_body.as_ref()?;
+                let branch_value = |body: &[Spanned<Statement>]| match body.last().map(|stmt| &stmt.node) {
+                    Some(Statement::Expr(value)) => self.returned_result_constructor(value),
+                    _ => None,
+                };
+                branch_value(&if_expr.then_body).or_else(|| branch_value(else_body))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `Ok` or `Err` constructor `name` spells, unless a binding of the program shadows it.
+    fn result_constructor_named(&self, name: &str) -> Option<ConstructorId> {
+        match constructors::from_str(name)? {
+            constructor @ (ConstructorId::Ok | ConstructorId::Err) if !self.has_non_builtin_call_root_binding(name) => {
+                Some(constructor)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the default of type `default_ty` passed to an `Option` or `Result` `unwrap_or` can be the payload of
+    /// type `payload_ty` the call returns in its place (#1561).
+    ///
+    /// A type parameter of the enclosing generic declaration is one fixed type inside that declaration, whatever a
+    /// caller later picks for it, so only a value of that same parameter stands in for it: `r.unwrap_or(0)` on a
+    /// `Result[T, int]` is refused, where ordinary compatibility accepts any type against a type parameter. The rule
+    /// holds at every depth of the payload that has the default's shape (`List[T]` takes a `List[T]` or `[]`, not a
+    /// `List[int]`), and an unknown default is left to the error that made it unknown. Everything else, a payload that
+    /// mentions no such parameter included, is checked by ordinary compatibility.
+    fn unwrap_or_default_fits_payload(&self, default_ty: &ResolvedType, payload_ty: &ResolvedType) -> bool {
+        if matches!(default_ty, ResolvedType::Unknown | ResolvedType::Never)
+            || !self.mentions_active_type_param(payload_ty)
+        {
+            return self.types_compatible(default_ty, payload_ty);
+        }
+        if let Some(param) = self.active_type_param_name(payload_ty) {
+            return self.active_type_param_name(default_ty) == Some(param);
+        }
+        match (default_ty, payload_ty) {
+            (ResolvedType::Generic(default_name, default_args), ResolvedType::Generic(payload_name, payload_args))
+                if default_name == payload_name && default_args.len() == payload_args.len() =>
+            {
+                default_args
+                    .iter()
+                    .zip(payload_args)
+                    .all(|(default_arg, payload_arg)| self.unwrap_or_default_fits_payload(default_arg, payload_arg))
+            }
+            (ResolvedType::Tuple(default_items), ResolvedType::Tuple(payload_items))
+                if default_items.len() == payload_items.len() =>
+            {
+                default_items
+                    .iter()
+                    .zip(payload_items)
+                    .all(|(default_item, payload_item)| self.unwrap_or_default_fits_payload(default_item, payload_item))
+            }
+            _ => self.types_compatible(default_ty, payload_ty),
+        }
+    }
+
+    /// Whether `ty` names a type parameter of an enclosing generic declaration anywhere in it.
+    fn mentions_active_type_param(&self, ty: &ResolvedType) -> bool {
+        if self.active_type_param_name(ty).is_some() {
+            return true;
+        }
+        match ty {
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                args.iter().any(|arg| self.mentions_active_type_param(arg))
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.mentions_active_type_param(inner),
+            _ => false,
+        }
+    }
+
     /// Typecheck one RFC 070 `Result[T, E]` combinator method call.
     fn check_result_combinator_method(
         &mut self,
@@ -587,24 +988,28 @@ impl TypeChecker {
             result_methods::ResultMethodId::AndThen => {
                 let expected = ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty.clone()]);
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&expected), span);
-                let ResolvedType::Generic(name, args) = ret else {
-                    return ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty]);
+                let result = match ret {
+                    ResolvedType::Generic(name, sides)
+                        if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && sides.len() == 2 =>
+                    {
+                        ResolvedType::Generic(name, sides)
+                    }
+                    _ => ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty]),
                 };
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 {
-                    return ResolvedType::Generic(name, args);
-                }
-                ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty])
+                self.settle_open_callback_result_side(method_id, args, result)
             }
             result_methods::ResultMethodId::OrElse => {
                 let expected = ResolvedType::Generic("Result".to_string(), vec![ok_ty.clone(), ResolvedType::Unknown]);
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&expected), span);
-                let ResolvedType::Generic(name, args) = ret else {
-                    return ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown]);
+                let result = match ret {
+                    ResolvedType::Generic(name, sides)
+                        if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && sides.len() == 2 =>
+                    {
+                        ResolvedType::Generic(name, sides)
+                    }
+                    _ => ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown]),
                 };
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 {
-                    return ResolvedType::Generic(name, args);
-                }
-                ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown])
+                self.settle_open_callback_result_side(method_id, args, result)
             }
             result_methods::ResultMethodId::Inspect => {
                 self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&ResolvedType::Unit), span);
@@ -794,13 +1199,16 @@ impl TypeChecker {
     /// This intentionally recognizes both explicit trait-typed values (`Iterator[T]` / `Iterable[T]`) and builtin
     /// collection values that have an obvious frontend iterator element type. It is a typechecker-only surface helper;
     /// lowering and emission use the same protocol shape to route known iterator methods through dedicated backend
-    /// handling.
+    /// handling. A `Generator[T]` satisfies `Iterator[T]` (RFC 006, RFC 088), so it is an iterator value here.
     fn iterable_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         match ty {
             ResolvedType::Generic(name, args)
                 if (Self::is_iterator_protocol_name(name) || Self::is_iterable_protocol_name(name))
                     && args.len() == 1 =>
             {
+                args.first().cloned()
+            }
+            ResolvedType::Generic(name, args) if Self::is_generator_name(name) && args.len() == 1 => {
                 args.first().cloned()
             }
             ResolvedType::Generic(name, args)
@@ -821,14 +1229,21 @@ impl TypeChecker {
         }
     }
 
-    /// Return the element type for values that are already typed as `Iterator[T]`.
+    /// Return the element type for values that are already typed as `Iterator[T]`, a `Generator[T]` included.
     fn iterator_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         match ty {
-            ResolvedType::Generic(name, args) if Self::is_iterator_protocol_name(name) && args.len() == 1 => {
+            ResolvedType::Generic(name, args)
+                if (Self::is_iterator_protocol_name(name) || Self::is_generator_name(name)) && args.len() == 1 =>
+            {
                 args.first().cloned()
             }
             _ => None,
         }
+    }
+
+    /// Return whether `name` is the RFC 006 `Generator` type.
+    fn is_generator_name(name: &str) -> bool {
+        collection_type_id(name) == Some(CollectionTypeId::Generator)
     }
 
     /// Validate fixed-arity RFC 088 method calls and report the same arity diagnostic style as other builtin calls.
@@ -917,6 +1332,261 @@ impl TypeChecker {
             }
         }
         valid
+    }
+
+    /// Validate a membership probe call: `dict.contains_key(key)` (#1668), `frozen_dict.contains_key(key)` (#1757) and
+    /// `frozen_set.contains(item)`.
+    ///
+    /// The probe's type must be compatible with `member_ty`, the key or element type, so a mistyped probe fails here
+    /// instead of as a rustc `Borrow` error in the generated lookup. The argument count and kinds are checked against
+    /// the registry arity with every builtin collection method's ([`Self::check_builtin_collection_method_args`]), so a
+    /// wrong count or a named or unpacked argument is already refused by the time this runs; `callee` names the
+    /// receiver family in the type-mismatch diagnostic. When `text_probes` is set, a text member (`str` or
+    /// `FrozenStr`) takes any text probe, the rule a frozen collection's `'static` text follows.
+    fn validate_membership_probe_call(
+        &mut self,
+        callee: &str,
+        member_ty: &ResolvedType,
+        text_probes: bool,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+    ) {
+        let [CallArg::Positional(expr)] = args else {
+            return;
+        };
+        let Some(actual) = arg_types.first() else {
+            return;
+        };
+        if matches!(member_ty, ResolvedType::Unknown) || (text_probes && is_str_like(actual) && is_str_like(member_ty))
+        {
+            return;
+        }
+        if self.types_compatible(actual, member_ty) {
+            // A numeric probe of a narrower type is widened to the member type where it is lowered (RFC 009).
+            self.record_value_destination_if_compatible(expr.span, actual, member_ty);
+        } else {
+            self.errors.push(errors::call_argument_type_mismatch(
+                callee,
+                None,
+                &member_ty.to_string(),
+                &actual.to_string(),
+                expr.span,
+            ));
+        }
+    }
+
+    /// Validate `dict.get(key, default)`: two positional arguments, a key of the key type and a default of the value
+    /// type, since the call is the value itself (the entry's, or `default` when no entry holds `key`).
+    fn validate_dict_get_with_default(
+        &mut self,
+        key_ty: &ResolvedType,
+        value_ty: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+    ) {
+        const CALLEE: &str = "Dict.get";
+        for ((arg, actual), expected) in args.iter().zip(arg_types).zip([key_ty, value_ty]) {
+            let expr = match arg {
+                CallArg::Positional(expr) => expr,
+                CallArg::Named(name, _) => {
+                    self.errors
+                        .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
+                    continue;
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
+                    continue;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
+                    continue;
+                }
+            };
+            if matches!(expected, ResolvedType::Unknown) {
+                continue;
+            }
+            if self.types_compatible(actual, expected) {
+                self.record_value_destination_if_compatible(expr.span, actual, expected);
+            } else {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    CALLEE,
+                    None,
+                    &expected.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+            }
+        }
+    }
+
+    /// Validate the arguments of a builtin text-codec call (`str.encode` / `bytes.decode`, #1668).
+    ///
+    /// Both methods take an optional `encoding` and `bytes.decode` also takes an optional `errors`, positionally or
+    /// by name. Every argument must be text. A literal label is checked against the `text_codecs` tables here so an
+    /// unsupported codec or error policy is a compile-time error; a label that is only known at run time is left to
+    /// the emitter's runtime guard, which reads the same tables.
+    fn validate_text_codec_call(
+        &mut self,
+        callee: &str,
+        accepts_errors_policy: bool,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) {
+        const ENCODING: &str = "encoding";
+        const ERRORS: &str = "errors";
+        let parameters: &[&str] = if accepts_errors_policy {
+            &[ENCODING, ERRORS]
+        } else {
+            &[ENCODING]
+        };
+
+        // ---- Bind each argument to its parameter, rejecting shapes the surface does not offer ----
+        let mut bound: Vec<(&str, &Spanned<Expr>, &ResolvedType)> = Vec::new();
+        let mut positional_count = 0usize;
+        for (arg, actual) in args.iter().zip(arg_types.iter()) {
+            match arg {
+                CallArg::Positional(expr) => {
+                    let Some(parameter) = parameters.get(positional_count) else {
+                        self.errors
+                            .push(errors::builtin_max_arity(callee, parameters.len(), args.len(), span));
+                        return;
+                    };
+                    positional_count += 1;
+                    bound.push((parameter, expr, actual));
+                }
+                CallArg::Named(name, expr) => {
+                    let Some(parameter) = parameters.iter().find(|parameter| **parameter == name.node) else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
+                        return;
+                    };
+                    if let Some((_, first, _)) = bound.iter().find(|(seen, _, _)| seen == parameter) {
+                        self.errors.push(errors::duplicate_call_argument(
+                            callee, parameter, first.span, name.span,
+                        ));
+                        return;
+                    }
+                    bound.push((parameter, expr, actual));
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "*", expr.span));
+                    return;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "**", expr.span));
+                    return;
+                }
+            }
+        }
+
+        // ---- Each bound label must be text, and a literal label must name a supported codec or policy ----
+        for (parameter, expr, actual) in bound {
+            if !is_str_like(actual) {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    callee,
+                    Some(parameter),
+                    &ResolvedType::Str.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+                continue;
+            }
+            let Expr::Literal(Literal::String(label)) = &expr.node else {
+                continue;
+            };
+            if parameter == ENCODING && !text_codecs::is_utf8_encoding_label(label) {
+                self.errors
+                    .push(errors::unsupported_text_encoding(callee, label, expr.span));
+            }
+            if parameter == ERRORS && DecodeErrorsPolicy::from_label(label).is_none() {
+                self.errors
+                    .push(errors::unsupported_decode_errors_policy(label, expr.span));
+            }
+        }
+    }
+
+    /// Return the declared type whose method body is being checked, with its own type parameters, or `None` outside a
+    /// model, class, enum or newtype method (a trait default among them).
+    fn current_method_owner_type(&self) -> Option<ResolvedType> {
+        let owner = self.current_method_owner.as_ref()?;
+        let type_params = match self.lookup_type_info(owner)? {
+            TypeInfo::Model(model) => model.type_params.clone(),
+            TypeInfo::Class(class) => class.type_params.clone(),
+            TypeInfo::Newtype(newtype) => newtype.type_params.clone(),
+            TypeInfo::Enum(enum_info) => enum_info.type_params.clone(),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => return None,
+        };
+        Some(if type_params.is_empty() {
+            ResolvedType::Named(owner.clone())
+        } else {
+            ResolvedType::Generic(
+                owner.clone(),
+                type_params.into_iter().map(ResolvedType::TypeVar).collect(),
+            )
+        })
+    }
+
+    /// Return the function type an RFC 088 adapter or terminal method of an iterator gives the callback it takes at
+    /// argument `index`, so a closure written there takes the iterator's element, and a fold's accumulator, as its
+    /// parameter types.
+    ///
+    /// `accumulator` is the type of a fold's first argument. The callback of `map` and `flat_map` leaves its result
+    /// to the closure's body. `None` when the receiver is not an iterator with a known element type or the method
+    /// takes no callback at `index`.
+    fn iterator_callback_expectation(
+        &self,
+        base_ty: &ResolvedType,
+        method: &str,
+        index: usize,
+        accumulator: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        use iterator_methods::IteratorMethodId as M;
+        let method_id = iterator_methods::from_str(method)?;
+        let element = self
+            .iterator_protocol_element_type(base_ty)
+            .filter(|element| !matches!(element, ResolvedType::Unknown))?;
+        let (params, ret) = match (method_id, index) {
+            (M::Map | M::FlatMap, 0) => (vec![element], ResolvedType::Unknown),
+            (M::Filter | M::TakeWhile | M::SkipWhile | M::Any | M::All | M::Find, 0) => {
+                (vec![element], ResolvedType::Bool)
+            }
+            (M::ForEach, 0) => (vec![element], ResolvedType::Unit),
+            (M::Fold | M::Reduce, 1) => {
+                let accumulator = accumulator
+                    .filter(|accumulator| !matches!(accumulator, ResolvedType::Unknown))?
+                    .clone();
+                (vec![accumulator.clone(), element], accumulator)
+            }
+            _ => return None,
+        };
+        Some(Self::iterator_callback_ty(params, ret))
+    }
+
+    /// Describe the function-typed slot an RFC 088 method of an iterator gives its callback, when it refuses a
+    /// closure that captures local values, or `None` when the receiver is not an iterator or the method takes no
+    /// callback.
+    ///
+    /// Each callback is a parameter of a standard-library method, which the functions reference gives a named function
+    /// or a closure that captures nothing (#1561): `map`, `filter`, `flat_map`, `take_while` and `skip_while` of an
+    /// iterator, a generator's own `map` and `filter` (RFC 006) included, keep it in the lazy iterator they return, and
+    /// a terminal takes it as its parameter.
+    fn iterator_callback_slot(&self, base_ty: &ResolvedType, method: &str) -> Option<String> {
+        use iterator_methods::IteratorMethodId as M;
+        self.iterator_protocol_element_type(base_ty)?;
+        match iterator_methods::from_str(method)? {
+            M::Map | M::Filter | M::FlatMap | M::TakeWhile | M::SkipWhile => {
+                Some(format!("stored by the iterator adapter '{method}'"))
+            }
+            M::Any | M::All | M::Find | M::Fold | M::Reduce | M::ForEach => {
+                Some(format!("passed to the standard-library method '{method}'"))
+            }
+            _ => None,
+        }
     }
 
     /// Build a resolved callable type from parameter and return types for adapter diagnostics.
@@ -1032,7 +1702,7 @@ impl TypeChecker {
     /// The frontend treats these protocol methods as a typed surface even when the receiver is a builtin collection
     /// whose methods are not represented as ordinary user-declared methods. Backend lowering and emission classify the
     /// same method family as known iterator calls.
-    fn resolve_iterator_protocol_method_call(
+    pub(super) fn resolve_iterator_protocol_method_call(
         &mut self,
         base_ty: &ResolvedType,
         method: &str,
@@ -1046,6 +1716,23 @@ impl TypeChecker {
             .unwrap_or_else(|| elem.clone());
         let method_id = iterator_methods::from_str(method)?;
         use iterator_methods::IteratorMethodId as M;
+        // A generator's own RFC 006 methods (`map`, `filter`, `take`, `collect`) keep their generator-typed results;
+        // the rest of the RFC 088 surface reaches it as an `Iterator[T]`.
+        if matches!(base_ty, ResolvedType::Generic(name, _) if Self::is_generator_name(name))
+            && matches!(method_id, M::Map | M::Filter | M::Take | M::Collect)
+        {
+            return None;
+        }
+        // A list, set, frozen collection or `Iterable[T]` provides `iter()`; the adapters and terminals are methods of
+        // the `Iterator[T]` it returns (RFC 088), so `items.map(f)` is refused where `items.iter().map(f)` is meant.
+        if !matches!(method_id, M::Iter) && self.iterator_protocol_element_type(base_ty).is_none() {
+            self.errors.push(errors::iterator_method_on_an_iterable(
+                &base_ty.to_string(),
+                method,
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
 
         match method_id {
             M::Iter => {
@@ -1352,9 +2039,11 @@ impl TypeChecker {
                 ),
                 string_methods::from_str(method).map(string_methods::as_str)?,
             ),
-            ResolvedType::Bytes if method == "as_slice" => (
+            ResolvedType::Bytes => (
                 incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Bytes),
-                "as_slice",
+                bytes_methods::from_str(method)
+                    .map(bytes_methods::as_str)
+                    .or_else(|| (method == "as_slice").then_some("as_slice"))?,
             ),
             ResolvedType::FrozenBytes => (
                 incan_lang::lang::types::stringlike::as_str(
@@ -1426,39 +2115,54 @@ impl TypeChecker {
             "saturating_resize" => NumericResizeMethodPolicy::Saturating,
             _ => return None,
         };
-        if !type_args.is_empty() {
-            self.errors
-                .push(errors::type_mismatch("no type arguments", "type arguments", span));
-            return Some(ResolvedType::Unknown);
-        }
+        let explicit_target = match type_args {
+            [] => None,
+            [target] if !matches!(policy, NumericResizeMethodPolicy::Lossless) => {
+                Some(self.resolve_type_checked(target))
+            }
+            [_] => {
+                self.errors.push(errors::type_mismatch(
+                    "no explicit target on resize()",
+                    "explicit resize target",
+                    span,
+                ));
+                return Some(ResolvedType::Unknown);
+            }
+            _ => {
+                self.errors.push(errors::type_mismatch(
+                    "at most one explicit resize target",
+                    "multiple type arguments",
+                    span,
+                ));
+                return Some(ResolvedType::Unknown);
+            }
+        };
         if !args.is_empty() {
             self.errors
                 .push(errors::type_mismatch("no arguments", "arguments", span));
             return Some(ResolvedType::Unknown);
         }
 
-        let target_ty = match policy {
+        let contextual_target = match policy {
             NumericResizeMethodPolicy::Try => match expected_return_ty {
                 Some(ResolvedType::Generic(name, args))
                     if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && args.len() == 1 =>
                 {
-                    args[0].clone()
+                    Some(args[0].clone())
                 }
-                _ => {
+                Some(found) if explicit_target.is_none() => {
                     self.errors.push(errors::type_mismatch(
                         "contextual Option[numeric] target",
-                        expected_return_ty
-                            .map(ToString::to_string)
-                            .as_deref()
-                            .unwrap_or("unknown target"),
+                        &found.to_string(),
                         span,
                     ));
                     return Some(ResolvedType::Unknown);
                 }
+                _ => None,
             },
             _ => match expected_return_ty {
-                Some(ty) => ty.clone(),
-                None => {
+                Some(ty) => Some(ty.clone()),
+                None if explicit_target.is_none() => {
                     self.errors.push(errors::type_mismatch(
                         "contextual numeric target",
                         "unknown target",
@@ -1466,8 +2170,27 @@ impl TypeChecker {
                     ));
                     return Some(ResolvedType::Unknown);
                 }
+                None => None,
             },
         };
+        let target_ty = explicit_target
+            .or_else(|| contextual_target.clone())
+            .unwrap_or(ResolvedType::Unknown);
+        if let Some(contextual_target) = contextual_target
+            && super::super::numeric_type_id_for_compat(&target_ty)
+                != super::super::numeric_type_id_for_compat(&contextual_target)
+        {
+            let contextual_result = match policy {
+                NumericResizeMethodPolicy::Try => option_ty(contextual_target),
+                _ => contextual_target,
+            };
+            self.errors.push(errors::type_mismatch(
+                &format!("explicit resize target compatible with {contextual_result}"),
+                &target_ty.to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
         let Some(target) = super::super::numeric_type_id_for_compat(&target_ty) else {
             self.errors
                 .push(errors::type_mismatch("numeric target", &target_ty.to_string(), span));
@@ -1512,6 +2235,51 @@ impl TypeChecker {
                     _ => Some(target_ty),
                 }
             }
+        }
+    }
+
+    /// Typecheck RFC 009 integer overflow helpers from the language-owned numeric registry.
+    fn check_integer_overflow_helper(
+        &mut self,
+        base_ty: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let helper = numerics::integer_helper_from_str(method)?;
+        let source = super::super::numeric_type_id_for_compat(base_ty)?;
+        if !numerics::supports_integer_helper(source, helper) {
+            return None;
+        }
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::type_mismatch("no type arguments", "type arguments", span));
+            return Some(ResolvedType::Unknown);
+        }
+        if args.len() != 1 || arg_types.len() != 1 {
+            self.errors
+                .push(errors::builtin_arity(helper.canonical, 1, args.len(), span));
+            return Some(ResolvedType::Unknown);
+        }
+
+        let expected_operand = match helper.operation {
+            IntegerHelperOperation::Add | IntegerHelperOperation::Sub | IntegerHelperOperation::Mul => source,
+            IntegerHelperOperation::Pow => numerics::NumericTypeId::U32,
+        };
+        if super::super::numeric_type_id_for_compat(&arg_types[0]) != Some(expected_operand) {
+            self.errors.push(errors::type_mismatch(
+                numerics::as_str(expected_operand),
+                &arg_types[0].to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+
+        match helper.family {
+            IntegerHelperFamily::Checked => Some(option_ty(base_ty.clone())),
+            IntegerHelperFamily::Wrapping | IntegerHelperFamily::Saturating => Some(base_ty.clone()),
         }
     }
 
@@ -1738,6 +2506,21 @@ impl TypeChecker {
             ResolvedType::Generic(name, args) => {
                 self.rust_canonical_path_for_nominal_receiver(name, Some(args.as_slice()))
             }
+            _ => None,
+        }
+    }
+
+    /// Return the import binding a bare receiver expression names, when it is an imported Rust item.
+    ///
+    /// `Trait.method(...)` and `Type.method(...)` spell the receiver as the import binding itself; a value receiver
+    /// such as `handle.method(...)`, including a local that happens to be a bare identifier, has no binding to report.
+    fn rust_import_binding_for_receiver_expr<'a>(&self, receiver: &'a Spanned<Expr>) -> Option<&'a str> {
+        match &receiver.node {
+            Expr::Ident(name) => self
+                .lookup_symbol(name)
+                .filter(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
+                .map(|_| name.as_str()),
+            Expr::Paren(inner) => self.rust_import_binding_for_receiver_expr(inner),
             _ => None,
         }
     }
@@ -2260,6 +3043,7 @@ impl TypeChecker {
             rust_path,
             method,
             receiver_metadata,
+            receiver_binding,
             type_args,
             args,
             arg_types,
@@ -2273,8 +3057,10 @@ impl TypeChecker {
             self.type_info.record_regular_method_arg_shape(receiver_span, method);
         }
         let Some(metadata) = self.rust_metadata_for_receiver_method(rust_path, method, receiver_metadata) else {
-            if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
-                && let Some(sig) = import_use.signature.as_ref()
+            let claimed_import = self.record_unique_rust_trait_import_for_method_call(method, span);
+            if let Some(sig) = claimed_import
+                .as_ref()
+                .and_then(|import_use| import_use.signature.as_ref())
             {
                 return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
                     rust_path,
@@ -2284,6 +3070,7 @@ impl TypeChecker {
                     args,
                     arg_types,
                     preserves_lookup_arg_shape,
+                    self_type: None,
                     span,
                 }));
             }
@@ -2292,6 +3079,7 @@ impl TypeChecker {
                     rust_path,
                     method,
                     receiver_metadata,
+                    receiver_binding,
                     type_args,
                     args,
                     arg_types,
@@ -2302,6 +3090,18 @@ impl TypeChecker {
                 preserves_lookup_arg_shape,
             ) {
                 return Some(ret);
+            }
+            // A trait-qualified call passes its receiver as the first argument, and only the trait method's
+            // declared receiver says how that argument is passed. Without a signature the mode is unknowable;
+            // refusing here keeps the emitter from assuming `&self` and handing rustc a mismatched borrow (#1375).
+            if self.receiver_names_rust_trait_import(receiver_binding, method) {
+                self.errors
+                    .push(errors::rust_trait_receiver_mode_unavailable(rust_path, method, span));
+                self.preserve_unresolved_rust_call_argument_returns(args);
+                return Some(ResolvedType::Unknown);
+            }
+            if claimed_import.is_none() {
+                self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
             }
             self.preserve_unresolved_rust_call_argument_returns(args);
             return None;
@@ -2324,8 +3124,12 @@ impl TypeChecker {
                         self.type_info.record_call_site_callable_params_exact(span, &[]);
                         return Some(ResolvedType::RustPath(rust_path.to_string()));
                     }
-                    if let Some(import_use) = self.record_rust_extension_trait_import_for_call(&metadata, method, span)
-                        && let Some(sig) = import_use.signature.as_ref()
+                    let claimed_import = self
+                        .record_rust_extension_trait_import_for_call(&metadata, method, span)
+                        .or_else(|| self.record_unique_rust_trait_import_for_method_call(method, span));
+                    if let Some(sig) = claimed_import
+                        .as_ref()
+                        .and_then(|import_use| import_use.signature.as_ref())
                     {
                         return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
                             rust_path,
@@ -2335,20 +3139,7 @@ impl TypeChecker {
                             args,
                             arg_types,
                             preserves_lookup_arg_shape,
-                            span,
-                        }));
-                    }
-                    if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
-                        && let Some(sig) = import_use.signature.as_ref()
-                    {
-                        return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
-                            rust_path,
-                            method,
-                            sig,
-                            type_args,
-                            args,
-                            arg_types,
-                            preserves_lookup_arg_shape,
+                            self_type: None,
                             span,
                         }));
                     }
@@ -2357,6 +3148,7 @@ impl TypeChecker {
                             rust_path,
                             method,
                             receiver_metadata,
+                            receiver_binding,
                             type_args,
                             args,
                             arg_types,
@@ -2369,6 +3161,9 @@ impl TypeChecker {
                         return Some(ret);
                     }
                     // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
+                    if claimed_import.is_none() {
+                        self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
+                    }
                     self.preserve_unresolved_rust_call_argument_returns(args);
                     return Some(ResolvedType::Unknown);
                 };
@@ -2438,6 +3233,24 @@ impl TypeChecker {
                         }
                     }
                 }
+                if specializes_receiver && resolved_type_args.is_empty() {
+                    let open_type_params = Self::open_rust_owner_type_args(&sig, type_info);
+                    if !open_type_params.is_empty() {
+                        // Nothing at the call fixes the owner's parameters; whether a later reader does is the
+                        // enclosing statement's question (#1720).
+                        let owner = receiver_binding
+                            .map(str::to_string)
+                            .unwrap_or_else(|| rust_path.rsplit("::").next().unwrap_or(rust_path).to_string());
+                        self.open_rust_generic_calls.insert(
+                            (span.start, span.end),
+                            crate::typechecker::OpenRustGenericCall {
+                                owner,
+                                method: method.to_string(),
+                                type_params: open_type_params,
+                            },
+                        );
+                    }
+                }
                 let effective_sig = if specializes_receiver && !resolved_type_args.is_empty() {
                     self.specialize_rust_owner_signature(
                         &sig,
@@ -2492,6 +3305,18 @@ impl TypeChecker {
                 ));
                 Some(ResolvedType::Unknown)
             }
+            RustItemKind::Trait(trait_info) if receiver_binding.is_some() => {
+                Some(self.resolve_rust_trait_qualified_call(RustTraitQualifiedCall {
+                    rust_path,
+                    trait_info,
+                    method,
+                    type_args,
+                    args,
+                    arg_types,
+                    preserves_lookup_arg_shape,
+                    span,
+                }))
+            }
             // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => {
@@ -2499,6 +3324,188 @@ impl TypeChecker {
                 Some(ResolvedType::Unknown)
             }
         }
+    }
+
+    /// Return whether a method-call receiver is a bare imported Rust trait that is known to declare `method`.
+    ///
+    /// The trait-import registry learns a trait's method names from inspected metadata or, failing that, from the
+    /// compiler's fallback trait vocabulary. Either way the spelling `Trait.method(...)` is then a trait-qualified call
+    /// rather than an associated function on a type, which is what decides whether a missing signature is a
+    /// receiver-mode gap the call must report.
+    fn receiver_names_rust_trait_import(&self, receiver_binding: Option<&str>, method: &str) -> bool {
+        receiver_binding
+            .and_then(|binding| self.type_info.rust.trait_imports.get(binding))
+            .is_some_and(|import| import.methods.contains(method))
+    }
+
+    /// Check a trait-qualified call `Trait.method(receiver, args...)` against inspected Rust trait metadata (#1375).
+    ///
+    /// Rust resolves `Trait::method` only against the trait's own associated items, and the method's declared receiver
+    /// decides how the explicit first argument is passed: `&mut self` needs an exclusive borrow, `&self` a shared one,
+    /// and `self` moves the value. That mode is recorded as the first argument's Rust boundary coercion, the same fact
+    /// lowering and emission already consume for every other inspected Rust parameter, so the emitter never derives
+    /// it from the method or trait name. The remaining arguments and the result follow the ordinary trait-method
+    /// validation; a method the trait does not declare is reported here instead of by rustc against generated code. A
+    /// receiver of unknown type records no mode and gives the call a result of unknown type, as without metadata.
+    fn resolve_rust_trait_qualified_call(&mut self, call: RustTraitQualifiedCall<'_>) -> ResolvedType {
+        let RustTraitQualifiedCall {
+            rust_path,
+            trait_info,
+            method,
+            type_args,
+            args,
+            arg_types,
+            preserves_lookup_arg_shape,
+            span,
+        } = call;
+        let Some(sig) = trait_info.items.iter().find_map(|item| match item {
+            RustTraitAssoc::Function { name, signature } if name == method => Some(signature),
+            _ => None,
+        }) else {
+            self.errors
+                .push(errors::rust_trait_method_not_declared(rust_path, method, span));
+            self.preserve_unresolved_rust_call_argument_returns(args);
+            return ResolvedType::Unknown;
+        };
+        if !Self::rust_signature_has_receiver(sig) {
+            // `Deserialize.deserialize(input)` has no receiver: Rust infers `Self` from the destination, which the
+            // checker learns only later, so the result stays permissive while the arguments are still validated.
+            return self.validate_rust_trait_method_call(RustTraitMethodCall {
+                rust_path,
+                method,
+                sig,
+                type_args,
+                args,
+                arg_types,
+                preserves_lookup_arg_shape,
+                self_type: Some(&ResolvedType::Unknown),
+                span,
+            });
+        }
+
+        // ---- The explicit receiver argument takes the declared receiver mode ----
+        let (Some(CallArg::Positional(receiver_expr)), Some(receiver_ty)) = (args.first(), arg_types.first()) else {
+            self.errors.push(errors::builtin_arity(
+                format!("rust::{rust_path}.{method}").as_str(),
+                sig.params.len(),
+                args.len(),
+                span,
+            ));
+            self.preserve_unresolved_rust_call_argument_returns(args);
+            return ResolvedType::Unknown;
+        };
+        // A receiver of unknown type, such as the guard `borrow_mut()` returns when nothing types it, may be the
+        // trait's `Self` or a guard or reference that reaches one. Neither the borrow that turns it into the declared
+        // receiver nor `Self` in the result can be decided, so the call keeps the facts it has without metadata: no
+        // receiver borrow, a result of unknown type, and its arguments handed to Rust as they are (#1561).
+        if Self::is_unknown_behind_references(receiver_ty) {
+            self.preserve_unresolved_rust_call_argument_returns(args);
+            return ResolvedType::Unknown;
+        }
+        let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
+        if let Some((mutable, _)) = Self::rust_display_borrow_kind(receiver_display.as_str()) {
+            let already_borrowed = match receiver_ty {
+                ResolvedType::RefMut(_) => true,
+                ResolvedType::Ref(_) => !mutable,
+                _ => false,
+            };
+            if matches!(receiver_ty, ResolvedType::Ref(_)) && mutable {
+                self.errors.push(errors::type_mismatch(
+                    receiver_display.as_str(),
+                    &receiver_ty.to_string(),
+                    receiver_expr.span,
+                ));
+            } else if !already_borrowed {
+                let kind = RustArgCoercionKind::Borrow { mutable };
+                if self.validate_rust_borrow_mutability(kind, receiver_expr) {
+                    let target_type = if mutable {
+                        ResolvedType::RefMut(Box::new(receiver_ty.clone()))
+                    } else {
+                        ResolvedType::Ref(Box::new(receiver_ty.clone()))
+                    };
+                    self.type_info.rust.arg_coercions.insert(
+                        (receiver_expr.span.start, receiver_expr.span.end),
+                        RustArgCoercionInfo {
+                            rust_target_type: receiver_display,
+                            target_type,
+                            kind,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ---- The remaining arguments follow the trait method's own parameters ----
+        let self_type = match receiver_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref().clone(),
+            other => other.clone(),
+        };
+        let ret = self.validate_rust_trait_method_call(RustTraitMethodCall {
+            rust_path,
+            method,
+            sig,
+            type_args,
+            args: &args[1..],
+            arg_types: &arg_types[1..],
+            preserves_lookup_arg_shape,
+            self_type: Some(&self_type),
+            span,
+        });
+        // The call site's parameter list must line up with the source arguments, receiver included, so that
+        // lowering and emission pair each argument with its own parameter shape.
+        self.record_rust_trait_qualified_call_site_params(span, sig, receiver_ty, rust_path);
+        ret
+    }
+
+    /// Return whether `ty` is unknown, directly or behind shared and mutable references.
+    fn is_unknown_behind_references(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Unknown => true,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::is_unknown_behind_references(inner),
+            _ => false,
+        }
+    }
+
+    /// Record the call-site parameters of a trait-qualified call with the receiver parameter in first position.
+    ///
+    /// `validate_rust_method_call` records the parameters after the receiver, which is right for `value.method(...)`
+    /// where the receiver is not an argument. A trait-qualified call spells the receiver as its first argument, so the
+    /// receiver parameter is re-added here with the receiver's own resolved shape rather than the opaque `Self`
+    /// display, keeping argument and parameter indexes aligned for the backend.
+    fn record_rust_trait_qualified_call_site_params(
+        &mut self,
+        span: Span,
+        sig: &RustFunctionSig,
+        receiver_ty: &ResolvedType,
+        owner_path: &str,
+    ) {
+        let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
+        let receiver_param_ty = match (Self::rust_display_borrow_kind(receiver_display.as_str()), receiver_ty) {
+            (Some(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => receiver_ty.clone(),
+            (Some((true, _)), _) => ResolvedType::RefMut(Box::new(receiver_ty.clone())),
+            (Some((false, _)), _) => ResolvedType::Ref(Box::new(receiver_ty.clone())),
+            (None, _) => receiver_ty.clone(),
+        };
+        let mut params = vec![CallableParam {
+            name: sig.params[0].name.clone(),
+            ty: receiver_param_ty,
+            kind: ParamKind::Normal,
+            has_default: false,
+            is_partial_preset: false,
+            is_mut: false,
+        }];
+        params.extend(sig.params[1..].iter().map(|param| CallableParam {
+            name: param.name.clone(),
+            ty: self.resolved_rust_boundary_target_from_param_display_for_owner_path(
+                param.type_display.as_str(),
+                owner_path,
+            ),
+            kind: ParamKind::Normal,
+            has_default: false,
+            is_partial_preset: false,
+            is_mut: false,
+        }));
+        self.type_info.record_call_site_callable_params_exact(span, &params);
     }
 
     /// Enforce RFC 054's arity-complete bracket contract for inspected Rust methods.
@@ -2517,8 +3524,8 @@ impl TypeChecker {
         }
         self.errors.push(errors::explicit_type_arg_arity(
             method,
-            declared_type_params.len(),
-            type_args.len(),
+            declared_type_params,
+            &Self::written_type_args(type_args),
             span,
         ));
         false
@@ -2559,11 +3566,42 @@ impl TypeChecker {
             call.preserves_lookup_arg_shape,
             call.span,
         );
-        let ret = Self::substitute_rust_self_type(ret, call.rust_path);
-        if Self::contains_unbound_rust_type_var(&ret) {
+        let ret = match call.self_type {
+            Some(self_type) => Self::substitute_rust_self_type_with_resolved(ret, self_type),
+            None => Self::substitute_rust_self_type(ret, call.rust_path),
+        };
+        if Self::contains_unbound_rust_type_var(&ret)
+            || (resolved_type_args.is_empty() && Self::mentions_rust_method_type_param(&ret, &call.sig.type_params))
+        {
             ResolvedType::Unknown
         } else {
             ret
+        }
+    }
+
+    /// Return whether a Rust return type still projects through one of the method's own type parameters.
+    ///
+    /// `Result<S::Ok, S::Error>` on `Serialize::serialize<S>` names associated types of a parameter the call did not
+    /// bind; Rust infers `S` from the argument, and the projection is not an Incan type the checker can compare.
+    fn mentions_rust_method_type_param(ty: &ResolvedType, type_params: &[String]) -> bool {
+        match ty {
+            ResolvedType::RustPath(path) => path
+                .split("::")
+                .next()
+                .is_some_and(|head| type_params.iter().any(|param| param == head.trim())),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+                Self::mentions_rust_method_type_param(inner, type_params)
+            }
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => args
+                .iter()
+                .any(|arg| Self::mentions_rust_method_type_param(arg, type_params)),
+            ResolvedType::Function(params, ret) => {
+                params
+                    .iter()
+                    .any(|param| Self::mentions_rust_method_type_param(&param.ty, type_params))
+                    || Self::mentions_rust_method_type_param(ret, type_params)
+            }
+            _ => false,
         }
     }
 
@@ -2596,6 +3634,7 @@ impl TypeChecker {
             rust_path,
             method,
             receiver_metadata: _,
+            receiver_binding: _,
             type_args,
             args,
             arg_types,
@@ -2708,6 +3747,40 @@ impl TypeChecker {
         Some(import_use.clone())
     }
 
+    /// Attribute a method call that no inspected surface resolved to the imported Rust items whose method surface is
+    /// unknown, so generated-use analysis keeps their `use` declarations while the call is reachable (#1450).
+    ///
+    /// Only imports with neither inspected metadata nor a fallback vocabulary qualify: an import with a declared
+    /// surface that does not list the method cannot provide it. The import the receiver itself names is already in
+    /// use as a path, and the import that is the receiver's own type is a type, not a trait; both are left out.
+    /// Without metadata the compiler cannot narrow further, so every remaining candidate is kept; a spurious retained
+    /// import is a warning, while a dropped one is an E0599 against code the author never wrote.
+    fn record_rust_method_trait_import_candidates(
+        &mut self,
+        receiver_rust_path: &str,
+        receiver_binding: Option<&str>,
+        span: Span,
+    ) {
+        let mut candidates = self
+            .type_info
+            .rust
+            .trait_imports
+            .iter()
+            .filter(|(binding, import)| {
+                !import.methods_known
+                    && Some(binding.as_str()) != receiver_binding
+                    && import.trait_path != receiver_rust_path
+            })
+            .map(|(binding, _)| binding.clone())
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return;
+        }
+        candidates.sort();
+        self.type_info
+            .record_rust_method_trait_import_candidates(span, candidates);
+    }
+
     /// Return the trait method signature when `import` is implemented by `type_info` and declares `method`.
     fn rust_trait_import_matches_receiver(
         type_info: &incan_lang::interop::RustTypeInfo,
@@ -2753,7 +3826,16 @@ impl TypeChecker {
     }
 
     /// Check if a type is cloneable.
+    ///
+    /// The derive relation answers wherever it knows the type, including every stdlib surface type the registry
+    /// records (so `Mutex[T]` clones and `JoinHandle[T]` does not). An unknown answer keeps this check's own policy:
+    /// a type parameter by its active bounds, a Rust-origin type refused, an unresolved type admitted.
     pub(in crate::typechecker) fn is_clone_type(&self, ty: &ResolvedType) -> bool {
+        match self.derive_support(ty, DeriveId::Clone) {
+            DeriveSupport::Supported => return true,
+            DeriveSupport::Missing(_) => return false,
+            DeriveSupport::Unknown => {}
+        }
         match ty {
             ResolvedType::Never
             | ResolvedType::Int
@@ -2794,6 +3876,8 @@ impl TypeChecker {
                         let err_ok = args.get(1).is_none_or(|t| self.is_clone_type(t));
                         ok_ok && err_ok
                     }
+                    // A generator is a one-shot runtime iterator; it has no copy.
+                    Some(CollectionTypeId::Generator) => false,
                     _ => args.iter().all(|t| self.is_clone_type(t)),
                 }
             }
@@ -2835,6 +3919,47 @@ impl TypeChecker {
         })
     }
 
+    /// Return whether `expr` builds a new value without taking anything out of an existing place, so storing it moves
+    /// the value and needs no copy (#1821).
+    ///
+    /// A literal and an f-string are new values. A call, a method call and a constructor are new values only when
+    /// every argument, and a method call's receiver, is itself a new value by this rule or has a `Copy` or `Clone`
+    /// type: `spawn(work(n))` qualifies, while `Some(handle)`, `maybe.unwrap()` and `holder.get()` over a place whose
+    /// type is not `Clone` do not, since building them would move or copy out of that place. A name, a field, an
+    /// element, `self` and every other shape read a place the program may use again; the checker does not decide
+    /// whether a read is the place's last use, so those are never new values. Parentheses and `?` yield the value of
+    /// the expression they wrap. The call's own callee is not a part of the value and is not inspected.
+    fn is_fresh_value(&self, expr: &Spanned<Expr>) -> bool {
+        let arguments_are_fresh_or_copyable = |args: &[CallArg]| {
+            args.iter().all(|arg| match arg {
+                CallArg::Positional(value) | CallArg::Named(_, value) => self.is_fresh_or_copyable_value(value),
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => false,
+            })
+        };
+        match &expr.node {
+            Expr::Literal(_) | Expr::FString(_) => true,
+            Expr::Paren(inner) | Expr::Try(inner) => self.is_fresh_value(inner),
+            Expr::Call(_, _, args) | Expr::Constructor(_, args) => arguments_are_fresh_or_copyable(args),
+            Expr::MethodCall(receiver, _, _, args) => {
+                self.is_fresh_or_copyable_value(receiver) && arguments_are_fresh_or_copyable(args)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether `expr` is a new value ([`Self::is_fresh_value`]) or has a checked type that is `Copy` or `Clone`,
+    /// so a value built from it takes nothing out of a place the program may use again.
+    ///
+    /// A part whose type the checker did not record counts as neither, which keeps the enclosing append's `Clone`
+    /// requirement.
+    fn is_fresh_or_copyable_value(&self, expr: &Spanned<Expr>) -> bool {
+        self.is_fresh_value(expr)
+            || self
+                .type_info
+                .expr_type(expr.span)
+                .is_some_and(|ty| self.is_copy_type(ty) || self.is_clone_type(ty))
+    }
+
     /// [`ResolvedType::SelfType`] in a trait method signature means the receiver type for this call site.
     fn concrete_type_for_trait_self(&self, receiver: &ResolvedType) -> ResolvedType {
         match receiver {
@@ -2865,7 +3990,11 @@ impl TypeChecker {
     /// For method **bodies**, `TypeChecker::concretize_self_type_in_annotation` in `check_decl.rs` maps `Self` to the
     /// owner's `self_ty` while checking the implementation. At a **call site**, `Self` means the instantiated
     /// receiver (for example `DataFrame[Order]` when calling on `x: DataFrame[Order]`).
-    fn substitute_self_in_resolved_type(&self, ty: ResolvedType, receiver: &ResolvedType) -> ResolvedType {
+    pub(in crate::typechecker::check_expr) fn substitute_self_in_resolved_type(
+        &self,
+        ty: ResolvedType,
+        receiver: &ResolvedType,
+    ) -> ResolvedType {
         match ty {
             ResolvedType::SelfType => self.concrete_type_for_trait_self(receiver),
             ResolvedType::Generic(name, args) => ResolvedType::Generic(
@@ -2977,6 +4106,7 @@ impl TypeChecker {
                 kind: param.kind,
                 has_default: param.has_default,
                 is_partial_preset: param.is_partial_preset,
+                is_mut: param.is_mut,
             })
             .collect();
         let return_type = self.substitute_self_in_resolved_type(method_info.return_type.clone(), receiver_ty);
@@ -3221,10 +4351,11 @@ impl TypeChecker {
             };
             let adoption = TypeBoundInfo {
                 name: type_name.clone(),
-                source_name: None,
+                source_name: self.trait_bound_source_name(type_name),
                 type_args: trait_args,
-                module_path: None,
+                module_path: self.trait_bound_module_path(type_name),
                 implementation_type_params: Vec::new(),
+                inferred: false,
             };
             return self
                 .resolve_unambiguous_adopted_trait_method_without_arg_prepass(std::slice::from_ref(&adoption), call);
@@ -3268,10 +4399,11 @@ impl TypeChecker {
                     receiver_ty: call.receiver_ty,
                     expected_return_ty: call.expected_return_ty,
                 };
+                let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &nt);
                 let ret = self.resolve_source_owner_method_without_arg_prepass(
                     &nt.methods,
                     &nt.method_overloads,
-                    &nt.trait_adoptions,
+                    &trait_adoptions,
                     &resolved_call,
                 )?;
                 if nt.is_rusttype {
@@ -3281,6 +4413,36 @@ impl TypeChecker {
             }
             _ => None,
         }
+    }
+
+    /// Resolve a zero-argument `receiver.method()` the compiler synthesizes, exactly as the written call is resolved
+    /// on a source-declared receiver.
+    ///
+    /// This is the first resolution a written call reaches (`check_method_call_with_expected`): the owner's sole
+    /// direct method, else its sole adopted trait method, with the same recorded facts at `call_span`, and the same
+    /// trait-module inheritance from `receiver_span`. `None` when that path does not decide the call, in which case a
+    /// written call falls through to the general method resolution.
+    pub(in crate::typechecker::check_expr) fn resolve_synthesized_source_method_call(
+        &mut self,
+        method: &str,
+        receiver_ty: &ResolvedType,
+        receiver_span: Span,
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let call = SourceMethodPrepass {
+            method,
+            receiver_surface: MemberBindingSurface::Instance,
+            type_args: &[],
+            args: &[],
+            span: call_span,
+            receiver_ty,
+            expected_return_ty,
+        };
+        let ret = self.resolve_unambiguous_source_method_without_arg_prepass(&call)?;
+        self.type_info
+            .inherit_same_trait_method_module(receiver_span, call_span);
+        Some(ret)
     }
 
     /// Resolve one source owner's sole direct or adopted method with declared argument context.
@@ -3507,6 +4669,17 @@ impl TypeChecker {
                 break;
             }
         }
+        // A `Hash` bound is met only by `@derive(Hash)`, which gives a type no `__hash__` (#1822), so the method the
+        // stdlib trait declares has nothing to call through the bound.
+        if method == HASH_DUNDER
+            && active_bounds
+                .iter()
+                .any(|bound| self.bound_is_builtin_trait(bound, TraitId::Hash))
+        {
+            self.errors
+                .push(errors::hash_method_through_hash_bound(placeholder_name, call_site_span));
+            return Some(ResolvedType::Unknown);
+        }
         let mut candidates = Vec::new();
         for bound in &active_bounds {
             if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
@@ -3564,10 +4737,82 @@ impl TypeChecker {
 
         let adoption = TypeBoundInfo {
             name: trait_name.to_string(),
-            source_name: None,
+            source_name: self.trait_bound_source_name(trait_name),
             type_args: trait_args,
-            module_path: None,
+            module_path: self.trait_bound_module_path(trait_name),
             implementation_type_params: Vec::new(),
+            inferred: false,
+        };
+        self.resolve_named_method(
+            &std::collections::HashMap::new(),
+            None,
+            Some(std::slice::from_ref(&adoption)),
+            method,
+            receiver_surface,
+            explicit_type_args,
+            args,
+            arg_types,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+        )
+    }
+
+    /// Resolve a method on a trait-typed value whose trait this module never bound, through the trait's owning module.
+    ///
+    /// A trait method may return a value of its own trait (`FallibleIterator.map` returns `FallibleIterator[U, E]`),
+    /// and a consumer can hold such a value without importing the trait: `numbers().map(double)` on a dependency's
+    /// adopter is checked through the adopter's own protocol, which the dependency's type carries together with the
+    /// trait's owning module. The next call in the chain names the trait only by its spelling, which is not bound here,
+    /// so it used to stay unresolved and the generated program called the method with the trait out of scope (#1761).
+    ///
+    /// The owning module is taken from what the checker already proved: the receiver's own trait dispatch when the
+    /// receiver is a call on the same trait, otherwise the stdlib module that trait resolution loaded it from. The
+    /// method then resolves exactly as it does on an adopter that carries the trait with that module, and records the
+    /// same dispatch, so lowering names the trait by its path. A name that is bound here, as a trait or as a type, is
+    /// left to ordinary resolution, and nothing is resolved when no owning module is known.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_unbound_trait_receiver_method(
+        &mut self,
+        receiver_span: Span,
+        receiver_ty: &ResolvedType,
+        method: &str,
+        receiver_surface: MemberBindingSurface,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        call_site_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let (trait_name, trait_args) = match receiver_ty {
+            ResolvedType::Named(name) => (name.as_str(), Vec::new()),
+            ResolvedType::Generic(name, args) => (name.as_str(), args.clone()),
+            _ => return None,
+        };
+        if self.lookup_semantic_trait_info(trait_name).is_some() || self.lookup_semantic_type_info(trait_name).is_some()
+        {
+            return None;
+        }
+        let receiver_module = match self.type_info.resolved_method_call(receiver_span) {
+            Some(ResolvedMethodCall {
+                dispatch:
+                    crate::typechecker::ResolvedMethodDispatch::Trait {
+                        trait_name: receiver_trait,
+                        module_path: Some(module_path),
+                        ..
+                    },
+                ..
+            }) if receiver_trait == trait_name => Some(module_path.clone()),
+            _ => None,
+        };
+        let module_path = receiver_module.or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))?;
+        let adoption = TypeBoundInfo {
+            name: trait_name.to_string(),
+            source_name: Some(trait_name.to_string()),
+            type_args: trait_args,
+            module_path: Some(module_path),
+            implementation_type_params: Vec::new(),
+            inferred: false,
         };
         self.resolve_named_method(
             &std::collections::HashMap::new(),
@@ -3621,6 +4866,23 @@ impl TypeChecker {
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), incan_ret, span);
     }
 
+    /// Return the constant a tuple index spells: an integer literal, a negated one, which counts from the end, or
+    /// either in parentheses.
+    ///
+    /// Lowering reads the same spellings when it turns the index into an element position, so every index accepted
+    /// here resolves to a position there.
+    fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
+        match &index.node {
+            Expr::Literal(Literal::Int(literal)) => Some(literal.value),
+            Expr::Unary(UnaryOp::Neg, operand) => match &operand.node {
+                Expr::Literal(Literal::Int(literal)) => literal.value.checked_neg(),
+                _ => None,
+            },
+            Expr::Paren(inner) => Self::constant_tuple_index(inner),
+            _ => None,
+        }
+    }
+
     /// Normalize a tuple index (supports negative indices) and emit bounds errors.
     fn resolve_tuple_index(&mut self, raw_idx: i64, len: usize, span: Span) -> Option<usize> {
         let len_i = len as i64;
@@ -3669,7 +4931,7 @@ impl TypeChecker {
     /// A type application and a subscript are the same syntax, so the arguments arrive as an expression rather
     /// than as types: `Deque[str]` is an index whose index is an identifier, and `Dict[str, int]` one whose index
     /// is a tuple. Only identifiers and nested applications are read; anything else is a genuine subscript and
-    /// returns `None` so the caller keeps its existing behaviour rather than inventing a type from a value.
+    /// returns `None` so the caller keeps its existing behavior rather than inventing a type from a value.
     fn type_arguments_from_index_expression(&self, index: &Spanned<Expr>) -> Option<Vec<ResolvedType>> {
         let elements: Vec<&Spanned<Expr>> = match &index.node {
             Expr::Tuple(items) => items.iter().collect(),
@@ -3753,7 +5015,10 @@ impl TypeChecker {
                 }
                 Some(CollectionTypeId::Dict) if args.len() >= 2 => {
                     let key_ty = &args[0];
-                    if !self.types_compatible(&index_ty, key_ty) {
+                    if self.types_compatible(&index_ty, key_ty) {
+                        // A numeric key of a narrower type is widened to the key type where it is lowered (RFC 009).
+                        self.record_value_destination_if_compatible(index.span, &index_ty, key_ty);
+                    } else {
                         self.errors.push(errors::index_type_mismatch(
                             &key_ty.to_string(),
                             &index_ty.to_string(),
@@ -3765,11 +5030,11 @@ impl TypeChecker {
                 Some(CollectionTypeId::Tuple) => {
                     // `Tuple[T1, ...]` (and `tuple[...]` normalized) behaves like a tuple.
                     let elems = args;
-                    let Expr::Literal(Literal::Int(raw_idx)) = &index.node else {
+                    let Some(raw_idx) = Self::constant_tuple_index(index) else {
                         self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                         return ResolvedType::Unknown;
                     };
-                    if let Some(idx) = self.resolve_tuple_index(raw_idx.value, elems.len(), span) {
+                    if let Some(idx) = self.resolve_tuple_index(raw_idx, elems.len(), span) {
                         return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                     }
                     ResolvedType::Unknown
@@ -3792,13 +5057,37 @@ impl TypeChecker {
                 }
                 ResolvedType::Str
             }
+            // A `const` `FrozenList[T]` is read like a list: `items[i]` is the element at an `int` index, counted from
+            // the end when negative, or an `IndexError` at run time (#1757).
+            ResolvedType::FrozenList(elem_ty) => {
+                if !is_intlike_for_index(&index_ty) {
+                    self.errors
+                        .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
+                }
+                *elem_ty
+            }
+            // A `const` `FrozenDict[K, V]` is read like a dict: `table[key]` is the value, or a `KeyError` at run
+            // time. A text key (`str` or `FrozenStr`) accepts any text probe (#1757).
+            ResolvedType::FrozenDict(key_ty, value_ty) => {
+                let text_probe_for_text_key = is_str_like(&index_ty) && is_str_like(&key_ty);
+                if !text_probe_for_text_key && self.types_compatible(&index_ty, &key_ty) {
+                    self.record_value_destination_if_compatible(index.span, &index_ty, &key_ty);
+                } else if !text_probe_for_text_key {
+                    self.errors.push(errors::index_type_mismatch(
+                        &key_ty.to_string(),
+                        &index_ty.to_string(),
+                        index.span,
+                    ));
+                }
+                *value_ty
+            }
             ResolvedType::Tuple(elems) => {
                 // Guardrail: tuple indexing must be an integer literal so we can bounds-check.
-                let Expr::Literal(Literal::Int(raw_idx)) = &index.node else {
+                let Some(raw_idx) = Self::constant_tuple_index(index) else {
                     self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                     return ResolvedType::Unknown;
                 };
-                if let Some(idx) = self.resolve_tuple_index(raw_idx.value, elems.len(), span) {
+                if let Some(idx) = self.resolve_tuple_index(raw_idx, elems.len(), span) {
                     return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                 }
                 ResolvedType::Unknown
@@ -3821,7 +5110,7 @@ impl TypeChecker {
         &mut self,
         base: &Spanned<Expr>,
         slice: &SliceExpr,
-        _span: Span,
+        span: Span,
     ) -> ResolvedType {
         let base_ty = self.check_expr(base);
 
@@ -3843,6 +5132,20 @@ impl TypeChecker {
         };
 
         match base_ty {
+            ty if self.is_user_operator_receiver(&ty) => {
+                let errors_before = self.errors.len();
+                check_component(start_ty.as_ref(), slice.start.as_deref(), &mut self.errors);
+                check_component(end_ty.as_ref(), slice.end.as_deref(), &mut self.errors);
+                check_component(step_ty.as_ref(), slice.step.as_deref(), &mut self.errors);
+                if self.errors.len() > errors_before {
+                    return ResolvedType::Unknown;
+                }
+                self.resolve_slice_dunder(&ty, slice, span).unwrap_or_else(|| {
+                    self.errors
+                        .push(errors::missing_method(&ty.to_string(), SLICE_HOOK, span));
+                    ResolvedType::Unknown
+                })
+            }
             ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
                 Some(CollectionTypeId::List) => {
                     // Validate slice bounds/step for lists as well (indices must be int-like).
@@ -3873,6 +5176,44 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Resolve `base[start:end:step]` on a user type through its `__getslice__` hook (`Sliceable[T]`), recording the
+    /// operator call for lowering.
+    ///
+    /// The hook takes each part as an `Option[int]`: `Some` of the written part, `None` for an omitted one. The parts
+    /// are checked once as `int` by the caller; the hook is resolved against placeholder `Option[int]` arguments at
+    /// a zero-width span after the slice, so no fact of a written part is checked or recorded twice. Returns `None`
+    /// when the type defines no `__getslice__`.
+    fn resolve_slice_dunder(&mut self, base_ty: &ResolvedType, slice: &SliceExpr, span: Span) -> Option<ResolvedType> {
+        let placeholder_span = Span::new(span.end, span.end);
+        let placeholder = |present: bool| {
+            let value = if present {
+                Expr::Call(
+                    Box::new(Spanned::new(
+                        Expr::Ident(constructors::as_str(ConstructorId::Some).to_string()),
+                        placeholder_span,
+                    )),
+                    Vec::new(),
+                    vec![CallArg::Positional(Spanned::new(
+                        Expr::Literal(Literal::Int(IntLiteral::synthetic(0))),
+                        placeholder_span,
+                    ))],
+                )
+            } else {
+                Expr::Literal(Literal::None)
+            };
+            CallArg::Positional(Spanned::new(value, placeholder_span))
+        };
+        let args = [slice.start.is_some(), slice.end.is_some(), slice.step.is_some()]
+            .into_iter()
+            .map(placeholder)
+            .collect::<Vec<_>>();
+        let arg_types = vec![option_ty(ResolvedType::Int); args.len()];
+        let ret = self.resolve_operator_dunder(base_ty, SLICE_HOOK, &args, &arg_types, span, None)?;
+        self.type_info
+            .record_resolved_operator_call(span, SLICE_HOOK, ResolvedOperatorKind::Slice);
+        Some(ret)
     }
 
     /// Type-check a field access (`base.field`) and return the field type.
@@ -3956,9 +5297,13 @@ impl TypeChecker {
                     (SymbolKind::Function(info), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
                         if !info.type_params.is_empty() {
-                            self.errors
-                                .push(errors::generic_function_reference(callable.as_str(), span));
-                            return ResolvedType::Unknown;
+                            // A local partial instantiates the generic function it names (RFC 084).
+                            if !self.is_generic_partial_target_span(span) {
+                                self.errors
+                                    .push(errors::generic_function_reference(callable.as_str(), span));
+                                return ResolvedType::Unknown;
+                            }
+                            self.generic_partial_target = Some(GenericPartialTarget::of_function(&callable, &info));
                         }
                         return Self::function_info_to_resolved_function_type(&info);
                     }
@@ -4137,10 +5482,7 @@ impl TypeChecker {
         };
 
         if let ResolvedType::Generic(name, args) = &base_ty
-            && matches!(
-                surface_types::from_str(name.as_str()),
-                Some(SurfaceTypeId::Json | SurfaceTypeId::Query)
-            )
+            && surface_types::from_str(name.as_str()).is_some_and(surface_types::field_access_reads_wrapped_value)
             && args.len() == 1
         {
             if field == "value" {
@@ -4302,6 +5644,76 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         self.check_method_call_with_expected(base, method, type_args, args, span, None)
+    }
+
+    /// Refuse a call that changes a place rooted at `self` inside a plain-`self` method (#1723).
+    ///
+    /// `self.items.pop()` in a `def pop(self)` body writes through a receiver the generated code borrows shared, so
+    /// the build would refuse it; reporting it here names the receiver to declare instead. The receiver chain is
+    /// followed the way assignments are (`Self::self_rooted_place`), and the method is judged by its declarations
+    /// ([`Self::method_receiver_change`]): only a call every candidate of which changes the receiver is refused. A
+    /// method the checker cannot classify is left alone, as is a receiver that is not rooted at `self`, which
+    /// [`Self::refuse_mutating_call_through_read_only_binding`] judges instead.
+    fn reject_mutating_call_through_immutable_self(
+        &mut self,
+        base: &Spanned<Expr>,
+        base_ty: &ResolvedType,
+        method: &str,
+        span: Span,
+    ) {
+        if self.current_immutable_self_method.is_none() {
+            return;
+        }
+        let Some(place) = Self::self_rooted_place(base) else {
+            return;
+        };
+        if self.method_receiver_change(base_ty, method, span) == ReceiverChange::Changes {
+            self.reject_write_through_immutable_self(&place, SelfMutation::MutatingCall { callee: method }, span);
+        }
+    }
+
+    /// Refuse a call that changes a place rooted at a local declared without `mut` or a parameter not marked `mut`
+    /// (#1561).
+    ///
+    /// A binding is immutable unless declared `mut`, and so is what it holds, so a call that changes its receiver goes
+    /// through the same refusal as a field or element write ([`Self::refuse_write_through_read_only_binding`]). The
+    /// method is judged by its declarations ([`Self::method_receiver_change`]): only a call every candidate of which
+    /// changes the receiver is refused, so a method the checker cannot classify is left alone. A generator's methods
+    /// advance it but take it by value, which a binding declared without `mut` hands over, so they are left alone too.
+    fn refuse_mutating_call_through_read_only_binding(
+        &mut self,
+        base: &Spanned<Expr>,
+        base_ty: &ResolvedType,
+        method: &str,
+        span: Span,
+    ) {
+        let generator = matches!(base_ty, ResolvedType::Generic(name, _)
+            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator));
+        if !generator && self.method_receiver_change(base_ty, method, span) == ReceiverChange::Changes {
+            self.refuse_write_through_read_only_binding(base, span);
+        }
+    }
+
+    /// Record the call at `span` when the receiver's source type declares `method` only with `mut self`.
+    ///
+    /// Only the type's own declarations answer, after resolving a method alias; a method a trait provides reaches
+    /// lowering through its trait dispatch fact, which carries the receiver itself. Builtin receivers and unknown
+    /// methods are not recorded.
+    fn record_mutable_receiver_method_call(&mut self, base_ty: &ResolvedType, method: &str, span: Span) {
+        let type_name = match base_ty {
+            ResolvedType::Named(name) => name,
+            ResolvedType::Generic(name, _) if collection_type_id(name.as_str()).is_none() => name,
+            _ => return,
+        };
+        let Some((declared, _)) = self.declared_method_receivers_and_adoptions(type_name, method) else {
+            return;
+        };
+        if !declared.is_empty() && declared.iter().all(|receiver| *receiver == Some(Receiver::Mutable)) {
+            self.type_info
+                .calls
+                .mutable_receiver_method_calls
+                .insert((span.start, span.end));
+        }
     }
 
     /// Classify a checked member-call receiver without recovering ownership from its spelling.
@@ -4470,6 +5882,81 @@ impl TypeChecker {
         })
     }
 
+    /// Return the type a builtin receiver's method takes its argument at `index` as, where the method stores the
+    /// argument in the receiver, looks it up among the receiver's elements or keys, or returns it as the receiver's
+    /// payload (#1859).
+    ///
+    /// `list[T].append(x)` stores `x` as a `T` and `extend` takes a `list[T]`, `dict[K, V].insert(k, v)` and
+    /// `set[T].add(x)` store their arguments as the key, value and element types, `list[T].contains(x)`, `count(x)`
+    /// and `index(x)`, `set[T].contains(x)`, and `dict[K, V].get(k)` and `contains_key(k)` look `x` or `k` up as an
+    /// element or a key (`get`'s default is a `V`), `Option[T].unwrap_or(x)` and `Result[T, E].unwrap_or(x)` return
+    /// `x` as the `T`, and `powf` on a `float` or `f32` takes an exponent of the receiver's own type. The argument is
+    /// checked against that type, so an integer literal there takes the float type a float slot expects, as it does in
+    /// a declaration, and a numeric argument of a narrower type is widened to it (RFC 009). An `Option` of a reference
+    /// (the `Option[&V]` of `dict.get`) and every other method give no expectation.
+    fn builtin_method_argument_expectation(base_ty: &ResolvedType, method: &str, index: usize) -> Option<ResolvedType> {
+        use incan_lang::lang::types::numerics::NumericTypeId;
+        let base_ty = match base_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+        if let Some(source) = super::super::numeric_type_id_for_compat(base_ty)
+            && let Some(helper) = numerics::integer_helper_from_str(method)
+            && index == 0
+            && numerics::supports_integer_helper(source, helper)
+        {
+            return Some(match helper.operation {
+                IntegerHelperOperation::Add | IntegerHelperOperation::Sub | IntegerHelperOperation::Mul => {
+                    base_ty.clone()
+                }
+                IntegerHelperOperation::Pow => ResolvedType::Numeric(numerics::NumericTypeId::U32),
+            });
+        }
+        match base_ty {
+            ResolvedType::Float | ResolvedType::Numeric(NumericTypeId::F32) => (index == 0
+                && float_methods::from_str(method) == Some(float_methods::FloatMethodId::Powf))
+            .then(|| base_ty.clone()),
+            ResolvedType::Generic(name, args) => match (collection_type_id(name.as_str()), args.as_slice()) {
+                (Some(CollectionTypeId::List), [element]) => match (list_methods::from_str(method)?, index) {
+                    (list_methods::ListMethodId::Append, 0) => Some(element.clone()),
+                    (list_methods::ListMethodId::Extend, 0) => Some(list_ty(element.clone())),
+                    (
+                        list_methods::ListMethodId::Contains
+                        | list_methods::ListMethodId::Count
+                        | list_methods::ListMethodId::Index,
+                        0,
+                    ) => Some(element.clone()),
+                    _ => None,
+                },
+                (Some(CollectionTypeId::Dict), [key, value]) => match (dict_methods::from_str(method)?, index) {
+                    (
+                        dict_methods::DictMethodId::Insert
+                        | dict_methods::DictMethodId::Get
+                        | dict_methods::DictMethodId::ContainsKey,
+                        0,
+                    ) => Some(key.clone()),
+                    (dict_methods::DictMethodId::Insert | dict_methods::DictMethodId::Get, 1) => Some(value.clone()),
+                    _ => None,
+                },
+                (Some(CollectionTypeId::Set), [element]) => (index == 0
+                    && matches!(
+                        set_methods::from_str(method),
+                        Some(set_methods::SetMethodId::Add | set_methods::SetMethodId::Contains)
+                    ))
+                .then(|| element.clone()),
+                (Some(CollectionTypeId::Option), [payload]) => (index == 0
+                    && option_methods::from_str(method) == Some(option_methods::OptionMethodId::UnwrapOr)
+                    && !matches!(payload, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+                .then(|| payload.clone()),
+                (Some(CollectionTypeId::Result), [ok, _]) => (index == 0
+                    && result_methods::from_str(method) == Some(ResultMethodId::UnwrapOr))
+                .then(|| ok.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Type-check `receiver.method(...)` once the receiver, method name, explicit type arguments, and value arguments
     /// have been identified, against an optional type for the destination the result is being produced for.
     ///
@@ -4555,7 +6042,36 @@ impl TypeChecker {
             return self.check_builtin_list_repeat_call(args, span);
         }
 
-        let mut base_ty = self.check_type_receiver_expr(base);
+        let receiver_expected = expected_return_ty.and_then(|expected| {
+            let owner = match expected {
+                ResolvedType::Generic(name, _) | ResolvedType::Named(name) => name,
+                _ => return None,
+            };
+            let method_info = self
+                .lookup_semantic_trait_info(owner)
+                .and_then(|info| info.methods.get(method))
+                .or_else(|| match self.lookup_semantic_type_info(owner) {
+                    Some(TypeInfo::Model(info)) => info.methods.get(method),
+                    Some(TypeInfo::Class(info)) => info.methods.get(method),
+                    Some(TypeInfo::Newtype(info)) => info.methods.get(method),
+                    Some(TypeInfo::Enum(info)) => info.methods.get(method),
+                    Some(TypeInfo::Builtin | TypeInfo::TypeAlias) | None => None,
+                });
+            method_info
+                .is_some_and(|info| matches!(info.return_type, ResolvedType::SelfType))
+                .then_some(expected)
+        });
+        let mut base_ty = match receiver_expected {
+            Some(expected) => self.check_type_receiver_expr_with_expected(base, expected),
+            None => self.check_type_receiver_expr(base),
+        };
+        // In a declared type's own method, a `Self` value (`other: Self`) is that type, so a method called on it
+        // resolves as it does on `self`; a trait default keeps `Self` open (#1561).
+        if matches!(base_ty, ResolvedType::SelfType)
+            && let Some(owner_ty) = self.current_method_owner_type()
+        {
+            base_ty = owner_ty;
+        }
         let receiver_surface = self.checked_member_receiver_surface(base, &base_ty);
         if let Some(expected) = expected_return_ty
             && matches!(
@@ -4582,6 +6098,10 @@ impl TypeChecker {
             self.check_call_args(args);
             return ResolvedType::Unknown;
         }
+        self.reject_mutating_call_through_immutable_self(base, &base_ty, method, span);
+        self.refuse_mutating_call_through_read_only_binding(base, &base_ty, method, span);
+        self.note_mut_param_method_call(base, &base_ty, method);
+        self.record_mutable_receiver_method_call(&base_ty, method, span);
         if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {
             self.type_info.record_resolved_identity(span, identity);
         }
@@ -4720,14 +6240,17 @@ impl TypeChecker {
                         // re-deriving a target from the qualifier and member spellings.
                         self.type_info
                             .record_call_site_callable_params_exact(span, &info.params);
-                        self.validate_stdlib_module_function_call(
+                        let result = self.validate_stdlib_module_function_call(
                             callable.as_str(),
                             &info,
                             type_args,
                             args,
                             span,
                             expected_return_ty,
-                        )
+                        );
+                        let identity = self.type_info.resolved_identity(span).cloned();
+                        self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
+                        result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
@@ -4791,11 +6314,11 @@ impl TypeChecker {
                 None
             }
         });
-        let result_callback_input = match (&base_ty, result_methods::from_str(method)) {
+        let result_callback = match (&base_ty, result_methods::from_str(method)) {
             (ResolvedType::Generic(name, type_args), Some(method_id))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && type_args.len() == 2 =>
             {
-                match method_id {
+                let input = match method_id {
                     ResultMethodId::Map | ResultMethodId::AndThen | ResultMethodId::Inspect => {
                         Some(type_args[0].clone())
                     }
@@ -4803,7 +6326,16 @@ impl TypeChecker {
                         Some(type_args[1].clone())
                     }
                     _ => None,
-                }
+                };
+                input.map(|input| {
+                    let output = Self::result_callback_expected_output(
+                        method_id,
+                        &type_args[0],
+                        &type_args[1],
+                        expected_return_ty,
+                    );
+                    (input, output)
+                })
             }
             _ => None,
         };
@@ -4819,11 +6351,11 @@ impl TypeChecker {
         let enum_variant_construction =
             self.enum_variant_construction_instantiation(&base_ty, method, expected_return_ty);
 
-        // Collect arg types for method-specific validation.
-        let arg_types: Vec<ResolvedType> = args
-            .iter()
-            .enumerate()
-            .map(|(index, arg)| {
+        // Collect arg types for method-specific validation. A fold's callback reads the accumulator type the
+        // argument before it gives, so each argument is checked after the ones before it.
+        let mut arg_types: Vec<ResolvedType> = Vec::with_capacity(args.len());
+        for (index, arg) in args.iter().enumerate() {
+            let arg_ty = {
                 let arg_expr = match arg {
                     CallArg::Positional(expr)
                     | CallArg::Named(_, expr)
@@ -4851,29 +6383,57 @@ impl TypeChecker {
                     self.check_expr(arg_expr);
                     self.errors.truncate(diagnostics_before);
                     ResolvedType::Unknown
-                } else if let Some(input_ty) = result_callback_input.as_ref()
+                } else if let Some((input_ty, output_ty)) = result_callback.as_ref()
                     && is_closure
                 {
                     let expected = ResolvedType::Function(
                         vec![CallableParam::positional(input_ty.clone())],
-                        Box::new(ResolvedType::Unknown),
+                        Box::new(output_ty.clone()),
                     );
+                    self.check_expr_with_expected(arg_expr, Some(&expected))
+                } else if is_closure
+                    && let Some(expected) =
+                        self.iterator_callback_expectation(&base_ty, method, index, arg_types.first())
+                {
                     self.check_expr_with_expected(arg_expr, Some(&expected))
                 } else if let Some(payload_ty) = variant_payload_ty {
                     self.check_expr_with_expected(arg_expr, Some(payload_ty))
+                } else if matches!(arg, CallArg::Positional(_))
+                    && !is_closure
+                    && let Some(expected) = Self::builtin_method_argument_expectation(&base_ty, method, index)
+                {
+                    let arg_ty = self.check_expr_with_expected(arg_expr, Some(&expected));
+                    // A numeric argument of a narrower type is widened to the slot's type where it is lowered.
+                    self.record_value_destination_if_compatible(arg_expr.span, &arg_ty, &expected);
+                    arg_ty
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }
-            })
-            .collect();
+            };
+            arg_types.push(arg_ty);
+        }
+        if let Some(slot) = self.iterator_callback_slot(&base_ty, method) {
+            for arg in args {
+                let (CallArg::Positional(arg_expr)
+                | CallArg::Named(_, arg_expr)
+                | CallArg::PositionalUnpack(arg_expr)
+                | CallArg::KeywordUnpack(arg_expr)) = arg;
+                self.refuse_capturing_callable(arg_expr, &slot);
+            }
+        }
 
         if self.receiver_has_computed_property(&base_ty, method, span) {
             self.errors.push(errors::property_called_as_method(method, span));
             return ResolvedType::Unknown;
         }
 
+        if let Some(ret) = self.resolve_list_method_by_argument_count(&base_ty, method, args, &arg_types, span) {
+            return ret;
+        }
         if let Some(ret) = self.resolve_iterator_protocol_method_call(&base_ty, method, args, &arg_types, span) {
-            self.mark_direct_iterator_binding_consumed(base, method, span);
+            if self.iterator_protocol_element_type(&base_ty).is_some() {
+                self.mark_direct_iterator_binding_consumed(base, method, span);
+            }
             return ret;
         }
 
@@ -4904,6 +6464,7 @@ impl TypeChecker {
                 rust_path: &path,
                 method,
                 receiver_metadata: self.rust_metadata_for_receiver_expr(base).as_ref(),
+                receiver_binding: self.rust_import_binding_for_receiver_expr(base),
                 type_args,
                 args,
                 arg_types: &arg_types,
@@ -4921,8 +6482,28 @@ impl TypeChecker {
         {
             return ret;
         }
-        // Trait default methods typecheck against `Self`, so be permissive here too.
+        if let Some(ret) = self.check_integer_overflow_helper(&base_ty, method, type_args, args, &arg_types, span) {
+            return ret;
+        }
+        // In a trait's own method, a method that the trait or a supertrait of it declares, called on a `Self` value,
+        // has that declaration's signature (#1561). Any other method called on `Self` is left open, as is every one in
+        // the standard library's own source, whose trait defaults its own lowering rules expand.
         if matches!(base_ty, ResolvedType::SelfType) {
+            if !self.checks_standard_library_source()
+                && let Some(trait_name) = self.current_trait_name.clone()
+                && let Some(method_info) = self.trait_method_info_resolved(&trait_name, method, span)
+            {
+                return self.check_generic_method_call(
+                    method,
+                    method_info,
+                    type_args,
+                    args,
+                    &arg_types,
+                    span,
+                    &base_ty,
+                    expected_return_ty,
+                );
+            }
             return ResolvedType::Unknown;
         }
 
@@ -5034,15 +6615,10 @@ impl TypeChecker {
         }
 
         // Builtin methods for builtin types (so we don't report missing methods).
-        if (matches!(base_ty, ResolvedType::Float)
-            || matches!(
-                base_ty,
-                ResolvedType::Numeric(
-                    incan_lang::lang::types::numerics::NumericTypeId::F32
-                        | incan_lang::lang::types::numerics::NumericTypeId::F64
-                )
-            ))
-            && let Some(id) = float_methods::from_str(method)
+        if matches!(
+            base_ty,
+            ResolvedType::Float | ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
+        ) && let Some(id) = float_methods::from_str(method)
         {
             use float_methods::FloatMethodId as M;
             match id {
@@ -5054,9 +6630,31 @@ impl TypeChecker {
             return ResolvedType::Bytes;
         }
 
+        // The builtin text return trip (#1668): `str.encode` and `bytes.decode` accept optional codec labels that are
+        // validated against the shared `text_codecs` tables when they are literals.
+        if (matches!(base_ty, ResolvedType::Str) || is_frozen_str(&base_ty))
+            && string_methods::from_str(method) == Some(StringMethodId::Encode)
+        {
+            self.validate_text_codec_call("str.encode", false, args, &arg_types, span);
+            return ResolvedType::Bytes;
+        }
+        if (matches!(base_ty, ResolvedType::Bytes) || is_frozen_bytes(&base_ty))
+            && bytes_methods::from_str(method) == Some(bytes_methods::BytesMethodId::Decode)
+        {
+            self.validate_text_codec_call("bytes.decode", true, args, &arg_types, span);
+            // Malformed input is a data failure the caller handles, so the result is a `Result` over the prelude
+            // validation error (#1668); `str.encode` cannot fail on valid text and stays a plain `bytes`.
+            return ResolvedType::Generic(
+                "Result".to_string(),
+                vec![ResolvedType::Str, ResolvedType::Named("ValidationError".to_string())],
+            );
+        }
+
+        // Every `str` method other than `encode` (checked above) takes its arguments by position (#1561).
         if matches!(base_ty, ResolvedType::Str)
             && let Some((id, ret)) = runtime_string_method_identity_and_return(method)
         {
+            self.refuse_non_positional_builtin_args(&format!("str.{}", string_methods::as_str(id)), args);
             if type_args.is_empty()
                 && HelperOp::for_selected_string_method(id).is_some()
                 && self.validate_selected_string_helper_call(id, args, &arg_types, span)
@@ -5069,6 +6667,7 @@ impl TypeChecker {
         if is_frozen_str(&base_ty)
             && let Some(ret) = string_method_return(method, true)
         {
+            self.refuse_non_positional_builtin_args(&format!("FrozenStr.{method}"), args);
             return ret;
         }
         if is_frozen_bytes(&base_ty)
@@ -5081,6 +6680,7 @@ impl TypeChecker {
             }
         }
 
+        self.check_builtin_collection_method_args(&base_ty, method, args, span);
         match &base_ty {
             ResolvedType::FrozenList(_) => {
                 if let Some(id) = frozen_list_methods::from_str(method) {
@@ -5091,35 +6691,68 @@ impl TypeChecker {
                     }
                 }
             }
-            ResolvedType::FrozenSet(_) => {
+            ResolvedType::FrozenSet(elem_ty) => {
                 if let Some(id) = frozen_set_methods::from_str(method) {
                     use frozen_set_methods::FrozenSetMethodId as M;
                     match id {
                         M::Len => return ResolvedType::Int,
-                        M::IsEmpty | M::Contains => return ResolvedType::Bool,
+                        M::IsEmpty => return ResolvedType::Bool,
+                        M::Contains => {
+                            // The probe follows the membership rule of `item in frozen_set`: an element, or any text
+                            // for a text element.
+                            self.validate_membership_probe_call("FrozenSet.contains", elem_ty, true, args, &arg_types);
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
-            ResolvedType::FrozenDict(_, _) => {
+            ResolvedType::FrozenDict(key_ty, _) => {
                 if let Some(id) = frozen_dict_methods::from_str(method) {
                     use frozen_dict_methods::FrozenDictMethodId as M;
                     match id {
                         M::Len => return ResolvedType::Int,
-                        M::IsEmpty | M::ContainsKey => return ResolvedType::Bool,
+                        M::IsEmpty => return ResolvedType::Bool,
+                        M::ContainsKey => {
+                            // The probe follows the key rule of `table[key]`: a text key (`str` or `FrozenStr`)
+                            // takes any text probe (#1757).
+                            self.validate_membership_probe_call(
+                                "FrozenDict.contains_key",
+                                key_ty,
+                                true,
+                                args,
+                                &arg_types,
+                            );
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
             _ => {}
         }
 
-        // Option[T] helpers.
-        //
-        // NOTE: `Dict.get(k)` is backed by Rust `HashMap::get`, which returns `Option<&V>`.
-        // We model that as `Option[&V]` internally, so helpers like `.copied()` can typecheck in the same way they do
-        // in Rust.
+        // Option[T] helpers. `copied` applies to an `Option` of a Rust reference (a Rust API's result); `dict.get`
+        // answers with the value itself, so it has nothing to copy.
         if base_ty.is_option() {
             let inner = base_ty.option_inner_type().cloned().unwrap_or(ResolvedType::Unknown);
+            if matches!(method, "copied" | "cloned")
+                && !matches!(inner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                && matches!(&base.node, Expr::MethodCall(_, name, _, _) if name == "get")
+            {
+                self.errors.push(
+                    errors::missing_method(&base_ty.to_string(), method, span).with_hint(format!(
+                        "`get` returns the stored value itself, so `.{method}()` has nothing to do; remove it"
+                    )),
+                );
+                return ResolvedType::Unknown;
+            }
             match option_methods::from_str(method) {
+                Some(option_methods::OptionMethodId::AsMut) => {
+                    if !args.is_empty() {
+                        self.errors
+                            .push(errors::builtin_arity("Option.as_mut", 0, args.len(), span));
+                    }
+                    return option_ty(ResolvedType::RefMut(Box::new(inner)));
+                }
                 Some(option_methods::OptionMethodId::Copied) => {
                     // Rust: `Option<&T>::copied() -> Option<T>` (for `T: Copy`).
                     if let ResolvedType::Ref(t) | ResolvedType::RefMut(t) = inner {
@@ -5135,7 +6768,7 @@ impl TypeChecker {
                     //
                     // For `Option<&T>`, this is `unwrap_or(default: &T) -> &T`.
                     if let Some(default_ty) = arg_types.first()
-                        && !self.types_compatible(default_ty, &inner)
+                        && !self.unwrap_or_default_fits_payload(default_ty, &inner)
                     {
                         self.errors
                             .push(errors::type_mismatch(&inner.to_string(), &default_ty.to_string(), span));
@@ -5167,7 +6800,7 @@ impl TypeChecker {
                 }
                 Some(result_methods::ResultMethodId::UnwrapOr) => {
                     if let Some(default_ty) = arg_types.first()
-                        && !self.types_compatible(default_ty, &ok_ty)
+                        && !self.unwrap_or_default_fits_payload(default_ty, &ok_ty)
                     {
                         self.errors
                             .push(errors::type_mismatch(&ok_ty.to_string(), &default_ty.to_string(), span));
@@ -5245,7 +6878,13 @@ impl TypeChecker {
                                 self.errors
                                     .push(errors::type_mismatch(&elem.to_string(), &arg0.to_string(), span));
                             }
-                            if !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
+                            // A new value moves into the list; a value taken from a place is copied (#1821).
+                            let appends_fresh_value = matches!(
+                                args.first(),
+                                Some(CallArg::Positional(value) | CallArg::Named(_, value))
+                                    if self.is_fresh_value(value)
+                            );
+                            if !appends_fresh_value && !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
                                 self.errors
                                     .push(errors::list_append_requires_clone(&clone_ty.to_string(), span));
                             }
@@ -5269,13 +6908,6 @@ impl TypeChecker {
                             return ResolvedType::Unit;
                         }
                         M::Clone => {
-                            if !args.is_empty() {
-                                self.errors.push(errors::type_mismatch(
-                                    "no arguments",
-                                    &format!("{} argument(s)", args.len()),
-                                    span,
-                                ));
-                            }
                             if !self.is_copy_type(&elem) && !self.is_clone_type(&elem) {
                                 self.errors
                                     .push(errors::list_clone_requires_clone(&elem.to_string(), span));
@@ -5297,11 +6929,32 @@ impl TypeChecker {
                     match id {
                         M::Keys => return list_ty(key),
                         M::Values => return list_ty(val),
-                        // `Dict.get(k)` is backed by Rust `HashMap::get`, which returns `Option<&V>`.
-                        // Model this as an internal reference so chained Rust-idiom helpers (like `.copied()`)
-                        // typecheck consistently with codegen.
-                        M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
+                        // `Dict.get(k, default)` is the value, or `default` when no entry holds `k`. The entry is
+                        // always copied out, so a value type that cannot be copied is refused
+                        // as a kept lookup is.
+                        M::Get if args.len() == 2 => {
+                            self.validate_dict_get_with_default(&key, &val, args, &arg_types);
+                            self.note_dict_lookup_value(span, &val);
+                            return val;
+                        }
+                        // `dict.get(k)` answers with the stored value, static or not. Lowering reads the entry in
+                        // place when the result is only read and copies it otherwise (`check_expr/dict_lookups.rs`).
+                        M::Get => {
+                            self.refuse_non_positional_builtin_args("Dict.get", args);
+                            if args.is_empty() {
+                                self.errors.push(errors::builtin_arity("Dict.get", 1, 0, span));
+                            } else if args.len() > 2 {
+                                self.errors
+                                    .push(errors::builtin_max_arity("Dict.get", 2, args.len(), span));
+                            }
+                            self.note_dict_lookup_value(span, &val);
+                            return option_ty(val.clone());
+                        }
                         M::Insert => return ResolvedType::Unit,
+                        M::ContainsKey => {
+                            self.validate_membership_probe_call("Dict.contains_key", &key, false, args, &arg_types);
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
@@ -5361,6 +7014,19 @@ impl TypeChecker {
             self.errors
                 .push(errors::missing_method(&base_ty.to_string(), method, span));
             return ResolvedType::Unknown;
+        }
+        if let Some(ret) = self.resolve_unbound_trait_receiver_method(
+            base.span,
+            &base_ty,
+            method,
+            receiver_surface,
+            type_args,
+            args,
+            &arg_types,
+            span,
+            expected_return_ty,
+        ) {
+            return ret;
         }
 
         if let ResolvedType::Generic(type_name, _type_args) = &base_ty
@@ -5423,10 +7089,11 @@ impl TypeChecker {
                 }
                 TypeInfo::Newtype(newtype) => {
                     let resolved_method = self.resolve_newtype_method_name(&newtype, method);
+                    let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &newtype);
                     if let Some(ret) = self.resolve_named_method(
                         &newtype.methods,
                         Some(&newtype.method_overloads),
-                        Some(&newtype.trait_adoptions),
+                        Some(&trait_adoptions),
                         resolved_method,
                         receiver_surface,
                         type_args,
@@ -5447,6 +7114,7 @@ impl TypeChecker {
                             rust_path: path,
                             method: resolved_method,
                             receiver_metadata: None,
+                            receiver_binding: None,
                             type_args,
                             args,
                             arg_types: &arg_types,
@@ -5534,10 +7202,11 @@ impl TypeChecker {
                     }
                     TypeInfo::Newtype(nt) => {
                         let resolved_method = self.resolve_newtype_method_name(&nt, method);
+                        let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &nt);
                         if let Some(ret) = self.resolve_named_method(
                             &nt.methods,
                             Some(&nt.method_overloads),
-                            Some(&nt.trait_adoptions),
+                            Some(&trait_adoptions),
                             resolved_method,
                             receiver_surface,
                             type_args,
@@ -5560,6 +7229,7 @@ impl TypeChecker {
                                 rust_path: path,
                                 method: resolved_method,
                                 receiver_metadata: None,
+                                receiver_binding: None,
                                 type_args,
                                 args,
                                 arg_types: &arg_types,
@@ -5574,6 +7244,25 @@ impl TypeChecker {
                     _ => {}
                 },
             }
+        }
+
+        // A method a generic placeholder's bound declares is typed by that bound, a protocol hook such as `__next__`
+        // included: `source.__next__()` on `Source with Iterator[T]` is an `Option[T]`, not the permissive `Unknown`
+        // below, so a value it yields keeps its type `T` downstream.
+        if self.is_generic_placeholder_type(&base_ty)
+            && let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
+            && let Some(ret) = self.resolve_generic_placeholder_method(
+                &placeholder_name,
+                method,
+                type_args,
+                args,
+                &arg_types,
+                span,
+                &base_ty,
+                expected_return_ty,
+            )
+        {
+            return ret;
         }
 
         // Reflection magic helpers are modeled explicitly above and should error on unsupported receivers rather than
@@ -5598,25 +7287,12 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        // RFC 023: Method calls on generic type variables are permissive.
-        //
-        // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
-        // At the Incan typechecker level we allow the call and return the same type variable.
+        // RFC 023: the Rust backend infers the bound a method call on a type parameter needs only for `.clone()`
+        // (`T: Clone`), which returns the parameter. Inside the declaration that introduces the parameter, its bounds
+        // are all it has, so any other method no bound declares is refused. A bound whose trait the checker cannot see
+        // (a Rust trait, an unresolved name) may declare it, and the result's type is then unknown rather than the
+        // parameter's. A placeholder of no enclosing declaration stays permissive.
         if self.is_generic_placeholder_type(&base_ty) {
-            if let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
-                && let Some(ret) = self.resolve_generic_placeholder_method(
-                    &placeholder_name,
-                    method,
-                    type_args,
-                    args,
-                    &arg_types,
-                    span,
-                    &base_ty,
-                    expected_return_ty,
-                )
-            {
-                return ret;
-            }
             if let Some(ret) = self.generic_reflection_magic_method_return_type(method) {
                 if let Some(id) = magic_methods::from_str(method) {
                     self.record_compiler_generated_member_identity(
@@ -5627,6 +7303,17 @@ impl TypeChecker {
                 }
                 self.validate_reflection_magic_call(method, type_args, args, span);
                 return ret;
+            }
+            if let Some(type_param) = self.rigid_type_param_name(&base_ty)
+                && method != trait_bounds::rust::CLONE_METHOD
+            {
+                if self.active_type_param_bounds_are_visible(type_param)
+                    && !self.active_type_param_bound_declares_member(type_param, method)
+                {
+                    self.errors
+                        .push(errors::type_parameter_method_not_declared(type_param, method, span));
+                }
+                return ResolvedType::Unknown;
             }
             return base_ty.clone();
         }
@@ -5696,6 +7383,7 @@ impl TypeChecker {
             type_args: Vec::new(),
             module_path: None,
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         let method_info = self.trait_method_info_resolved_for_adoption(&adoption, method, span)?;
         if !self.is_clone_type(receiver_ty) {
@@ -5730,6 +7418,47 @@ impl TypeChecker {
         }
     }
 
+    /// Return the owner type parameters an associated function's result carries that neither its arguments nor a
+    /// declared default can fix, in declaration order; empty when the call is not open.
+    ///
+    /// `HashMap::new() -> HashMap<K, V, RandomState>` leaves `K` and `V` to the caller's context, while the hasher
+    /// parameter has a declared default and is never open; `from_iter(iter: I) where I: IntoIterator<Item = (K,
+    /// V)>` names them in a parameter, so the argument fixes them and nothing is open. A result written as `Self`
+    /// stands for the owner with every parameter. The displays are compared token by token so a parameter named
+    /// `K` does not match inside `Key`.
+    pub(in crate::typechecker) fn open_rust_owner_type_args(
+        sig: &RustFunctionSig,
+        type_info: &incan_lang::interop::RustTypeInfo,
+    ) -> Vec<String> {
+        let mentions = |display: &str, param: &str| {
+            display
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .any(|token| token == param)
+        };
+        let result_is_self = mentions(sig.return_type.as_str(), "Self");
+        let open = type_info
+            .type_params
+            .iter()
+            .enumerate()
+            .filter(|(index, param)| {
+                let has_default = type_info
+                    .type_param_defaults
+                    .get(*index)
+                    .is_some_and(|default| default.is_some());
+                !has_default && (result_is_self || mentions(sig.return_type.as_str(), param))
+            })
+            .map(|(_, param)| param.clone())
+            .collect::<Vec<_>>();
+        if open.iter().any(|param| {
+            sig.params
+                .iter()
+                .any(|argument| mentions(argument.type_display.as_str(), param))
+        }) {
+            return Vec::new();
+        }
+        open
+    }
+
     /// Return whether a borrowed Rust value's `to_vec` method produces Incan `bytes`.
     fn rust_ref_to_vec_returns_bytes(path: &str) -> bool {
         path.starts_with("[u8") || (path.contains("GenericArray") && (path.contains("<u8") || path.contains("u8,")))
@@ -5740,6 +7469,59 @@ impl TypeChecker {
         match &base.node {
             Expr::MethodCall(_, method, _, _) => matches!(method.as_str(), "as_bytes" | "digest" | "finalize_reset"),
             _ => false,
+        }
+    }
+}
+
+/// Return the values a `match` or `loop:` expression can produce: the expression body of each arm, and each value a
+/// `break` of the loop itself gives, in source order (#1561).
+///
+/// A block arm produces no value, and a `break` inside a nested `loop:`, `while` or `for` leaves that inner loop, so
+/// neither is one of them. Any other expression has none.
+fn branch_values(value: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
+    match &value.node {
+        Expr::Match(_, arms) => arms
+            .iter()
+            .filter_map(|arm| match &arm.node.body {
+                MatchBody::Expr(body) => Some(body),
+                MatchBody::Block(_) => None,
+            })
+            .collect(),
+        Expr::Loop(loop_expr) => {
+            let mut values = Vec::new();
+            collect_break_values(&loop_expr.body, &mut values);
+            values
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Collect the values the `break` statements of one loop body give, entering `if` branches, `unsafe` blocks and the
+/// block arms of a `match` statement, but no nested loop, whose `break` statements leave that loop.
+fn collect_break_values<'a>(body: &'a [Spanned<Statement>], values: &mut Vec<&'a Spanned<Expr>>) {
+    for statement in body {
+        match &statement.node {
+            Statement::Break(Some(value)) => values.push(value),
+            Statement::If(if_stmt) => {
+                collect_break_values(&if_stmt.then_body, values);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_break_values(branch, values);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    collect_break_values(else_body, values);
+                }
+            }
+            Statement::Unsafe(unsafe_stmt) => collect_break_values(&unsafe_stmt.body, values),
+            Statement::Expr(expr) => {
+                if let Expr::Match(_, arms) = &expr.node {
+                    for arm in arms {
+                        if let MatchBody::Block(block) = &arm.node.body {
+                            collect_break_values(block, values);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

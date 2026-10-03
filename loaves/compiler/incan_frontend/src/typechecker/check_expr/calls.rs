@@ -4,6 +4,7 @@
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
 use crate::ast::{CallArg, Expr, ImportPath, ParamKind, Span, Spanned, Type};
+use crate::diagnostics::errors::TypeArgumentOrigin;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{
@@ -22,10 +23,10 @@ use incan_lang::lang::c_abi;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::stdlib;
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::surface::types::SurfaceTypeId;
 use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::SemanticSourceTargetKind;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 
@@ -34,6 +35,9 @@ mod builtins;
 mod constructors;
 mod generic_bounds;
 mod rust_boundary;
+mod task_arguments;
+
+pub(in crate::typechecker::check_expr) use generic_bounds::first_open_type_param;
 
 /// Source-facing and canonical identity for one constructor reached through a public package namespace.
 pub(super) struct PublicModuleConstructorContext<'a> {
@@ -256,14 +260,19 @@ impl TypeChecker {
                     self.type_info.record_resolved_identity(callee.span, identity);
                 }
                 return match (kind, public_library) {
-                    (SymbolKind::Function(info), _) => self.validate_stdlib_module_function_call(
-                        callable.as_str(),
-                        &info,
-                        type_args,
-                        args,
-                        span,
-                        expected_return_ty,
-                    ),
+                    (SymbolKind::Function(info), _) => {
+                        let result = self.validate_stdlib_module_function_call(
+                            callable.as_str(),
+                            &info,
+                            type_args,
+                            args,
+                            span,
+                            expected_return_ty,
+                        );
+                        let identity = self.type_info.resolved_identity(callee.span).cloned();
+                        self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
+                        result
+                    }
                     (SymbolKind::FunctionOverloads(overloads), _) => self
                         .validate_function_overload_call_with_callee_span(
                             callable.as_str(),
@@ -344,7 +353,17 @@ impl TypeChecker {
                 return ResolvedType::Unknown;
             }
 
-            if let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty) {
+            // RFC 054: a generic standard-library function reached through a surface-function import, such as
+            // `channel[str](4)`, takes explicit type arguments as any generic function does, so a call that writes
+            // them is checked against the function's declaration below.
+            let explicit_generic_surface_call = !type_args.is_empty()
+                && self.active_surface_function_import(name).is_some()
+                && self.lookup_symbol(name).is_some_and(
+                    |symbol| matches!(&symbol.kind, SymbolKind::Function(info) if !info.type_params.is_empty()),
+                );
+            if !explicit_generic_surface_call
+                && let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty)
+            {
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -386,7 +405,7 @@ impl TypeChecker {
                             self.record_direct_callee_identity(name, callee.span);
                             return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
                         }
-                        if let Some(tid) = surface_types::from_str(name) {
+                        if let Some(tid) = self.constructor_surface_type(name) {
                             if !type_args.is_empty() {
                                 self.errors
                                     .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -403,7 +422,9 @@ impl TypeChecker {
                                 return self.check_json_query_constructor_call(tid, args, span);
                             }
                             if matches!(tid, SurfaceTypeId::Html) {
-                                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                                // The value is typed by the binding the call spells, so `Page(...)` under
+                                // `from std.web import Html as Page` is a `Page`, as its annotations are.
+                                return ResolvedType::Named(name.clone());
                             }
                             if matches!(tid, SurfaceTypeId::ValidationError) {
                                 return self.check_constructor(name, args, span);
@@ -411,7 +432,17 @@ impl TypeChecker {
                         }
                         let explicit_constructor_context =
                             self.explicit_constructor_type_context(name, &type_info, type_args, span);
-                        let explicit_constructor_ty = explicit_constructor_context.as_ref().map(|(ty, _)| ty.clone());
+                        if let Some((_, type_bindings)) = &explicit_constructor_context {
+                            self.refuse_unsatisfied_nominal_type_arguments(
+                                name,
+                                type_bindings,
+                                TypeArgumentOrigin::Explicit,
+                                span,
+                            );
+                        }
+                        let constructor_context = explicit_constructor_context
+                            .or_else(|| self.expected_constructor_type_context(name, &type_info, expected_return_ty));
+                        let contextual_constructor_ty = constructor_context.as_ref().map(|(ty, _)| ty.clone());
                         if let TypeInfo::Model(model) = &type_info
                             && model
                                 .derives
@@ -431,7 +462,7 @@ impl TypeChecker {
                                 .ident_kinds
                                 .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                             let constructor_ty = self.check_constructor(name, args, span);
-                            return explicit_constructor_ty.unwrap_or(constructor_ty);
+                            return contextual_constructor_ty.unwrap_or(constructor_ty);
                         }
                         let ctor_fields = match &type_info {
                             TypeInfo::Model(info) => Some(info.fields.clone()),
@@ -442,7 +473,7 @@ impl TypeChecker {
                             return ResolvedType::Unknown;
                         };
                         self.record_direct_callee_identity(name, callee.span);
-                        if let Some((_, type_bindings)) = &explicit_constructor_context {
+                        if let Some((_, type_bindings)) = &constructor_context {
                             for field in fields.values_mut() {
                                 field.ty = substitute_resolved_type(&field.ty, type_bindings);
                             }
@@ -454,7 +485,7 @@ impl TypeChecker {
                             .expressions
                             .ident_kinds
                             .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
-                        return explicit_constructor_ty.unwrap_or(constructor_ty);
+                        return contextual_constructor_ty.unwrap_or(constructor_ty);
                     }
                     SymbolKind::Function(func_info) => {
                         if let Some(target) =
@@ -479,6 +510,7 @@ impl TypeChecker {
                         let first_error = self.errors.len();
                         let result =
                             self.validate_function_call(name, &func_info, type_args, args, span, expected_return_ty);
+                        self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
                         if let Some(declaration) = declaration {
                             self.attach_related_declaration_to_new_errors(first_error, &declaration);
                         }
@@ -624,12 +656,12 @@ impl TypeChecker {
             }
 
             let in_scope = self.symbols.lookup(name).is_some();
-            if in_scope && let Some(tid) = surface_types::from_str(name) {
+            if in_scope && let Some(tid) = self.constructor_surface_type(name) {
                 if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                     return self.check_json_query_constructor_call(tid, args, span);
                 }
                 if matches!(tid, SurfaceTypeId::Html) {
-                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                    return ResolvedType::Named(name.clone());
                 }
             }
 
@@ -662,12 +694,12 @@ impl TypeChecker {
                     .expressions
                     .ident_kinds
                     .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
-                if in_scope && let Some(tid) = surface_types::from_str(name) {
+                if in_scope && let Some(tid) = self.constructor_surface_type(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
                     }
                     if matches!(tid, SurfaceTypeId::Html) {
-                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                        return ResolvedType::Named(name.clone());
                     }
                 }
                 return constructor_ty;
@@ -727,6 +759,7 @@ impl TypeChecker {
                 );
                 let final_params = Self::substitute_callable_params(&resolved_params, &type_bindings);
                 self.type_info.record_call_site_callable_params(span, &final_params);
+                self.check_capturing_value_call_arguments(callee, &params, args);
                 substitute_resolved_type(&ret, &type_bindings)
             }
             ty if self.is_user_operator_receiver(&ty)
@@ -785,7 +818,7 @@ impl TypeChecker {
         let callable = format!("{binding}.{member}");
         if self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                format!("C binding symbol `{callable}` requires an enclosing `unsafe:` acknowledgement"),
+                format!("C binding symbol `{callable}` requires an enclosing `unsafe:` acknowledgment"),
                 span,
             ));
             self.check_call_args(args);
@@ -837,6 +870,10 @@ impl TypeChecker {
         self.record_c_raw_owned_resource_transfers(&symbol, args);
         self.type_info.record_call_site_callable_params(span, &parameters);
         let return_type = Self::c_raw_call_return_type(&binding, &symbol.return_type);
+        if matches!(&return_type, ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID) {
+            // The view may only be bound to a local or copied at once; anything else lets it escape (RFC 116).
+            self.unbound_scoped_c_string_views.insert((span.start, span.end));
+        }
         self.type_info.c_abi.raw_calls.push(CBindingRawCall {
             span,
             owner: self.current_c_abi_raw_call_owner.clone(),
@@ -1080,7 +1117,7 @@ impl TypeChecker {
     pub(in crate::typechecker::check_expr) fn c_raw_call_type(binding: &str, ty: &CBindingType) -> ResolvedType {
         match ty {
             CBindingType::Scalar(scalar) => c_abi::scalar_numeric_type(*scalar)
-                .map(ResolvedType::Numeric)
+                .map(ResolvedType::from_numeric_id)
                 .unwrap_or(ResolvedType::Int),
             CBindingType::Void => ResolvedType::Unit,
             CBindingType::Resource { resource, .. } => {
@@ -1327,7 +1364,7 @@ impl TypeChecker {
             || method == finish_method;
         if requires_unsafe && self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                "checked C span bridge operations require an enclosing `unsafe:` acknowledgement".to_string(),
+                "checked C span bridge operations require an enclosing `unsafe:` acknowledgment".to_string(),
                 span,
             ));
             self.check_call_args(args);
@@ -1472,7 +1509,7 @@ impl TypeChecker {
         }
         if self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                "extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgement".to_string(),
+                "extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgment".to_string(),
                 span,
             ));
             return Some(ResolvedType::Unknown);
@@ -1492,11 +1529,22 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> Option<ResolvedType> {
-        if method != "copy_utf8"
-            || !matches!(self.check_expr(base), ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID)
-        {
+        if method != "copy_utf8" {
             return None;
         }
+        // The receiver of `copy_utf8` is the one position a view may be read in (RFC 116).
+        let mut receiver = base;
+        while let Expr::Paren(inner) = &receiver.node {
+            receiver = inner;
+        }
+        let receiver_key = (receiver.span.start, receiver.span.end);
+        self.scoped_c_string_view_receivers.insert(receiver_key);
+        let base_ty = self.check_expr(base);
+        self.scoped_c_string_view_receivers.remove(&receiver_key);
+        if !matches!(base_ty, ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID) {
+            return None;
+        }
+        self.unbound_scoped_c_string_views.remove(&receiver_key);
         let [CallArg::Named(name, _)] = args else {
             self.errors.push(CompileError::type_error(
                 "a scoped C string view requires copy_utf8(max_bytes=<positive int>)".to_string(),
@@ -1515,7 +1563,7 @@ impl TypeChecker {
         }
         if self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                "copying a scoped C string view requires an enclosing `unsafe:` acknowledgement".to_string(),
+                "copying a scoped C string view requires an enclosing `unsafe:` acknowledgment".to_string(),
                 span,
             ));
             self.check_call_args(args);
@@ -1952,6 +2000,7 @@ impl TypeChecker {
         let baseline_consumed_iterator_bindings = self.consumed_iterator_bindings.clone();
 
         let mut matches = Vec::new();
+        let mut rejections: Vec<(String, String)> = Vec::new();
         for overload in overloads {
             self.errors = baseline_errors.clone();
             self.warnings = baseline_warnings.clone();
@@ -1960,6 +2009,12 @@ impl TypeChecker {
 
             let result =
                 self.validate_function_call(func_name, &overload.info, type_args, args, span, expected_return_ty);
+            if let Some(first_error) = self.errors.get(baseline_errors.len()) {
+                rejections.push((
+                    self.overload_candidate_signature(func_name, &overload.info),
+                    first_error.message.clone(),
+                ));
+            }
             if self.errors.len() == baseline_errors.len() {
                 let selected_identity = overload.identity.clone().or_else(|| {
                     baseline_type_info
@@ -2001,6 +2056,12 @@ impl TypeChecker {
                 self.warnings = baseline_warnings;
                 self.type_info = baseline_type_info;
                 self.consumed_iterator_bindings = baseline_consumed_iterator_bindings;
+                // A set with several candidates reports what every one of them wanted; the closest candidate is
+                // then re-validated so its own diagnostics keep their argument-level spans (#1373).
+                if rejections.len() > 1 {
+                    self.errors
+                        .push(errors::no_overload_accepts_call(func_name, &rejections, span));
+                }
                 let shape_match = overloads
                     .iter()
                     .find(|overload| Self::function_call_shape_accepts(&overload.info, type_args, args));
@@ -2022,6 +2083,56 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Render one overload candidate as source-shaped signature text for a rejection listing.
+    ///
+    /// The rendering is for diagnostics only: `name[T with Bound, U](x: int, *rest: str) -> float`. Parameter and
+    /// return types use the checker's type display, and bounds use the same display the bound checker reports.
+    fn overload_candidate_signature(&self, func_name: &str, info: &FunctionInfo) -> String {
+        let no_bindings = HashMap::new();
+        let type_params = info
+            .type_params
+            .iter()
+            .map(|param| {
+                let bounds = info
+                    .type_param_bound_details
+                    .get(param)
+                    .map(|bounds| {
+                        bounds
+                            .iter()
+                            .map(|bound| self.type_bound_display(bound, &no_bindings))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                match bounds.as_slice() {
+                    [] => param.clone(),
+                    [single] => format!("{param} with {single}"),
+                    many => format!("{param} with ({})", many.join(", ")),
+                }
+            })
+            .collect::<Vec<_>>();
+        let type_params = if type_params.is_empty() {
+            String::new()
+        } else {
+            format!("[{}]", type_params.join(", "))
+        };
+        let params = info
+            .params
+            .iter()
+            .map(|param| {
+                let prefix = match param.kind {
+                    ParamKind::Normal => "",
+                    ParamKind::RestPositional => "*",
+                    ParamKind::RestKeyword => "**",
+                };
+                let name = param.name.as_deref().unwrap_or("_");
+                let default = if param.has_default { " = ..." } else { "" };
+                format!("{prefix}{name}: {}{default}", param.ty)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{func_name}{type_params}({params}) -> {}", info.return_type)
     }
 
     /// Return whether one overload accepts the supplied generic and value-argument counts.
@@ -2342,8 +2453,8 @@ impl TypeChecker {
         if type_args.len() != type_params.len() {
             self.errors.push(errors::explicit_type_arg_arity(
                 name,
-                type_params.len(),
-                type_args.len(),
+                type_params,
+                &Self::written_type_args(type_args),
                 span,
             ));
             return ResolvedType::Unknown;

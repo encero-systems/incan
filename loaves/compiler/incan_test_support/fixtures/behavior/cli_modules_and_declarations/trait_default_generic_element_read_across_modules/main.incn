@@ -1,0 +1,18 @@
+# behavior: an imported trait's generic default methods return an element and a slice of their list to an adopter in another module
+# expect-stdout:
+#   5
+#   z
+#   2
+
+from picks import Picker
+
+
+model Chooser with Picker:
+    id: int
+
+
+def main() -> None:
+    chooser = Chooser(id=1)
+    println(chooser.pick([5, 6]))
+    println(chooser.pick(["z"]))
+    println(len(chooser.tail([7, 8, 9])))

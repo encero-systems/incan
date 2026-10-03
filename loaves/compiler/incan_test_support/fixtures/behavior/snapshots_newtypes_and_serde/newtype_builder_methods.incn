@@ -1,0 +1,45 @@
+# behavior: static builder methods on a str newtype construct values, and a user-provided __into_response__ is an ordinary method
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_builder_methods_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_with_override_codegen
+# expect-stdout:
+#   200 OK
+#   201 Created
+#   404 Not Found
+#   Custom: Status OK
+
+# Test newtype with static builder methods (RFC 017 foundation for std.web migration)
+
+
+type Response = newtype str:
+    def ok() -> Response:
+        return Response("200 OK")
+
+    def created() -> Response:
+        return Response("201 Created")
+
+    def status(code: int, body: str) -> Response:
+        return Response(f"{code} {body}")
+
+
+# Simple newtype wrapping string
+type CustomResponse = newtype str:
+    def ok(message: str) -> CustomResponse:
+        return CustomResponse(f"{message} OK")
+
+    # User provides __into_response__ - this should prevent auto-delegation
+    def __into_response__(self) -> str:
+        return f"Custom: {self.0}"
+
+
+def main() -> None:
+    # Test static builders
+    r1 = Response.ok()
+    r2 = Response.created()
+    r3 = Response.status(404, "Not Found")
+
+    println(r1.0)
+    println(r2.0)
+    println(r3.0)
+    response: CustomResponse = CustomResponse.ok("Status")
+    result: str = response.__into_response__()
+    println(result)

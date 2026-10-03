@@ -1,0 +1,23 @@
+# behavior: a std module's derive bundle applies through `import … as` and `from std import … as` bindings
+# retires: loaves/compiler/incan_emit/src/checked_program/sdk_module_derives.rs::sdk_module_derives_imports_and_aliases_preserve_backend_requirements
+# expect-stdout:
+#   {"value":1}
+#   {"value":2}
+
+import std.serde.json as chosen
+from std.serde import json as picked
+
+
+@derive(chosen)
+pub model Record:
+    pub value: int
+
+
+@derive(picked)
+pub model Other:
+    pub value: int
+
+
+def main() -> None:
+    println(Record(value=1).to_json())
+    println(Other(value=2).to_json())

@@ -1,0 +1,79 @@
+# behavior: model constructors and receiver chains build and run in statement and expression conditions, match scrutinees, assertions, comprehension and generator filters, and for iterables
+# retires: loaves/compiler/incan_emit/src/tests/condition_position_struct_literals.rs::struct_literals_in_condition_positions_build_issue1561
+# expect-stdout:
+#   if
+#   elif
+#   while
+#   match 3
+#   assert
+#   testing assert
+#   bool conversion 1
+#   if expression 3
+#   filters 2 2
+#   class index
+#   numeric cast
+#   for 3
+
+from std.testing import assert_eq
+
+
+model Reading:
+    pub value: int
+
+    def is_positive(self) -> bool:
+        return self.value > 0
+
+
+model Outer:
+    pub inner: Reading
+    pub values: list[int]
+
+
+class Flag:
+    pub values: list[bool]
+
+
+model Small:
+    pub value: i8
+
+
+def main() -> None:
+    if Reading(value=3).value == 3:
+        println("if")
+    if false:
+        println("wrong branch")
+    elif Outer(inner=Reading(value=3), values=[3]).inner.is_positive():
+        println("elif")
+
+    mut keep_going = true
+    while keep_going and Reading(value=1).value == 1:
+        println("while")
+        keep_going = false
+
+    match Reading(value=3):
+        Reading(value=value) if Reading(value=value).value == 3 => println(f"match {value}")
+        _ => println("wrong match arm")
+
+    assert Reading(value=3).value == 3
+    println("assert")
+    assert_eq(Reading(value=3).value, 3)
+    println("testing assert")
+    println(f"bool conversion {int(Reading(value=3).value == 3)}")
+
+    chosen = if Outer(inner=Reading(value=3), values=[]).inner.value == 3:
+        println("if expression 3")
+    else:
+        println("wrong expression branch")
+
+    squares = [value * value for value in [1, 2] if Reading(value=value).is_positive()]
+    generated = (value for value in [1, 2] if Reading(value=value).value > 0)
+    println(f"filters {len(squares)} {len(generated.collect())}")
+
+    if Flag(values=[true]).values[0]:
+        println("class index")
+
+    if Small(value=1i8).value < 2i16:
+        println("numeric cast")
+
+    for value in Outer(inner=Reading(value=3), values=[3]).values:
+        println(f"for {value}")

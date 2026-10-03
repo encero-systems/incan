@@ -1,0 +1,9 @@
+# behavior: returning a value of the generic function's own type parameter T where an int is expected is refused, since a caller may pick any type for T
+# expect-diagnostic: INCAN-T0001
+
+def count[T](x: T) -> int:
+    return x
+
+
+def main() -> None:
+    println(count(1))

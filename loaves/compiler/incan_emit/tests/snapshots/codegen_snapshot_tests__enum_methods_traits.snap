@@ -7,7 +7,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub trait Labelled {
+pub trait Labeled {
     fn label(&self) -> String;
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +43,7 @@ impl Signal {
         return Signal::Start.clone();
     }
 }
-impl Labelled for Signal {
+impl Labeled for Signal {
     fn label(&self) -> String {
         let _ = match self.clone() {
             Signal::Start => {

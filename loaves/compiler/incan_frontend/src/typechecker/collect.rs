@@ -16,7 +16,10 @@ use super::{
 };
 
 mod decl_helpers;
+mod declaration_scopes;
 pub(super) mod decorators;
+mod forward_references;
+mod std_root_imports;
 mod stdlib_imports;
 
 use self::decl_helpers::{
@@ -68,7 +71,7 @@ type InheritedMembers = (
     HashMap<String, Vec<MethodInfo>>,
 );
 
-type PartialCallableSignature = (
+pub(in crate::typechecker) type PartialCallableSignature = (
     Vec<CallableParam>,
     ResolvedType,
     bool,
@@ -486,7 +489,10 @@ impl TypeChecker {
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
-    fn partial_callable_signature_from_kind(segments: &[String], kind: SymbolKind) -> Option<PartialCallableSignature> {
+    pub(in crate::typechecker) fn partial_callable_signature_from_kind(
+        segments: &[String],
+        kind: SymbolKind,
+    ) -> Option<PartialCallableSignature> {
         match kind {
             SymbolKind::Function(info) => Some((
                 info.params,
@@ -916,12 +922,19 @@ impl TypeChecker {
                         .collect(),
                     module_path,
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 }
             })
             .collect()
     }
 
     /// Return the source module that owns a trait bound, including direct imports and module-qualified spellings.
+    ///
+    /// A trait the name reaches through no import is declared in the current module, unless it is a builtin trait: the
+    /// compiler's root-scope stub for `Display` or `Eq` is declared in no module of this compilation, so a bound on it
+    /// has no owning module here and its methods resolve through the builtin's standard-library declaration, as they
+    /// do for a module checked without a module path. Giving it the current module left `value.__str__()` through
+    /// `T with Display` without a dispatch in every project module (#1561).
     pub fn trait_bound_module_path(&self, name: &str) -> Option<Vec<String>> {
         if let Some(path) = self.import_binding_path(name) {
             return path
@@ -936,8 +949,16 @@ impl TypeChecker {
         if let Some(target) = self.source_import_targets.get(name) {
             return Some(target.module_path.clone());
         }
-        let symbol = self.lookup_symbol(name)?;
+        let symbol_id = self.symbols.lookup(name)?;
+        let symbol = self.symbols.get(symbol_id)?;
         if !matches!(&symbol.kind, SymbolKind::Trait(_)) {
+            return None;
+        }
+        if self
+            .symbols
+            .identity_of(symbol_id)
+            .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin)
+        {
             return None;
         }
         self.current_module_path.clone()
@@ -948,30 +969,85 @@ impl TypeChecker {
         if let Some(path) = self.import_binding_path(name) {
             return path.last().cloned();
         }
+        if let Some(target) = self.source_import_targets.get(name) {
+            return Some(target.name.clone());
+        }
         let (_module_name, trait_name) = name.rsplit_once('.')?;
         Some(trait_name.to_string())
     }
 
     /// Resolve a trait bound name, installing hidden symbols for module-qualified imported traits.
+    ///
+    /// A trait named through a `pub::` package module binding (`t.Tag` after `import pub::tags as t`) keeps the
+    /// package declaration's identity, so a bound on it is met by the package's own adopters as it is under
+    /// `from pub::tags import Tag` (#1561).
     pub fn resolve_trait_bound_name(&mut self, name: &str, span: Span) -> String {
         if name.contains('.')
             && let Some((canonical, info)) = self.resolve_qualified_trait(name)
         {
-            self.define_hidden_trait_symbol(&canonical, info, span);
+            let identity = self.package_module_trait_identity(name);
+            self.define_hidden_trait_symbol_with_identity(&canonical, info, identity, span);
             return canonical;
         }
         name.to_string()
+    }
+
+    /// Return the checked identity of the trait a module-qualified name names through a `pub::` package module
+    /// binding, or `None` for any other spelling.
+    fn package_module_trait_identity(&mut self, name: &str) -> Option<CanonicalSymbolId> {
+        let (module_name, trait_name) = name.rsplit_once('.')?;
+        let module_path = self.module_path_for_imported_name(module_name)?;
+        let [root, library, rest @ ..] = module_path.as_slice() else {
+            return None;
+        };
+        if root != super::PUBLIC_LIBRARY_NAMESPACE {
+            return None;
+        }
+        let resolved = self
+            .resolve_pub_library_module_symbol_member(library, rest, trait_name)
+            .ok()
+            .flatten()?;
+        matches!(resolved.kind, SymbolKind::Trait(_))
+            .then_some(resolved.canonical)
+            .flatten()
     }
 
     /// Retain a generic bound's foreign identity before its declaring module's imports leave scope.
     ///
     /// Source imports and checked SDK signatures carry the absolute Rust path rather than a local alias. Known
     /// non-trait items keep their binding so ordinary bound validation can reject them instead of deferring them.
+    /// Source-defined traits exported by the standard prelude are materialized only when no local or imported binding
+    /// already owns the name, preserving ordinary lexical shadowing.
     pub fn resolve_generic_bound_name(&mut self, name: &str, span: Span) -> String {
         if let Some(path) = self.imported_generic_rust_bound_path(name) {
             return path;
         }
+        self.materialize_implicit_prelude_trait_bound(name, span);
         self.resolve_trait_bound_name(name, span)
+    }
+
+    /// Materialize a bare source-defined standard-prelude trait used as a generic bound.
+    ///
+    /// Compiler-owned builtin traits are installed with the root symbol table, but traits such as `Mod` are authored
+    /// in `std.traits` and re-exported by `std.prelude`. Generic bounds need the full source contract so operator and
+    /// method lookup can observe its hooks. An existing binding wins, so a local trait with the same spelling never
+    /// acquires standard-library semantics.
+    fn materialize_implicit_prelude_trait_bound(&mut self, name: &str, span: Span) {
+        if name.contains('.') || self.lookup_symbol(name).is_some() {
+            return;
+        }
+        let prelude_path = vec!["std".to_string(), "traits".to_string(), "prelude".to_string()];
+        if let Some(info) = self.lookup_imported_module_trait(&prelude_path, name) {
+            self.define_hidden_trait_symbol(name, info, span);
+            self.source_import_targets.insert(
+                name.to_string(),
+                crate::typechecker::SourceTargetInfo {
+                    module_path: prelude_path,
+                    name: name.to_string(),
+                    kind: SemanticSourceTargetKind::Trait.to_string(),
+                },
+            );
+        }
     }
 
     /// Resolve a foreign generic bound for both declaration collection and checked public export metadata.
@@ -1011,15 +1087,13 @@ impl TypeChecker {
                             type_args: Vec::new(),
                             module_path: Some(module_path.clone()),
                             implementation_type_params: Vec::new(),
+                            inferred: false,
                         });
                     }
                 }
                 continue;
             }
-            let resolved = self
-                .import_binding_path(derive_name)
-                .map(<[String]>::to_vec)
-                .unwrap_or_else(|| vec![derive_name.to_string()]);
+            let resolved = self.derive_trait_path(derive_name);
             if resolved.len() >= 2 {
                 let module_segments = &resolved[..resolved.len() - 1];
                 let trait_name = &resolved[resolved.len() - 1];
@@ -1034,6 +1108,7 @@ impl TypeChecker {
                             type_args: Vec::new(),
                             module_path: Some(module_segments.to_vec()),
                             implementation_type_params: Vec::new(),
+                            inferred: false,
                         });
                     }
                 } else if self.lookup_trait_info(derive_name).is_some() {
@@ -1043,11 +1118,30 @@ impl TypeChecker {
                         type_args: Vec::new(),
                         module_path: None,
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     });
                 }
             }
         }
         out
+    }
+
+    /// Return the module path and trait name a derive argument names, last segment the trait.
+    ///
+    /// A name imported on its own resolves through its import binding (`Serialize` to `std.serde.json.Serialize`); a
+    /// module-qualified name resolves its module through the module's import (`json.Serialize`,
+    /// `serde.json.Serialize`), as the same spelling does after `with` (#1885). Anything else is the name alone.
+    pub fn derive_trait_path(&self, derive_name: &str) -> Vec<String> {
+        if let Some(path) = self.import_binding_path(derive_name) {
+            return path.to_vec();
+        }
+        if let Some((module_name, trait_name)) = derive_name.rsplit_once('.')
+            && let Some(mut path) = self.module_path_for_imported_name(module_name)
+        {
+            path.push(trait_name.to_string());
+            return path;
+        }
+        vec![derive_name.to_string()]
     }
 
     /// Resolve a module-qualified trait name through the imported-module metadata table.
@@ -1067,6 +1161,9 @@ impl TypeChecker {
     }
 
     /// Look up a trait declared by an imported module, falling back to the current scope for direct imports.
+    ///
+    /// The module is a project module, a standard-library module or a `pub::` package module, so `with t.Tag` after
+    /// `import pub::tags as t` names the package's own trait, or the trait a package alias of it names.
     pub fn lookup_imported_module_trait(&mut self, module_path: &[String], trait_name: &str) -> Option<TraitInfo> {
         let module_key = module_path.join(".");
         if let Some(info) = self.dependency_module_traits.get(&format!("{module_key}.{trait_name}")) {
@@ -1079,9 +1176,20 @@ impl TypeChecker {
         {
             return None;
         }
-        self.stdlib_cache
-            .lookup_trait(module_path, trait_name)
-            .or_else(|| self.lookup_trait_info(trait_name).cloned())
+        if let Some(SymbolKind::Trait(info)) = self.source_dependency_member_symbol_kind(module_path, trait_name) {
+            return Some(info);
+        }
+        if let Some(info) = self.stdlib_cache.lookup_trait(module_path, trait_name) {
+            return Some(info);
+        }
+        if let [root, library, rest @ ..] = module_path
+            && root == super::PUBLIC_LIBRARY_NAMESPACE
+            && let Some((SymbolKind::Trait(info), _)) =
+                self.lookup_pub_library_module_symbol_member(library, rest, trait_name)
+        {
+            return Some(info);
+        }
+        self.lookup_trait_info(trait_name).cloned()
     }
 
     /// Return whether a module-qualified trait may be adopted through `@derive(...)`.
@@ -1114,9 +1222,21 @@ impl TypeChecker {
     }
 
     /// Resolve an imported name or alias to a module path.
+    ///
+    /// A dotted name walks from its first segment: when that segment is an imported module, the remaining segments
+    /// are submodules of it, so `serde.json` after `from std import serde` names `std.serde.json` (#1887). A dotted
+    /// name whose first segment is not an imported module is the path it spells.
     pub fn module_path_for_imported_name(&self, name: &str) -> Option<Vec<String>> {
-        if name.contains('.') {
-            return Some(name.split('.').map(str::to_string).collect());
+        if let Some((head, rest)) = name.split_once('.') {
+            let mut path = self
+                .lookup_symbol(head)
+                .and_then(|symbol| match &symbol.kind {
+                    SymbolKind::Module(info) => Some(info.path.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| vec![head.to_string()]);
+            path.extend(rest.split('.').map(str::to_string));
+            return Some(path);
         }
         if let Some(symbol) = self.lookup_symbol(name)
             && let SymbolKind::Module(info) = &symbol.kind
@@ -1128,11 +1248,23 @@ impl TypeChecker {
 
     /// Define a compiler-internal trait symbol used for qualified imported trait references.
     pub fn define_hidden_trait_symbol(&mut self, name: &str, info: TraitInfo, span: Span) {
+        // RFC 120: this binding names a dependency's trait declaration; its identity is unproven here rather than
+        // minted from the referencing module.
+        self.define_hidden_trait_symbol_with_identity(name, info, None, span);
+    }
+
+    /// Define a compiler-internal trait symbol for a qualified imported trait reference, with the declaration's
+    /// checked identity when the referenced module proves one.
+    fn define_hidden_trait_symbol_with_identity(
+        &mut self,
+        name: &str,
+        info: TraitInfo,
+        identity: Option<CanonicalSymbolId>,
+        span: Span,
+    ) {
         if self.symbols.lookup(name).is_some() {
             return;
         }
-        // RFC 120: this binding names a dependency's trait declaration; its identity is unproven here rather than
-        // minted from the referencing module.
         self.symbols.define_import_binding(
             Symbol {
                 name: name.to_string(),
@@ -1140,7 +1272,7 @@ impl TypeChecker {
                 span,
                 scope: 0,
             },
-            None,
+            identity,
         );
     }
 
@@ -1263,7 +1395,8 @@ impl TypeChecker {
             .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name).to_string());
         let info = self.lookup_imported_module_trait(&module_path, &trait_name)?;
         let symbol_name = name.to_string();
-        self.define_hidden_trait_symbol(&symbol_name, info.clone(), span);
+        let identity = self.package_module_trait_identity(name);
+        self.define_hidden_trait_symbol_with_identity(&symbol_name, info.clone(), identity, span);
         Some((symbol_name, info))
     }
 
@@ -1755,6 +1888,7 @@ impl TypeChecker {
                                 .collect(),
                             module_path: self.trait_bound_module_path(&bound.name),
                             implementation_type_params: Vec::new(),
+                            inferred: false,
                         })
                         .collect(),
                 )
@@ -1765,12 +1899,10 @@ impl TypeChecker {
             .params
             .iter()
             .map(|p| {
-                CallableParam::named_with_default(
-                    p.node.name.clone(),
-                    self.resolve_type_checked(&p.node.ty),
-                    p.node.kind,
-                    p.node.default.is_some(),
-                )
+                let ty = self.resolve_type_checked(&p.node.ty);
+                let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
+                CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
+                    .with_mut(is_mut)
             })
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);
@@ -1783,6 +1915,7 @@ impl TypeChecker {
                 span,
             )),
         };
+        self.record_caller_visible_mut_params(binding.identity.as_ref(), &func.params, &params);
         let mut info = FunctionInfo {
             params,
             return_type,

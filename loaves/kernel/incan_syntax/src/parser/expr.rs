@@ -1,7 +1,9 @@
 /// Expression parsing methods.
 ///
 /// This chunk implements the expression grammar using a precedence ladder: `or` → `and` → `not` → comparison → range →
-/// additive → multiplicative → power → unary → postfix → primary.
+/// `|` → `^` → `&` → shift → additive → multiplicative → prefix `-` / `~` → power → postfix → primary. `**` binds
+/// tighter than a prefix operator on its left and looser than one on its right: its exponent is read at the prefix
+/// level.
 ///
 /// ## Notes
 /// - Operator identities are carried by [`TokenKind::Operator`] / [`OperatorId`] rather than string spellings.
@@ -260,7 +262,7 @@ impl<'a> Parser<'a> {
 
     /// Parse multiplicative expressions, preserving DSL-owned glyphs in eligible vocab blocks.
     fn multiplicative(&mut self) -> Result<Spanned<Expr>, CompileError> {
-        let mut left = self.power()?;
+        let mut left = self.unary()?;
 
         loop {
             let op = if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
@@ -281,7 +283,7 @@ impl<'a> Parser<'a> {
                 break;
             };
 
-            let right = self.power()?;
+            let right = self.unary()?;
             let span = left.span.merge(right.span);
             let glyph = match op {
                 BinaryOp::Mul => "*",
@@ -337,48 +339,6 @@ impl<'a> Parser<'a> {
             })),
             span,
         )
-    }
-
-    fn power(&mut self) -> Result<Spanned<Expr>, CompileError> {
-        let mut left = self.unary()?;
-
-        // Right-associative: 2**3**2 = 2**(3**2)
-        if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
-            let right = self.power()?; // recursive for right-associativity
-            let span = left.span.merge(right.span);
-            left = Spanned::new(Expr::Binary(Box::new(left), BinaryOp::Pow, Box::new(right)), span);
-        }
-
-        Ok(left)
-    }
-
-    /// Parse prefix unary expressions, including RFC 028 bitwise inversion.
-    fn unary(&mut self) -> Result<Spanned<Expr>, CompileError> {
-        if self.match_token(&TokenKind::Operator(OperatorId::Minus)) {
-            let start = self.tokens[self.pos - 1].span.start;
-            let expr = self.unary()?;
-            let span = Span::new(start, expr.span.end);
-            Ok(Spanned::new(Expr::Unary(UnaryOp::Neg, Box::new(expr)), span))
-        } else if self.match_token(&TokenKind::Operator(OperatorId::Tilde)) {
-            let start = self.tokens[self.pos - 1].span.start;
-            let expr = self.unary()?;
-            let span = Span::new(start, expr.span.end);
-            Ok(Spanned::new(Expr::Unary(UnaryOp::Invert, Box::new(expr)), span))
-        } else if let Some(id) = self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression) {
-            self.advance();
-            let start = self.tokens[self.pos - 1].span.start;
-            let expr = self.unary()?;
-            let span = Span::new(start, expr.span.end);
-            Ok(Spanned::new(
-                Expr::Surface(Box::new(SurfaceExpr {
-                    key: SurfaceFeatureKey::SoftKeyword(id),
-                    payload: SurfaceExprPayload::PrefixUnary(Box::new(expr)),
-                })),
-                span,
-            ))
-        } else {
-            self.postfix()
-        }
     }
 
     /// Parse postfix forms such as calls, method calls, field access, indexing, and `?`.
@@ -639,11 +599,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse index or slice expression inside brackets Handles: [expr], [start:end], [start:end:step], [:end],
-    /// [start:], [::step]
+    /// [start:], [::step], [start::step]
     fn index_or_slice(&mut self) -> Result<IndexOrSlice, CompileError> {
         // Check for immediate colon (slice starting with no start value)
         if self.check(&TokenKind::Punctuation(PunctuationId::Colon)) {
             return self.parse_slice(None);
+        }
+        if self.check(&TokenKind::Punctuation(PunctuationId::ColonColon)) {
+            return self.parse_slice_without_end(None);
         }
 
         // Check for immediate closing bracket (not valid, but let expression handle error)
@@ -657,6 +620,9 @@ impl<'a> Parser<'a> {
         // Check if this is a slice (has colon after first expression)
         if self.check(&TokenKind::Punctuation(PunctuationId::Colon)) {
             return self.parse_slice(Some(first));
+        }
+        if self.check(&TokenKind::Punctuation(PunctuationId::ColonColon)) {
+            return self.parse_slice_without_end(Some(first));
         }
 
         // Just a regular index
@@ -691,6 +657,25 @@ impl<'a> Parser<'a> {
         Ok(IndexOrSlice::Slice(SliceExpr {
             start: start.map(Box::new),
             end,
+            step,
+        }))
+    }
+
+    /// Parse a slice whose end is omitted and whose two colons the lexer reads as one `::` token (`[::step]`,
+    /// `[start::step]`, `[::]`); the start, if any, is already parsed.
+    fn parse_slice_without_end(&mut self, start: Option<Spanned<Expr>>) -> Result<IndexOrSlice, CompileError> {
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::ColonColon),
+            "Expected '::' in slice",
+        )?;
+        let step = if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+            None
+        } else {
+            Some(Box::new(self.expression()?))
+        };
+        Ok(IndexOrSlice::Slice(SliceExpr {
+            start: start.map(Box::new),
+            end: None,
             step,
         }))
     }
@@ -993,7 +978,7 @@ impl<'a> Parser<'a> {
                 body.push(self.braced_vocab_expression_list_item()?);
             } else {
                 let start = self.current_span().start;
-                let stmt = self.assignment_or_expr_stmt()?;
+                let stmt = self.assignment_or_expr_item(TupleValueSpelling::SingleExpression)?;
                 let end = self.tokens[self.pos.saturating_sub(1)].span.end;
                 body.push(Spanned::new(stmt, Span::new(start, end)));
             }
@@ -2169,14 +2154,7 @@ impl<'a> Parser<'a> {
                 (Statement::Expr(expr), false) => MatchBody::Expr(expr.clone()),
                 _ => MatchBody::Block(vec![stmt]),
             };
-            Ok(Spanned::new(
-                MatchArm {
-                    pattern,
-                    guard,
-                    body,
-                },
-                Span::new(start, end),
-            ))
+            Ok(Spanned::new(MatchArm { pattern, guard, body }, Span::new(start, end)))
         }
     }
 
@@ -3034,6 +3012,7 @@ fn split_fstring_format(text: &str) -> (&str, FStringFormat) {
         if spec == "?" {
             return (text[..idx].trim_end(), FStringFormat::Debug);
         }
+        return (text[..idx].trim_end(), FStringFormat::Unsupported(spec.to_string()));
     }
 
     (text, FStringFormat::Display)
