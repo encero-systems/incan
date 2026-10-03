@@ -1963,6 +1963,7 @@ fn validate_rust_fact_work(
         {
             return Err(format!("environment name `{}` is invalid", entry.name));
         }
+        refuse_compiler_permission_environment(&entry.name)?;
         match (&entry.literal, &entry.input) {
             (Some(literal), None) if literal.contains('\0') => {
                 return Err(format!("environment `{}` literal cannot contain NUL", entry.name));
@@ -2177,6 +2178,25 @@ fn validate_rust_fact_record_selection(
 }
 
 /// Validate identity-bound compile-time environment values and their generated-output references.
+/// Refuse an environment name that would change which language the pinned rustc accepts.
+///
+/// `RUSTC_BOOTSTRAP` makes a stable rustc accept unstable features and answer probes as a nightly would. A fact
+/// record is data about one crate, so it can never grant that, neither to the crate's own compilation nor to a tool
+/// it runs. Oven also clears the variable from the ambient environment of every direct rustc launch, so the only
+/// route to the permission is one Oven itself records for the toolchain's own driver units.
+fn refuse_compiler_permission_environment(name: &str) -> Result<(), String> {
+    if name == "RUSTC_BOOTSTRAP" {
+        return Err(
+            "environment `RUSTC_BOOTSTRAP` is refused: it would let the pinned stable rustc accept unstable features"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate the compile environment one fact record supplies to its crate's rustc invocation: sorted unique portable
+/// names, none that grants compiler permissions, each with exactly one literal value or one `OUT_DIR` path the record
+/// itself produces.
 fn validate_rust_fact_compile_environment(record: &RustFactRecord) -> Result<(), String> {
     if record.environment.windows(2).any(|pair| pair[0].name >= pair[1].name) {
         return Err("environment must be sorted by unique name".to_string());
@@ -2191,6 +2211,7 @@ fn validate_rust_fact_compile_environment(record: &RustFactRecord) -> Result<(),
         {
             return Err(format!("environment name `{}` is invalid", environment.name));
         }
+        refuse_compiler_permission_environment(&environment.name)?;
         match (&environment.literal, &environment.out) {
             (Some(literal), None) if literal.contains('\0') => {
                 return Err(format!("environment `{}` literal cannot contain NUL", environment.name));
@@ -4583,6 +4604,38 @@ outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }
         assert_eq!(record.tool.len(), 1);
         assert_eq!(record.link[0].library.name, "sys_helper");
         assert_eq!(record.tool[0].environment.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_facts_refuse_rustc_bootstrap_in_any_environment() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let record = r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+"#;
+        let compile = format!("{record}environment = [{{ name = \"RUSTC_BOOTSTRAP\", literal = \"1\" }}]\n");
+        let tool = format!(
+            r#"{record}
+[[rust.facts.tool]]
+name = "bindgen"
+target = "aarch64-apple-darwin"
+executable = {{ name = "bindgen", owner = "{digest}", path = "bin/bindgen", digest = "{digest}" }}
+arguments = [{{ output = "bindings" }}]
+environment = [{{ name = "RUSTC_BOOTSTRAP", literal = "1" }}]
+outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }}]
+"#
+        );
+        for manifest in [compile, tool] {
+            let Err(error) = ProjectManifest::from_str(&manifest, Path::new("loaf.toml")) else {
+                return Err("a fact record declaring RUSTC_BOOTSTRAP must be refused".into());
+            };
+            assert!(error.to_string().contains("RUSTC_BOOTSTRAP"), "{error}");
+        }
         Ok(())
     }
 
