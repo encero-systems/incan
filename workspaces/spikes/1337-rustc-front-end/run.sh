@@ -95,3 +95,8 @@ unit --incan-unit --crate-type rlib --crate-name planner --extern mir_seam="$out
 unit --incan-allow-rustc-private --extern planner="$out/libplanner.rlib" "$here/step9_app.rs" -o "$out/step9_app"
 expect_output step9_app "in-process rustc exit status 0" "$here/step9_target.rs" "$out/step9_target" "$sysroot"
 expect_output step9_target "answer() = 42"
+
+# Step 10: drops and unwinding. Unconditional drops plus one cleanup block; rustc's drop elaboration does the rest.
+build_driver step10_drops_and_unwinding
+compile_with step10_drops_and_unwinding step10_program
+expect_output step10_program "10 7 unwound=true drops=1,2,3"

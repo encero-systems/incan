@@ -269,9 +269,20 @@ impl<'tcx> Cfg<'tcx> {
         self.blocks[bb].terminator = Some(Terminator { source_info: SourceInfo::outermost(span), kind, attributes: ThinVec::new() });
     }
 
+    /// A block on the unwind path. rustc requires cleanup code to live in blocks marked as cleanup.
+    pub fn cleanup_block(&mut self) -> BasicBlock {
+        self.blocks.push(BasicBlockData::new(None, true))
+    }
+
     /// Ends `bb` with a call of `callee::<generic_args>(args)` into `destination`, and returns the block the call
-    /// continues in.
+    /// continues in. Unwinding continues to the caller.
     pub fn call(&mut self, bb: BasicBlock, callee: DefId, generic_args: &[ty::GenericArg<'tcx>], args: Vec<Operand<'tcx>>, destination: Place<'tcx>) -> BasicBlock {
+        self.call_unwinding_to(bb, callee, generic_args, args, destination, UnwindAction::Continue)
+    }
+
+    /// As [`Cfg::call`], but a panic in the callee unwinds into `unwind`, typically a cleanup block that drops what
+    /// this body owns.
+    pub fn call_unwinding_to(&mut self, bb: BasicBlock, callee: DefId, generic_args: &[ty::GenericArg<'tcx>], args: Vec<Operand<'tcx>>, destination: Place<'tcx>, unwind: UnwindAction) -> BasicBlock {
         let span = self.span;
         let next = self.block();
         let kind = TerminatorKind::Call {
@@ -279,7 +290,7 @@ impl<'tcx> Cfg<'tcx> {
             args: args.into_iter().map(|node| rustc_span::Spanned { node, span }).collect(),
             destination,
             target: Some(next),
-            unwind: UnwindAction::Continue,
+            unwind,
             call_source: CallSource::Normal,
             fn_span: span,
         };
