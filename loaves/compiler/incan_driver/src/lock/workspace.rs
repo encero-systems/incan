@@ -30,7 +30,9 @@ use incan_provider::requirements::{
     ProjectRequirements, collect_project_requirements, merge_project_requirement_dependencies,
     semantic_sdk_path_dependencies,
 };
-use oven_model::lock::{CargoFeatureSelection, workspace_semantic_lock_state};
+use oven_model::lock::{
+    CargoFeatureSelection, IncanLock, LOCK_FILENAME, portable_project_path, workspace_semantic_lock_state,
+};
 use oven_model::manifest::{DependencySpec, ProjectManifest};
 use oven_model::workspace::WorkspaceGraph;
 
@@ -479,6 +481,11 @@ pub fn collect_project_lock_context(
             manifest.project_root().display()
         )));
     }
+    require_sdk_inventory_for_lock_write(
+        session_manifest.project_root(),
+        workspace,
+        session.sdk_inventory.is_some(),
+    )?;
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_authority_snapshot_read();
     let entry_paths = project_lock_entry_paths(session_manifest, explicit_entry_file);
@@ -548,10 +555,60 @@ pub fn collect_project_lock_context(
     }))
 }
 
+/// Refuse to replace recorded SDK lock state with a lock assembled without an SDK inventory.
+///
+/// A project with no SDK inventory, such as one built from a fresh home that compiles the standard library from
+/// source, may still write its lock. An existing SDK entry for the project or workspace member is authoritative,
+/// though: it must not disappear merely because an Oven command ran with a fresh home or without an installed
+/// inventory.
+fn require_sdk_inventory_for_lock_write(
+    project_root: &Path,
+    workspace: Option<&WorkspaceGraph>,
+    inventory_available: bool,
+) -> CliResult<()> {
+    let lock_root = workspace.map_or(project_root, WorkspaceGraph::root);
+    let existing_lock_records_sdk = existing_lock_records_member_sdk(lock_root, project_root, workspace.is_some());
+    if lock_write_without_sdk_is_allowed(inventory_available, existing_lock_records_sdk) {
+        return Ok(());
+    }
+    Err(CliError::failure(
+        "no standard-library SDK inventory is available to this Oven command, so it cannot rewrite `oven.lock` without the SDK state the existing lock records; run `incan lock`, which prepares and publishes the inventory, then rerun the command",
+    ))
+}
+
+/// Return whether one lock writer may proceed without an SDK inventory.
+fn lock_write_without_sdk_is_allowed(inventory_available: bool, existing_lock_records_sdk: bool) -> bool {
+    inventory_available || !existing_lock_records_sdk
+}
+
+/// Return whether the existing canonical lock records SDK state for this project or workspace member.
+fn existing_lock_records_member_sdk(lock_root: &Path, project_root: &Path, is_workspace: bool) -> bool {
+    let Ok(lock) = IncanLock::load(&lock_root.join(LOCK_FILENAME)) else {
+        return false;
+    };
+    if !is_workspace {
+        return lock.semantic.sdk.is_some();
+    }
+    let member_root = portable_project_path(lock_root, project_root);
+    lock.semantic
+        .workspace_members
+        .iter()
+        .find(|member| member.member_root == member_root)
+        .is_some_and(|member| member.sdk.is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lock::test_support::registry_dependency;
+
+    #[test]
+    fn sdk_inventory_lock_write_decision_preserves_recorded_sdk_state() {
+        assert!(!lock_write_without_sdk_is_allowed(false, true));
+        assert!(lock_write_without_sdk_is_allowed(false, false));
+        assert!(lock_write_without_sdk_is_allowed(true, true));
+        assert!(lock_write_without_sdk_is_allowed(true, false));
+    }
 
     #[test]
     fn workspace_lock_merge_unifies_cargo_features_without_permitting_identity_drift()

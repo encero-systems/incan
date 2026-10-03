@@ -18,6 +18,8 @@ my_project/
 
 You can scaffold a full new project (manifest, entry point, starter test, README, and `.gitignore`) with `incan new`. Use `incan init` when you already have a directory and want to add Incan project files there.
 
+Lock publication requires a discoverable SDK inventory when the existing project or workspace-member state in `oven.lock` records an SDK. A lock writer does not replace that state with an SDK-less lock. Without recorded SDK state, a lock without SDK state is valid.
+
 ## `[project]`
 
 Project metadata. All fields are optional.

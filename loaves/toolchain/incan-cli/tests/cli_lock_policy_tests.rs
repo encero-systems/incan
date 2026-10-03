@@ -7,7 +7,8 @@
 
 include!("support/cli_workspace_and_lock_tests_root.rs");
 
-use std::process::Output;
+use std::path::Path;
+use std::process::{Command, Output};
 
 #[test]
 fn transitive_project_registry_unit_does_not_shadow_the_prebaked_stdlib_extern_issue2005()
@@ -115,6 +116,84 @@ fn lock_generates_semantic_state_without_starting_cargo() -> Result<(), Box<dyn 
     );
     let lock = oven_model::lock::IncanLock::load(&tmp.path().join("oven.lock"))?;
     assert_eq!(lock.cargo_lock_payload, "version = 4\n");
+    Ok(())
+}
+
+#[test]
+fn oven_bake_refuses_to_drop_recorded_sdk_state_without_an_inventory_issue2007()
+-> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    write_minimal_project(project.path(), "oven_bake_sdk_lock", "")?;
+    let fresh_home = project.path().join("fresh-home");
+    let configure = |args: &[&str], home: &Path| -> Result<Command, Box<dyn std::error::Error>> {
+        let mut command = configured_incan_command(project.path(), args);
+        command
+            .env("INCAN_HOME", home)
+            .env_remove("INCAN_SDK_INVENTORY")
+            .env_remove("INCAN_INTERNAL_SDK_PROVIDER_STORE")
+            .env_remove("INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE");
+        if args.starts_with(&["oven", "bake"]) {
+            incan_test_support::configure_explicit_oven_bake_command(&mut command)?;
+        }
+        Ok(command)
+    };
+
+    let lock_path = project.path().join("oven.lock");
+    oven_model::lock::IncanLock::new_with_semantic(
+        incan_lang::version::INCAN_VERSION,
+        "sha256:committed-sdk-lock-fixture".to_string(),
+        oven_model::lock::CargoFeatureSelection::default(),
+        oven_model::lock::SemanticLockState {
+            sdk: Some(oven_model::lock::LockedSdkState {
+                identity: "committed-sdk".to_string(),
+                inventory_digest: "sha256:committed-sdk-inventory".to_string(),
+                profile: "full".to_string(),
+                components: Vec::new(),
+            }),
+            ..oven_model::lock::SemanticLockState::default()
+        },
+        "version = 4\n".to_string(),
+    )
+    .write(&lock_path)?;
+    let original_lock = fs::read(&lock_path)?;
+    assert!(
+        oven_model::lock::IncanLock::load(&lock_path)?.semantic.sdk.is_some(),
+        "the fixture lock must start with component SDK state"
+    );
+
+    let refused_bake = configure(&["oven", "bake", "--project", "."], &fresh_home)?.output()?;
+    assert!(
+        !refused_bake.status.success(),
+        "a fresh-home bake must refuse the incomplete lock write"
+    );
+    let refusal = incan_test_support::strip_ansi_escapes(&String::from_utf8_lossy(&refused_bake.stderr));
+    assert!(
+        refusal.contains("no standard-library SDK inventory is available to this Oven command")
+            && refusal.contains("run `incan lock`, which prepares and publishes the inventory"),
+        "the refusal must name the missing inventory and its preparation command:\n{refusal}"
+    );
+    assert_eq!(
+        fs::read(&lock_path)?,
+        original_lock,
+        "a refused bake must leave oven.lock unchanged"
+    );
+
+    // A standalone Cargo test has no receipt-bound exact rustc capture for the compatibility publisher. The compiler
+    // suite supplies that authority and owns the successful-bake assertion. Its prepared SDK provider store stands in
+    // for the inventory `incan lock` publishes: building the standard library from source in a fresh home is outside
+    // the suite's Cargo-free authority.
+    if !incan_test_support::oven_compiler_suite_is_active() {
+        return Ok(());
+    }
+    let mut bake_with_inventory = configured_incan_command(project.path(), &["oven", "bake", "--project", "."]);
+    bake_with_inventory.env("INCAN_HOME", &fresh_home);
+    incan_test_support::configure_explicit_oven_bake_command(&mut bake_with_inventory)?;
+    let successful_bake = bake_with_inventory.output()?;
+    assert_success(&successful_bake, "oven bake once an SDK inventory is available");
+    assert!(
+        oven_model::lock::IncanLock::load(&lock_path)?.semantic.sdk.is_some(),
+        "the successful bake must retain component SDK state"
+    );
     Ok(())
 }
 

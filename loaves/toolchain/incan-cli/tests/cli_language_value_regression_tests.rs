@@ -27,6 +27,56 @@ def main() -> Result[None, str]:
     Ok(())
 }
 
+/// A normal source program that imports `std.testing` links the component that owns those helpers.
+#[test]
+fn source_program_importing_std_testing_links_its_component_issue2011() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let provider = tmp.path().join("value_provider");
+    fs::create_dir_all(provider.join("src"))?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = \"value_provider\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        provider.join("src/lib.incn"),
+        "pub def answer() -> int:\n    return 42\n",
+    )?;
+    let provider_bake = run_explicit_oven_bake(&provider)?;
+    assert_success(&provider_bake, "bake the source program's public dependency");
+
+    let consumer = tmp.path().join("consumer");
+    let main_path = write_minimal_project(
+        &consumer,
+        "source_testing_component",
+        "\n[dependencies]\nvalue_provider = { path = \"../value_provider\" }\n",
+    )?;
+    fs::write(
+        &main_path,
+        r#"from pub::value_provider import answer
+from std.testing import assert_is_ok, fail_t
+
+def require_value() -> int:
+    result: Result[int, str] = Ok(answer())
+    return assert_is_ok(result)
+
+def fail_value(error: str) -> int:
+    return fail_t(error)
+
+def main() -> None:
+    println(require_value())
+"#,
+    )?;
+
+    let bake = run_explicit_oven_bake(&consumer)?;
+    assert_success(&bake, "bake a source program that imports std.testing");
+    let build = run_incan(&consumer, &["build", "src/main.incn"])?;
+    assert_success(&build, "build a source program that imports std.testing");
+    let run = run_incan(&consumer, &["run", "src/main.incn"])?;
+    assert_success(&run, "run a source program that imports std.testing");
+    assert_eq!(String::from_utf8(run.stdout)?, "42\n");
+    Ok(())
+}
+
 /// Infer owned strings from later list members through a real build and runtime loop.
 #[test]
 fn nested_empty_first_list_runs_without_a_caller_annotation_issue1471() -> Result<(), Box<dyn std::error::Error>> {

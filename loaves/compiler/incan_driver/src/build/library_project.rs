@@ -27,7 +27,7 @@ use crate::build::plan_authority::{
     explicit_bake_profiles, oven_source_inline_dependency_specs, validate_selected_plan_registry_dependencies,
 };
 use crate::build::plan_selection::{
-    format_oven_registry_dependency_requirements, packaged_provider_selection_links_source_stdlib,
+    format_oven_registry_dependency_requirements, packaged_provider_selection_links_required_stdlib,
     registry_leaf_authority_for_plan_selection, select_or_bake_generated_project_plan,
 };
 use crate::build::provider_compilation::{
@@ -1039,7 +1039,7 @@ pub fn prepare_library_project(
             // An imported package Loaf is sufficient only for consume-only commands. An explicit library bake must
             // instead publish the library's own direct registry roots with its complete generated source closure.
             let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
-                packaged_provider_selection_links_source_stdlib(
+                packaged_provider_selection_links_required_stdlib(
                     compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
                         .map_err(oven_plan_error)?,
                     &provider_plan,

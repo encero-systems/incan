@@ -18,6 +18,7 @@ use crate::lock::{
 };
 use crate::session::CompilationSession;
 use incan_provider::dependency_resolver::ResolvedDependencies;
+use incan_provider::inventory::prepare_or_discover_sdk_inventory;
 use incan_provider::requirements::{
     ProjectRequirements, merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
 };
@@ -84,6 +85,27 @@ pub fn collect_and_publish_project_lock(
         None,
     )?;
     Ok(context)
+}
+
+/// Prepare a component SDK inventory when this toolchain has a source catalog, then publish the canonical lock.
+///
+/// `incan lock` owns this explicit preparation path. Oven publishers use [`collect_and_publish_project_lock`]
+/// directly so a bake can discover prepared state but can never launch the legacy SDK provider builder itself.
+pub fn prepare_sdk_and_publish_project_lock(
+    manifest: &ProjectManifest,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> CliResult<ProjectLockContext> {
+    let _inventory = prepare_or_discover_sdk_inventory().map_err(|error| CliError::failure(error.to_string()))?;
+    collect_and_publish_project_lock(
+        manifest,
+        entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+    )
 }
 
 /// Read the compiler-owned Cargo.lock payload override used while building an internal artifact.
