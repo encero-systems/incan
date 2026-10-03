@@ -1068,9 +1068,10 @@ impl<'a> IrEmitter<'a> {
         let rhs_name = "__incan_static_rhs";
         let rhs_ident = format_ident!("{}", rhs_name);
         let rewritten_target = match target {
-            AssignTarget::Field { object, field } => AssignTarget::Field {
+            AssignTarget::Field { object, field, ty } => AssignTarget::Field {
                 object: Box::new(Self::rewrite_storage_root_expr_for_mut(object, local_name)),
                 field: field.clone(),
+                ty: ty.clone(),
             },
             AssignTarget::Index { object, index } => AssignTarget::Index {
                 object: Box::new(Self::rewrite_storage_root_expr_for_mut(object, local_name)),
@@ -1245,6 +1246,7 @@ impl<'a> IrEmitter<'a> {
                 let t = self.emit_assign_target(target)?;
                 let v = match target {
                     AssignTarget::Var { ty, .. } => self.emit_value_for_target(value, ty)?,
+                    AssignTarget::Field { ty, .. } => self.emit_value_for_target(value, ty)?,
                     _ => self.emit_assignment_value(value, None)?,
                 };
                 Ok(quote! { #t = #v; })

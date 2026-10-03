@@ -74,7 +74,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/lvalue.rs",
-      "sha256": "66dc64ad998fd45782bfec390ac20a35c671701ccad24e185843a044d5389f26",
+      "sha256": "5a5df875b42f632852e2299b5a80dd76cd87d7a86cb297e87c9fe6eafd233291",
       "lines": 209
     },
     {
@@ -129,8 +129,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
-      "sha256": "d6baa4105447ff06967a719a25d8e2fec02797f97c385661530ecc9da2c8adc8",
-      "lines": 1992
+      "sha256": "6538b49e9c9d5aba2992c50510303a302e92f9b64ceb6c7eba10370257bd2ef2",
+      "lines": 1994
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
@@ -744,6 +744,25 @@
       "behavior_evidence": "generic_list_comprehension_consumes_parameter behavior fixture and direct_comprehension_source ownership tests",
       "semantic_owner": "incan_emit::ownership::plan_direct_comprehension_source over lowered VarAccess",
       "retirement_condition": "delete with the Rust-source backend in #654"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/lvalue.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1986",
+      "behavior_evidence": "cli_values_and_calls/str_const_assignment_to_owned_places behavior fixture; field_assignment_targets_retain_their_checked_storage_type_issue1986",
+      "semantic_owner": "lowering: AssignTarget field storage type; ownership: Assignment value-use conversion",
+      "retirement_condition": "the Rust-source backend is deleted (#654)"
     }
   ]
 }

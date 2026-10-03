@@ -520,6 +520,42 @@ fn field_write<'ir>(stmts: &'ir [IrStmt], field: &str, occurrence: usize) -> Res
         .ok_or_else(|| format!("missing write {occurrence} of field `{field}`"))
 }
 
+/// #1986: lowering retains the checked storage type on direct and nested field assignment targets so emission applies
+/// the ordinary assignment conversion to values such as a `str` constant's borrowed representation.
+#[test]
+fn field_assignment_targets_retain_their_checked_storage_type_issue1986() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+const GREETING: str = "hello"
+
+model Label:
+    text: str
+
+model Holder:
+    label: Label
+
+def main() -> None:
+    mut label = Label(text="initial")
+    label.text = GREETING
+    mut holder = Holder(label=Label(text="initial"))
+    holder.label.text = GREETING
+    println(label.text)
+"#,
+    )?;
+    let fields = body(&ir, "main")?
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            IrStmtKind::Assign {
+                target: AssignTarget::Field { field, ty, .. },
+                ..
+            } => Some((field.as_str(), ty)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(fields, vec![("text", &IrType::String), ("text", &IrType::String)]);
+    Ok(())
+}
+
 /// #1858: a value of an `Option`'s payload type written to an `Option` return type, field or list element lowers to a
 /// `Some` call of the place's type around the value; a value already of the `Option` type is lowered as it is.
 #[test]

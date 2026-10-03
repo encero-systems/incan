@@ -153,7 +153,7 @@ impl<'a> IrEmitter<'a> {
                 let n = self.rust_static_reference_ident(name, *reference_kind)?;
                 Ok(quote! { #n })
             }
-            AssignTarget::Field { object, field } => {
+            AssignTarget::Field { object, field, .. } => {
                 let o = self.emit_lvalue_expr(object)?;
                 let f = Self::emit_place_member(field);
                 // Same precedence rule as in `emit_lvalue_expr`: only parenthesize when the receiver may start with a
