@@ -13,6 +13,7 @@ Every step runs on the pinned Rust 1.98.0 with the `rustc-dev` component, built 
 | 0 | `step0_driver.rs` | A driver built against rustc's own crates compiles and runs a program on the pinned toolchain. |
 | 2 | `step2_mir_body.rs` | A function's body can come from MIR the front end constructs instead of from Rust source. That MIR calls the **generic** `core::cmp::max::<i64>`, and rustc monomorphizes it. The source body is `loop {}`; the program would hang if rustc compiled it. |
 | 3 | `step3_injected_declaration.rs` | A function can be declared with no source at all, by injecting an AST item after the crate root is parsed. `step3_program.rs` never declares `answer`. Its MIR body calls the user-written Rust function `double`, and Rust's `main` calls `answer` back: one crate graph, calls in both directions. |
+| 4 | `step4_model_adt.rs` | An Incan model is a real Rust struct, declared by AST injection. Rust constructs a `Point` and passes it to an Incan function whose MIR reads its fields; Incan MIR constructs a `Point` and returns it, and Rust reads its fields. No conversion happens in either direction — RFC 121's representation identity, literally. |
 
 rustc's borrow checker validates the constructed MIR, as it would for any Rust function. Incan's ownership facts therefore still have to describe valid Rust ownership, which is already true of the code the emitter generates today.
 
@@ -37,4 +38,4 @@ The step-3 driver compiles and links `step3_program.rs` to a native binary in ab
 
 ## Not yet tested
 
-Generic Incan functions, Incan models and enums as Rust ADTs, mapping spans to `.incn` sources for diagnostics and debuginfo, lowering real Body IR rather than hand-built MIR, and Oven driving the front end with JEC unit reuse.
+Generic Incan functions, enums as Rust ADTs, mapping spans to `.incn` sources for diagnostics and debuginfo, lowering real Body IR rather than hand-built MIR, and Oven driving the front end with JEC unit reuse.

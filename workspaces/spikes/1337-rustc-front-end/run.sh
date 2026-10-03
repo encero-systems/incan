@@ -39,3 +39,7 @@ expect_output step2_program "answer() = 42"
 build_driver step3_injected_declaration
 compile_with step3_injected_declaration step3_program
 expect_output step3_program "answer() = 42"
+
+build_driver step4_model_adt
+compile_with step4_model_adt step4_program
+expect_output step4_program "7 5 10"
