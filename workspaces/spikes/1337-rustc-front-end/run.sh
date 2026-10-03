@@ -28,6 +28,19 @@ expect_output() {
   printf 'ok   %s -> %s\n' "$1" "$actual"
 }
 
+expect_panic_at() {
+  if "$out/$1" >"$out/$1.stdout" 2>"$out/$1.stderr"; then
+    printf "FAIL %s: expected a panic, but it exited cleanly\n" "$1" >&2
+    exit 1
+  fi
+  if ! grep -qF "$2" "$out/$1.stderr" || ! grep -qF "$3" "$out/$1.stderr"; then
+    printf "FAIL %s: expected a panic at %s (%s), got:\n" "$1" "$2" "$3" >&2
+    cat "$out/$1.stderr" >&2
+    exit 1
+  fi
+  printf "ok   %s -> panicked at %s %s\n" "$1" "$2" "$3"
+}
+
 build_driver step0_driver
 compile_with step0_driver step0_program
 expect_output step0_program "hello from a program compiled by the Incan driver"
@@ -43,3 +56,15 @@ expect_output step3_program "answer() = 42"
 build_driver step4_model_adt
 compile_with step4_model_adt step4_program
 expect_output step4_program "7 5 10"
+
+build_driver step5_enum_adt
+compile_with step5_enum_adt step5_program
+expect_output step5_program "rect 3x3 | empty | [12, 20, 0]"
+
+build_driver step6_generic_function
+compile_with step6_generic_function step6_program
+expect_output step6_program "incan 2.5 9"
+
+build_driver step7_incn_spans
+INCAN_SOURCE="$here/scores.incn" compile_with step7_incn_spans step7_program
+expect_panic_at step7_program "scores.incn:3:12:" "attempt to add with overflow"
