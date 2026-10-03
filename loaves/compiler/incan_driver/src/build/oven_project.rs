@@ -1147,6 +1147,7 @@ pub fn bake_generated_project_compatibility_plan(
         // multi-gigabyte dependency DWARF payload. Keep the named debug publisher compact so one project closure stays
         // inside Oven's bounded compatibility domain.
         compact_debug_info: true,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: source_compiler_vocab_support && base_loaf.is_none(),
         // Rust package identity is carried through artifact metadata, not only source or crate names. The base owns the
         // complete Incan release cohort; the project contributes its locked third-party and provider delta.

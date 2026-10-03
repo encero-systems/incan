@@ -273,7 +273,12 @@ fn rematerialize_caller_owned_provider_graph(
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        replace_selected_compiler_runtime_libraries(&mut provider_plan, &provider_runtime_libraries)?;
+        replace_selected_compiler_runtime_libraries(
+            &mut provider_plan,
+            &provider_runtime_libraries,
+            preferred_runtime_registry_authority,
+            &provider_dependencies,
+        )?;
         let mut provider_compiler_owned_roots = inherited_compiler_owned_roots.to_vec();
         provider_compiler_owned_roots.extend(compiler_owned_roots(&provider_plan));
         provider_compiler_owned_roots.sort();
@@ -858,10 +863,13 @@ pub fn replace_caller_owned_package_libraries(
 ///
 /// Compiler runtime crates are compiled against one another. Replacing only a missing crate can therefore expose two
 /// nominally identical Rust types from different `incan_std_core` artifacts. The replacement is all-or-nothing for
-/// the names present in the provider receipt; ordinary user path and registry dependencies are left untouched.
+/// the names present in the provider receipt. Transitive registry externs used by its generated standard library
+/// follow the same cohort, while packages declared directly by the project or workspace remain caller-selected.
 pub fn replace_selected_compiler_runtime_libraries(
     artifact_plan: &mut OvenRustcArtifactPlan,
     runtime_libraries: &[OvenCallerOwnedRustcLibrary],
+    runtime_registry_authority: Option<&OvenRegistryLeafAuthority>,
+    direct_dependencies: &[DependencySpec],
 ) -> CliResult<()> {
     let runtime_names = runtime_libraries
         .iter()
@@ -873,6 +881,22 @@ pub fn replace_selected_compiler_runtime_libraries(
     artifact_plan
         .caller_owned_library_digests
         .retain(|crate_name, _| !runtime_names.contains(crate_name.as_str()));
+    if let Some(authority) = runtime_registry_authority {
+        let directly_declared_packages = direct_dependencies
+            .iter()
+            .filter(|dependency| matches!(dependency.source, DependencySource::Registry))
+            .map(|dependency| {
+                dependency
+                    .package
+                    .as_deref()
+                    .unwrap_or(&dependency.crate_name)
+                    .replace('-', "_")
+            })
+            .collect::<BTreeSet<_>>();
+        authority
+            .rebind_transitive_target_externs(artifact_plan, &directly_declared_packages)
+            .map_err(oven_rustc_error)?;
+    }
     attach_caller_owned_rustc_libraries(artifact_plan, runtime_libraries).map_err(oven_rustc_error)
 }
 
@@ -1147,6 +1171,80 @@ mod tests {
             remaining.is_empty(),
             "a receipt-selected project plan must reuse its own sealed direct path extern"
         );
+    }
+
+    #[test]
+    fn runtime_cohort_rebinds_transitive_registry_externs_but_preserves_direct_packages()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let release = tempfile::tempdir()?;
+        let release_deps = release.path().join("debug/deps");
+        fs::create_dir_all(&release_deps)?;
+        let transitive_bytes = b"release transitive unit";
+        let direct_bytes = b"release direct unit";
+        fs::write(release_deps.join("libtransitive_unit.rlib"), transitive_bytes)?;
+        fs::write(release_deps.join("libdirect_unit.rlib"), direct_bytes)?;
+        let leaf = |package: &str, bytes: &[u8]| oven_rustc::rustc::OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: Some(format!("sha256:{package}-unit")),
+            package: package.to_string(),
+            version: "1.0.0".to_string(),
+            crate_name: package.to_string(),
+            features: Vec::new(),
+            source: oven_rustc::rustc::OvenRustcRegistrySource {
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: format!("{package}-checksum"),
+                relative_root: format!("registry-sources/{package}"),
+                digest: format!("sha256:{package}-source"),
+            },
+            artifact: oven_rustc::rustc::OvenRustcArtifactExtern {
+                crate_name: package.to_string(),
+                relative_path: format!("debug/deps/lib{package}.rlib"),
+                digest: oven_store::digest_bytes(bytes),
+            },
+        };
+        let authority = OvenRegistryLeafAuthority::new(
+            release.path().to_path_buf(),
+            vec![
+                leaf("transitive_unit", transitive_bytes),
+                leaf("direct_unit", direct_bytes),
+            ],
+        );
+        let mut plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: vec![
+                ("direct_unit".to_string(), PathBuf::from("consumer/libdirect_unit.rlib")),
+                (
+                    "transitive_unit".to_string(),
+                    PathBuf::from("consumer/libtransitive_unit.rlib"),
+                ),
+            ],
+            compile_environment: BTreeMap::new(),
+            caller_owned_library_digests: BTreeMap::new(),
+        };
+        let direct = DependencySpec {
+            crate_name: "direct_unit".to_string(),
+            version: Some("1".to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+
+        replace_selected_compiler_runtime_libraries(&mut plan, &[], Some(&authority), &[direct])?;
+
+        let release_transitive = fs::canonicalize(release_deps.join("libtransitive_unit.rlib"))?;
+        assert_eq!(
+            plan.externs,
+            [
+                ("direct_unit".to_string(), PathBuf::from("consumer/libdirect_unit.rlib")),
+                ("transitive_unit".to_string(), release_transitive,),
+            ]
+        );
+        Ok(())
     }
 
     #[test]

@@ -17,14 +17,14 @@ use oven_rustc::rustc::{
     OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION, OvenCompilerSupportRootIntentAuthority, OvenRuntimeFoundation,
     OvenRuntimeFoundationPackageSource, OvenRuntimeFoundationSourceInventory, OvenRuntimeFoundationUnit,
     OvenRuntimeFoundationUnitExecution, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
-    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
-    OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
-    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
-    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_sha256,
-    selected_graph_unit_identity,
+    OvenRustcSupportingArtifact, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency,
+    OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput,
+    OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner,
+    OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose,
+    OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit,
+    OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents,
+    selected_graph_sha256, selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
@@ -75,16 +75,12 @@ pub struct OvenLegacyCargoSelectedGeneratedBinding {
 /// One selected environment value matched to an exact build-script observation.
 ///
 /// Every `rustc-env` line a build script emitted gets one binding, so the closure digest states what was observed
-/// and what became of it; the binding decides whether the graph carries the value. RFC 119 makes a script's
-/// directives capture provenance rather than unit authority, so every observed value is retained here and in the
-/// closure digest but withheld from the graph.
+/// and what became of it; the binding decides whether the graph carries the exact text or a private-OUT_DIR path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenLegacyCargoSelectedEnvironmentBinding {
     /// Exact raw Cargo observation retained only for producer-side comparison.
     pub observed_value: String,
-    /// Portable selected value that enters graph identity after the comparison succeeds, or `None` when the graph
-    /// admits no retained representation for the name: the entry then stays identity-bound through the build-script
-    /// closure digest and does not reach the graph.
+    /// Portable selected value that enters graph identity after the comparison succeeds.
     pub value: Option<OvenSelectedRustFacetEnvironmentValue>,
 }
 
@@ -131,6 +127,8 @@ pub struct OvenLegacyCargoDeclaredBuildScriptFacts {
     pub cfg: Vec<String>,
     /// Declared generated inputs by name and digest, which the observation was required to match.
     pub out: BTreeMap<String, String>,
+    /// Declared compile-time environment values required to match the observation.
+    pub environment: Vec<oven_model::manifest::RustFactCompileEnvironment>,
 }
 
 /// All non-Cargo physical facts needed to turn one capture into a portable raw graph.
@@ -260,6 +258,148 @@ pub fn runtime_foundation_from_compiled_loaf(
         selected_graph: graph.clone(),
         units,
     })
+}
+
+/// Construct the Cargo-free publisher foundation that rebuilds every selected registry unit with direct rustc.
+///
+/// The compatibility Loaf contributes its complete compiled manifest, while the selected graph adds any generated
+/// products and native archives attached after that Loaf was first sealed. Keeping the compiled closure intact lets
+/// the release envelope bind one exact plan for normal consumers and for the rebuild foundation; the selected graph
+/// remains the sole authority for which units the publisher rebuilds.
+pub fn runtime_foundation_for_publisher_rebuild(
+    finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+    loaf: &OvenLoaf,
+    compiler_closure_identity: &str,
+) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
+    let graph = finalized.graph.graph();
+    let constituents = graph
+        .owners
+        .iter()
+        .filter(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
+        .collect::<Vec<_>>();
+    let [artifact_owner] = constituents.as_slice() else {
+        return Err(projection_error(
+            "runtime foundation artifact owner",
+            "the selected graph does not name exactly one Constituent owner",
+        ));
+    };
+    if loaf.plan.intent.target != graph.selection.intent.target
+        || loaf.plan.intent.toolchain != graph.selection.intent.toolchain
+        || loaf.plan.intent.profile != graph.selection.intent.profile
+    {
+        return Err(projection_error(
+            "runtime foundation publisher Loaf",
+            "target, toolchain or profile differs from the selected graph",
+        ));
+    }
+    let mut artifacts = loaf.plan.clone();
+    artifacts.supporting_artifacts = publisher_rebuild_supporting_artifacts(graph, &loaf.plan)?;
+    artifacts
+        .validate_shape(&artifacts.intent)
+        .map_err(|error| projection_error("runtime foundation publisher artifacts", &error.to_string()))?;
+    let units = graph
+        .units
+        .iter()
+        .map(|unit| OvenRuntimeFoundationUnit {
+            selected_identity: unit.identity.clone(),
+            domain: unit.domain,
+            execution: OvenRuntimeFoundationUnitExecution::Rebuild,
+        })
+        .collect();
+    Ok(OvenRuntimeFoundation {
+        schema_version: OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION,
+        compiler_closure_digest: compiler_closure_identity.to_string(),
+        artifact_owner: artifact_owner.identity.clone(),
+        artifacts,
+        selected_graph: graph.clone(),
+        units,
+    })
+}
+
+/// Project every retained registry manifest and publisher-produced compiler input into the rebuild plan.
+///
+/// Registry source declarations remain valid only with their exact plan-declared `Cargo.toml`. Generated trees and
+/// native archives come from the already-validated selected graph and become supporting artifacts here, so the asset
+/// publisher cannot carry bytes that the immutable artifact manifest omits. Repeated identical paths collapse to one
+/// declaration; conflicting claims refuse the projection.
+fn publisher_rebuild_supporting_artifacts(
+    graph: &OvenSelectedRustFacetGraph,
+    source_plan: &oven_rustc::rustc::OvenRustcArtifactManifest,
+) -> Result<Vec<OvenRustcSupportingArtifact>, OvenLegacyCargoError> {
+    let mut declared = BTreeMap::new();
+    let mut retained = source_plan.supporting_artifacts.clone();
+    let retained_paths = retained
+        .iter()
+        .map(|artifact| artifact.relative_path.clone())
+        .collect::<BTreeSet<_>>();
+    for artifact in &source_plan.supporting_artifacts {
+        insert_publisher_rebuild_artifact(&mut declared, &artifact.relative_path, &artifact.digest)?;
+    }
+    for source in &source_plan.registry_sources {
+        let manifest_path = if source.source.relative_root == "." {
+            "Cargo.toml".to_string()
+        } else {
+            format!("{}/Cargo.toml", source.source.relative_root)
+        };
+        let matches = source_plan
+            .supporting_artifacts
+            .iter()
+            .filter(|artifact| artifact.relative_path == manifest_path)
+            .collect::<Vec<_>>();
+        let [manifest] = matches.as_slice() else {
+            return Err(projection_error(
+                "runtime foundation registry source",
+                &format!(
+                    "`{}` {} has {} immutable-plan manifest declarations",
+                    source.package,
+                    source.version,
+                    matches.len()
+                ),
+            ));
+        };
+        insert_publisher_rebuild_artifact(&mut declared, &manifest.relative_path, &manifest.digest)?;
+    }
+    for unit in &graph.units {
+        for generated in &unit.generated_inputs {
+            for member in &generated.members {
+                let path = if generated.source.path == "." {
+                    member.path.clone()
+                } else {
+                    format!("{}/{}", generated.source.path, member.path)
+                };
+                insert_publisher_rebuild_artifact(&mut declared, &path, &member.digest)?;
+            }
+        }
+        for library in &unit.linked_libraries {
+            if let OvenSelectedRustFacetLinkedLibrary::Archive { artifact, digest, .. } = library {
+                insert_publisher_rebuild_artifact(&mut declared, &artifact.path, digest)?;
+            }
+        }
+    }
+    retained.extend(
+        declared
+            .into_iter()
+            .filter(|(relative_path, _)| !retained_paths.contains(relative_path))
+            .map(|(relative_path, digest)| OvenRustcSupportingArtifact { relative_path, digest }),
+    );
+    Ok(retained)
+}
+
+/// Insert one publisher-rebuild artifact while refusing two byte identities for the same portable path.
+fn insert_publisher_rebuild_artifact(
+    declared: &mut BTreeMap<String, String>,
+    relative_path: &str,
+    digest: &str,
+) -> Result<(), OvenLegacyCargoError> {
+    if let Some(existing) = declared.insert(relative_path.to_string(), digest.to_string())
+        && existing != digest
+    {
+        return Err(projection_error(
+            "runtime foundation publisher artifact",
+            &format!("`{relative_path}` has conflicting immutable-plan digests"),
+        ));
+    }
+    Ok(())
 }
 
 /// The one portable identity a registry-backed selected unit's source carries: the `registry:` coordinate.
@@ -537,54 +677,90 @@ fn selected_domain_key(domain: OvenSelectedRustFacetDomain) -> u8 {
     }
 }
 
-/// Encode the strict Incan policy request from validated physical facts and retained package sources.
-pub fn encode_selected_graph_policy_request(
-    selected: &ValidatedOvenSelectedRustFacetGraph,
+/// Encode one environment value in the closed v5 policy vocabulary.
+///
+/// Captured text and private `OUT_DIR` locations keep their distinct selected-graph identity forms, but the policy
+/// exchange needs only exact text or an owner-relative path. This prevents capture provenance from expanding the
+/// exchange vocabulary while preserving the graph digest that authenticates that provenance.
+fn encode_policy_environment_value(
+    value: &OvenSelectedRustFacetEnvironmentValue,
+    generated_inputs: &[OvenSelectedRustFacetGeneratedInput],
+) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    match value {
+        OvenSelectedRustFacetEnvironmentValue::Text { value }
+        | OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
+            Ok(serde_json::json!({"kind": "text", "value": value}))
+        }
+        OvenSelectedRustFacetEnvironmentValue::Path { value } => {
+            Ok(serde_json::json!({"kind": "path", "value": value}))
+        }
+        OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => {
+            let mut matching = generated_inputs.iter().filter(|input| input.name == "out_dir");
+            let Some(generated) = matching.next() else {
+                return Err(projection_error(
+                    "policy environment OUT_DIR",
+                    "does not bind exactly one generated out_dir input",
+                ));
+            };
+            if matching.next().is_some() {
+                return Err(projection_error(
+                    "policy environment OUT_DIR",
+                    "does not bind exactly one generated out_dir input",
+                ));
+            }
+            let path = if relative == "." {
+                generated.source.path.clone()
+            } else {
+                format!("{}/{relative}", generated.source.path.trim_end_matches('/'))
+            };
+            Ok(serde_json::json!({
+                "kind": "path",
+                "value": {"owner": generated.source.owner, "path": path},
+            }))
+        }
+        OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { hmac_sha256 } => {
+            Ok(serde_json::json!({"kind": "sensitive_digest", "hmac_sha256": hmac_sha256}))
+        }
+    }
+}
+
+/// Encode every selected environment entry using only kinds accepted by the v5 Incan decoder.
+fn encode_policy_environment(
+    unit: &OvenSelectedRustFacetUnit,
+) -> Result<serde_json::Map<String, serde_json::Value>, OvenLegacyCargoError> {
+    unit.environment
+        .iter()
+        .map(|(name, value)| {
+            encode_policy_environment_value(value, &unit.generated_inputs).map(|encoded| (name.clone(), encoded))
+        })
+        .collect()
+}
+
+/// Encode one physical unit while keeping compiler-only cfg and argument facts behind its authenticated identity.
+fn encode_policy_unit(unit: &OvenSelectedRustFacetUnit) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    Ok(serde_json::json!({
+        "identity": unit.identity,
+        "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
+        "domain": serde_json::to_value(unit.domain).map_err(|error| projection_error("policy unit domain", &error.to_string()))?,
+        "role": serde_json::to_value(unit.role).map_err(|error| projection_error("policy unit role", &error.to_string()))?,
+        "crate_kind": serde_json::to_value(unit.crate_kind).map_err(|error| projection_error("policy crate kind", &error.to_string()))?,
+        "closure": {
+            "environment": encode_policy_environment(unit)?,
+            "generated_inputs": unit.generated_inputs,
+            "linked_libraries": unit.linked_libraries,
+            "sysroot_externs": unit.sysroot_externs,
+        },
+        "features": unit.features,
+    }))
+}
+
+/// Encode retained package catalogs for the selected physical units.
+fn encode_policy_catalogs(
+    graph: &OvenSelectedRustFacetGraph,
     capture: &OvenLegacyCargoSelectedUnitCapture,
     sources: &[OvenLegacyCargoInspectionSource],
     intent_owner: &str,
-) -> Result<serde_json::Value, OvenLegacyCargoError> {
-    let graph = selected.graph();
-    let units = graph
-        .units
-        .iter()
-        .map(|unit| {
-            Ok(serde_json::json!({
-                "identity": unit.identity,
-                "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
-                "domain": serde_json::to_value(unit.domain).map_err(|error| projection_error("policy unit domain", &error.to_string()))?,
-                "role": serde_json::to_value(unit.role).map_err(|error| projection_error("policy unit role", &error.to_string()))?,
-                "crate_kind": serde_json::to_value(unit.crate_kind).map_err(|error| projection_error("policy crate kind", &error.to_string()))?,
-                "closure": {
-                    "environment": unit.environment,
-                    "generated_inputs": unit.generated_inputs,
-                    "linked_libraries": unit.linked_libraries,
-                    "sysroot_externs": unit.sysroot_externs,
-                },
-                "features": unit.features,
-            }))
-        })
-        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
-    let roots = graph
-        .exposed_roots
-        .values()
-        .map(|root| serde_json::to_value(root).map_err(|error| projection_error("policy root", &error.to_string())))
-        .collect::<Result<Vec<_>, _>>()?;
-    let bindings = graph
-        .units
-        .iter()
-        .flat_map(|unit| {
-            unit.dependencies.iter().map(move |dependency| {
-                serde_json::json!({
-                    "parent_unit": unit.identity,
-                    "alias": dependency.alias,
-                    "child_unit": dependency.unit,
-                })
-            })
-        })
-        .collect::<Vec<_>>();
-    // The engine keys catalogs by package identity and refuses a repeated key, so a package compiled in both
-    // domains (a host rlib feeding a proc-macro and a target rlib) contributes its manifest once.
+) -> Result<Vec<serde_json::Value>, OvenLegacyCargoError> {
     let mut catalogs = Vec::new();
     let mut seen = BTreeSet::new();
     for unit in &graph.units {
@@ -610,8 +786,7 @@ pub fn encode_selected_graph_policy_request(
                 "does not bind exactly one retained source",
             ));
         };
-        let manifest_path = source.source_root.join("Cargo.toml");
-        let manifest_bytes = fs::read(&manifest_path)
+        let manifest_bytes = fs::read(source.source_root.join("Cargo.toml"))
             .map_err(|error| projection_error("policy catalog manifest", &error.to_string()))?;
         let manifest_digest = selected_graph_sha256(&manifest_bytes);
         let declared_manifest = source
@@ -651,6 +826,41 @@ pub fn encode_selected_graph_policy_request(
             "build_unit_present": build_unit_present,
         }));
     }
+    Ok(catalogs)
+}
+
+/// Encode the strict Incan policy request from validated physical facts and retained package sources.
+pub fn encode_selected_graph_policy_request(
+    selected: &ValidatedOvenSelectedRustFacetGraph,
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sources: &[OvenLegacyCargoInspectionSource],
+    intent_owner: &str,
+) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    let graph = selected.graph();
+    let units = graph
+        .units
+        .iter()
+        .map(encode_policy_unit)
+        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
+    let roots = graph
+        .exposed_roots
+        .values()
+        .map(|root| serde_json::to_value(root).map_err(|error| projection_error("policy root", &error.to_string())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let bindings = graph
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.dependencies.iter().map(move |dependency| {
+                serde_json::json!({
+                    "parent_unit": unit.identity,
+                    "alias": dependency.alias,
+                    "child_unit": dependency.unit,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let catalogs = encode_policy_catalogs(graph, capture, sources, intent_owner)?;
     Ok(serde_json::json!({
         "schema": "incan.oven.rust-policy-exchange/5",
         "operation": "validate_selected_rust_graph",
@@ -1425,15 +1635,18 @@ pub fn legacy_cargo_foundation_projection(
                     "does not have one exact final publisher binding",
                 ));
             }
-            let environment = if adoption.is_some() {
-                BTreeMap::new()
-            } else {
-                facts
-                    .environment
-                    .iter()
-                    .map(|(name, value)| (name.clone(), observed_environment_binding(name, value)))
-                    .collect()
-            };
+            let environment = facts
+                .environment
+                .iter()
+                .map(|(name, value)| {
+                    let binding = adoption
+                        .and_then(|adoption| adoption.record.environment.iter().find(|item| item.name == *name))
+                        .map(|declared| declared_environment_binding(declared, value))
+                        .transpose()?
+                        .unwrap_or_else(|| observed_environment_binding(name, value));
+                    Ok((name.clone(), binding))
+                })
+                .collect::<Result<BTreeMap<_, _>, OvenLegacyCargoError>>()?;
             build_scripts.insert(
                 edge,
                 OvenLegacyCargoSelectedBuildScriptBinding {
@@ -1451,6 +1664,7 @@ pub fn legacy_cargo_foundation_projection(
                             .iter()
                             .map(|out| (out.name.clone(), out.digest.clone()))
                             .collect(),
+                        environment: adoption.record.environment.clone(),
                     }),
                 },
             );
@@ -1485,13 +1699,40 @@ pub fn legacy_cargo_foundation_projection(
 
 /// Bind one observed `rustc-env` line of an observation-governed build-script edge.
 ///
-/// Script-emitted environment is capture evidence rather than selected-unit authority under RFC 119. The value is
-/// therefore withheld from the graph and stays identity-bound through the build-script closure digest.
+/// The exact captured text becomes selected-unit authority and stays identity-bound through both the graph and the
+/// build-script closure digest. It is never recovered from the publisher's ambient environment.
 fn observed_environment_binding(_name: &str, observed: &str) -> OvenLegacyCargoSelectedEnvironmentBinding {
     OvenLegacyCargoSelectedEnvironmentBinding {
         observed_value: observed.to_string(),
-        value: None,
+        value: Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+            value: observed.to_string(),
+        }),
     }
+}
+
+/// Convert one registry-declared rustc environment value into its portable selected-graph representation.
+fn declared_environment_binding(
+    declared: &oven_model::manifest::RustFactCompileEnvironment,
+    observed: &str,
+) -> Result<OvenLegacyCargoSelectedEnvironmentBinding, OvenLegacyCargoError> {
+    let value = match (&declared.literal, &declared.out) {
+        (Some(value), None) if value == observed => {
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: value.clone() }
+        }
+        (None, Some(relative)) => OvenSelectedRustFacetEnvironmentValue::OutDir {
+            relative: relative.clone(),
+        },
+        _ => {
+            return Err(projection_error(
+                "selected build-script environment",
+                "does not match its declared literal or OUT_DIR-relative value",
+            ));
+        }
+    };
+    Ok(OvenLegacyCargoSelectedEnvironmentBinding {
+        observed_value: observed.to_string(),
+        value: Some(value),
+    })
 }
 
 /// Identify the execution node that supplies retained build-script facts to a consumer edge.
@@ -1543,11 +1784,19 @@ pub fn project_legacy_cargo_selected_graph_with_identities(
                 None => continue,
             };
             let build_script_facts = projected_build_script_facts(capture, sealed, index)?;
+            let environment = projected_compile_environment(capture_unit, binding, &build_script_facts)?;
             let crate_kind = captured_crate_kind(capture_unit)?;
             let domain = captured_domain(capture_unit, &sealed.selection)?;
             let role = captured_role(capture_unit, crate_kind, domain)?;
             validate_registry_binding(capture_unit, binding, &sealed.owners)?;
             validate_source_owner(binding, &sealed.owners)?;
+            let compiler_crate_type = capture_unit.compiler_crate_type.clone().ok_or_else(|| {
+                projection_error("selected compiler crate type", "is absent from the traced invocation")
+            })?;
+            let compiler_paths = capture_unit
+                .compiler_paths
+                .clone()
+                .ok_or_else(|| projection_error("selected compiler paths", "are absent from the traced invocation"))?;
 
             let mut unit = OvenSelectedRustFacetUnit {
                 identity: String::new(),
@@ -1563,8 +1812,11 @@ pub fn project_legacy_cargo_selected_graph_with_identities(
                 source_members: source_members(capture_unit, binding)?,
                 features: capture_unit.effective_features.clone(),
                 cfg: build_script_facts.cfg,
+                compiler_crate_type,
+                compiler_paths,
+                compiler_arguments: capture_unit.compiler_arguments.clone(),
                 sysroot_externs: capture_unit.sysroot_externs.clone(),
-                environment: build_script_facts.environment,
+                environment,
                 include_dirs: binding.include_dirs.clone(),
                 exclude_dirs: binding.exclude_dirs.clone(),
                 dependencies,
@@ -1882,7 +2134,7 @@ pub fn legacy_cargo_build_script_closure_digest(
     records.sort_by(|left, right| {
         (&left.consumer, &left.build_unit, &left.package).cmp(&(&right.consumer, &right.build_unit, &right.package))
     });
-    let bytes = serde_json::to_vec(&("incan.oven.legacy-cargo-build-script-closure/2", records))
+    let bytes = oven_model::digest::canonical_json_bytes(&("incan.oven.legacy-cargo-build-script-closure/2", records))
         .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
     Ok(oven_rustc::rustc::selected_graph_sha256(&bytes))
 }
@@ -2100,6 +2352,119 @@ struct ProjectedBuildScriptFacts {
     linked_libraries: Vec<OvenSelectedRustFacetLinkedLibrary>,
 }
 
+/// Merge Cargo's exact compile-time environment with the build-script values selected for one unit.
+fn projected_compile_environment(
+    unit: &OvenLegacyCargoSelectedUnit,
+    binding: &OvenLegacyCargoSelectedGraphUnitBinding,
+    build_script: &ProjectedBuildScriptFacts,
+) -> Result<BTreeMap<String, OvenSelectedRustFacetEnvironmentValue>, OvenLegacyCargoError> {
+    let mut environment = build_script.environment.clone();
+    for (name, observed) in &unit.compile_environment {
+        let value = match name.as_str() {
+            "CARGO_MANIFEST_DIR" => {
+                validate_captured_manifest_environment(unit, name, observed)?;
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: binding.source.owner.clone(),
+                        path: binding.source.root.clone(),
+                    },
+                }
+            }
+            "CARGO_MANIFEST_PATH" => {
+                validate_captured_manifest_environment(unit, name, observed)?;
+                let manifest = format!("{}/Cargo.toml", binding.source.root.trim_end_matches('/'));
+                if !binding.source_members.iter().any(|member| member.path == "Cargo.toml") {
+                    return Err(projection_error(
+                        "selected compile environment",
+                        "CARGO_MANIFEST_PATH has no retained Cargo.toml source member",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: binding.source.owner.clone(),
+                        path: manifest,
+                    },
+                }
+            }
+            "OUT_DIR" => {
+                let captured_out_dir = unit
+                    .dependencies
+                    .iter()
+                    .filter_map(|dependency| dependency.build_script.as_ref())
+                    .any(|facts| facts.out_dir.to_string_lossy() == observed.as_str());
+                if !captured_out_dir
+                    || !build_script
+                        .generated_inputs
+                        .iter()
+                        .any(|input| input.name == "out_dir")
+                {
+                    return Err(projection_error(
+                        "selected compile environment",
+                        "captured OUT_DIR does not match a retained generated output",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: ".".to_string(),
+                }
+            }
+            _ => OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: observed.clone(),
+            },
+        };
+        match environment.insert(name.clone(), value.clone()) {
+            Some(previous) if previous != value => {
+                return Err(projection_error(
+                    "selected compile environment",
+                    &format!("`{name}` has conflicting Cargo and build-script values"),
+                ));
+            }
+            Some(_) | None => {}
+        }
+    }
+    Ok(environment)
+}
+
+/// Check a transient Cargo manifest path before rebinding it beneath the unit's admitted source owner.
+fn validate_captured_manifest_environment(
+    unit: &OvenLegacyCargoSelectedUnit,
+    name: &str,
+    observed: &str,
+) -> Result<(), OvenLegacyCargoError> {
+    let module = Path::new(&unit.root_module);
+    let mut source_root = unit.source_path.as_path();
+    for _ in module.components() {
+        source_root = source_root.parent().ok_or_else(|| {
+            projection_error(
+                "selected compile environment",
+                "captured source does not contain its declared root module",
+            )
+        })?;
+    }
+    if source_root.join(module) != unit.source_path {
+        return Err(projection_error(
+            "selected compile environment",
+            "captured source does not end in its declared root module",
+        ));
+    }
+    let expected = match name {
+        "CARGO_MANIFEST_DIR" => source_root.to_path_buf(),
+        "CARGO_MANIFEST_PATH" => source_root.join("Cargo.toml"),
+        _ => {
+            return Err(projection_error(
+                "selected compile environment",
+                "requested manifest validation for an unsupported variable",
+            ));
+        }
+    };
+    if Path::new(observed) != expected {
+        return Err(projection_error(
+            "selected compile environment",
+            &format!("{name} does not match the captured unit source"),
+        ));
+    }
+    Ok(())
+}
+
 /// Attach checked build-script cfg, environment, generated output and linked-library facts to one consumer.
 fn projected_build_script_facts(
     capture: &OvenLegacyCargoSelectedUnitCapture,
@@ -2149,20 +2514,23 @@ fn projected_build_script_facts(
                     "does not match its exact captured value",
                 ));
             }
-            // A withheld entry is a checked observation the graph does not carry: the exact-value comparison
-            // above still holds it to the capture, and the closure digest keeps its identity.
+            // Older sealed bindings may withhold an entry. Current projections carry exact captured text or a
+            // declared OUT_DIR-relative path, while the comparison above still checks every value against capture.
             let Some(value) = &bound.value else {
                 continue;
             };
             match value {
                 OvenSelectedRustFacetEnvironmentValue::Text { value } if value == observed => {}
+                OvenSelectedRustFacetEnvironmentValue::CapturedText { value } if value == observed => {}
                 OvenSelectedRustFacetEnvironmentValue::Text { .. } => {
                     return Err(projection_error(
                         "selected build-script environment",
                         "text value does not exactly match its captured value",
                     ));
                 }
-                OvenSelectedRustFacetEnvironmentValue::Path { .. }
+                OvenSelectedRustFacetEnvironmentValue::OutDir { .. } => {}
+                OvenSelectedRustFacetEnvironmentValue::CapturedText { .. }
+                | OvenSelectedRustFacetEnvironmentValue::Path { .. }
                 | OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {
                     return Err(projection_error(
                         "selected build-script environment",
@@ -2482,11 +2850,19 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use oven_rustc::loaf::{
+        OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafAccounting, OvenLoafCompatibility, OvenLoafProvenance,
+        stage_release_runtime_foundation_toolchain,
+    };
     use oven_rustc::rustc::OvenRustcRegistrySource;
     use oven_rustc::rustc::{
-        OvenCompilerSupportRootIntent, OvenCompilerSupportRootIntentAuthority, OvenSelectedRustFacetCfgSnapshot,
-        OvenSelectedRustFacetIntent, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetTargetSpec,
-        compiler_support_root_intent_digest, selected_graph_sha256, selected_graph_source_digest,
+        OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenCompilerSupportRootIntent,
+        OvenCompilerSupportRootIntentAuthority, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset,
+        OvenRustcArtifactManifest, OvenRustcRegistrySourcePackage, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetIntent, OvenSelectedRustFacetPurpose,
+        OvenSelectedRustFacetTargetSpec, compiler_support_root_intent_digest, execute_runtime_foundation_rebuild,
+        publish_runtime_foundation_asset_with_generated_owners, rustc_host_and_target_cfg_snapshots, rustc_host_target,
+        rustc_identity, selected_graph_sha256, selected_graph_source_digest,
     };
     use oven_store::{
         OvenGeneratedProjectRequest, receipt_generated_project, receipt_with_compiler_support_root_intent,
@@ -2589,12 +2965,20 @@ mod tests {
                 crate_types: vec!["lib".to_string()],
                 source_path: PathBuf::from("/transient/serde/src/lib.rs"),
                 artifact_paths: Vec::new(),
+                retained_artifacts: Vec::new(),
                 root_module: "src/lib.rs".to_string(),
                 edition: "2021".to_string(),
                 mode: "build".to_string(),
                 platform: Some("x86_64-unknown-linux-gnu".to_string()),
                 target_is_explicit: Some(true),
                 cfg: vec!["target_has_atomic=\"8\"".to_string()],
+                compiler_crate_type: Some("lib".to_string()),
+                compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+                compiler_arguments: vec![OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "embed-bitcode".to_string(),
+                    value: "no".to_string(),
+                }],
+                compile_environment: BTreeMap::new(),
                 effective_features: vec!["derive".to_string()],
                 dependencies: Vec::new(),
                 sysroot_externs: Vec::new(),
@@ -2824,6 +3208,588 @@ mod tests {
         )?)
     }
 
+    /// Physical source facts prepared before the synthetic Cargo capture is assembled.
+    struct PublisherRebuildSourceFixture {
+        package_root: PathBuf,
+        out_dir: PathBuf,
+        members: Vec<super::super::OvenLegacyCargoInspectionSourceMember>,
+        source_digest: String,
+        proc_macro_root: PathBuf,
+        proc_macro_members: Vec<super::super::OvenLegacyCargoInspectionSourceMember>,
+        proc_macro_digest: String,
+    }
+
+    /// Capture and retained registry-source facts consumed by the synthetic publisher pipeline.
+    struct PublisherRebuildCaptureFixture {
+        capture: OvenLegacyCargoSelectedUnitCapture,
+        sources: Vec<super::super::OvenLegacyCargoInspectionSource>,
+        loaf_root: PathBuf,
+    }
+
+    /// Write the exact source and generated trees used by the publisher rebuild pipeline fixture.
+    fn write_publisher_rebuild_sources(
+        scratch: &Path,
+    ) -> Result<PublisherRebuildSourceFixture, Box<dyn std::error::Error>> {
+        let package_root = scratch.join("loaf/registry-sources/aurora-codec-7.4.2");
+        let out_dir = scratch.join("cargo-out");
+        fs::create_dir_all(package_root.join("src"))?;
+        fs::create_dir_all(out_dir.join("nested"))?;
+        fs::write(
+            package_root.join("Cargo.toml"),
+            b"[package]\nname = \"aurora-codec\"\nversion = \"7.4.2\"\nedition = \"2021\"\nbuild = \"build.rs\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(package_root.join("build.rs"), b"fn main() {}\n")?;
+        fs::write(
+            package_root.join("src/lib.rs"),
+            b"#![deny(warnings)]\nuse aurora_macro::marker;\nmarker!();\ninclude!(concat!(env!(\"OUT_DIR\"), \"/nested/generated.rs\"));\n#[cfg(aurora_generated)]\npub const BUILD_MARKER: &str = env!(\"AURORA_BUILD_MARKER\");\n#[cfg(not(aurora_generated))]\ncompile_error!(\"captured rustc-cfg was not replayed\");\npub const PACKAGE: &str = env!(\"CARGO_PKG_NAME\");\npub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\nfn lint_cap_probe() {}\n",
+        )?;
+        fs::write(
+            out_dir.join("nested/generated.rs"),
+            b"pub const GENERATED_VALUE: u32 = 47;\n",
+        )?;
+        let member = |path: &str| -> Result<super::super::OvenLegacyCargoInspectionSourceMember, std::io::Error> {
+            Ok(super::super::OvenLegacyCargoInspectionSourceMember {
+                path: path.to_string(),
+                digest: digest(&fs::read(package_root.join(path))?),
+            })
+        };
+        let members = vec![member("Cargo.toml")?, member("build.rs")?, member("src/lib.rs")?];
+        let selected_members = members
+            .iter()
+            .map(|member| OvenSelectedRustFacetSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let source_digest = selected_graph_source_digest(&selected_members)?;
+        let proc_macro_root = scratch.join("loaf/registry-sources/aurora-macro-2.1.0");
+        fs::create_dir_all(proc_macro_root.join("src"))?;
+        fs::write(
+            proc_macro_root.join("Cargo.toml"),
+            b"[package]\nname = \"aurora-macro\"\nversion = \"2.1.0\"\nedition = \"2021\"\n\n[lib]\nproc-macro = true\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(
+            proc_macro_root.join("src/lib.rs"),
+            b"extern crate proc_macro;\nuse proc_macro::TokenStream;\n#[proc_macro]\npub fn marker(_input: TokenStream) -> TokenStream { TokenStream::new() }\n",
+        )?;
+        let proc_macro_members = ["Cargo.toml", "src/lib.rs"]
+            .into_iter()
+            .map(|path| {
+                Ok(super::super::OvenLegacyCargoInspectionSourceMember {
+                    path: path.to_string(),
+                    digest: digest(&fs::read(proc_macro_root.join(path))?),
+                })
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        let proc_macro_digest = selected_graph_source_digest(
+            &proc_macro_members
+                .iter()
+                .map(|member| OvenSelectedRustFacetSourceMember {
+                    path: member.path.clone(),
+                    digest: member.digest.clone(),
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(PublisherRebuildSourceFixture {
+            package_root,
+            out_dir,
+            members,
+            source_digest,
+            proc_macro_root,
+            proc_macro_members,
+            proc_macro_digest,
+        })
+    }
+
+    /// Build the release-profile proc-macro unit whose strip helper must come from the retained Rust sysroot.
+    fn publisher_rebuild_proc_macro_unit(
+        source: &PublisherRebuildSourceFixture,
+        host: &str,
+    ) -> Result<super::super::OvenLegacyCargoSelectedUnit, Box<dyn std::error::Error>> {
+        let mut unit = capture()?.units.remove(0);
+        unit.package_id = "registry+https://example.invalid/aurora-index#aurora-macro@2.1.0".to_string();
+        unit.package = "aurora-macro".to_string();
+        unit.package_version = "2.1.0".to_string();
+        unit.package_source = Some("registry+https://example.invalid/aurora-index".to_string());
+        unit.target_name = "aurora_macro".to_string();
+        unit.target_kinds = vec!["proc-macro".to_string()];
+        unit.crate_types = vec!["proc-macro".to_string()];
+        unit.compiler_crate_type = Some("proc-macro".to_string());
+        unit.source_path = source.proc_macro_root.join("src/lib.rs");
+        unit.platform = Some(host.to_string());
+        unit.target_is_explicit = Some(false);
+        unit.effective_features.clear();
+        unit.cfg.clear();
+        unit.compiler_arguments = vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "strip".to_string(),
+                value: "debuginfo".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "extra-filename".to_string(),
+                value: "-fixture".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+        ];
+        unit.compile_environment.clear();
+        unit.sysroot_externs = vec!["proc_macro".to_string()];
+        unit.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            registry: "registry+https://example.invalid/aurora-index".to_string(),
+            checksum: "aurora-macro-checksum".to_string(),
+            digest: source.proc_macro_digest.clone(),
+            root_module: "src/lib.rs".to_string(),
+            members: source.proc_macro_members.clone(),
+        });
+        Ok(unit)
+    }
+
+    /// Observe the real compiler context used by the end-to-end publisher fixture.
+    fn publisher_rebuild_compiler_context(
+        rustc: &Path,
+    ) -> Result<super::super::OvenLegacyCargoSelectedCompilerContext, Box<dyn std::error::Error>> {
+        let host = rustc_host_target(rustc)?;
+        let toolchain = rustc_identity(rustc)?;
+        let (host_cfg, target_cfg) = rustc_host_and_target_cfg_snapshots(rustc, &host)?;
+        Ok(super::super::OvenLegacyCargoSelectedCompilerContext {
+            host: host.clone(),
+            target: host,
+            toolchain: toolchain.clone(),
+            rustc_identity: toolchain,
+            host_cfg,
+            target_cfg,
+        })
+    }
+
+    /// Resolve the repository's pinned release compiler for the release-foundation rebuild proof.
+    fn publisher_rebuild_release_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let output = std::process::Command::new("rustup")
+            .args(["which", "--toolchain", "1.98.0", "rustc"])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "rustup could not locate the pinned Rust 1.98.0 compiler: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let path = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+        if !path.is_file() {
+            return Err(format!("pinned release compiler is not a file: {}", path.display()).into());
+        }
+        Ok(path)
+    }
+
+    /// Project both retained registry packages into the inspection-source catalog consumed by policy admission.
+    fn publisher_rebuild_inspection_sources(
+        source: &PublisherRebuildSourceFixture,
+    ) -> Vec<super::super::OvenLegacyCargoInspectionSource> {
+        vec![
+            super::super::OvenLegacyCargoInspectionSource {
+                package: "aurora-codec".to_string(),
+                version: "7.4.2".to_string(),
+                registry: "registry+https://example.invalid/aurora-index".to_string(),
+                checksum: "aurora-checksum".to_string(),
+                features: Vec::new(),
+                source_root: source.package_root.clone(),
+                source_digest: source.source_digest.clone(),
+                members: source.members.clone(),
+            },
+            super::super::OvenLegacyCargoInspectionSource {
+                package: "aurora-macro".to_string(),
+                version: "2.1.0".to_string(),
+                registry: "registry+https://example.invalid/aurora-index".to_string(),
+                checksum: "aurora-macro-checksum".to_string(),
+                features: Vec::new(),
+                source_root: source.proc_macro_root.clone(),
+                source_digest: source.proc_macro_digest.clone(),
+                members: source.proc_macro_members.clone(),
+            },
+        ]
+    }
+
+    /// Build the target library and its captured-but-inert build-script execution unit.
+    fn publisher_rebuild_library_units(
+        source: &PublisherRebuildSourceFixture,
+        host: &str,
+    ) -> Result<
+        (
+            super::super::OvenLegacyCargoSelectedUnit,
+            super::super::OvenLegacyCargoSelectedUnit,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let registry = super::super::OvenLegacyCargoSelectedRegistrySource {
+            registry: "registry+https://example.invalid/aurora-index".to_string(),
+            checksum: "aurora-checksum".to_string(),
+            digest: source.source_digest.clone(),
+            root_module: "src/lib.rs".to_string(),
+            members: source.members.clone(),
+        };
+        let mut library = capture()?.units.remove(0);
+        library.package_id = "registry+https://example.invalid/aurora-index#aurora-codec@7.4.2".to_string();
+        library.package = "aurora-codec".to_string();
+        library.package_version = "7.4.2".to_string();
+        library.package_source = Some("registry+https://example.invalid/aurora-index".to_string());
+        library.target_name = "aurora_codec".to_string();
+        library.source_path = source.package_root.join("src/lib.rs");
+        library.platform = Some(host.to_string());
+        library.target_is_explicit = Some(true);
+        library.effective_features.clear();
+        library.cfg.clear();
+        library.compiler_arguments = vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "extra-filename".to_string(),
+                value: "-fixture".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+        ];
+        library.compile_environment = BTreeMap::from([
+            (
+                "CARGO_MANIFEST_DIR".to_string(),
+                source.package_root.display().to_string(),
+            ),
+            (
+                "CARGO_MANIFEST_PATH".to_string(),
+                source.package_root.join("Cargo.toml").display().to_string(),
+            ),
+            ("CARGO_PKG_NAME".to_string(), "aurora-codec".to_string()),
+            ("CARGO_PKG_VERSION".to_string(), "7.4.2".to_string()),
+            ("OUT_DIR".to_string(), source.out_dir.display().to_string()),
+        ]);
+        library.registry_source = Some(registry.clone());
+        let mut build_script = library.clone();
+        build_script.target_name = "build-script-build".to_string();
+        build_script.target_kinds = vec!["custom-build".to_string()];
+        build_script.crate_types = vec!["bin".to_string()];
+        build_script.compiler_crate_type = Some("bin".to_string());
+        build_script.source_path = source.package_root.join("build.rs");
+        build_script.root_module = "build.rs".to_string();
+        build_script.mode = "run-custom-build".to_string();
+        build_script.compile_environment.clear();
+        build_script.dependencies.clear();
+        build_script.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            root_module: "build.rs".to_string(),
+            ..registry
+        });
+        library.dependencies = vec![
+            super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 2,
+                extern_crate_name: None,
+                build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                    cfgs: vec!["aurora_generated".to_string()],
+                    environment: BTreeMap::from([("AURORA_BUILD_MARKER".to_string(), "saffron".to_string())]),
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: source.out_dir.clone(),
+                    output: None,
+                    publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
+                }),
+            },
+            super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 3,
+                extern_crate_name: Some("aurora_macro".to_string()),
+                build_script: None,
+            },
+        ];
+        library
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "aurora_macro".to_string(),
+                metadata: false,
+            });
+        Ok((library, build_script))
+    }
+
+    /// Assemble captured physical facts for a stripped proc macro, its library consumer and one build-script edge.
+    fn publisher_rebuild_capture_fixture(
+        scratch: &Path,
+        rustc: &Path,
+    ) -> Result<PublisherRebuildCaptureFixture, Box<dyn std::error::Error>> {
+        let source = write_publisher_rebuild_sources(scratch)?;
+        let compiler = publisher_rebuild_compiler_context(rustc)?;
+        let host = compiler.host.clone();
+        let (library, build_script) = publisher_rebuild_library_units(&source, &host)?;
+        let proc_macro = publisher_rebuild_proc_macro_unit(&source, &host)?;
+        let mut root = library.clone();
+        root.package_id = "path+file:///fixture#publisher-harness@1.0.0".to_string();
+        root.package = "publisher-harness".to_string();
+        root.package_version = "1.0.0".to_string();
+        root.package_source = None;
+        root.target_name = "publisher_harness".to_string();
+        root.source_path = scratch.join("publisher-harness.rs");
+        root.root_module = "publisher-harness.rs".to_string();
+        root.compile_environment.clear();
+        root.registry_source = None;
+        root.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: Some("aurora_codec".to_string()),
+            build_script: None,
+        }];
+        root.compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
+        root.compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "aurora_codec".to_string(),
+                metadata: false,
+            });
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![root, library, build_script, proc_macro],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: Some(compiler),
+        };
+        let sources = publisher_rebuild_inspection_sources(&source);
+        Ok(PublisherRebuildCaptureFixture {
+            capture,
+            sources,
+            loaf_root: scratch.join("loaf"),
+        })
+    }
+
+    /// Convert the encoded request catalogs into the selected response shape emitted by the policy engine.
+    fn selected_policy_response(request: &serde_json::Value) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let units = request["units"].as_array().ok_or("policy request has no units")?;
+        let catalogs = request["catalogs"].as_array().ok_or("policy request has no catalogs")?;
+        let inventories = catalogs
+            .iter()
+            .map(|catalog| {
+                let unit = units
+                    .iter()
+                    .find(|unit| unit["package"] == catalog["package"])
+                    .ok_or("policy catalog has no selected unit")?;
+                Ok(serde_json::json!({
+                    "package": catalog["package"],
+                    "domain": unit["domain"],
+                    "owner": catalog["owner"],
+                    "package_root": catalog["package_root"],
+                    "manifest": catalog["manifest"],
+                    "members": catalog["members"],
+                    "build_unit_present": catalog["build_unit_present"],
+                    "effective_features": unit["features"],
+                }))
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        Ok(serde_json::json!({
+            "schema": request["schema"],
+            "operation": request["operation"],
+            "status": "selected",
+            "graph_digest": request["graph_digest"],
+            "inventories": inventories,
+            "warnings": [],
+        }))
+    }
+
+    /// Build the minimal compatibility Loaf whose source plan feeds one publisher rebuild foundation.
+    fn publisher_rebuild_loaf(
+        finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+        sources: &[super::super::OvenLegacyCargoInspectionSource],
+    ) -> Result<OvenLoaf, Box<dyn std::error::Error>> {
+        let graph = finalized.graph.graph();
+        if graph.units.is_empty() {
+            return Err("publisher graph has no registry unit".into());
+        }
+        let intent = oven_store::OvenBuildIntent {
+            target: graph.selection.intent.target.clone(),
+            toolchain: graph.selection.intent.toolchain.clone(),
+            profile: graph.selection.intent.profile.clone(),
+            features: Vec::new(),
+        };
+        let plan = OvenRustcArtifactManifest {
+            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: intent.clone(),
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            entrypoint_dependency_search_paths: BTreeMap::new(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: Vec::new(),
+            registry_sources: graph
+                .units
+                .iter()
+                .map(|unit| {
+                    let source = sources
+                        .iter()
+                        .find(|source| source.package == unit.package && source.version == unit.package_version)
+                        .ok_or("publisher unit has no inspection source")?;
+                    Ok(OvenRustcRegistrySourcePackage {
+                        package: unit.package.clone(),
+                        version: unit.package_version.clone(),
+                        features: unit.features.clone(),
+                        source: OvenRustcRegistrySource {
+                            registry: source.registry.clone(),
+                            checksum: source.checksum.clone(),
+                            relative_root: unit.source.root.clone(),
+                            digest: unit.source.digest.clone(),
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?,
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: graph
+                .units
+                .iter()
+                .map(|unit| {
+                    Ok(oven_rustc::rustc::OvenRustcSupportingArtifact {
+                        relative_path: format!("{}/Cargo.toml", unit.source.root),
+                        digest: unit
+                            .source_members
+                            .iter()
+                            .find(|member| member.path == "Cargo.toml")
+                            .ok_or("publisher unit has no Cargo.toml")?
+                            .digest
+                            .clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?,
+        };
+        Ok(OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: finalized.final_receipt.build_unit_identity.clone(),
+            provenance: OvenLoafProvenance {
+                compiler_version: intent.toolchain.clone(),
+                rust_toolchain: intent.toolchain,
+                sdk_provider_codegen_revision: "publisher-pipeline-fixture".to_string(),
+                baker: "legacy_cargo".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes: 0,
+                payload_physical_bytes: 0,
+            },
+            compatibility: OvenLoafCompatibility {
+                runtime_inputs: BTreeMap::new(),
+                providers: Vec::new(),
+            },
+            registry_leaves: Vec::new(),
+            plan,
+        })
+    }
+
+    /// One synthetic registry unit survives capture, projection, policy exchange, foundation publication and a real
+    /// direct-rustc rebuild with every byte-affecting build-script and Cargo environment fact active together.
+    #[test]
+    fn publisher_rebuild_pipeline_compiles_nested_generated_output_end_to_end() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let scratch = tempdir()?;
+        let rustc = publisher_rebuild_release_rustc()?;
+        let PublisherRebuildCaptureFixture {
+            mut capture,
+            sources,
+            loaf_root,
+        } = publisher_rebuild_capture_fixture(scratch.path(), &rustc)?;
+        let retained = super::super::retain_legacy_cargo_selected_generated_outputs(&mut capture, &loaf_root)?;
+        assert_eq!(retained.len(), 1);
+        assert!(retained[0].relative_path.ends_with("/nested/generated.rs"));
+
+        let compiler = capture.compiler.as_ref().ok_or("capture has no compiler context")?;
+        let toolchain_root = scratch.path().join("toolchain");
+        let (toolchain_owner, toolchain_members) =
+            stage_release_runtime_foundation_toolchain(&rustc, &compiler.target, &toolchain_root)?;
+        assert!(toolchain_members.iter().any(|member| {
+            member.relative_path == Path::new("lib/rustlib").join(&compiler.host).join("bin/rust-objcopy")
+        }));
+        let receipt_root = scratch.path().join("receipt");
+        fs::create_dir_all(&receipt_root)?;
+        let receipt_source = receipt_root.join("publisher.rs");
+        fs::write(&receipt_source, b"pub fn publisher_fixture() {}\n")?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                &receipt_root,
+                "publisher-harness",
+                "1.0.0",
+                &compiler.target,
+                &compiler.toolchain,
+                "release",
+                Vec::new(),
+            )
+            .with_generated_source("publisher.rs", receipt_source),
+        )?;
+        let (_, generated) = legacy_cargo_generated_output_bindings(&capture)?;
+        let linked = legacy_cargo_generated_archive_bindings(&capture, &generated)?;
+        let provisional = legacy_cargo_foundation_projection(
+            &capture,
+            &receipt,
+            &sources,
+            &receipt.identity,
+            &toolchain_owner,
+            &linked,
+            &LoafRegistryAuthority::none(),
+        )?;
+        let closure = legacy_cargo_build_script_closure_digest(&capture, &provisional.build_scripts)?;
+        let capture_receipt =
+            receipt_with_build_unit_input(&receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure)?;
+        let projection = legacy_cargo_foundation_projection(
+            &capture,
+            &receipt,
+            &sources,
+            &capture_receipt.identity,
+            &toolchain_owner,
+            &linked,
+            &LoafRegistryAuthority::none(),
+        )?;
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"publisher-harness\"\nversion = \"1.0.0\"\n\n[rust-dependencies]\naurora_codec = { package = \"aurora-codec\", version = \"7.4.2\" }\n",
+            Path::new("loaf.toml"),
+        )?;
+        let finalized = finalize_compiler_support_selected_graph(
+            &capture,
+            &projection,
+            &manifest,
+            &BTreeSet::new(),
+            &toolchain_owner,
+            &receipt,
+        )?;
+
+        let request = encode_selected_graph_policy_request(&finalized.graph, &capture, &sources, &toolchain_owner)?;
+        let closure = &request["units"]
+            .as_array()
+            .and_then(|units| units.iter().find(|unit| unit["package"]["name"] == "aurora-codec"))
+            .ok_or("policy request has no aurora-codec unit")?["closure"];
+        assert_eq!(closure["environment"]["AURORA_BUILD_MARKER"]["value"], "saffron");
+        assert_eq!(closure["environment"]["CARGO_PKG_VERSION"]["value"], "7.4.2");
+        assert!(
+            closure["generated_inputs"][0]["members"]
+                .as_array()
+                .is_some_and(|members| members.len() == 1)
+        );
+        let response = selected_policy_response(&request)?;
+        let selection = runtime_foundation_inventories_from_policy_response(&finalized.graph, &response)?;
+        let loaf = publisher_rebuild_loaf(&finalized, &sources)?;
+        let foundation = runtime_foundation_for_publisher_rebuild(&finalized, &loaf, &toolchain_owner)?;
+        let asset = OvenRuntimeFoundationAsset::sealed(foundation, selection.inventories)?;
+        let install_root = scratch.path().join("install");
+        fs::create_dir_all(&install_root)?;
+        let admitted = publish_runtime_foundation_asset_with_generated_owners(
+            asset,
+            &loaf_root,
+            &toolchain_root,
+            &[],
+            &install_root.join("foundation"),
+        )?;
+        let materialized = admitted.materialize_asset_for_publication()?;
+        let build = execute_runtime_foundation_rebuild(
+            materialized.foundation(),
+            materialized.materialized(),
+            &OvenRuntimeCompilerClosure::new(toolchain_root.join("bin/rustc"), toolchain_owner),
+            &scratch.path().join("rebuild"),
+        )?;
+        assert_eq!(build.compiler_launches(), 2);
+        assert!(build.outputs().iter().all(|output| output.artifact.is_file()));
+        assert!(build.outputs().iter().any(|output| {
+            output.crate_name == "aurora_macro"
+                && output.artifact.extension().and_then(|extension| extension.to_str())
+                    == Some(std::env::consts::DLL_EXTENSION)
+        }));
+        Ok(())
+    }
+
     /// The Release runtime-foundation publisher seals its capture with the production binder, never a hand-made
     /// projection. This walks that exact sequence for a transport root, one registry library and its build script,
     /// plus a package the script alone depends on, which Cargo compiled to run the script and Oven never links.
@@ -2896,10 +3862,142 @@ mod tests {
         Ok(())
     }
 
+    /// Cargo package text stays exact while transient manifest paths are checked and rebound to admitted source.
+    #[test]
+    fn projection_replays_captured_cargo_compile_environment() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut capture, sources) = release_shaped_capture("sha256:fixture", BTreeMap::new())?;
+        capture.units[1].compile_environment = BTreeMap::from([
+            ("CARGO_MANIFEST_DIR".to_string(), "/transient/serde".to_string()),
+            (
+                "CARGO_MANIFEST_PATH".to_string(),
+                "/transient/serde/Cargo.toml".to_string(),
+            ),
+            ("CARGO_PKG_VERSION".to_string(), "1.0.0".to_string()),
+        ]);
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        let unit = &finalized.graph.graph().units[0];
+        assert_eq!(
+            unit.environment["CARGO_PKG_VERSION"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: "1.0.0".to_string()
+            }
+        );
+        assert!(matches!(
+            unit.environment["CARGO_MANIFEST_DIR"],
+            OvenSelectedRustFacetEnvironmentValue::Path { .. }
+        ));
+
+        capture.units[1]
+            .compile_environment
+            .insert("CARGO_MANIFEST_DIR".to_string(), "/ambient/wrong".to_string());
+        let refused = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none());
+        assert!(
+            refused
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("does not match the captured unit source")),
+            "a manifest path unrelated to the captured source must be refused"
+        );
+        Ok(())
+    }
+
+    /// The policy projection collapses internal provenance variants onto the decoder's closed environment kinds,
+    /// carries generated and native-link closure facts, and leaves cfg/check-cfg behind the authenticated identity.
+    #[test]
+    fn policy_unit_encoding_uses_only_decoder_environment_kinds() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let mut graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        let unit = graph.units.get_mut(0).ok_or("fixture graph lost its selected unit")?;
+        let generated_source = OvenSelectedRustFacetPath {
+            owner: unit.source.owner.clone(),
+            path: "generated-outputs/fixture".to_string(),
+        };
+        unit.generated_inputs = vec![OvenSelectedRustFacetGeneratedInput {
+            name: "out_dir".to_string(),
+            source: generated_source.clone(),
+            digest: oven_rustc::rustc::selected_graph_generated_input_digest(&[])?,
+            members: Vec::new(),
+        }];
+        unit.linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: generated_source.owner.clone(),
+                path: format!("{}/libfixture.a", generated_source.path),
+            },
+            digest: digest(b"fixture archive"),
+        }];
+        unit.compiler_arguments = vec![OvenSelectedRustFacetCompilerArgument::CheckCfg {
+            value: "cfg(fixture)".to_string(),
+        }];
+        unit.cfg = vec!["fixture".to_string()];
+        unit.environment = BTreeMap::from([
+            (
+                "CAPTURED".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                    value: "captured".to_string(),
+                },
+            ),
+            (
+                "OUT_DIR".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: ".".to_string(),
+                },
+            ),
+            (
+                "OUT_DIR_CHILD".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: "install".to_string(),
+                },
+            ),
+            (
+                "OWNER_PATH".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: unit.source.owner.clone(),
+                        path: unit.source.root.clone(),
+                    },
+                },
+            ),
+            (
+                "PUBLIC".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Text {
+                    value: "public".to_string(),
+                },
+            ),
+            (
+                "SECRET".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::SensitiveDigest {
+                    hmac_sha256: format!("hmac-sha256:{}", "a".repeat(64)),
+                },
+            ),
+        ]);
+
+        let encoded = encode_policy_unit(unit)?;
+        assert!(encoded.get("cfg").is_none() && encoded.get("compiler_arguments").is_none());
+        assert!(encoded["closure"]["generated_inputs"].is_array());
+        assert!(encoded["closure"]["linked_libraries"].is_array());
+        assert_eq!(encoded["closure"]["environment"]["CAPTURED"]["kind"], "text");
+        assert_eq!(encoded["closure"]["environment"]["PUBLIC"]["kind"], "text");
+        assert_eq!(encoded["closure"]["environment"]["OWNER_PATH"]["kind"], "path");
+        assert_eq!(encoded["closure"]["environment"]["OUT_DIR"]["kind"], "path");
+        assert_eq!(
+            encoded["closure"]["environment"]["OUT_DIR"]["value"]["path"],
+            generated_source.path
+        );
+        assert_eq!(
+            encoded["closure"]["environment"]["OUT_DIR_CHILD"]["value"]["path"],
+            "generated-outputs/fixture/install"
+        );
+        assert_eq!(encoded["closure"]["environment"]["SECRET"]["kind"], "sensitive_digest");
+        Ok(())
+    }
+
     /// The foundation must take its artifact owner from the graph's Constituent owner rather than from the capture
     /// receipt, even when portable closure identity makes those digests equal for this projection.
     #[test]
-    fn runtime_foundation_artifact_owner_is_the_graph_constituent() -> Result<(), Box<dyn std::error::Error>> {
+    fn runtime_foundation_publisher_rebuild_preserves_compiled_plan_and_adds_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
         use oven_rustc::loaf::{
             OVEN_LOAF_SCHEMA_VERSION, OvenLoafAccounting, OvenLoafCompatibility, OvenLoafProvenance,
         };
@@ -2924,12 +4022,17 @@ mod tests {
             profile: graph.selection.intent.profile.clone(),
             features: Vec::new(),
         };
+        let compiled_artifact = OvenRustcArtifactExtern {
+            crate_name: unit.crate_name.clone(),
+            relative_path: "deps/libserde.rlib".to_string(),
+            digest: "sha256:serde-artifact".to_string(),
+        };
         let plan = OvenRustcArtifactManifest {
             schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
             intent: intent.clone(),
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
-            externs: Vec::new(),
+            externs: vec![compiled_artifact.clone()],
             entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![OvenRustcRegistryLeaf {
@@ -2946,16 +4049,31 @@ mod tests {
                     relative_root: unit.source.root.clone(),
                     digest: unit.source.digest.clone(),
                 },
-                artifact: OvenRustcArtifactExtern {
-                    crate_name: unit.crate_name.clone(),
-                    relative_path: "deps/libserde.rlib".to_string(),
-                    digest: "sha256:serde-artifact".to_string(),
+                artifact: compiled_artifact,
+            }],
+            registry_sources: vec![OvenRustcRegistrySourcePackage {
+                package: unit.package.clone(),
+                version: unit.package_version.clone(),
+                features: unit.features.clone(),
+                source: OvenRustcRegistrySource {
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "serde-checksum".to_string(),
+                    relative_root: unit.source.root.clone(),
+                    digest: unit.source.digest.clone(),
                 },
             }],
-            registry_sources: Vec::new(),
             compile_environment: BTreeMap::new(),
             vocab_auxiliary_targets: Vec::new(),
-            supporting_artifacts: Vec::new(),
+            supporting_artifacts: vec![
+                oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: format!("{}/Cargo.toml", unit.source.root),
+                    digest: "sha256:serde-manifest".to_string(),
+                },
+                oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: "deps/unselected.rmeta".to_string(),
+                    digest: "sha256:unselected-artifact".to_string(),
+                },
+            ],
         };
         let loaf = OvenLoaf {
             schema_version: OVEN_LOAF_SCHEMA_VERSION,
@@ -2977,15 +4095,72 @@ mod tests {
             registry_leaves: plan.registry_leaves.clone(),
             plan,
         };
+        let mut publisher_product_graph = graph.clone();
+        publisher_product_graph.units[0]
+            .generated_inputs
+            .push(OvenSelectedRustFacetGeneratedInput {
+                name: "generated-bindings".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: digest(b"publisher tool owner"),
+                    path: "generated/bindings".to_string(),
+                },
+                digest: digest(b"publisher tool tree"),
+                members: vec![OvenSelectedRustFacetSourceMember {
+                    path: "bindings.rs".to_string(),
+                    digest: digest(b"publisher bindings"),
+                }],
+            });
+        publisher_product_graph.units[0]
+            .linked_libraries
+            .push(OvenSelectedRustFacetLinkedLibrary::Archive {
+                name: "native".to_string(),
+                kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                artifact: OvenSelectedRustFacetPath {
+                    owner: digest(b"publisher link owner"),
+                    path: "native/libnative.a".to_string(),
+                },
+                digest: digest(b"publisher native archive"),
+            });
+        let declared = publisher_rebuild_supporting_artifacts(&publisher_product_graph, &loaf.plan)?;
+        assert_eq!(declared.len(), 4);
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "generated/bindings/bindings.rs")
+        );
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "native/libnative.a")
+        );
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "deps/unselected.rmeta")
+        );
         let foundation = runtime_foundation_from_compiled_loaf(&finalized, &loaf, "sha256:compiled-plan")?;
         assert_eq!(foundation.artifact_owner, constituent.identity);
         assert_eq!(foundation.units.len(), 1);
+        let publisher = runtime_foundation_for_publisher_rebuild(
+            &finalized,
+            &loaf,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )?;
+        assert!(
+            publisher
+                .units
+                .iter()
+                .all(|unit| { matches!(unit.execution, OvenRuntimeFoundationUnitExecution::Rebuild) })
+        );
+        assert_eq!(publisher.artifacts, loaf.plan);
+        publisher.artifacts.validate_shape(&intent)?;
         Ok(())
     }
 
     fn adoption_registry(
         checksum: &str,
         cfg: &str,
+        environment: &str,
     ) -> Result<(tempfile::TempDir, oven_model::loaf_registry::LoafRegistry), Box<dyn std::error::Error>> {
         let root = tempdir()?;
         let manifest_dir = root.path().join("crates-io/serde/1.0.0");
@@ -2993,7 +4168,7 @@ mod tests {
         fs::write(
             manifest_dir.join("loaf.toml"),
             format!(
-                "[project]\nname = \"serde\"\nversion = \"1.0.0\"\n\n[source]\nregistry = \"https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{checksum}\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\nprofile = \"release\"\nfeatures = [\"derive\"]\ncfg = [{cfg}]\n"
+                "[project]\nname = \"serde\"\nversion = \"1.0.0\"\n\n[source]\nregistry = \"https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{checksum}\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\nprofile = \"release\"\nfeatures = [\"derive\"]\ncfg = [{cfg}]\n{environment}"
             ),
         )?;
         let index_dir = root.path().join("index/se/rd");
@@ -3008,11 +4183,8 @@ mod tests {
         Ok((root, registry))
     }
 
-    /// A build script that reemits configuration through `rustc-env` gives the graph no admissible value: the
-    /// validator retains an unregistered name neither as text nor otherwise, so the observation is withheld from
-    /// the graph and the unit publishes with an empty environment. A registry declaration for the exact source and
-    /// selection is the RFC 119 answer: the projection carries the declared facts and nothing else, and the graph
-    /// looks the same either way.
+    /// A build script's captured environment enters graph identity, while an adopted registry record must declare
+    /// the same value before it can govern the unit.
     #[test]
     fn a_registry_declaration_governs_an_adopted_unit_and_must_agree_with_its_observation()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3021,12 +4193,17 @@ mod tests {
         let (capture, sources) = release_shaped_capture(&checksum, script_environment)?;
 
         let unadopted = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
-        assert!(
-            unadopted.graph.graph().units[0].environment.is_empty(),
-            "without a declaration the script-emitted environment is withheld from the graph, not refused"
+        assert_eq!(
+            unadopted.graph.graph().units[0].environment["CFG_OPT_LEVEL"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: "3".to_string() },
+            "the exact observed environment must remain compiler-visible and identity-bearing"
         );
 
-        let (registry_root, registry) = adoption_registry(&checksum, "")?;
+        let (registry_root, registry) = adoption_registry(
+            &checksum,
+            "",
+            "environment = [{ name = \"CFG_OPT_LEVEL\", literal = \"3\" }]\n",
+        )?;
         let authority = LoafRegistryAuthority::resolve(&capture, &registry, "release")?;
         assert!(
             authority.adoption(1).is_some(),
@@ -3046,14 +4223,10 @@ mod tests {
             "a fixture index line lists no binding status, so the adoption is harvested"
         );
         assert!(oven_model::manifest::is_sha256_identity(&records[0].index_line_digest));
-        let refused = finalize_release_shaped(&capture, &sources, &authority);
-        assert!(
-            refused
-                .as_ref()
-                .err()
-                .is_some_and(|error| error.to_string().contains("cannot carry observed rustc-env")),
-            "an adopted record must refuse script environment it cannot carry: {:?}",
-            refused.as_ref().err().map(ToString::to_string)
+        let adopted = finalize_release_shaped(&capture, &sources, &authority)?;
+        assert_eq!(
+            adopted.graph.graph().units[0].environment["CFG_OPT_LEVEL"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: "3".to_string() }
         );
         assert!(authority.evidence_digest().is_some());
 
@@ -3068,7 +4241,8 @@ mod tests {
                 digest: digest(b"adopted script probe"),
                 output: None,
             });
-        let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &registry, "release")?;
+        let (_probe_root, probe_registry) = adoption_registry(&checksum, "", "")?;
+        let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &probe_registry, "release")?;
         let refused_probe = finalize_release_shaped(&probed_capture, &probed_sources, &probed_authority);
         assert!(
             refused_probe
@@ -3106,7 +4280,7 @@ mod tests {
             "registry evidence must bind the governing manifest bytes"
         );
 
-        let (_root, disagreeing) = adoption_registry(&checksum, "\"has_answer\"")?;
+        let (_root, disagreeing) = adoption_registry(&checksum, "\"has_answer\"", "")?;
         let authority = LoafRegistryAuthority::resolve(&capture, &disagreeing, "release")?;
         let refused = finalize_release_shaped(&capture, &sources, &authority);
         assert!(
@@ -3118,23 +4292,21 @@ mod tests {
             refused.as_ref().err().map(ToString::to_string)
         );
 
-        let (_root, other_profile) = adoption_registry(&checksum, "")?;
+        let (_root, other_profile) = adoption_registry(&checksum, "", "")?;
         let authority = LoafRegistryAuthority::resolve(&capture, &other_profile, "debug")?;
         assert!(authority.is_empty(), "a record bound to another profile adopts nothing");
         Ok(())
     }
 
-    /// `libm` reemits its configuration through `rustc-env` for its own test logging; the values are not portable
-    /// text (`["arch", "default"]`) and the names are nobody's public compiler fact. Without a registry declaration
-    /// the release publisher must still publish: every entry is withheld from the graph, and the closure digest
-    /// binds every observation (#1704).
+    /// `libm` reemits configuration through `rustc-env`; exact captured text remains both compiler-visible and
+    /// identity-bearing without being inferred from the publisher's ambient environment.
     #[test]
-    fn an_unadopted_script_environment_is_withheld_from_the_graph_and_bound_by_the_closure_digest_issue1704()
+    fn an_unadopted_script_environment_is_carried_by_the_graph_and_bound_by_the_closure_digest_issue1704()
     -> Result<(), Box<dyn std::error::Error>> {
         let checksum = format!("sha256:{}", "b".repeat(64));
-        let withheld_value = "[\"arch\", \"default\"]";
+        let captured_value = "[\"arch\", \"default\"]";
         let script_environment = BTreeMap::from([
-            ("CFG_CARGO_FEATURES".to_string(), withheld_value.to_string()),
+            ("CFG_CARGO_FEATURES".to_string(), captured_value.to_string()),
             ("CFG_OPT_LEVEL".to_string(), "3".to_string()),
             ("CFG_TARGET_FEATURES".to_string(), "[\"neon\", \"sha2\"]".to_string()),
             ("PROFILE".to_string(), "release".to_string()),
@@ -3143,17 +4315,19 @@ mod tests {
 
         let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let unit = &finalized.graph.graph().units[0];
-        assert!(
-            unit.environment.is_empty(),
-            "an ungoverned script-emitted directive must not become a selected unit fact"
+        assert_eq!(
+            unit.environment["CFG_CARGO_FEATURES"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: captured_value.to_string()
+            }
         );
         let encoded = String::from_utf8(finalized.graph.to_json_bytes()?)?;
         assert!(
-            !encoded.contains("CFG_CARGO_FEATURES") && !encoded.contains(withheld_value),
-            "a withheld observation must not reach the serialized graph"
+            encoded.contains("CFG_CARGO_FEATURES") && encoded.contains("captured_text"),
+            "captured compile environment must reach the serialized graph"
         );
 
-        // The binder states the withholding per key, and the closure digest changes with the withheld value.
+        // The binder states the captured value per key, and the closure digest changes with that value.
         let directory = tempdir()?;
         let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "release-stdlib")?)?;
         let toolchain_owner = digest(b"release toolchain owner");
@@ -3177,9 +4351,19 @@ mod tests {
             vec!["CFG_CARGO_FEATURES", "CFG_OPT_LEVEL", "CFG_TARGET_FEATURES", "PROFILE"],
             "every observed key gets one binding"
         );
-        assert_eq!(edge.environment["CFG_CARGO_FEATURES"].value, None);
-        assert_eq!(edge.environment["CFG_CARGO_FEATURES"].observed_value, withheld_value);
-        assert_eq!(edge.environment["PROFILE"].value, None);
+        assert_eq!(
+            edge.environment["CFG_CARGO_FEATURES"].value,
+            Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: captured_value.to_string()
+            })
+        );
+        assert_eq!(edge.environment["CFG_CARGO_FEATURES"].observed_value, captured_value);
+        assert_eq!(
+            edge.environment["PROFILE"].value,
+            Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: "release".to_string()
+            })
+        );
         let closure_digest = legacy_cargo_build_script_closure_digest(&capture, &bindings)?;
         let (changed_capture, _) = release_shaped_capture(
             &checksum,
@@ -3203,7 +4387,7 @@ mod tests {
         assert_ne!(
             closure_digest,
             legacy_cargo_build_script_closure_digest(&changed_capture, &changed_bindings)?,
-            "a withheld value still binds the capture receipt through the closure digest"
+            "a captured value still binds the capture receipt through the closure digest"
         );
         Ok(())
     }
@@ -3289,6 +4473,7 @@ mod tests {
         assert!(graph.exposed_roots.is_empty());
         assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Library);
         assert_eq!(graph.units[0].features, ["derive"]);
+        assert_eq!(graph.units[0].compiler_arguments, capture.units[0].compiler_arguments);
         Ok(())
     }
 
@@ -3306,12 +4491,17 @@ mod tests {
             crate_types: vec!["bin".to_string()],
             source_path: PathBuf::from("/transient/serde/build.rs"),
             artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
             root_module: "build.rs".to_string(),
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
@@ -3578,6 +4768,12 @@ mod tests {
                 extern_crate_name: Some("renamed_serde".to_string()),
                 build_script: None,
             });
+        direct
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "renamed_serde".to_string(),
+                metadata: false,
+            });
         capture.units.push(direct.clone());
         let mut binding = sealed.units.get(&0).cloned().ok_or("missing fixture source binding")?;
         binding
@@ -3593,6 +4789,15 @@ mod tests {
             extern_crate_name: Some("renamed_serde".to_string()),
             build_script: None,
         }];
+        transport
+            .compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
+        transport
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "renamed_serde".to_string(),
+                metadata: false,
+            });
         capture.units.push(transport);
         capture.roots = vec![2];
         let manifest = ProjectManifest::from_str(
@@ -3849,12 +5054,17 @@ mod tests {
             crate_types: vec!["bin".to_string()],
             source_path: PathBuf::from("/transient/serde/build.rs"),
             artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
             root_module: "build.rs".to_string(),
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
@@ -3950,12 +5160,17 @@ mod tests {
             crate_types: vec!["bin".to_string()],
             source_path: PathBuf::from("/transient/serde/build.rs"),
             artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
             root_module: "build.rs".to_string(),
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
             target_is_explicit: Some(false),
             cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),

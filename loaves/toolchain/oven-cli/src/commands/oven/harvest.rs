@@ -150,6 +150,7 @@ pub fn oven_harvest(options: OvenHarvestCommandOptions) -> CliResult<ExitCode> {
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
         provider_compilations: &[],
         compact_debug_info: true,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: false,
         base_loaf: None,
     })

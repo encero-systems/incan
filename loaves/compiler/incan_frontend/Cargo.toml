@@ -39,8 +39,8 @@ syn = { workspace = true, features = ["printing"] }
 thiserror = { workspace = true }
 toml = "0.9"
 tracing = { workspace = true }
-wasmtime = { version = "36.0.16", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "36.0.16", default-features = false, features = ["preview1"] }
+wasmtime = { version = "36.0.17", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "36.0.17", default-features = false, features = ["preview1"] }
 tempfile = { version = "3", optional = true }
 
 [dev-dependencies]

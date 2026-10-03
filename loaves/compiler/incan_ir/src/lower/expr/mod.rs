@@ -98,6 +98,35 @@ fn can_use_source_method_projection(receiver: &TypedExpr, dispatch: Option<&IrMe
             )))
 }
 
+/// Return whether a checked method identity names Rust `Clone::clone` through Incan's source-owned builtin trait.
+///
+/// Source-module identities include the `std` root, while compiled-provider identities start at the mounted module.
+/// Both identify the same native trait slot and must therefore bypass recoverable source-method projection.
+fn is_builtin_clone_method_identity(identity: Option<&incan_semantics_core::CanonicalSymbolId>) -> bool {
+    let Some(identity) = identity else {
+        return false;
+    };
+    if identity.kind != incan_semantics_core::SemanticSourceTargetKind::Method
+        || identity.declaration_name != trait_bounds::rust::CLONE_METHOD
+    {
+        return false;
+    }
+    let Some(source_module) = builtin_traits::source_module(TraitId::Clone) else {
+        return false;
+    };
+    let mounted_module = source_module
+        .strip_prefix(stdlib::STDLIB_ROOT)
+        .and_then(|path| path.strip_prefix('.'))
+        .unwrap_or(source_module);
+    let module_path = match &identity.origin {
+        incan_semantics_core::SymbolOrigin::Module(path) => path,
+        incan_semantics_core::SymbolOrigin::Package { module_path, .. } => module_path,
+        _ => return false,
+    };
+    module_path.iter().map(String::as_str).eq(source_module.split('.'))
+        || module_path.iter().map(String::as_str).eq(mounted_module.split('.'))
+}
+
 /// Group an operator-shaped operand of `not`, unary `-` and `~` so the operator applies to the whole expression.
 ///
 /// `not (a == b)` negates the comparison. The Rust-emission backend spells a prefix operator directly in front of the
@@ -304,6 +333,9 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
+        if is_builtin_clone_method_identity(identity) {
+            return (trait_bounds::rust::CLONE_METHOD.to_string(), dispatch);
+        }
         let adopts_builtin_source_trait = self.receiver_adopts_the_builtin_source_trait(receiver, dispatch.as_ref());
         if !(can_use_source_method_projection(receiver, dispatch.as_ref()) || adopts_builtin_source_trait)
             || (!adopts_builtin_source_trait && self.method_belongs_to_an_imported_type(identity))
@@ -943,6 +975,10 @@ impl AstLowering {
                 } else if let Some(dependency_path) = self.unimported_dependency_trait_path(&declaration_name, receiver)
                 {
                     dependency_path
+                } else if let Some(project_path) =
+                    self.unimported_project_trait_path(&declaration_name, module_path.as_deref())
+                {
+                    project_path
                 } else {
                     trait_name
                 };
@@ -959,6 +995,35 @@ impl AstLowering {
                 }))
             }
         }
+    }
+
+    /// Return the crate-qualified path of a project trait whose declaration is not imported at this call site.
+    ///
+    /// A subtrait import makes its own Rust trait available but does not bring an unimported supertrait into scope.
+    /// Calls resolved to that supertrait therefore need its declaring-module path so emission selects UFCS rather
+    /// than depending on Rust method lookup through an absent `use` binding.
+    fn unimported_project_trait_path(&self, declaration_name: &str, module_path: Option<&[String]>) -> Option<String> {
+        let module_path = module_path?;
+        if module_path.is_empty()
+            || stdlib::is_any_stdlib_path(module_path)
+            || module_path
+                .first()
+                .is_some_and(|root| root == keywords::as_str(KeywordId::Pub))
+        {
+            return None;
+        }
+        if self.current_source_module_name.as_deref().is_some_and(|name| {
+            name.split('.')
+                .filter(|segment| !segment.is_empty())
+                .eq(module_path.iter().map(String::as_str))
+        }) {
+            return None;
+        }
+        let imported = self.import_aliases.values().any(|path| {
+            path.split_last()
+                .is_some_and(|(name, owner)| name == declaration_name && owner == module_path)
+        });
+        (!imported).then(|| format!("crate::{}::{declaration_name}", module_path.join("::")))
     }
 
     /// Return the Rust path of a trait that a `pub::` dependency declares and exports, for a call on one of that
@@ -3966,6 +4031,34 @@ mod tests {
         ));
     }
 
+    /// A clone call whose checked identity comes from the source stdlib keeps Rust's native method even when the
+    /// checker records no explicit trait dispatch for a nominal union carrier.
+    #[test]
+    fn builtin_clone_identity_without_dispatch_keeps_native_method() -> Result<(), Box<dyn std::error::Error>> {
+        let source_module = builtin_traits::source_module(TraitId::Clone).ok_or("Clone must have a source module")?;
+        let identity = incan_semantics_core::CanonicalSymbolId {
+            namespace: incan_semantics_core::SymbolNamespace::Member,
+            origin: incan_semantics_core::SymbolOrigin::Module(source_module.split('.').map(str::to_string).collect()),
+            declaration_name: trait_bounds::rust::CLONE_METHOD.to_string(),
+            kind: incan_semantics_core::SemanticSourceTargetKind::Method,
+            scope_discriminant: None,
+            declaration_span: incan_semantics_core::HirSourceSpan::new(0, 0),
+        };
+        let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Struct("Choice".to_string()));
+        let lowering = AstLowering::new();
+
+        let (method, dispatch) = lowering.project_method_target_for_identity(
+            Some(&identity),
+            trait_bounds::rust::CLONE_METHOD,
+            &receiver,
+            None,
+        );
+
+        assert_eq!(method, trait_bounds::rust::CLONE_METHOD);
+        assert!(dispatch.is_none());
+        Ok(())
+    }
+
     #[test]
     fn a_receiver_typed_as_a_supertrait_adopter_keeps_the_trait_slot_spelling() {
         // `take_sorted(..)` returns `OrderedCollection[int]`, and calling `.first()` on it dispatches `Collection`.
@@ -3998,6 +4091,26 @@ mod tests {
         assert!(
             !lowering.receiver_adopts_the_dispatched_trait(&receiver, Some(&trait_dispatch("DataSet"))),
             "a value typed as the trait itself names no implementation to project"
+        );
+    }
+
+    /// An imported subtrait does not put its project-owned supertrait into Rust method-lookup scope.
+    #[test]
+    fn unimported_project_supertrait_dispatch_uses_its_declaring_module_path() {
+        let mut lowering = AstLowering::new();
+        lowering.import_aliases.insert(
+            "TaggedReader".to_string(),
+            vec!["readers".to_string(), "TaggedReader".to_string()],
+        );
+
+        assert_eq!(
+            lowering.unimported_project_trait_path("Reader", Some(&["readers".to_string()])),
+            Some("crate::readers::Reader".to_string())
+        );
+        assert_eq!(
+            lowering.unimported_project_trait_path("TaggedReader", Some(&["readers".to_string()])),
+            None,
+            "a directly imported trait keeps ordinary method lookup"
         );
     }
 

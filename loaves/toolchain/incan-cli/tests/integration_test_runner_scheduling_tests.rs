@@ -679,6 +679,27 @@ module tests:
         );
     }
 
+    /// Run one fixture journey against a fresh Cargo target so the explicit publisher observes every rustc unit.
+    fn run_with_fresh_generated_target(
+        cwd: &Path,
+        incan_home: &Path,
+        generated_target: &Path,
+        args: &[&str],
+    ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        let mut command = incan_command();
+        command
+            .args(args)
+            .current_dir(cwd)
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_NO_BANNER", "1")
+            .env("INCAN_HOME", incan_home)
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", generated_target);
+        if args.starts_with(&["oven", "bake"]) {
+            super::support::configure_explicit_oven_bake_command(&mut command)?;
+        }
+        Ok(command.output()?)
+    }
+
     /// #1561: a project with no SDK inventory, as on a fresh home, compiles each standard-library module it imports
     /// from source into its own crate, and that code calls the module's runtime crate (`incan_std_testing::fail_t`
     /// for `std.testing`). A workspace member's test batches link those crates: `std.testing` assertions,
@@ -921,6 +942,115 @@ def test_a_card_built_with_empty_fields() -> None:
         assert_command_succeeded(
             &run_on_source_standard_library(root.path(), &incan_home, &["build", "--lib"])?,
             "the workspace root's library build after the member's bake",
+        );
+        Ok(())
+    }
+
+    /// #2005: a member's native test batch keeps the standard-library Loaf's transitive registry units even when
+    /// the member inherits terminal, Unicode, and TLS-enabled HTTP dependencies from the workspace table.
+    #[test]
+    fn e2e_workspace_member_test_batch_keeps_the_stdlib_registry_cohort_issue2005()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src"))?;
+        std::fs::write(
+            root.path().join("loaf.toml"),
+            r#"[project]
+name = "workspace_json_provider"
+version = "0.1.0"
+
+[workspace]
+members = ["consumer"]
+
+[workspace.dependencies]
+workspace_json_provider = { path = "." }
+
+[workspace.rust-dependencies]
+crossterm = "0.29"
+unicode-width = "0.2"
+unicode-segmentation = "=1.12.0"
+ureq = { version = "2.12", features = ["tls"] }
+"#,
+        )?;
+        std::fs::write(
+            root.path().join("src/lib.incn"),
+            "pub def provider_value() -> int:\n    return 7\n",
+        )?;
+        let consumer = root.path().join("consumer");
+        std::fs::create_dir_all(consumer.join("src"))?;
+        std::fs::create_dir_all(consumer.join("tests"))?;
+        std::fs::write(
+            consumer.join("loaf.toml"),
+            r#"[project]
+name = "workspace_json_consumer"
+version = "0.1.0"
+
+[dependencies]
+workspace_json_provider = { workspace = true }
+
+[rust-dependencies]
+crossterm = { workspace = true }
+unicode-width = { workspace = true }
+unicode-segmentation = { workspace = true }
+ureq = { workspace = true }
+"#,
+        )?;
+        std::fs::write(
+            consumer.join("src/lib.incn"),
+            "pub def member_value() -> int:\n    return 3\n",
+        )?;
+        std::fs::write(
+            consumer.join("tests/test_json.incn"),
+            r#"from pub::workspace_json_provider import provider_value
+from std.serde import json
+from std.testing import assert_eq
+
+
+@derive(json)
+model Event:
+    id: int
+
+
+def test_serializes_with_the_selected_standard_library_cohort() -> None:
+    assert_eq(provider_value(), 7)
+    assert_eq(Event(id=3).to_json(), "{\"id\":3}")
+"#,
+        )?;
+
+        let generated_target = root.path().join("generated-target");
+        let incan_home = root.path().join("incan-home");
+        let bake_provider = run_with_fresh_generated_target(
+            root.path(),
+            &incan_home,
+            &generated_target,
+            &["oven", "bake", "--project", "."],
+        )?;
+        assert_command_succeeded(&bake_provider, "workspace library bake");
+        let build_provider = run_with_fresh_generated_target(
+            root.path(),
+            &incan_home,
+            &generated_target,
+            &["build", "--lib", "--locked"],
+        )?;
+        assert_command_succeeded(&build_provider, "workspace library provider build");
+        let bake_member = run_with_fresh_generated_target(
+            &consumer,
+            &incan_home,
+            &generated_target,
+            &["oven", "bake", "--project", "."],
+        )?;
+        assert_command_succeeded(&bake_member, "workspace member bake");
+        let tests = run_with_fresh_generated_target(
+            &consumer,
+            &incan_home,
+            &generated_target,
+            &["test", "tests", "--locked"],
+        )?;
+        assert_command_succeeded(&tests, "workspace member native test batch");
+        assert!(
+            String::from_utf8_lossy(&tests.stdout).contains("1 passed"),
+            "the member JSON test must execute:\n{}",
+            String::from_utf8_lossy(&tests.stdout)
         );
         Ok(())
     }

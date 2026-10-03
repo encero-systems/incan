@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     OvenMaterializedRustFacetGraph, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
-    OvenRustcError, OvenSelectedRustFacetDomain, OvenSelectedRustFacetGraph, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetOwnerRoot, OvenSelectedRustFacetPath, OvenSelectedRustFacetSourceMember,
-    OvenSelectedRustFacetSupplementalSourceMembers, ValidatedOvenSelectedRustFacetGraph,
-    materialize_selected_rust_facet_graph_with_supplemental_source_members,
+    OvenRustcError, OvenRustcSupportingArtifact, OvenSelectedRustFacetDomain, OvenSelectedRustFacetGraph,
+    OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot, OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetSupplementalSourceMembers,
+    ValidatedOvenSelectedRustFacetGraph, materialize_selected_rust_facet_graph_with_supplemental_source_members,
 };
 
 mod asset;
@@ -32,6 +32,21 @@ pub const OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION: u32 = 4;
 
 /// Canonical descriptor filename retained at the root of one installed runtime-foundation asset.
 pub const OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME: &str = "foundation.json";
+
+/// Resolve a link artifact's admitted pipelined metadata sibling without scanning the artifact directory.
+fn materialized_metadata_artifact(
+    artifact_root: &std::path::Path,
+    supporting_artifacts: &[OvenRustcSupportingArtifact],
+    link_relative_path: &str,
+) -> Option<PathBuf> {
+    let mut metadata_relative = PathBuf::from(link_relative_path);
+    metadata_relative.set_extension("rmeta");
+    let metadata_relative_text = metadata_relative.to_str()?;
+    supporting_artifacts
+        .iter()
+        .any(|artifact| artifact.relative_path == metadata_relative_text)
+        .then(|| artifact_root.join(metadata_relative))
+}
 
 /// A versioned SDK-owned authority for one direct-Rustc compiler-runtime closure.
 ///
@@ -149,6 +164,8 @@ pub struct OvenMaterializedRuntimeFoundationPrebuiltDependency {
     pub domain: OvenSelectedRustFacetDomain,
     /// Foundation-owned immutable artifact path verified during publication materialization.
     pub artifact: PathBuf,
+    /// Foundation-owned pipelined metadata artifact when Cargo selected that artifact form.
+    pub metadata_artifact: Option<PathBuf>,
     /// Digest recorded for the exact artifact path.
     pub digest: String,
 }
@@ -536,6 +553,11 @@ impl ValidatedOvenRuntimeFoundation {
                         selected_identity: dependency.selected_identity,
                         domain: dependency.domain,
                         artifact,
+                        metadata_artifact: materialized_metadata_artifact(
+                            &artifact_root,
+                            &self.artifacts.supporting_artifacts,
+                            &dependency.artifact.relative_path,
+                        ),
                         digest: dependency.artifact.digest,
                     })
                 })
@@ -681,11 +703,12 @@ mod tests {
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
         OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetDependency, OvenSelectedRustFacetGeneratedInput,
-        OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-        OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
-        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
-        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
+        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetDependency,
+        OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetIntent,
+        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
+        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
+        OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, selected_graph_sha256,
+        selected_graph_source_digest, selected_graph_unit_identity,
     };
     use crate::rustc::{
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
@@ -831,6 +854,13 @@ mod tests {
                 return Err("fixture uses only registry and compiler source kinds".into());
             }
         };
+        let compiler_arguments = dependencies
+            .iter()
+            .map(|dependency| OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: dependency.alias.clone(),
+                metadata: false,
+            })
+            .collect();
         let mut unit = OvenSelectedRustFacetUnit {
             sysroot_externs: Vec::new(),
             identity: String::new(),
@@ -852,6 +882,14 @@ mod tests {
             source_members: members,
             features: Vec::new(),
             cfg: Vec::new(),
+            compiler_crate_type: match crate_kind {
+                OvenSelectedRustFacetCrateKind::Rlib => "lib",
+                OvenSelectedRustFacetCrateKind::Binary => "bin",
+                OvenSelectedRustFacetCrateKind::ProcMacro => "proc-macro",
+            }
+            .to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments,
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.to_string(),
@@ -1171,6 +1209,64 @@ mod tests {
         OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?).map_err(Into::into)
     }
 
+    /// Build a registry fixture whose manifest is both a source member, a supporting artifact and an environment file.
+    fn publisher_manifest_overlap_asset(
+        package: &str,
+        source_root: &str,
+        supporting_digest: Option<String>,
+    ) -> Result<OvenRuntimeFoundationAsset, Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let package_manifest = source_member("Cargo.toml", fixture_cargo_toml(package).as_bytes());
+        let source_members = vec![
+            package_manifest.clone(),
+            source_member("src/lib.rs", fixture_source_bytes("serde").as_bytes()),
+        ];
+        let source_digest = selected_graph_source_digest(&source_members)?;
+        edit_serde_unit(&mut foundation, |unit| {
+            unit.package = package.to_string();
+            unit.source.identity = format!("registry:{package}@1.0.0");
+            unit.source.root = source_root.to_string();
+            unit.source.digest = source_digest.clone();
+            unit.source_members = source_members;
+            unit.include_dirs = vec![OvenSelectedRustFacetPath {
+                owner: unit.source.owner.clone(),
+                path: source_root.to_string(),
+            }];
+            unit.environment.insert(
+                "CARGO_MANIFEST_PATH".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: unit.source.owner.clone(),
+                        path: format!("{source_root}/Cargo.toml"),
+                    },
+                },
+            );
+        })?;
+        for source in &mut foundation.artifacts.registry_sources {
+            if source.package == "serde" {
+                source.package = package.to_string();
+                source.source.relative_root = source_root.to_string();
+                source.source.digest = source_digest.clone();
+            }
+        }
+        for leaf in &mut foundation.artifacts.registry_leaves {
+            if leaf.package == "serde" {
+                leaf.package = package.to_string();
+                leaf.source.relative_root = source_root.to_string();
+                leaf.source.digest = source_digest.clone();
+            }
+        }
+        let manifest = foundation
+            .artifacts
+            .supporting_artifacts
+            .iter_mut()
+            .find(|artifact| artifact.relative_path == "registry-sources/serde-1.0.0/Cargo.toml")
+            .ok_or("fixture lost serde manifest artifact")?;
+        manifest.relative_path = format!("{source_root}/Cargo.toml");
+        manifest.digest = supporting_digest.unwrap_or(package_manifest.digest);
+        OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?).map_err(Into::into)
+    }
+
     /// Write one exact foundation fixture member below a temporary retained owner root.
     fn write_fixture_file(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         let path = root.join(relative);
@@ -1335,9 +1431,9 @@ mod tests {
         Ok(())
     }
 
-    /// Registry source cannot become a compiler-owned rebuild just because source bytes happen to be present.
+    /// A registry unit becomes rebuildable only through an explicit publisher policy.
     #[test]
-    fn runtime_foundation_refuses_registry_rebuild() -> Result<(), Box<dyn std::error::Error>> {
+    fn runtime_foundation_admits_registry_publisher_rebuild() -> Result<(), Box<dyn std::error::Error>> {
         let mut foundation = foundation()?;
         let policy = foundation
             .units
@@ -1345,13 +1441,8 @@ mod tests {
             .find(|policy| matches!(policy.execution, OvenRuntimeFoundationUnitExecution::Prebuilt { .. }))
             .ok_or("fixture lost prebuilt policy")?;
         policy.execution = OvenRuntimeFoundationUnitExecution::Rebuild;
-        assert!(matches!(
-            foundation.validated(),
-            Err(OvenRustcError::InvalidInput {
-                field: "runtime foundation rebuild unit",
-                ..
-            })
-        ));
+        let validated = foundation.validated()?;
+        assert_eq!(validated.rebuild_units().count(), 3);
         Ok(())
     }
 
@@ -1657,27 +1748,79 @@ mod tests {
         Ok(())
     }
 
-    /// A generated input sealed under its own GeneratedOutput owner is published into the asset like one the
-    /// constituent owns directly, so the asset can materialize it again after mirroring.
+    /// A registry manifest claimed through source inventory, supporting artifacts and `CARGO_MANIFEST_PATH` stages
+    /// once as a regular file; the environment reference must not manufacture a directory at that file path.
+    #[test]
+    fn runtime_foundation_publisher_stages_an_overlapping_registry_manifest_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = "quasar-packet";
+        let source_root = "registry-sources/quasar-packet-1.0.0";
+        let asset = publisher_manifest_overlap_asset(package, source_root, None)?;
+        let source = tempfile::tempdir()?;
+        let toolchain = tempfile::tempdir()?;
+        let install = tempfile::tempdir()?;
+        write_materialization_fixture(source.path(), toolchain.path())?;
+        fs::rename(
+            source.path().join("registry-sources/serde-1.0.0"),
+            source.path().join(source_root),
+        )?;
+        fs::write(
+            source.path().join(source_root).join("Cargo.toml"),
+            fixture_cargo_toml(package),
+        )?;
+        let destination = install.path().join("runtime-foundation");
+
+        let _ = publish_runtime_foundation_asset(asset, source.path(), toolchain.path(), &destination)?;
+
+        assert!(destination.join(source_root).join("Cargo.toml").is_file());
+        Ok(())
+    }
+
+    /// Two byte identities for the same registry manifest refuse in layout preflight before staging begins.
+    #[test]
+    fn runtime_foundation_publisher_refuses_conflicting_registry_manifest_claims()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_root = "registry-sources/nebula-codec-1.0.0";
+        let asset = publisher_manifest_overlap_asset(
+            "nebula-codec",
+            source_root,
+            Some(selected_graph_sha256(b"a different synthetic manifest")),
+        )?;
+        let validated = asset.validated()?;
+        let refusal = super::asset::validate_runtime_foundation_asset_member_paths(&validated)
+            .err()
+            .ok_or("conflicting registry manifest claims were accepted")?;
+        assert!(refusal.to_string().contains("conflicting regular-file byte identities"));
+        Ok(())
+    }
+
+    /// Generated trees sealed under their own GeneratedOutput owner are published member by member, while a checked
+    /// empty tree remains a directory; both forms materialize again after mirroring.
     #[test]
     fn runtime_foundation_asset_publisher_carries_generated_output_owned_inputs()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut foundation = foundation()?;
+        let mut populated_foundation = foundation()?;
         let generated_owner = selected_graph_sha256(b"generated-output\0generated/serde\0digest");
-        edit_serde_unit(&mut foundation, |unit| {
+        edit_serde_unit(&mut populated_foundation, |unit| {
             for input in &mut unit.generated_inputs {
                 input.source.owner = generated_owner.clone();
             }
         })?;
-        foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
-            identity: generated_owner,
-            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
-        });
-        foundation
+        populated_foundation
+            .selected_graph
+            .owners
+            .push(OvenSelectedRustFacetOwner {
+                identity: generated_owner.clone(),
+                kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+            });
+        populated_foundation
             .selected_graph
             .owners
             .sort_by(|left, right| left.identity.cmp(&right.identity));
-        let asset = OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?)?;
+        let asset = OvenRuntimeFoundationAsset::sealed(
+            populated_foundation.clone(),
+            source_inventories(&populated_foundation)?,
+        )?;
         let source_root = tempfile::tempdir()?;
         let toolchain_root = tempfile::tempdir()?;
         let install_root = tempfile::tempdir()?;
@@ -1689,6 +1832,46 @@ mod tests {
         assert_eq!(admitted.foundation_identity(), asset.foundation_identity);
         assert!(destination.join("generated/serde/private.rs").is_file());
         let _ = admitted.materialize_asset_for_publication()?;
+
+        let mut empty_foundation = foundation()?;
+        let empty_digest = crate::rustc::selected_graph_generated_input_digest(&[])?;
+        edit_serde_unit(&mut empty_foundation, |unit| {
+            for input in &mut unit.generated_inputs {
+                input.source.owner = generated_owner.clone();
+                input.members.clear();
+                input.digest = empty_digest.clone();
+            }
+        })?;
+        empty_foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner,
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        empty_foundation
+            .selected_graph
+            .owners
+            .sort_by(|left, right| left.identity.cmp(&right.identity));
+        empty_foundation
+            .artifacts
+            .supporting_artifacts
+            .retain(|artifact| artifact.relative_path != "generated/serde/private.rs");
+        let empty_asset =
+            OvenRuntimeFoundationAsset::sealed(empty_foundation.clone(), source_inventories(&empty_foundation)?)?;
+        let empty_source = tempfile::tempdir()?;
+        let empty_toolchain = tempfile::tempdir()?;
+        let empty_install = tempfile::tempdir()?;
+        write_materialization_fixture(empty_source.path(), empty_toolchain.path())?;
+        fs::remove_file(empty_source.path().join("generated/serde/private.rs"))?;
+        let empty_destination = empty_install.path().join("runtime-foundation");
+
+        let empty_admitted = publish_runtime_foundation_asset(
+            empty_asset,
+            empty_source.path(),
+            empty_toolchain.path(),
+            &empty_destination,
+        )?;
+
+        assert!(empty_destination.join("generated/serde").is_dir());
+        let _ = empty_admitted.materialize_asset_for_publication()?;
         Ok(())
     }
 

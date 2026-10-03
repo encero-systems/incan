@@ -201,6 +201,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 loaf_registry,
                 loaf_registry_commit,
                 harvest_dir,
+                link_owners,
             } => commands::oven_legacy_cargo_bake_loafs(commands::OvenLoafBakeCommandOptions {
                 compiler_root,
                 output,
@@ -222,6 +223,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 loaf_registry,
                 loaf_registry_commit,
                 harvest_dir,
+                link_owners,
             }),
         },
         OvenCommand::CompilerLibtests {

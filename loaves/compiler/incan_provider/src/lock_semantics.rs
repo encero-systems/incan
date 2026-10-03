@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use oven_model::digest::digest_bytes;
+use oven_model::digest::{canonical_json_bytes, digest_bytes};
 use oven_model::lock::{
     LockedFeatureEdge, LockedOvenState, LockedPackageFeatures, LockedProvider, LockedSdkComponent, LockedSdkState,
     SemanticLockState, portable_project_path,
@@ -704,7 +704,7 @@ fn semantic_sdk_inventory_digest(
             }
         }
     }
-    let normalized = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+    let normalized = canonical_json_bytes(&value).map_err(|error| error.to_string())?;
     Ok(digest_bytes(&normalized))
 }
 

@@ -478,6 +478,65 @@ def main(token: ImportedToken) -> float:
 }
 
 #[test]
+fn dependency_trait_adoption_meets_bounds_through_aliases_and_module_bindings() -> Result<(), Box<dyn std::error::Error>>
+{
+    let provider = r#"
+pub trait Tag:
+  def tag(self) -> str: ...
+
+pub Tagging = Tag
+
+pub model Label with Tag:
+  pub name: str
+
+  def tag(self) -> str:
+    return self.name
+"#;
+    let provider_ast = parse_program(provider, "dependency trait provider");
+    let mut provider_checker = TypeChecker::new();
+    provider_checker.set_current_module_path(Some(vec!["main".to_string()]));
+    provider_checker
+        .check_program(&provider_ast)
+        .map_err(|errors| std::io::Error::other(format!("provider typecheck failed: {errors:?}")))?;
+    let exports = collect_checked_public_exports(&provider_ast, &provider_checker);
+    let manifest = LibraryManifest::from_checked_exports("tags".to_string(), "0.1.0".to_string(), &exports);
+    let library_index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "tags".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "tags",
+                "tags",
+                synthetic_artifact_root("dependency_trait_identity"),
+            ),
+        },
+    )]));
+    let consumer = r#"
+import pub::tags as t
+from pub::tags import Label, Tag as Tagged, Tagging
+
+def direct[T with Tagged](value: T) -> str:
+  return value.tag()
+
+def exported_alias[T with Tagging](value: T) -> str:
+  return value.tag()
+
+def module_bound[T with t.Tag](value: T) -> str:
+  return value.tag()
+
+def main() -> None:
+  label = Label(name="ok")
+  println(direct(label))
+  println(exported_alias(label))
+  println(module_bound(label))
+"#;
+
+    check_str_with_library_index(consumer, library_index)
+        .map_err(|errors| std::io::Error::other(format!("consumer typecheck failed: {errors:?}")))?;
+    Ok(())
+}
+
+#[test]
 fn test_checked_public_exports_preserve_same_name_trait_methods() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 pub trait Convert[T]:

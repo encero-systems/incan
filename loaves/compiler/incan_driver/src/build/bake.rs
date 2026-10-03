@@ -18,7 +18,8 @@ use crate::build::output_materialization::{
 };
 use crate::build::output_paths::{
     library_project_output_sidecars, normalized_project_entrypoint, oven_binary_path, packaged_library_metadata_files,
-    project_output_bake_files, project_root_for_completed_output, validated_project_output_relative_path,
+    project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
+    validated_project_output_relative_path,
 };
 use crate::build::output_selection::project_output_report_snapshot;
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
@@ -34,7 +35,8 @@ use crate::build::plan_selection::{
     registry_leaf_authority_for_plan_selection,
 };
 use crate::build::publication::{
-    project_output_payload_for_bake, publish_project_inspection_authority, publish_project_output_loaf,
+    ProjectInspectionDependencyAuthority, project_output_payload_for_bake, publish_project_inspection_authority,
+    publish_project_output_loaf,
 };
 use crate::build::reuse::try_reuse_baked_project;
 use crate::build::source_authority::{
@@ -916,12 +918,26 @@ pub fn bake_oven_project_targets(
         let (registry_dependencies, dev_registry_dependencies) =
             canonical_project_inspection_dependencies(dependency_surface)?;
         let source_authority_digest = authority_context.final_project_source_authority(&project_root)?;
+        #[cfg(feature = "rust_inspect")]
+        let project_locked_registry_packages = project_locked_registry_packages(
+            rust_inspect_manifest_dirs
+                .iter()
+                .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
+                .collect::<Vec<_>>()
+                .iter()
+                .map(PathBuf::as_path),
+        )?;
+        #[cfg(not(feature = "rust_inspect"))]
+        let project_locked_registry_packages = Vec::new();
         let inspection_authority = publish_project_inspection_authority(
             &store,
             &project_root,
             &source_authority_digest,
-            &registry_dependencies,
-            &dev_registry_dependencies,
+            ProjectInspectionDependencyAuthority {
+                registry_dependencies: &registry_dependencies,
+                dev_registry_dependencies: &dev_registry_dependencies,
+                locked_registry_packages: &project_locked_registry_packages,
+            },
             &test_dependency_envelope,
             library_inspection_constituent.as_ref(),
         )?;

@@ -45,6 +45,8 @@ use incan_frontend::module::canonicalize_source_module_segments;
 use incan_frontend::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
+#[cfg(test)]
+use incan_lang::lang::traits;
 use incan_lang::lang::{rust_keywords, stdlib, trait_bounds};
 use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 
@@ -3330,6 +3332,155 @@ pub model Stream[R] with Walk:
             })),
             "the checked root adoption must receive its inferred implementation header"
         );
+    }
+
+    /// A public generic adopter publishes both a direct subtrait and its implied supertrait before inferred
+    /// implementation bounds are attached to the manifest.
+    #[test]
+    fn generic_supertrait_adoption_reaches_library_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub trait Catalog[T with Clone]:
+    def item(self) -> T: ...
+
+pub trait OrderedCatalog[T with Clone] with Catalog[T]:
+    def ordered(self) -> Self: ...
+
+pub model Parcel[T with Clone] with OrderedCatalog:
+    pub value: T
+
+    def item(self) -> T:
+        return self.value
+
+    def ordered(self) -> Self:
+        return self
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["main".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("catalogs", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+
+        let mut codegen = IrCodegen::new();
+        let mut type_info = checker.type_info().clone();
+        for (name, span) in [("Catalog", (0, 70)), ("OrderedCatalog", (71, 160))] {
+            type_info.declarations.resolved_import_identities.insert(
+                name.to_string(),
+                incan_semantics_core::CanonicalSymbolId {
+                    namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+                    origin: incan_semantics_core::SymbolOrigin::Module(vec!["lib".to_string()]),
+                    declaration_name: name.to_string(),
+                    kind: incan_semantics_core::SemanticSourceTargetKind::Trait,
+                    scope_discriminant: None,
+                    declaration_span: incan_semantics_core::HirSourceSpan::new(span.0, span.1),
+                },
+            );
+        }
+        codegen.set_prechecked_type_info(type_info, HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest).map_err(|error| {
+            format!(
+                "{error}; requirements={:?}; model adoptions={:?}",
+                metadata.implementation_bound_requirements, manifest.exports.models[0].trait_adoptions
+            )
+        })?;
+        let parcel = manifest
+            .exports
+            .models
+            .iter()
+            .find(|model| model.name == "Parcel")
+            .ok_or("missing Parcel export")?;
+        assert!(
+            parcel
+                .trait_adoptions
+                .iter()
+                .any(
+                    |adoption| adoption.source_name.as_deref().unwrap_or(&adoption.name) == "Catalog"
+                        && !adoption.implementation_type_params.is_empty()
+                ),
+            "Catalog[T] did not receive its inferred implementation bounds: {:?}",
+            parcel.trait_adoptions
+        );
+        Ok(())
+    }
+
+    /// A standard-library module keeps its mounted module identity when publishing a direct generic trait adoption.
+    #[test]
+    fn stdlib_local_generic_adoption_keeps_manifest_identity() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub trait Iterator[T]:
+    def next(mut self) -> Option[T]: ...
+
+pub model BatchIterator[T, Source with Iterator[T]] with Iterator[list[T]]:
+    pub source: Source
+
+    def next(mut self) -> Option[list[T]]:
+        return None
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["derives".to_string(), "collection".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_standard_library_source(true);
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("incan_stdlib_core", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+
+        let mut codegen = IrCodegen::new();
+        codegen.set_standard_library_source(true);
+        let mut type_info = checker.type_info().clone();
+        let iterator = traits::as_str(traits::TraitId::Iterator).to_string();
+        type_info.declarations.resolved_import_identities.insert(
+            iterator.clone(),
+            incan_semantics_core::CanonicalSymbolId {
+                namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+                origin: incan_semantics_core::SymbolOrigin::Module(module_path.clone()),
+                declaration_name: iterator,
+                kind: incan_semantics_core::SemanticSourceTargetKind::Trait,
+                scope_discriminant: None,
+                declaration_span: incan_semantics_core::HirSourceSpan::new(0, 0),
+            },
+        );
+        codegen.set_prechecked_type_info(type_info, HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest).map_err(|error| {
+            format!(
+                "{error}; requirements={:?}; model adoptions={:?}",
+                metadata.implementation_bound_requirements, manifest.exports.models[0].trait_adoptions
+            )
+        })?;
+        Ok(())
     }
 
     /// Issue #1819: compiled-library metadata publishes the inferred inherent impl header and method-generic bounds

@@ -1081,8 +1081,9 @@ fn out_dir_version_matches(unit_version: Option<&str>, dep_version: Option<&str>
 ///
 /// Both routes below filter by package version whenever the version of a unit is known: a Cargo target's units
 /// through the map the workspace loader wrote from rust-analyzer's crate graph, sealed units through the version the
-/// bake recorded. A unit whose version is unknown stays a candidate, so a workspace without either record keeps
-/// today's behavior.
+/// bake recorded. A unit whose version is unknown remains a fallback only when no exact-version unit exists, so a
+/// workspace without either record keeps today's behavior without allowing an untagged sibling to shadow an exact
+/// match.
 fn generated_out_dir_candidates(root: &Path, dep_root: &Path, crate_name: &str) -> Vec<PathBuf> {
     let target_dir = cargo_configured_target_dir(root);
     let dep_version = dependency_manifest_version(dep_root);
@@ -1094,7 +1095,8 @@ fn generated_out_dir_candidates(root: &Path, dep_root: &Path, crate_name: &str) 
     crate_names.push(normalized_crate_cache_key(crate_name));
     crate_names.sort();
     crate_names.dedup();
-    let mut files = Vec::new();
+    let mut exact_version_files = Vec::new();
+    let mut fallback_files = Vec::new();
     for profile in ["debug", "release"] {
         let build_dir = target_dir.join(profile).join("build");
         let Ok(entries) = fs::read_dir(build_dir) else {
@@ -1120,7 +1122,11 @@ fn generated_out_dir_candidates(root: &Path, dep_root: &Path, crate_name: &str) 
             for out_entry in out_entries.flatten() {
                 let path = out_entry.path();
                 if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-                    files.push(path);
+                    if unit_version.is_some() && dep_version.is_some() {
+                        exact_version_files.push(path);
+                    } else {
+                        fallback_files.push(path);
+                    }
                 }
             }
         }
@@ -1149,10 +1155,19 @@ fn generated_out_dir_candidates(root: &Path, dep_root: &Path, crate_name: &str) 
         for out_entry in out_entries.flatten() {
             let path = out_entry.path();
             if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-                files.push(path);
+                if sealed.version.is_some() && dep_version.is_some() {
+                    exact_version_files.push(path);
+                } else {
+                    fallback_files.push(path);
+                }
             }
         }
     }
+    let mut files = if exact_version_files.is_empty() {
+        fallback_files
+    } else {
+        exact_version_files
+    };
     files.sort();
     files.dedup();
     files

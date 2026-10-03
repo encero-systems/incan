@@ -4,6 +4,71 @@
 use super::*;
 
 #[test]
+fn test_checked_exports_publish_generic_supertrait_adoption_closure() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub trait Catalog[T with Clone]:
+  def item(self) -> T: ...
+
+pub trait OrderedCatalog[T with Clone] with Catalog[T]:
+  def ordered(self) -> Self: ...
+
+pub model ExplicitBox[T with Clone] with OrderedCatalog[T]:
+  pub value: T
+
+  def item(self) -> T:
+    return self.value
+
+  def ordered(self) -> Self:
+    return self
+
+pub model BareBox[T with Clone] with OrderedCatalog:
+  pub value: T
+
+  def item(self) -> T:
+    return self.value
+
+  def ordered(self) -> Self:
+    return self
+"#;
+    let ast = parse_program(source, "generic supertrait adoption export");
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".to_string()]));
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("provider typecheck failed: {errors:?}")))?;
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    for model_name in ["ExplicitBox", "BareBox"] {
+        let model = exports
+            .iter()
+            .find_map(|export| match &export.kind {
+                CheckedExportKind::Model(model) if model.name == model_name => Some(model),
+                _ => None,
+            })
+            .ok_or_else(|| format!("missing {model_name} export"))?;
+        assert!(
+            model.trait_adoptions.iter().any(|adoption| {
+                adoption.name == "Catalog"
+                    && adoption.type_args == [ResolvedType::TypeVar("T".to_string())]
+                    && adoption.module_path.as_deref() == Some(&["lib".to_string()])
+            }),
+            "expected {model_name} to publish its implied Catalog[T] adoption: {:?}",
+            model.trait_adoptions
+        );
+        assert!(
+            model.trait_adoptions.iter().any(|adoption| {
+                adoption.name == "OrderedCatalog"
+                    && adoption.type_args == [ResolvedType::TypeVar("T".to_string())]
+                    && adoption.module_path.as_deref() == Some(&["lib".to_string()])
+            }),
+            "expected {model_name} to publish its direct OrderedCatalog[T] adoption: {:?}",
+            model.trait_adoptions
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn test_explicit_clone_bound_accepts_builtin_clone_types() {
     let source = r#"
 def identity[T with Clone](value: T) -> T:

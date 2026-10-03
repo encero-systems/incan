@@ -857,6 +857,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 }
             }
             IrExprKind::List(items) => {
+                // Empty lists emit `Vec::<T>::new()` when destination typing supplies `T`, so unlike an ordinary
+                // inferred expression type this one is textual Rust and any imported nominal in it must stay bound.
+                if items.is_empty() {
+                    self.scan_type(&expr.ty);
+                }
                 for item in items {
                     match item {
                         IrListEntry::Element(value) | IrListEntry::Spread(value) => self.scan_expr(value),

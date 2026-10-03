@@ -1115,8 +1115,9 @@ impl TypeChecker {
     /// Infer concrete type bindings for generic type parameters from a parameter/argument type pair.
     ///
     /// This walks matching container structure recursively so constructor field checks and function calls can recover
-    /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`.
-    pub(in crate::typechecker::check_expr) fn infer_type_param_bindings(
+    /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`. Public-package aliases and
+    /// provider-qualified spellings of the same generic declaration share that structure even when their names differ.
+    pub(in crate::typechecker) fn infer_type_param_bindings(
         &self,
         expected: &ResolvedType,
         actual: &ResolvedType,
@@ -1135,7 +1136,18 @@ impl TypeChecker {
             }
             ResolvedType::Generic(name, expected_args) => {
                 if let ResolvedType::Generic(actual_name, actual_args) = actual
-                    && name == actual_name
+                    && (name == actual_name
+                        || self
+                            .public_library_type_identities
+                            .get(name)
+                            .zip(self.public_library_type_identities.get(actual_name))
+                            .is_some_and(|(expected_identity, actual_identity)| expected_identity == actual_identity)
+                        || self
+                            .module_qualified_nominals_compatible(
+                                &ResolvedType::Named(name.clone()),
+                                &ResolvedType::Named(actual_name.clone()),
+                            )
+                            .unwrap_or(false))
                 {
                     for (e, a) in expected_args.iter().zip(actual_args.iter()) {
                         self.infer_type_param_bindings(e, a, bindings);

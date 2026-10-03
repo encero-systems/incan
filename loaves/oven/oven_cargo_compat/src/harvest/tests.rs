@@ -5,9 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oven_model::manifest::{
-    RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactExecutable, RustFactLibrary, RustFactLibraryKind,
-    RustFactLinkLanguage, RustFactLinkObject, RustFactOut, RustFactOutput, RustFactRecord, RustFactWorkObservation,
-    RustFactWorkRecord, is_sha256_identity,
+    RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactCompileEnvironment, RustFactExecutable,
+    RustFactLibrary, RustFactLibraryKind, RustFactLinkLanguage, RustFactLinkObject, RustFactOut, RustFactOutput,
+    RustFactRecord, RustFactWorkObservation, RustFactWorkRecord, is_sha256_identity,
 };
 use oven_rustc::rustc::{OvenSelectedRustFacetCfgSnapshot, selected_graph_sha256};
 use serde::Serialize;
@@ -57,12 +57,17 @@ fn library(package: &str, version: &str, features: &[&str]) -> OvenLegacyCargoSe
         crate_types: vec!["lib".to_string()],
         source_path: PathBuf::from(format!("/transient/{package}/src/lib.rs")),
         artifact_paths: Vec::new(),
+        retained_artifacts: Vec::new(),
         root_module: "src/lib.rs".to_string(),
         edition: "2021".to_string(),
         mode: "build".to_string(),
         platform: Some("x86_64-unknown-linux-gnu".to_string()),
         target_is_explicit: Some(true),
         cfg: Vec::new(),
+        compiler_crate_type: Some("lib".to_string()),
+        compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+        compiler_arguments: Vec::new(),
+        compile_environment: BTreeMap::new(),
         effective_features: features.iter().map(|feature| feature.to_string()).collect(),
         dependencies: Vec::new(),
         sysroot_externs: Vec::new(),
@@ -335,7 +340,7 @@ fn harvest_contract_proposes_probe_only_answers_as_cfg() -> TestResult {
 }
 
 #[test]
-fn harvest_contract_converts_only_rebindable_environment_inputs() -> TestResult {
+fn harvest_contract_declares_out_dir_relative_environment() -> TestResult {
     let mut observed = facts(&[], Some(retained_products()));
     observed
         .environment
@@ -345,21 +350,25 @@ fn harvest_contract_converts_only_rebindable_environment_inputs() -> TestResult 
         &evidence(),
         "release",
     )?;
-    assert!(report.proposals.is_empty());
-    let refusal = report
-        .refusals
+    let proposal = report
+        .proposals
         .iter()
-        .find(|refusal| refusal.package == "fixture" && refusal.reason == HarvestRefusalReason::EnvironmentObserved)
-        .ok_or("retained environment input must be refused until its typed record exists")?;
-    let input = &refusal.observations.environment[0];
-    assert_eq!(input.name, "FIXTURE_ARCHIVE");
-    assert_eq!(input.owner_relative_path, "libfixture.a");
-    assert_eq!(input.digest, selected_graph_sha256(b"archive"));
+        .find(|proposal| proposal.project.name == "fixture")
+        .ok_or("retained environment input was not proposed")?;
+    assert_eq!(
+        proposal.rust.facts[0].environment,
+        [RustFactCompileEnvironment {
+            name: "FIXTURE_ARCHIVE".to_string(),
+            literal: None,
+            out: Some("libfixture.a".to_string()),
+        }]
+    );
+    assert!(proposal.admitted_record().is_ok());
     Ok(())
 }
 
 #[test]
-fn harvest_contract_refuses_unmodelled_environment_values() -> TestResult {
+fn harvest_contract_declares_literal_environment_values() -> TestResult {
     let mut observed = facts(&[], Some(retained_products()));
     observed
         .environment
@@ -369,12 +378,11 @@ fn harvest_contract_refuses_unmodelled_environment_values() -> TestResult {
         &evidence(),
         "release",
     )?;
-    assert!(report.proposals.is_empty());
-    assert!(
-        report
-            .refusals
-            .iter()
-            .any(|refusal| refusal.reason == HarvestRefusalReason::EnvironmentObserved)
+    let proposal = report.proposals.first().ok_or("literal environment was not proposed")?;
+    assert_eq!(proposal.rust.facts[0].environment[0].name, "SECRET");
+    assert_eq!(
+        proposal.rust.facts[0].environment[0].literal.as_deref(),
+        Some("ambient-value")
     );
     Ok(())
 }
@@ -400,11 +408,11 @@ fn harvest_contract_proves_binding_derived_environment_constants() -> TestResult
         .iter()
         .find(|proposal| proposal.project.name == "libm")
         .ok_or("libm binding-derived constants must harvest")?;
-    assert!(proposal.rust.facts[0].environment_inputs.is_empty());
+    assert_eq!(proposal.rust.facts[0].environment.len(), 3);
     assert!(proposal.admitted_record().is_ok());
     assert!(
-        !serde_json::to_string(proposal)?.contains("CFG_"),
-        "proved constants need no fact key"
+        serde_json::to_string(proposal)?.contains("CFG_TARGET_FEATURES"),
+        "proved constants must remain identity-bearing compile environment"
     );
     Ok(())
 }
@@ -479,25 +487,12 @@ fn admitted_proposal_converts_cfg_out_and_refuses_raw_work() -> TestResult {
         Some(HarvestAdmissionRefusal::UnresolvedLinkObservations)
     );
 
-    let mut environment = facts(&[], Some(retained_products()));
-    environment
-        .environment
-        .insert("FIXTURE_ARCHIVE".to_string(), "/transient/out/libfixture.a".to_string());
-    let raw = harvest_registry_units(
-        &capture(vec![(library("fixture", "1.0.0", &[]), Some(environment))]),
-        &evidence(),
-        "release",
-    )?;
-    let environment = raw
-        .refusals
-        .iter()
-        .find(|refusal| refusal.package == "fixture")
-        .ok_or("environment refusal missing")?
-        .observations
-        .environment
-        .clone();
     let mut raw_proposal = clean.proposals[0].clone();
-    raw_proposal.rust.facts[0].environment_inputs = environment;
+    raw_proposal.rust.facts[0].environment_inputs = vec![HarvestEnvironmentInput {
+        name: "FIXTURE_ARCHIVE".to_string(),
+        owner_relative_path: "libfixture.a".to_string(),
+        digest: selected_graph_sha256(b"archive"),
+    }];
     assert_eq!(
         raw_proposal.admitted_record().err(),
         Some(HarvestAdmissionRefusal::UnresolvedEnvironmentInputs)
@@ -1366,7 +1361,7 @@ fn scripts_outside_the_record_vocabulary_are_refused_by_reason() -> TestResult {
             output: None,
         });
     let report = harvest_registry_units(&capture, &evidence(), "release")?;
-    assert!(report.proposals.is_empty());
+    assert!(report.proposals.iter().any(|proposal| proposal.project.name == "libm"));
     let refused = report
         .refusals
         .iter()
@@ -1381,7 +1376,6 @@ fn scripts_outside_the_record_vocabulary_are_refused_by_reason() -> TestResult {
                 HarvestRefusalReason::OutputNotRetained,
                 "OUT_DIR was not inventoried"
             ),
-            ("libm", HarvestRefusalReason::EnvironmentObserved, "SECRET"),
             (
                 "openssl-sys",
                 HarvestRefusalReason::LinkedPaths,
@@ -1736,8 +1730,14 @@ fn a_fact_carries_exactly_the_record_keys_and_safe_unique_outputs() -> TestResul
         .ok_or("fact must be an object")?
         .keys()
         .cloned()
-        .collect::<Vec<_>>();
-    assert_eq!(keys, ["cfg", "features", "out", "profile", "target", "toolchain"]);
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        ["cfg", "features", "out", "profile", "target", "toolchain"]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect()
+    );
     assert_eq!(json["rust"]["facts"][0]["out"][0]["path"], "out/private.rs");
 
     let escaping = capture_with_members(vec![OvenLegacyCargoInspectionSourceMember {
@@ -1846,8 +1846,27 @@ fn the_written_report_is_canonical_and_idempotent() -> TestResult {
         .ok_or("proposal must be an object")?
         .keys()
         .cloned()
-        .collect::<Vec<_>>();
-    assert_eq!(keys, ["evidence", "project", "rust", "source"], "keys are sorted");
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        ["evidence", "project", "rust", "source"]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+        "the proposal carries exactly the admitted top-level fields"
+    );
+    let evidence_position = proposal_text
+        .find("\"evidence\"")
+        .ok_or("proposal has no evidence field")?;
+    let project_position = proposal_text
+        .find("\"project\"")
+        .ok_or("proposal has no project field")?;
+    let rust_position = proposal_text.find("\"rust\"").ok_or("proposal has no rust field")?;
+    let source_position = proposal_text.find("\"source\"").ok_or("proposal has no source field")?;
+    assert!(
+        evidence_position < project_position && project_position < rust_position && rust_position < source_position,
+        "canonical proposal fields are sorted in the written bytes"
+    );
     assert!(proposal_text.ends_with('\n'));
     assert_eq!(proposal["rust"]["facts"].as_array().map(Vec::len), Some(1));
     assert_eq!(

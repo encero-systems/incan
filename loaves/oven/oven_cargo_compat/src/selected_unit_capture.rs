@@ -12,9 +12,11 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use oven_model::digest::canonical_json_bytes;
 use oven_rustc::rustc::substitution::RustcUnitRequest;
 use oven_rustc::rustc::{
-    OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetSourceMember, selected_graph_generated_input_digest,
+    OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerArgument,
+    OvenSelectedRustFacetCompilerPaths, OvenSelectedRustFacetSourceMember, selected_graph_generated_input_digest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -429,6 +431,10 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         unit.artifact_paths.sort();
         unit.artifact_paths.dedup();
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
+        unit.compiler_arguments = rustc_rebuild_arguments(&item.invocation.arguments)?;
+        unit.compiler_crate_type = observed_crate_types(item.invocation).into_iter().next();
+        unit.compiler_paths = Some(captured_compiler_paths(item.invocation)?);
+        unit.compile_environment = item.invocation.environment.clone();
         unit.sysroot_externs = extern_arguments(&item.invocation.arguments)?.sysroot;
         unit.target_is_explicit = Some(argument_value(&item.invocation.arguments, "--target").is_some());
     }
@@ -581,7 +587,7 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
         .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
         .collect::<BTreeMap<_, _>>();
     let source_digest = digest_bytes(&regular_file_bytes(&canonical_source).ok()?);
-    let encoded = serde_json::to_vec(&serde_json::json!({
+    let encoded = canonical_json_bytes(&serde_json::json!({
         "arguments": normalized_arguments,
         "environment": semantic_environment,
         "source_digest": source_digest,
@@ -692,7 +698,7 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
         .iter()
         .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
         .collect::<BTreeMap<_, _>>();
-    let encoded = serde_json::to_vec(&serde_json::json!({
+    let encoded = canonical_json_bytes(&serde_json::json!({
         "arguments": arguments,
         "environment": environment,
         "source_digest": source_digest,
@@ -1018,6 +1024,191 @@ fn rustc_non_feature_cfgs(arguments: &[String]) -> Vec<String> {
     cfg
 }
 
+/// Retain the portable byte- and success-affecting arguments needed to reproduce one Cargo-selected unit. A bare
+/// `-C name` is rustc's boolean spelling of `name=yes`.
+fn rustc_rebuild_arguments(
+    arguments: &[String],
+) -> Result<Vec<OvenSelectedRustFacetCompilerArgument>, OvenLegacyCargoError> {
+    let mut retained = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        if argument == "--cfg" || argument.starts_with("--cfg=") {
+            let value = if let Some(value) = argument.strip_prefix("--cfg=") {
+                value.to_string()
+            } else {
+                arguments.get(index + 1).cloned().ok_or_else(|| {
+                    OvenLegacyCargoError::Plan("rustc option `--cfg` has no value in captured invocation".to_string())
+                })?
+            };
+            retained.push(OvenSelectedRustFacetCompilerArgument::Cfg { value });
+            index += if argument == "--cfg" { 2 } else { 1 };
+            continue;
+        }
+        if argument == "--emit" || argument.starts_with("--emit=") {
+            let value = if let Some(value) = argument.strip_prefix("--emit=") {
+                value.to_string()
+            } else {
+                arguments.get(index + 1).cloned().ok_or_else(|| {
+                    OvenLegacyCargoError::Plan("rustc option `--emit` has no value in captured invocation".to_string())
+                })?
+            };
+            retained.push(OvenSelectedRustFacetCompilerArgument::Emit { value });
+            index += if argument == "--emit" { 2 } else { 1 };
+            continue;
+        }
+        if matches!(argument.as_str(), "-C" | "--codegen") {
+            let value = arguments.get(index + 1).ok_or_else(|| {
+                OvenLegacyCargoError::Plan(format!("rustc option `{argument}` has no value in captured invocation"))
+            })?;
+            let (name, setting) = value.split_once('=').unwrap_or((value.as_str(), "yes"));
+            if OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS.contains(&name) {
+                retained.push(OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: name.to_string(),
+                    value: setting.to_string(),
+                });
+            }
+            index += 2;
+            continue;
+        }
+        if argument == "--check-cfg" {
+            let value = arguments.get(index + 1).ok_or_else(|| {
+                OvenLegacyCargoError::Plan("rustc option `--check-cfg` has no value in captured invocation".to_string())
+            })?;
+            retained.push(OvenSelectedRustFacetCompilerArgument::CheckCfg {
+                value: value.to_string(),
+            });
+            index += 2;
+            continue;
+        }
+        let lint_level = ["allow", "warn", "deny", "forbid", "force-warn"]
+            .into_iter()
+            .find(|level| argument == &format!("--{level}") || argument.starts_with(&format!("--{level}=")));
+        if let Some(level) = lint_level {
+            let name = if let Some((_, name)) = argument.split_once('=') {
+                name.to_string()
+            } else {
+                arguments
+                    .get(index + 1)
+                    .cloned()
+                    .ok_or_else(|| OvenLegacyCargoError::Plan(format!("rustc lint option `{argument}` has no value")))?
+            };
+            retained.push(OvenSelectedRustFacetCompilerArgument::Lint {
+                level: level.to_string(),
+                name,
+            });
+            index += if argument.contains('=') { 1 } else { 2 };
+            continue;
+        }
+        if argument == "--cap-lints" {
+            let value = arguments.get(index + 1).ok_or_else(|| {
+                OvenLegacyCargoError::Plan("rustc option `--cap-lints` has no value in captured invocation".to_string())
+            })?;
+            retained.push(OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: value.to_string(),
+            });
+            index += 2;
+            continue;
+        }
+        if argument == "--extern" || argument.starts_with("--extern=") {
+            let value = if let Some(value) = argument.strip_prefix("--extern=") {
+                value
+            } else {
+                arguments.get(index + 1).map(String::as_str).ok_or_else(|| {
+                    OvenLegacyCargoError::Plan(
+                        "rustc option `--extern` has no value in captured invocation".to_string(),
+                    )
+                })?
+            };
+            if let Some((alias, path)) = value.split_once('=') {
+                retained.push(OvenSelectedRustFacetCompilerArgument::Extern {
+                    alias: alias.to_string(),
+                    metadata: Path::new(path)
+                        .extension()
+                        .is_some_and(|extension| extension == "rmeta"),
+                });
+            }
+            index += if argument == "--extern" { 2 } else { 1 };
+            continue;
+        }
+        index += 1;
+    }
+    Ok(retained)
+}
+
+/// Resolve Cargo's machine-local compiler paths through the exact remap flags rustc observed.
+fn captured_compiler_paths(
+    invocation: &OvenLegacyRustcInvocation,
+) -> Result<OvenSelectedRustFacetCompilerPaths, OvenLegacyCargoError> {
+    let source_root = invocation
+        .environment
+        .get("CARGO_MANIFEST_DIR")
+        .ok_or_else(|| OvenLegacyCargoError::Plan("captured rustc invocation has no CARGO_MANIFEST_DIR".to_string()))?;
+    let output_directory = argument_value(&invocation.arguments, "--out-dir")
+        .ok_or_else(|| OvenLegacyCargoError::Plan("captured rustc invocation has no --out-dir".to_string()))?;
+    Ok(OvenSelectedRustFacetCompilerPaths {
+        root_module_is_relative: super::rustc_trace::rustc_positional_source(&invocation.arguments)
+            .is_some_and(|path| Path::new(path).is_relative()),
+        source_root: remapped_compiler_path(&invocation.arguments, source_root, "source root")?,
+        working_directory: remapped_compiler_path(
+            &invocation.arguments,
+            &invocation.working_directory,
+            "working directory",
+        )?,
+        output_directory: remapped_compiler_path(&invocation.arguments, output_directory, "output directory")?,
+        out_dir: invocation
+            .environment
+            .get("OUT_DIR")
+            .map(|path| remapped_compiler_path(&invocation.arguments, path, "OUT_DIR"))
+            .transpose()?,
+    })
+}
+
+/// Apply the most specific captured rustc path remap to one absolute compiler-visible path.
+fn remapped_compiler_path(
+    arguments: &[String],
+    path: &str,
+    field: &'static str,
+) -> Result<String, OvenLegacyCargoError> {
+    let path = Path::new(path);
+    let mut mappings = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        let mapping = if argument == "--remap-path-prefix" {
+            index += 1;
+            arguments.get(index).map(String::as_str)
+        } else {
+            argument.strip_prefix("--remap-path-prefix=")
+        };
+        if let Some(mapping) = mapping {
+            let (from, to) = mapping.rsplit_once('=').ok_or_else(|| {
+                OvenLegacyCargoError::Plan("captured rustc path remap has no destination".to_string())
+            })?;
+            if let Ok(relative) = path.strip_prefix(from) {
+                mappings.push((Path::new(from).components().count(), Path::new(to).join(relative)));
+            }
+        }
+        index += 1;
+    }
+    let matched = mappings
+        .into_iter()
+        .max_by_key(|(specificity, _)| *specificity)
+        .map(|(_, remapped)| remapped.to_string_lossy().replace('\\', "/"));
+    matched.ok_or_else(|| {
+        let remaps = arguments
+            .iter()
+            .filter(|argument| argument.contains("remap-path-prefix") || argument.contains("=/incan/"))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        OvenLegacyCargoError::Plan(format!(
+            "captured rustc {field} `{}` has no admitted path remap; captured remap arguments: {remaps}",
+            path.display()
+        ))
+    })
+}
+
 /// Publisher-only physical facts for one Cargo selected-unit graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1082,6 +1273,13 @@ pub struct OvenLegacyCargoSelectedUnit {
     /// the portable capture wire and identity; the sealed artifact digest and selected-unit identity replace them.
     #[serde(default, skip_serializing)]
     pub artifact_paths: Vec<PathBuf>,
+    /// Digest-bound copies of the compiler artifacts retained below the exported Loaf root.
+    ///
+    /// Cargo's target directory is publisher scratch and may disappear immediately after capture. These records
+    /// identify the exact bytes copied while that directory still existed; later evidence consumers must verify the
+    /// declared digest and may not substitute another same-shaped file.
+    #[serde(default)]
+    pub retained_artifacts: Vec<OvenLegacyCargoRetainedArtifact>,
     /// Package-root-relative crate root derived from Cargo metadata and the selected target record.
     pub root_module: String,
     pub edition: String,
@@ -1094,6 +1292,18 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub target_is_explicit: Option<bool>,
     /// Exact non-feature rustc cfg arguments; Cargo features remain separately named by `effective_features`.
     pub cfg: Vec<String>,
+    /// Exact crate-type spelling from the joined rustc invocation.
+    #[serde(default)]
+    pub compiler_crate_type: Option<String>,
+    /// Portable paths produced by the joined invocation's captured remap flags.
+    #[serde(default)]
+    pub compiler_paths: Option<OvenSelectedRustFacetCompilerPaths>,
+    /// Ordered portable compiler arguments retained from Cargo's exact successful rustc invocation.
+    #[serde(default)]
+    pub compiler_arguments: Vec<OvenSelectedRustFacetCompilerArgument>,
+    /// Exact Cargo compile-time environment observed for this successful rustc invocation.
+    #[serde(default)]
+    pub compile_environment: BTreeMap<String, String>,
     pub effective_features: Vec<String>,
     pub dependencies: Vec<OvenLegacyCargoSelectedDependency>,
     /// Bare compiler/sysroot externs admitted from the verified rustc invocation.
@@ -1102,6 +1312,30 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub build_script: Option<OvenLegacyCargoBuildScriptFacts>,
     /// Exact staged registry source evidence, when this is a registry-backed unit.
     pub registry_source: Option<OvenLegacyCargoSelectedRegistrySource>,
+}
+
+/// Build stable captured compiler paths for Cargo-compatibility fixtures.
+#[cfg(test)]
+pub(crate) fn fixture_captured_compiler_paths() -> OvenSelectedRustFacetCompilerPaths {
+    OvenSelectedRustFacetCompilerPaths {
+        root_module_is_relative: true,
+        source_root: "/incan/source".to_string(),
+        working_directory: "/incan/source".to_string(),
+        output_directory: "/incan/target/deps".to_string(),
+        out_dir: None,
+    }
+}
+
+/// One compiler artifact copied out of Cargo's transient target directory at capture time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyCargoRetainedArtifact {
+    /// Loaf-root-relative path of the retained bytes.
+    pub relative_path: String,
+    /// Original artifact extension used to pair the Cargo and direct-rustc products exactly.
+    pub extension: Option<String>,
+    /// Digest of the retained raw bytes.
+    pub digest: String,
 }
 
 /// The portable facts of one selected unit: what its compilation was, independent of where it ran.
@@ -1127,6 +1361,10 @@ struct PortableSelectedUnitKey<'a> {
     platform: Option<&'a str>,
     target_is_explicit: Option<bool>,
     cfg: &'a [String],
+    compiler_crate_type: Option<&'a str>,
+    compiler_paths: Option<&'a OvenSelectedRustFacetCompilerPaths>,
+    compiler_arguments: &'a [OvenSelectedRustFacetCompilerArgument],
+    compile_environment: BTreeMap<&'a str, String>,
     effective_features: &'a [String],
     sysroot_externs: &'a [String],
     build_script: Option<PortableBuildScriptKey<'a>>,
@@ -1229,17 +1467,41 @@ fn selected_unit_portable_identity(
         platform: unit.platform.as_deref(),
         target_is_explicit: unit.target_is_explicit,
         cfg: &unit.cfg,
+        compiler_crate_type: unit.compiler_crate_type.as_deref(),
+        compiler_paths: unit.compiler_paths.as_ref(),
+        compiler_arguments: &unit.compiler_arguments,
+        compile_environment: unit
+            .compile_environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), portable_compile_environment_value(name, value, unit)))
+            .collect(),
         effective_features: &unit.effective_features,
         sysroot_externs: &unit.sysroot_externs,
         build_script: unit.build_script.as_ref().map(PortableBuildScriptKey::new),
         dependencies,
     };
-    let identity = serde_json::to_vec(&("incan.oven.legacy-cargo-selected-unit/2", key))
+    let identity = serde_json::to_vec(&("incan.oven.legacy-cargo-selected-unit/4", key))
         .map(|bytes| digest_bytes(&bytes))
         .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode selected-unit capture: {error}")))?;
     visiting.remove(&index);
     memo.insert(index, identity.clone());
     Ok(identity)
+}
+
+/// Remove transient Cargo roots from one compiler environment value before selected-capture identity hashing.
+fn portable_compile_environment_value(name: &str, value: &str, unit: &OvenLegacyCargoSelectedUnit) -> String {
+    match name {
+        "CARGO_MANIFEST_DIR" => "@manifest-dir".to_string(),
+        "CARGO_MANIFEST_PATH" => "@manifest-dir/Cargo.toml".to_string(),
+        "OUT_DIR" => unit
+            .dependencies
+            .iter()
+            .filter_map(|dependency| dependency.build_script.as_ref())
+            .find(|facts| value == facts.out_dir.to_string_lossy())
+            .map(|_| "@oven-out-dir".to_string())
+            .unwrap_or_else(|| value.to_string()),
+        _ => value.to_string(),
+    }
 }
 
 /// Registry source evidence joined by exact Cargo package coordinates before the transient publisher is released.
@@ -1504,12 +1766,17 @@ fn capture_legacy_cargo_selected_units_inner(
             crate_types: unit.target.crate_types.clone(),
             source_path: unit.target.src_path.clone(),
             artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
             root_module,
             edition: unit.target.edition.clone(),
             mode: unit.mode.clone(),
             platform: unit.platform.clone(),
             target_is_explicit: None,
             cfg: Vec::new(),
+            compiler_crate_type: None,
+            compiler_paths: None,
+            compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
             effective_features: features,
             dependencies,
             sysroot_externs: Vec::new(),
@@ -1524,6 +1791,52 @@ fn capture_legacy_cargo_selected_units_inner(
         build_script_tool_probes: Vec::new(),
         compiler: None,
     })
+}
+
+/// Copy every traced compiler artifact into publisher staging before Cargo's target directory is discarded.
+pub fn retain_legacy_cargo_selected_artifacts(
+    capture: &mut OvenLegacyCargoSelectedUnitCapture,
+    staging: &Path,
+) -> Result<Vec<OvenRustcSupportingArtifact>, OvenLegacyCargoError> {
+    let mut supporting = Vec::new();
+    for unit in &mut capture.units {
+        let mut retained = Vec::new();
+        for source in &unit.artifact_paths {
+            let bytes = regular_file_bytes(source)?;
+            let digest = digest_bytes(&bytes);
+            let content_identity = digest.strip_prefix("sha256:").ok_or_else(|| {
+                OvenLegacyCargoError::Plan("retained Cargo artifact digest is not a SHA-256 identity".to_string())
+            })?;
+            let relative_path = format!("cargo-capture-artifacts/{content_identity}");
+            let destination = staging.join(&relative_path);
+            let parent = destination.parent().ok_or_else(|| {
+                OvenLegacyCargoError::Plan("retained Cargo artifact has no parent directory".to_string())
+            })?;
+            std::fs::create_dir_all(parent).map_err(|source| OvenLegacyCargoError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+            std::fs::write(&destination, &bytes).map_err(|source| OvenLegacyCargoError::Io {
+                path: destination.clone(),
+                source,
+            })?;
+            let retained_digest = digest_bytes(&regular_file_bytes(&destination)?);
+            if retained_digest != digest {
+                return Err(OvenLegacyCargoError::Plan(format!(
+                    "Cargo artifact for `{}` changed while it was retained",
+                    unit.package
+                )));
+            }
+            retained.push(OvenLegacyCargoRetainedArtifact {
+                relative_path: relative_path.clone(),
+                extension: source.extension().and_then(|value| value.to_str()).map(str::to_string),
+                digest: digest.clone(),
+            });
+            supporting.push(OvenRustcSupportingArtifact { relative_path, digest });
+        }
+        unit.retained_artifacts = retained;
+    }
+    Ok(supporting)
 }
 
 /// Copy every declared build-script output directory into publisher staging and retain its exact member inventory.
@@ -1761,6 +2074,32 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     #[test]
+    /// Bare boolean code-generation flags are rustc's `name=yes`; options outside the retained set never refuse.
+    fn rebuild_arguments_accept_bare_codegen_flags() -> Result<(), Box<dyn std::error::Error>> {
+        let arguments = ["-C", "prefer-dynamic", "-C", "debug-assertions", "-C", "opt-level=3"]
+            .map(ToString::to_string)
+            .to_vec();
+        assert_eq!(
+            rustc_rebuild_arguments(&arguments)?,
+            vec![
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "prefer-dynamic".to_string(),
+                    value: "yes".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "debug-assertions".to_string(),
+                    value: "yes".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "opt-level".to_string(),
+                    value: "3".to_string(),
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn capture_preserves_unit_edges_and_structured_build_script_facts() -> Result<(), Box<dyn std::error::Error>> {
         let graph = serde_json::from_value::<CargoUnitGraph>(serde_json::json!({
             "version": 1,
@@ -1959,12 +2298,17 @@ mod tests {
                 crate_types: vec!["bin".to_string()],
                 source_path: PathBuf::from("/fixture/build.rs"),
                 artifact_paths: Vec::new(),
+                retained_artifacts: Vec::new(),
                 root_module: "build.rs".to_string(),
                 edition: "2024".to_string(),
                 mode: "run-custom-build".to_string(),
                 platform: None,
                 target_is_explicit: None,
                 cfg: Vec::new(),
+                compiler_crate_type: Some("lib".to_string()),
+                compiler_paths: Some(fixture_captured_compiler_paths()),
+                compiler_arguments: Vec::new(),
+                compile_environment: BTreeMap::new(),
                 effective_features: Vec::new(),
                 dependencies: Vec::new(),
                 sysroot_externs: Vec::new(),
@@ -2026,6 +2370,62 @@ mod tests {
         Ok(())
     }
 
+    /// Retained compiler bytes and their digest binding survive after publisher scratch is removed and serialization.
+    #[test]
+    fn selected_unit_capture_retains_artifacts_before_transient_output_disappears()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let transient = scratch.path().join("target/libfixture.rlib");
+        fs::create_dir_all(transient.parent().ok_or("artifact has no parent")?)?;
+        fs::write(&transient, b"Cargo artifact bytes")?;
+        let mut unit: OvenLegacyCargoSelectedUnit = serde_json::from_value(serde_json::json!({
+            "package_id": "fixture 1.0.0", "package": "fixture", "package_version": "1.0.0",
+            "package_source": null, "target_name": "fixture", "target_kinds": ["lib"], "crate_types": ["lib"],
+            "source_path": "/transient/src/lib.rs", "root_module": "src/lib.rs", "edition": "2024",
+            "mode": "build", "platform": "fixture-target", "target_is_explicit": true, "cfg": [],
+            "compiler_arguments": [], "compile_environment": {}, "effective_features": [], "dependencies": [],
+            "sysroot_externs": [], "build_script": null, "registry_source": null
+        }))?;
+        unit.artifact_paths = vec![transient.clone()];
+        let mut capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![unit],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let staging = scratch.path().join("staging");
+        let supporting = retain_legacy_cargo_selected_artifacts(&mut capture, &staging)?;
+        fs::remove_file(transient)?;
+        let retained = capture.units[0]
+            .retained_artifacts
+            .first()
+            .ok_or("capture lost its retained artifact")?;
+        assert_eq!(retained.extension.as_deref(), Some("rlib"));
+        assert_eq!(retained.digest, digest_bytes(b"Cargo artifact bytes"));
+        assert_eq!(
+            retained.relative_path,
+            format!(
+                "cargo-capture-artifacts/{}",
+                retained
+                    .digest
+                    .strip_prefix("sha256:")
+                    .ok_or("retained digest is not SHA-256")?
+            )
+        );
+        assert_eq!(supporting[0].digest, retained.digest);
+        assert_eq!(
+            fs::read(staging.join(&retained.relative_path))?,
+            b"Cargo artifact bytes"
+        );
+        let round_trip: OvenLegacyCargoSelectedUnitCapture = serde_json::from_slice(&serde_json::to_vec(&capture)?)?;
+        assert_eq!(
+            round_trip.units[0].retained_artifacts,
+            capture.units[0].retained_artifacts
+        );
+        Ok(())
+    }
+
     #[test]
     fn stable_trace_binds_exact_extern_path_to_compiled_child() -> Result<(), Box<dyn std::error::Error>> {
         let scratch = tempfile::tempdir()?;
@@ -2057,8 +2457,9 @@ mod tests {
             }),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc.clone(),
-                "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "--cfg", "target_has_atomic=\"ptr\"", "-C", "extra-filename=-sealed", "--emit", "link", "--out-dir", target.to_string_lossy(), "/fixture/dep/src/lib.rs"],
-                "environment": {"CARGO_MANIFEST_DIR": "/fixture/dep", "CARGO_PKG_NAME": "dep", "CARGO_PKG_VERSION": "2.0.0"}
+                "working_directory": "/fixture/dep",
+                "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "--cfg", "target_has_atomic=\"ptr\"", "-C", "opt-level=3", "-C", "embed-bitcode=no", "--warn=missing_docs", "--check-cfg", "cfg(docsrs,test)", "-C", "metadata=0123456789abcdef", "-C", "extra-filename=-sealed", "-C", "strip=debuginfo", "--emit", "link", "--cap-lints", "warn", "--out-dir", target.to_string_lossy(), "--remap-path-prefix", "/fixture=/incan/source", "--remap-path-prefix", format!("{}=/incan/target", target.display()), "/fixture/dep/src/lib.rs"],
+                "environment": {"CARGO_CRATE_NAME": "dep", "CARGO_MANIFEST_DIR": "/fixture/dep", "CARGO_PKG_NAME": "dep", "CARGO_PKG_VERSION": "2.0.0", "CARGO_PKG_VERSION_MAJOR": "2", "CARGO_PKG_VERSION_MINOR": "0", "CARGO_PKG_VERSION_PATCH": "0", "CARGO_PKG_VERSION_PRE": ""}
             }),
             serde_json::json!({
                 "reason": "compiler-artifact", "package_id": "root 1.0.0",
@@ -2067,7 +2468,8 @@ mod tests {
             }),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc.clone(),
-                "arguments": ["--crate-name", "root", "--crate-type", "bin", "--edition", "2024", "-C", "extra-filename=", "--emit", "link", "--out-dir", target.to_string_lossy(), "--extern", format!("dep={}", dep_artifact.display()), "/fixture/root/src/main.rs"],
+                "working_directory": "/fixture/root",
+                "arguments": ["--crate-name", "root", "--crate-type", "bin", "--edition", "2024", "-C", "extra-filename=", "--emit", "link", "--out-dir", target.to_string_lossy(), "--remap-path-prefix", "/fixture=/incan/source", "--remap-path-prefix", format!("{}=/incan/target", target.display()), "--extern", format!("dep={}", dep_artifact.display()), "/fixture/root/src/main.rs"],
                 "environment": {"CARGO_MANIFEST_DIR": "/fixture/root", "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1"}
             }),
         ];
@@ -2085,10 +2487,81 @@ mod tests {
         assert_eq!(capture.roots, [1]);
         assert!(capture.rustc_invocations_observed);
         assert_eq!(capture.units[0].cfg, ["target_has_atomic=\"ptr\""]);
+        assert_eq!(capture.units[0].compile_environment["CARGO_CRATE_NAME"], "dep");
+        assert_eq!(capture.units[0].compile_environment["CARGO_PKG_VERSION"], "2.0.0");
+        assert_eq!(capture.units[0].compile_environment["CARGO_PKG_VERSION_PRE"], "");
+        assert_eq!(
+            capture.units[0].compiler_arguments,
+            [
+                OvenSelectedRustFacetCompilerArgument::Cfg {
+                    value: "target_has_atomic=\"ptr\"".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "opt-level".to_string(),
+                    value: "3".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "embed-bitcode".to_string(),
+                    value: "no".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Lint {
+                    level: "warn".to_string(),
+                    name: "missing_docs".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::CheckCfg {
+                    value: "cfg(docsrs,test)".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "metadata".to_string(),
+                    value: "0123456789abcdef".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "extra-filename".to_string(),
+                    value: "-sealed".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "strip".to_string(),
+                    value: "debuginfo".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Emit {
+                    value: "link".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::CapLints {
+                    value: "warn".to_string(),
+                },
+            ]
+        );
+        assert_eq!(capture.units[0].compiler_crate_type.as_deref(), Some("lib"));
+        assert_eq!(
+            capture.units[0].compiler_paths,
+            Some(OvenSelectedRustFacetCompilerPaths {
+                root_module_is_relative: false,
+                source_root: "/incan/source/dep".to_string(),
+                working_directory: "/incan/source/dep".to_string(),
+                output_directory: "/incan/target/".to_string(),
+                out_dir: None,
+            })
+        );
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
         assert_eq!(
             capture.units[1].dependencies[0].extern_crate_name.as_deref(),
             Some("dep")
+        );
+        assert_eq!(
+            capture.units[1].compiler_arguments,
+            [
+                OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "extra-filename".to_string(),
+                    value: String::new(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Emit {
+                    value: "link".to_string(),
+                },
+                OvenSelectedRustFacetCompilerArgument::Extern {
+                    alias: "dep".to_string(),
+                    metadata: false,
+                },
+            ]
         );
         Ok(())
     }
@@ -2121,7 +2594,8 @@ mod tests {
             }),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc_name.clone(),
-                "arguments": ["--crate-name", "shared", "--crate-type", "lib", "-C", "extra-filename=", "--emit", "link", "--out-dir", host_dir.to_string_lossy(), "/fixture/shared/src/lib.rs"],
+                "working_directory": "/fixture/shared",
+                "arguments": ["--crate-name", "shared", "--crate-type", "lib", "-C", "extra-filename=", "--emit", "link", "--out-dir", host_dir.to_string_lossy(), "--remap-path-prefix", "/fixture=/incan/source", "--remap-path-prefix", format!("{}=/incan/target", host_dir.display()), "/fixture/shared/src/lib.rs"],
                 "environment": {"CARGO_MANIFEST_DIR": "/fixture/shared", "CARGO_PKG_NAME": "shared", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1"}
             }),
             serde_json::json!({
@@ -2131,7 +2605,8 @@ mod tests {
             }),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc_name.clone(),
-                "arguments": ["--crate-name", "shared", "--crate-type", "lib", "--target", "wasm32-unknown-unknown", "-C", "extra-filename=", "--emit", "link", "--out-dir", wasm_dir.to_string_lossy(), "/fixture/shared/src/lib.rs"],
+                "working_directory": "/fixture/shared",
+                "arguments": ["--crate-name", "shared", "--crate-type", "lib", "--target", "wasm32-unknown-unknown", "-C", "extra-filename=", "--emit", "link", "--out-dir", wasm_dir.to_string_lossy(), "--remap-path-prefix", "/fixture=/incan/source", "--remap-path-prefix", format!("{}=/incan/target", wasm_dir.display()), "/fixture/shared/src/lib.rs"],
                 "environment": {"CARGO_MANIFEST_DIR": "/fixture/shared", "CARGO_PKG_NAME": "shared", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1"}
             }),
         ];
@@ -2155,7 +2630,7 @@ mod tests {
     }
 
     #[test]
-    fn stable_trace_refuses_externs_without_exact_paths() {
+    fn stable_trace_refuses_externs_without_exact_paths() -> Result<(), Box<dyn std::error::Error>> {
         let arguments = vec!["--extern".to_string(), "dependency".to_string()];
         assert!(matches!(
             extern_arguments(&arguments),
@@ -2174,9 +2649,10 @@ mod tests {
             )])
         );
         let sysroot = vec!["--extern".to_string(), "proc_macro".to_string()];
-        let captured = extern_arguments(&sysroot).expect("verified proc_macro sysroot extern should be retained");
+        let captured = extern_arguments(&sysroot)?;
         assert!(captured.paths.is_empty());
         assert_eq!(captured.sysroot, ["proc_macro"]);
+        Ok(())
     }
 
     #[test]
@@ -2561,7 +3037,8 @@ mod tests {
             custom_artifact.clone(),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc_name.clone(),
-                "arguments": ["--crate-name", "build_script_build", "--crate-type", "bin", "-C", "extra-filename=", "--emit", "link", "--out-dir", custom_dir.to_string_lossy(), package_root.join("build.rs")],
+                "working_directory": package_root.to_string_lossy(),
+                "arguments": ["--crate-name", "build_script_build", "--crate-type", "bin", "-C", "extra-filename=", "--emit", "link", "--out-dir", custom_dir.to_string_lossy(), "--remap-path-prefix", format!("{}=/incan/source", package_root.display()), "--remap-path-prefix", format!("{}=/incan/target", scratch.path().join("target").display()), package_root.join("build.rs")],
                 "environment": {"CARGO_MANIFEST_DIR": package_root.to_string_lossy(), "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0"}
             }),
             build_script.clone(),
@@ -2574,14 +3051,16 @@ mod tests {
             consumer_artifact.clone(),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc_name.clone(),
-                "arguments": ["--crate-name", "root", "--crate-type", "lib", "-C", "extra-filename=-sealed", "--emit", "link", "--out-dir", deps_dir.to_string_lossy(), package_root.join("src/lib.rs")],
+                "working_directory": package_root.to_string_lossy(),
+                "arguments": ["--crate-name", "root", "--crate-type", "lib", "-C", "extra-filename=-sealed", "--emit", "link", "--out-dir", deps_dir.to_string_lossy(), "--remap-path-prefix", format!("{}=/incan/source", package_root.display()), "--remap-path-prefix", format!("{}=/incan/target", scratch.path().join("target").display()), package_root.join("src/lib.rs")],
                 "environment": {"CARGO_MANIFEST_DIR": package_root.to_string_lossy(), "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1", "OUT_DIR": output_dir.to_string_lossy(), "TARGET": "fixture-host"}
             }),
             target_build_script.clone(),
             target_artifact.clone(),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc_name.clone(),
-                "arguments": ["--crate-name", "root", "--crate-type", "lib", "--target", "wasm32-unknown-unknown", "-C", "extra-filename=-target", "--emit", "link", "--out-dir", deps_dir.to_string_lossy(), package_root.join("src/lib.rs")],
+                "working_directory": package_root.to_string_lossy(),
+                "arguments": ["--crate-name", "root", "--crate-type", "lib", "--target", "wasm32-unknown-unknown", "-C", "extra-filename=-target", "--emit", "link", "--out-dir", deps_dir.to_string_lossy(), "--remap-path-prefix", format!("{}=/incan/source", package_root.display()), "--remap-path-prefix", format!("{}=/incan/target", scratch.path().join("target").display()), package_root.join("src/lib.rs")],
                 "environment": {"CARGO_MANIFEST_DIR": package_root.to_string_lossy(), "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1", "OUT_DIR": target_output_dir.to_string_lossy(), "TARGET": "wasm32-unknown-unknown"}
             }),
         ];

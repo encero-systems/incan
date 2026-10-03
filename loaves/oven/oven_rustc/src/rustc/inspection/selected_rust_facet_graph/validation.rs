@@ -7,7 +7,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-    OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCrateKind,
+    OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS, OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN,
+    OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetCrateKind,
     OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue,
     OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetGraphError,
     OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
@@ -231,6 +232,108 @@ pub(crate) fn validate_selected_graph_sorted_strings(
         return Err(selected_graph_invalid(field, "must be sorted and unique"));
     }
     Ok(())
+}
+
+/// Admit the closed portable subset of captured Cargo compiler arguments.
+pub(crate) fn validate_selected_graph_compiler_arguments(
+    arguments: &[OvenSelectedRustFacetCompilerArgument],
+    field: &str,
+) -> Result<(), OvenSelectedRustFacetGraphError> {
+    for (index, argument) in arguments.iter().enumerate() {
+        let argument_field = format!("{field}[{index}]");
+        match argument {
+            OvenSelectedRustFacetCompilerArgument::Emit { value } => {
+                validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                if value
+                    .split(',')
+                    .any(|kind| !matches!(kind, "dep-info" | "metadata" | "link"))
+                {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains an unadmitted rustc emit kind",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::Codegen { name, value } => {
+                if !OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS.contains(&name.as_str()) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.name"),
+                        "is not an admitted portable code-generation option",
+                    ));
+                }
+                if name != "extra-filename" || !value.is_empty() {
+                    validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                }
+                if value.chars().any(char::is_control) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains a control character",
+                    ));
+                }
+                if name == "link-arg" && !portable_proc_macro_install_name_argument(value) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "is not the admitted Apple proc-macro install-name argument",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::CheckCfg { value } => {
+                validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                if value.chars().any(char::is_control) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains a control character",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::Cfg { value } => {
+                validate_selected_graph_text(value, &format!("{argument_field}.value"))?;
+                if value.chars().any(char::is_control) {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "contains a control character",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::CapLints { value } => {
+                if !matches!(value.as_str(), "allow" | "warn" | "deny" | "forbid") {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.value"),
+                        "is not a rustc lint level",
+                    ));
+                }
+            }
+            OvenSelectedRustFacetCompilerArgument::Lint { level, name } => {
+                if !matches!(level.as_str(), "allow" | "warn" | "deny" | "forbid" | "force-warn") {
+                    return Err(selected_graph_invalid(
+                        format!("{argument_field}.level"),
+                        "lint level is not supported for deterministic replay",
+                    ));
+                }
+                validate_selected_graph_text(name, &format!("{argument_field}.name"))?;
+            }
+            OvenSelectedRustFacetCompilerArgument::Extern { alias, .. } => {
+                validate_selected_graph_alias(alias, &format!("{argument_field}.alias"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Admit only the Apple reproducibility and install-name arguments injected for proc-macro identity.
+fn portable_proc_macro_install_name_argument(value: &str) -> bool {
+    if matches!(value, "-install_name" | "-Wl,-reproducible") {
+        return true;
+    }
+    value
+        .strip_prefix("@rpath/lib")
+        .and_then(|name| name.strip_suffix(".dylib"))
+        .is_some_and(|name| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        })
 }
 
 /// Require one complete compiler cfg snapshot to use the sole graph wire spelling.
@@ -597,6 +700,7 @@ struct OvenSelectedRustFacetUnitIdentityInput<'a> {
     source_members: &'a [OvenSelectedRustFacetSourceMember],
     features: &'a [String],
     cfg: &'a [String],
+    compiler_arguments: &'a [OvenSelectedRustFacetCompilerArgument],
     environment: &'a BTreeMap<String, OvenSelectedRustFacetEnvironmentValue>,
     include_dirs: &'a [OvenSelectedRustFacetPath],
     exclude_dirs: &'a [OvenSelectedRustFacetPath],
@@ -635,6 +739,7 @@ pub fn selected_graph_unit_identity(
         source_members: &unit.source_members,
         features: &unit.features,
         cfg: &unit.cfg,
+        compiler_arguments: &unit.compiler_arguments,
         environment: &unit.environment,
         include_dirs: &unit.include_dirs,
         exclude_dirs: &unit.exclude_dirs,
@@ -721,6 +826,23 @@ pub(crate) fn validate_selected_graph_environment(
     field: &str,
 ) -> Result<(), OvenSelectedRustFacetGraphError> {
     validate_selected_graph_environment_name(name, field)?;
+    match value {
+        OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
+            if value.len() > 16 * 1024 || value.contains('\0') {
+                return Err(selected_graph_invalid(
+                    field,
+                    "captured compiler environment must be at most 16384 bytes and contain no NUL",
+                ));
+            }
+            return Ok(());
+        }
+        OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => {
+            return validate_selected_graph_path(relative, field, true);
+        }
+        OvenSelectedRustFacetEnvironmentValue::Text { .. }
+        | OvenSelectedRustFacetEnvironmentValue::Path { .. }
+        | OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {}
+    }
     if selected_graph_environment_is_path_list(name) {
         return Err(selected_graph_invalid(
             field,

@@ -1500,12 +1500,6 @@ mod link_execution {
 
         let objects = verify_complete_objects(&output_root, &request.objects, &logical_arguments)?;
         let archive = write_archive(request, &output_root, &object_paths)?;
-        for path in object_paths.values() {
-            fs::remove_file(path).map_err(|source| PublisherExecutionError::Io {
-                path: path.clone(),
-                source,
-            })?;
-        }
         let products = vec![archive];
         let mut receipt = PublisherExecutionReceipt {
             schema_version: PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION,

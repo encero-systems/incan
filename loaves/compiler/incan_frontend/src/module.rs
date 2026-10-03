@@ -391,6 +391,17 @@ pub fn canonicalize_source_module_segments(segments: &[String]) -> Vec<String> {
     }
 }
 
+/// Canonicalize a library declaration's source-root spelling for identity comparison and publication.
+///
+/// The checker collects a library entrypoint under `main`, while its published declaration metadata uses `lib`.
+/// These roots name the same declaration domain; nested module paths already have one stable spelling.
+pub fn canonicalize_library_declaration_module_path(module_path: &[String]) -> Vec<String> {
+    match module_path {
+        [root] if root == "main" => vec!["lib".to_string()],
+        _ => module_path.to_vec(),
+    }
+}
+
 /// Return logical module identities for one source import in source-resolution order.
 ///
 /// Bare imports first resolve beside the importing module and then from the source root. Absolute imports resolve from

@@ -190,8 +190,9 @@ impl TypeChecker {
     /// Resolve the type of one field on a value typed by a Rust path, as the field is written in Incan source.
     ///
     /// The path is the value's own `RustPath` spelling; the metadata lookup normalizes the `rust::` prefix and any
-    /// type arguments, exactly as a field read does. Field access and field assignment resolve through this one
-    /// lookup, so a field that can be read can also be assigned.
+    /// type arguments, exactly as a field read does. A fast cache entry can carry only nominal metadata, so a missing
+    /// field upgrades to complete semantic metadata before the checker rejects it. Field access and field assignment
+    /// resolve through this one lookup, so a field that can be read can also be assigned.
     pub(in crate::typechecker) fn rust_path_field_type(&self, path: &str, field: &str) -> Option<ResolvedType> {
         // Field reads pass the value's path straight to the metadata lookup, which owns the `rust::` and generic
         // normalization; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
@@ -199,8 +200,17 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let rust_field = Self::rust_field_for_source_name(&info.fields, field)?;
-        Some(self.resolved_rust_field_type(path, rust_field))
+        let rust_field = match Self::rust_field_for_source_name(&info.fields, field) {
+            Some(rust_field) => rust_field.clone(),
+            None => {
+                let complete = self.rust_item_metadata_for_complete_type(path)?;
+                let RustItemKind::Type(complete_info) = &complete.kind else {
+                    return None;
+                };
+                Self::rust_field_for_source_name(&complete_info.fields, field)?.clone()
+            }
+        };
+        Some(self.resolved_rust_field_type(path, &rust_field))
     }
 
     /// Resolve a Rust field type from its display string against the owning Rust type.
@@ -4341,9 +4351,9 @@ impl TypeChecker {
             };
             let adoption = TypeBoundInfo {
                 name: type_name.clone(),
-                source_name: None,
+                source_name: self.trait_bound_source_name(type_name),
                 type_args: trait_args,
-                module_path: None,
+                module_path: self.trait_bound_module_path(type_name),
                 implementation_type_params: Vec::new(),
                 inferred: false,
             };
@@ -4727,9 +4737,9 @@ impl TypeChecker {
 
         let adoption = TypeBoundInfo {
             name: trait_name.to_string(),
-            source_name: None,
+            source_name: self.trait_bound_source_name(trait_name),
             type_args: trait_args,
-            module_path: None,
+            module_path: self.trait_bound_module_path(trait_name),
             implementation_type_params: Vec::new(),
             inferred: false,
         };
@@ -6032,7 +6042,29 @@ impl TypeChecker {
             return self.check_builtin_list_repeat_call(args, span);
         }
 
-        let mut base_ty = self.check_type_receiver_expr(base);
+        let receiver_expected = expected_return_ty.and_then(|expected| {
+            let owner = match expected {
+                ResolvedType::Generic(name, _) | ResolvedType::Named(name) => name,
+                _ => return None,
+            };
+            let method_info = self
+                .lookup_semantic_trait_info(owner)
+                .and_then(|info| info.methods.get(method))
+                .or_else(|| match self.lookup_semantic_type_info(owner) {
+                    Some(TypeInfo::Model(info)) => info.methods.get(method),
+                    Some(TypeInfo::Class(info)) => info.methods.get(method),
+                    Some(TypeInfo::Newtype(info)) => info.methods.get(method),
+                    Some(TypeInfo::Enum(info)) => info.methods.get(method),
+                    Some(TypeInfo::Builtin | TypeInfo::TypeAlias) | None => None,
+                });
+            method_info
+                .is_some_and(|info| matches!(info.return_type, ResolvedType::SelfType))
+                .then_some(expected)
+        });
+        let mut base_ty = match receiver_expected {
+            Some(expected) => self.check_type_receiver_expr_with_expected(base, expected),
+            None => self.check_type_receiver_expr(base),
+        };
         // In a declared type's own method, a `Self` value (`other: Self`) is that type, so a method called on it
         // resolves as it does on `self`; a trait default keeps `Self` open (#1561).
         if matches!(base_ty, ResolvedType::SelfType)

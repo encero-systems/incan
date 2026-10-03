@@ -20,10 +20,8 @@ fn main() {
         }),
     );
     let xs = vec![1, 2, 3, 4];
-    let evens = xs
-        .iter()
+    let evens = ((xs).into_iter())
         .filter_map(|x| {
-            let x = *x;
             if incan_std_core::num::py_mod_i64(x, 2) == 0 {
                 Some((x, x * x))
             } else {

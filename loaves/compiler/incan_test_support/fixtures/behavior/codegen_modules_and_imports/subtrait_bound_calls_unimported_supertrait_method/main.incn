@@ -1,0 +1,14 @@
+# behavior: a parameter typed by an imported subtrait calls a method declared by its unimported generic supertrait
+# retires: loaves/compiler/incan_emit/src/tests/inherited_method_dispatch.rs::subtrait_bound_exposes_the_unimported_supertrait_method
+# expect-stdout:
+#   42
+
+from readers import Packet, TaggedReader
+
+
+def read_tagged[T](value: TaggedReader[T]) -> T:
+    return value.read()
+
+
+def main() -> None:
+    println(read_tagged(Packet(value=42)))

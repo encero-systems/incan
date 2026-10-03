@@ -1260,3 +1260,139 @@ fn direct_rustc_refuses_source_changes_before_invoking_the_compiler() -> Result<
     assert!(matches!(result, Err(OvenRustcError::SourceEvidenceMismatch { .. })));
     Ok(())
 }
+
+/// Compile one library fixture with an explicit metadata identity and optional direct dependency.
+fn compile_vocab_closure_fixture(
+    rustc: &Path,
+    source: &Path,
+    crate_name: &str,
+    metadata: &str,
+    output: &Path,
+    dependency: Option<(&str, &Path)>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut command = super::super::rustc_probe_command(rustc);
+    command
+        .arg(source)
+        .arg("--crate-name")
+        .arg(crate_name)
+        .args(["--crate-type", "rlib", "--edition", "2024"])
+        .args(["-C", &format!("metadata={metadata}")])
+        .arg("-o")
+        .arg(output);
+    if let Some((alias, artifact)) = dependency {
+        command.arg("--extern").arg(format!("{alias}={}", artifact.display()));
+        if let Some(parent) = artifact.parent() {
+            command.arg("-L").arg(format!("dependency={}", parent.display()));
+        }
+    }
+    let result = command.output()?;
+    if !result.status.success() {
+        return Err(format!(
+            "fixture compiler failed for `{crate_name}`: {}",
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[test]
+fn publisher_vocab_probe_refuses_a_target_unit_with_a_stale_host_dependency() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let artifact_root = root.path().join("loaf");
+    let dependencies = artifact_root.join("compiler-support/fixture/host/deps");
+    fs::create_dir_all(&dependencies)?;
+    let dependency_source = root.path().join("dependency.rs");
+    let consumer_source = root.path().join("consumer.rs");
+    fs::write(&dependency_source, "pub fn value() -> u32 { 1 }\n")?;
+    fs::write(
+        &consumer_source,
+        "extern crate fixture_dependency; pub fn value() -> u32 { fixture_dependency::value() }\n",
+    )?;
+    let rustc = rustc_path()?;
+    let target = rustc_host_target(&rustc)?;
+    let dependency = dependencies.join("libfixture_dependency.rlib");
+    let consumer = dependencies.join("libfixture_consumer.rlib");
+    compile_vocab_closure_fixture(
+        &rustc,
+        &dependency_source,
+        "fixture_dependency",
+        "original-host-unit",
+        &dependency,
+        None,
+    )?;
+    compile_vocab_closure_fixture(
+        &rustc,
+        &consumer_source,
+        "fixture_consumer",
+        "target-unit",
+        &consumer,
+        Some(("fixture_dependency", &dependency)),
+    )?;
+    let source = root.path().join("main.rs");
+    fs::write(&source, "fn main() {}\n")?;
+    let receipt = receipt_generated_project(
+        &OvenGeneratedProjectRequest::new(
+            root.path(),
+            "vocab_probe_fixture",
+            "0.1.0",
+            target.clone(),
+            rustc_identity(&rustc)?,
+            "release",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", &source),
+    )?;
+    let relative_root = "compiler-support/fixture/host/deps";
+    let mut manifest = OvenRustcArtifactManifest {
+        schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+        intent: receipt.intent,
+        dependency_search_paths: Vec::new(),
+        native_search_paths: Vec::new(),
+        externs: Vec::new(),
+        entrypoint_dependency_search_paths: BTreeMap::new(),
+        entrypoint_externs: BTreeMap::new(),
+        registry_leaves: Vec::new(),
+        registry_sources: Vec::new(),
+        compile_environment: BTreeMap::new(),
+        vocab_auxiliary_targets: vec![OvenRustcAuxiliaryTarget {
+            target: target.clone(),
+            dependency_search_paths: vec![relative_root.to_string()],
+            externs: vec![OvenRustcArtifactExtern {
+                crate_name: "fixture_consumer".to_string(),
+                relative_path: format!("{relative_root}/libfixture_consumer.rlib"),
+                digest: digest_bytes(&fs::read(&consumer)?),
+            }],
+        }],
+        supporting_artifacts: vec![OvenRustcSupportingArtifact {
+            relative_path: format!("{relative_root}/libfixture_dependency.rlib"),
+            digest: digest_bytes(&fs::read(&dependency)?),
+        }],
+    };
+    manifest.verify_vocab_auxiliary_targets_with_direct_rustc(&artifact_root, &rustc, &rustc, root.path())?;
+
+    compile_vocab_closure_fixture(
+        &rustc,
+        &dependency_source,
+        "fixture_dependency",
+        "rebuilt-host-unit",
+        &dependency,
+        None,
+    )?;
+    let dependency_artifact = manifest
+        .supporting_artifacts
+        .first_mut()
+        .ok_or("fixture lost its dependency artifact")?;
+    dependency_artifact.digest = digest_bytes(&fs::read(&dependency)?);
+
+    let error = manifest
+        .verify_vocab_auxiliary_targets_with_direct_rustc(&artifact_root, &rustc, &rustc, root.path())
+        .err()
+        .ok_or("stale auxiliary dependency unexpectedly loaded")?;
+    let message = error.to_string();
+    assert!(message.contains(&target));
+    assert!(message.contains("fixture_consumer"));
+    assert!(message.contains("fixture_dependency"));
+    Ok(())
+}

@@ -286,6 +286,7 @@ pub fn oven_legacy_cargo_prepare(options: OvenLegacyCargoPrepareCommandOptions) 
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
         provider_compilations: &[],
         compact_debug_info: false,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: false,
         base_loaf: None,
     })
@@ -4415,6 +4416,7 @@ mod tests {
                 loaf_registry: None,
                 loaf_registry_commit: None,
                 harvest_dir: None,
+                link_owners: Vec::new(),
             },
             OvenLoafEnvelope::CompilerSuite,
             report,
@@ -5539,7 +5541,7 @@ mod tests {
         assert_eq!(limits.max_domain_physical_bytes, DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES);
         assert_eq!(limits.max_domain_physical_bytes, 12 * 1024 * 1024 * 1024);
         assert_eq!(limits.max_domain_logical_bytes, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES);
-        assert_eq!(limits.max_domain_logical_bytes, 6 * 1024 * 1024 * 1024);
+        assert_eq!(limits.max_domain_logical_bytes, 10 * 1024 * 1024 * 1024);
         assert!(limits.max_domain_physical_bytes <= limits.max_physical_bytes);
         Ok(())
     }

@@ -1,6 +1,7 @@
-# behavior: a module that imports a model but not the types its fields name passes an empty list, dict and set, a None, nested and tuple-typed empty lists, and an empty list and None to imported functions where those types are expected, and a type parameter of its own named like one of those types stays its own
+# behavior: a module passes empty collections where imported model fields supply their element types, retaining both an explicitly imported model used only by that expectation and paths for types it does not import, and a type parameter of its own named like one of those types stays its own
 # retires: loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs::empty_collections_and_none_for_types_the_module_does_not_import_build_issue1561
 # retires: loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs::a_type_the_module_imports_keeps_its_import_beside_an_unimported_one_issue1561
+# retires: loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs::an_empty_list_keeps_the_import_of_its_expected_model_element_type
 # retires: loaves/compiler/incan_ir/src/lower/tests/unbound_nominals.rs::types_a_module_names_without_binding_them_are_placed_at_their_declaring_module_issue1561
 # retires: loaves/compiler/incan_ir/src/lower/tests/unbound_nominals.rs::a_type_parameter_named_like_an_unbound_type_keeps_its_spelling_issue1561
 # expect-stdout:
@@ -13,9 +14,10 @@
 #   none
 #   1
 #   p
+#   0
 #   3
 
-from ids import Evidence as Proof
+from ids import Evidence, Evidence as Proof
 from records import Decision, make_id, count_kinds, describe
 
 
@@ -41,5 +43,7 @@ def main() -> None:
     proofs.append(Proof(id="p"))
     println(len(proofs))
     println(proofs[0].id)
+    expected_only = Decision(name="expected", admitted_evidence_ids=[], scores={}, seen=set(), first=None, nested=[], pairs=[], kinds={})
+    println(len(expected_only.nested))
     shelf = Shelf[int](items=[3])
     println(len(shelf.emptied()) + shelf.items[0])

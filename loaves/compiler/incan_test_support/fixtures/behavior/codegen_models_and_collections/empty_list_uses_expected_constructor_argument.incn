@@ -1,0 +1,15 @@
+# behavior: a bare generic constructor returned from a generic method types its empty list field with the method's result argument
+# expect-stdout:
+#   0
+
+class Cursor[T with Clone]:
+    pub items: list[T]
+
+    def select[U with Clone](self, value: U) -> Cursor[U]:
+        return Cursor(items=[])
+
+
+def main() -> None:
+    cursor = Cursor[int](items=[1])
+    selected = cursor.select[str]("picked")
+    println(len(selected.items))

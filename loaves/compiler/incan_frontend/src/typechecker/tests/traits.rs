@@ -1449,3 +1449,40 @@ pub model Key with Eq:
 fn messages(errors: &[CompileError]) -> Vec<&str> {
     errors.iter().map(|error| error.message.as_str()).collect()
 }
+#[test]
+fn test_imported_subtrait_method_dispatch_keeps_supertrait_module() -> Result<(), Vec<CompileError>> {
+    let readers = r#"
+pub trait Reader[T]:
+    def read(self) -> T: ...
+
+pub trait TaggedReader[T] with Reader[T]:
+    def tag(self) -> str: ...
+"#;
+    let consumer = r#"
+from readers import TaggedReader
+
+def read_tagged[T](value: TaggedReader[T]) -> T:
+    return value.read()
+"#;
+    let readers = parser::parse(&lexer::lex(readers)?)?;
+    let consumer = parser::parse(&lexer::lex(consumer)?)?;
+    let mut checker = TypeChecker::new();
+    checker.check_with_imports(&consumer, &[("readers", &readers)])?;
+
+    let resolved_calls = &checker.type_info().calls.resolved_method_calls;
+    assert!(
+        resolved_calls.values().any(|call| {
+            matches!(
+                &call.dispatch,
+                ResolvedMethodDispatch::Trait {
+                    trait_name,
+                    module_path: Some(module_path),
+                    ..
+                } if call.method == "read" && trait_name == "Reader" && module_path == &["readers".to_string()]
+            )
+        }),
+        "import: {:#?}; resolved calls: {resolved_calls:#?}",
+        checker.type_info().import_binding_path("TaggedReader")
+    );
+    Ok(())
+}

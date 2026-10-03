@@ -369,6 +369,27 @@ impl TypeChecker {
         Some((ResolvedType::Generic(name.to_string(), resolved_args), bindings))
     }
 
+    /// Use an expected generic result to specialize a constructor whose call does not spell type arguments.
+    ///
+    /// Constructor fields must be checked after this substitution so destination-typed literals inside the call use
+    /// the result's concrete or method-generic arguments rather than the enclosing owner's same-named parameters.
+    pub(in crate::typechecker::check_expr::calls) fn expected_constructor_type_context(
+        &self,
+        name: &str,
+        type_info: &TypeInfo,
+        expected: Option<&ResolvedType>,
+    ) -> Option<(ResolvedType, std::collections::HashMap<String, ResolvedType>)> {
+        let type_params = Self::constructor_hook_owner_type_params(type_info);
+        let Some(ResolvedType::Generic(expected_name, expected_args)) = expected else {
+            return None;
+        };
+        if expected_name != name || expected_args.len() != type_params.len() {
+            return None;
+        }
+        let bindings = type_param_subst_map_call_site(type_params, expected_args);
+        Some((expected.cloned()?, bindings))
+    }
+
     /// Compute the constructor result surface type, substituting any generic bindings inferred from constructor fields.
     ///
     /// Unbound type parameters remain `Unknown` so callers can continue typechecking even when inference is partial.

@@ -105,15 +105,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The pinned IncQL vocab companion retains a source-relative dependency on Incan's vocab crate. The gate creates
-# only the expected link and removes it afterwards; an existing different path is refused rather than overwritten.
+# The migrated IncQL vocab companion retains its `incan/crates/incan_vocab` source-relative dependency while the
+# Incan source moved that crate under `loaves/kernel`. Stage only that canonical crate in a scratch compatibility
+# view; an existing path is accepted only when its vocab leaf resolves to the same source.
+vocab_source="$incan_source/loaves/kernel/incan_vocab"
+[ -d "$vocab_source" ] || fail "Incan vocab source not found: $vocab_source"
 if [ -e "$incql/incan" ] || [ -L "$incql/incan" ]; then
-    existing_incan_source="$(cd "$incql/incan" 2>/dev/null && pwd -P)" \
-        || fail "existing IncQL incan companion path is not a readable directory: $incql/incan"
-    [ "$existing_incan_source" = "$incan_source" ] \
-        || fail "existing IncQL incan companion path resolves to $existing_incan_source, expected $incan_source"
+    existing_vocab_source="$(cd "$incql/incan/crates/incan_vocab" 2>/dev/null && pwd -P)" \
+        || fail "existing IncQL vocab companion path is not readable: $incql/incan/crates/incan_vocab"
+    [ "$existing_vocab_source" = "$vocab_source" ] \
+        || fail "existing IncQL vocab companion resolves to $existing_vocab_source, expected $vocab_source"
 else
-    ln -s "$incan_source" "$incql/incan"
+    incan_compat="$work/incan-source-compat"
+    mkdir -p "$incan_compat/crates"
+    ln -s "$vocab_source" "$incan_compat/crates/incan_vocab"
+    ln -s "$incan_compat" "$incql/incan"
     created_incan_link=1
 fi
 
@@ -155,10 +161,10 @@ for command_name in cc gcc clang; do
     ln -s cc-link-only "$guard/$command_name"
 done
 
-# Residual outputs can conceal a fallback or stale semantic graph. The pinned source and lock remain untouched.
+# Residual outputs can conceal a fallback or stale semantic graph. Every oven.lock is committed input in the
+# migrated checkout, so reset only derived output trees and leave the root and example locks byte-for-byte intact.
 printf '== Resetting consumer outputs ==\n'
-rm -rf "$incql/.incan" "$incql/target" "$incql/oven.lock" \
-    "$quickstart/.incan" "$quickstart/target" "$quickstart/oven.lock" "$quickstart/incan.lock"
+rm -rf "$incql/.incan" "$incql/target" "$quickstart/.incan" "$quickstart/target"
 
 run_stage() {
     local label="$1"

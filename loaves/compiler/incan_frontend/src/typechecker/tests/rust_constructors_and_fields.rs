@@ -2,6 +2,8 @@
 //! field assignment and indexing through metadata, and ancestral re-export paths.
 
 use super::*;
+#[cfg(feature = "rust_inspect")]
+use incan_lang::interop::RustTypeMetadataCompleteness;
 
 #[cfg(feature = "rust_inspect")]
 fn write_rust_inspect_probe_crate(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -42,6 +44,22 @@ impl Builder {
 
 pub enum Choice {
     Some(i32),
+}
+
+pub struct Item;
+
+pub struct Holder {
+    pub items: Vec<Item>,
+}
+
+impl Holder {
+    pub fn empty() -> Self {
+        Self { items: Vec::new() }
+    }
+}
+
+pub fn empty_holder() -> Holder {
+    Holder::empty()
 }
 "#,
     )?;
@@ -474,6 +492,61 @@ def h(holder: Holder) -> None:
         2,
         "only the two invalid assignments may be reported: {messages:?}"
     );
+    Ok(())
+}
+
+/// A test-only scope must upgrade partial Rust metadata before rejecting assignment to a public field on a value
+/// returned by a provider function. Test-batch handoff can seed the fast cache with only the nominal Rust type.
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_scope_upgrades_partial_rust_field_metadata_for_provider_result() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Holder, empty_holder as rust_empty_holder
+
+def empty_holder() -> Holder:
+  return rust_empty_holder()
+
+module tests:
+  def test_assign_public_field() -> None:
+    mut holder = empty_holder()
+    holder.items = []
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex failed: {errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse failed: {errors:?}")))?;
+    let tmp = tempfile::tempdir()?;
+    write_rust_inspect_probe_crate(tmp.path())?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            tmp.path(),
+            RustItemMetadata {
+                canonical_path: "demo::Holder".to_string(),
+                definition_path: Some("demo::Holder".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    type_params: Vec::new(),
+                    type_param_defaults: Vec::new(),
+                    mutable_reference_type_params: Vec::new(),
+                    expanded_derive_traits: Vec::new(),
+                    has_const_params: false,
+                    alias_target: None,
+                    metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+                    methods: Vec::new(),
+                    implemented_traits: Vec::new(),
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|error| std::io::Error::other(format!("seed partial Holder metadata: {error}")))?;
+
+    checker.check_program(&ast).map_err(|errors| {
+        std::io::Error::other(format!(
+            "expected the test-scope field assignment to use complete Holder metadata: {errors:?}"
+        ))
+    })?;
     Ok(())
 }
 

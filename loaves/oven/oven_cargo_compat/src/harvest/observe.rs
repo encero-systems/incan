@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use oven_model::loaf_registry::canonical_checksum;
-use oven_model::manifest::{RustFactOut, is_sha256_identity};
+use oven_model::manifest::{RustFactCompileEnvironment, RustFactOut, is_sha256_identity};
 
 use super::super::{
     OvenLegacyCargoBuildScriptFacts, OvenLegacyCargoBuildScriptToolProbe, OvenLegacyCargoError,
@@ -328,14 +328,9 @@ fn observe_unit(
         map_compiler_probe_outputs(capture, &build_script).map_err(|(reason, detail)| refuse(reason, detail))?;
     let generated =
         adopt_generated_members(&mapped.generated_members).map_err(|(reason, detail)| refuse(reason, detail))?;
-    let environment_inputs = observe_environment_inputs(
-        build_script.facts,
-        &admitted.features,
-        profile,
-        &compiler.target_cfg,
-        &generated.products,
-    )
-    .map_err(|(reason, detail)| refuse(reason, detail))?;
+    let environment =
+        declared_compile_environment(build_script.facts, &admitted.features, profile, &compiler.target_cfg)
+            .map_err(|(reason, detail)| refuse(reason, detail))?;
     let link_observations = observe_native_link_paths(build_script.facts, mapped.output, &generated.products)
         .map_err(|(reason, detail)| refuse(reason, detail))?;
     let tool_probes = observe_tool_probes(
@@ -355,7 +350,7 @@ fn observe_unit(
         ObservedPhases {
             output: mapped.output,
             generated,
-            environment_inputs,
+            environment,
             link_observations,
             probe_answers,
         },
@@ -764,8 +759,8 @@ struct ObservedPhases<'a> {
     output: Option<&'a OvenLegacyCargoSelectedGeneratedOutput>,
     /// Adopted generated members and products.
     generated: GeneratedAdoption,
-    /// Owner-relative environment inputs and their byte identities.
-    environment_inputs: Vec<HarvestEnvironmentInput>,
+    /// Portable compile-time environment declarations.
+    environment: Vec<RustFactCompileEnvironment>,
     /// Native-link observations.
     link_observations: Vec<HarvestLinkObservation>,
     /// Compiler-probe answers and their evidence digests.
@@ -782,7 +777,7 @@ fn assemble_observation(
     let ObservedPhases {
         output,
         generated,
-        environment_inputs,
+        environment,
         link_observations,
         probe_answers,
     } = phases;
@@ -794,7 +789,8 @@ fn assemble_observation(
             features: admitted.features,
             cfg: probe_answers.cfg,
             out: generated.out,
-            environment_inputs,
+            environment,
+            environment_inputs: Vec::new(),
             link_observations,
             tool_observations: probe_answers.tool_observations,
             link: Vec::new(),
@@ -864,41 +860,47 @@ fn observe_build_script<'a>(
     })
 }
 
-/// Rebind script environment observations to selected-binding constants or retained products.
-fn observe_environment_inputs(
+/// Convert captured `cargo:rustc-env` output into portable literal or OUT_DIR-relative declarations.
+fn declared_compile_environment(
     facts: Option<&OvenLegacyCargoBuildScriptFacts>,
     features: &[String],
     profile: &str,
     target_cfg: &oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot,
-    products: &[HarvestObservedProduct],
-) -> Result<Vec<HarvestEnvironmentInput>, (HarvestRefusalReason, String)> {
-    let mut environment_inputs = Vec::new();
-    if let Some(facts) = facts {
-        for (name, value) in &facts.environment {
-            if let Some(expected) = binding_derived_environment_value(name, features, profile, target_cfg) {
-                if value != &expected {
-                    return Err((HarvestRefusalReason::BindingDerivedEnvironmentMismatch, name.clone()));
-                }
-                continue;
+) -> Result<Vec<RustFactCompileEnvironment>, (HarvestRefusalReason, String)> {
+    let Some(facts) = facts else {
+        return Ok(Vec::new());
+    };
+    let mut environment = Vec::new();
+    for (name, value) in &facts.environment {
+        if let Some(expected) = binding_derived_environment_value(name, features, profile, target_cfg) {
+            if value != &expected {
+                return Err((HarvestRefusalReason::BindingDerivedEnvironmentMismatch, name.clone()));
             }
-            let Some(owner_relative_path) = owner_relative_path(Path::new(value), &facts.out_dir) else {
-                return Err((HarvestRefusalReason::EnvironmentObserved, name.clone()));
-            };
-            let Some(product) = products
-                .iter()
-                .find(|product| product.owner_relative_path == owner_relative_path)
-            else {
-                return Err((HarvestRefusalReason::EnvironmentObserved, name.clone()));
-            };
-            environment_inputs.push(HarvestEnvironmentInput {
+            environment.push(RustFactCompileEnvironment {
                 name: name.clone(),
-                owner_relative_path,
-                digest: product.digest.clone(),
+                literal: Some(value.clone()),
+                out: None,
+            });
+            continue;
+        }
+        if let Some(relative) = owner_relative_path(Path::new(value), &facts.out_dir) {
+            environment.push(RustFactCompileEnvironment {
+                name: name.clone(),
+                literal: None,
+                out: Some(relative),
+            });
+        } else if Path::new(value).is_absolute() {
+            return Err((HarvestRefusalReason::EnvironmentObserved, name.clone()));
+        } else {
+            environment.push(RustFactCompileEnvironment {
+                name: name.clone(),
+                literal: Some(value.clone()),
+                out: None,
             });
         }
     }
-    environment_inputs.sort();
-    Ok(environment_inputs)
+    environment.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(environment)
 }
 
 /// Derive the recognized script-emitted constants whose bytes are already fixed by the selected binding.

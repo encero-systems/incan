@@ -511,10 +511,12 @@ fn direct_workspace_reads_the_sealed_build_unit_of_the_inspected_version() -> Re
     let root = tmp.path().join("generated_lock");
     let inner = tmp.path().join("inner-0.1.0");
     let wrong_out = tmp.path().join("plan/target/debug/build/inner-0000000000000000/out");
+    let unknown_out = tmp.path().join("plan/target/debug/build/inner-1111111111111111/out");
     let right_out = tmp.path().join("plan/target/debug/build/inner-ffffffffffffffff/out");
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(inner.join("src"))?;
     fs::create_dir_all(&wrong_out)?;
+    fs::create_dir_all(&unknown_out)?;
     fs::create_dir_all(&right_out)?;
     fs::write(
         root.join("Cargo.toml"),
@@ -541,12 +543,20 @@ fn direct_workspace_reads_the_sealed_build_unit_of_the_inspected_version() -> Re
         right_out.join("gen.rs"),
         "pub struct Node;\npub mod kind {\n    pub enum Kind {\n        Node(::prost::alloc::boxed::Box<super::Node>),\n        Empty,\n    }\n}\n",
     )?;
+    fs::write(
+        unknown_out.join("gen.rs"),
+        "pub mod kind {\n    pub enum Kind {\n        UnknownUnit,\n    }\n}\n",
+    )?;
     crate::loader::write_oven_generated_out_dirs(
         &root,
         &[
             crate::loader::SealedGeneratedOutDir {
                 out_dir: wrong_out,
                 version: Some("0.2.0".to_string()),
+            },
+            crate::loader::SealedGeneratedOutDir {
+                out_dir: unknown_out,
+                version: None,
             },
             crate::loader::SealedGeneratedOutDir {
                 out_dir: right_out,

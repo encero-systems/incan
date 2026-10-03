@@ -46,6 +46,9 @@ pub struct OvenLoafBakerContext<'a> {
     pub capacity_roots: [&'a Path; 2],
     pub transient_limit: u64,
     pub cargo: &'a Path,
+    /// Compiler used only for publisher-owned auxiliary targets that are not members of the retained host closure.
+    pub auxiliary_target_rustc: &'a Path,
+    /// Retained compiler path used for the host Cargo capture and every direct-rustc replay.
     pub rustc: &'a Path,
     /// Explicit real C compiler traced for native-link adoption.
     pub cc: &'a Path,
@@ -168,6 +171,7 @@ pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
         },
         provider_compilations: &[],
         compact_debug_info: true,
+        retain_equivalence_artifacts: true,
         source_compiler_vocab_support: false,
         base_loaf: None,
     })?;
@@ -884,12 +888,17 @@ mod tests {
             crate_types: vec!["lib".to_string()],
             source_path: PathBuf::from("/sealed/blake2/src/lib.rs"),
             artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
             root_module: "src/lib.rs".to_string(),
             edition: "2021".to_string(),
             mode: "build".to_string(),
             platform: Some("aarch64-apple-darwin".to_string()),
             target_is_explicit: Some(true),
             cfg: cfg.iter().map(|value| (*value).to_string()).collect(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: Default::default(),
             effective_features: vec!["std".to_string()],
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),

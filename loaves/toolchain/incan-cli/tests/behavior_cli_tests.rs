@@ -34,8 +34,14 @@ fn behavior_cli_refusals_values_and_calls_fixtures_hold() -> Result<(), Box<dyn 
     assert_area_green("cli_refusals_values_and_calls")
 }
 
-/// Literals, collections, assignments, patterns, numerics, mut parameters, and the task handles, channel senders and
-/// locks a loop passes on.
+/// Boolean logic, comparisons, operator precedence, and conditions expressed through value and record patterns.
+#[test]
+fn behavior_cli_logic_comparisons_and_patterns_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
+    assert_area_green("cli_logic_comparisons_and_patterns")
+}
+
+/// Literals, collections, assignments, numerics, mut parameters, and the task handles, channel senders and locks a
+/// loop passes on.
 #[test]
 fn behavior_cli_values_and_calls_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
     assert_area_green("cli_values_and_calls")

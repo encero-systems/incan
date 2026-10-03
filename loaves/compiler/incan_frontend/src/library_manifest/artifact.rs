@@ -7,10 +7,10 @@ use std::sync::{Mutex, OnceLock};
 
 use sha2::{Digest, Sha256};
 
-use oven_model::digest::hash_named_bytes;
 pub use oven_model::digest::{
     ProviderArtifactDigestError, digest_cargo_path_source_tree_with_cache, digest_toolchain_source_tree_with_cache,
 };
+use oven_model::digest::{canonical_json_bytes, canonical_toml_string, hash_named_bytes};
 
 use crate::library_manifest::wire::RawLibraryManifest;
 use crate::library_manifest::{
@@ -411,7 +411,7 @@ fn digest_provider_semantic_artifact_inner(
         // provider identity. The source digest plus normalized contract and Cargo requirements own that identity.
         normalized_manifest.rust_abi = None;
     }
-    let normalized_manifest_bytes = serde_json::to_vec(&RawLibraryManifest::from_semantic(&normalized_manifest))
+    let normalized_manifest_bytes = canonical_json_bytes(&RawLibraryManifest::from_semantic(&normalized_manifest))
         .map_err(|error| ProviderArtifactDigestError::Normalization {
             path: manifest_path.to_path_buf(),
             message: error.to_string(),
@@ -519,7 +519,7 @@ fn normalize_cargo_delivery_coordinates(
         })?;
     normalize_toml_paths(&mut cargo, delivery_coordinates);
     normalize_toolchain_dependency_paths(&mut cargo, cargo_toml_path, toolchain_dependencies);
-    toml::to_string(&cargo)
+    canonical_toml_string(&cargo)
         .map(String::into_bytes)
         .map_err(|error| ProviderArtifactDigestError::Normalization {
             path: cargo_toml_path.to_path_buf(),
@@ -1030,6 +1030,42 @@ mod tests {
             "[package]\nname = \"provider\"\nversion = \"0.1.0\"\n\n[dependencies.user_path]\npath = \"../different-user-dependency\"\n",
         )?;
         assert_ne!(stable, semantic(second.path())?);
+        Ok(())
+    }
+
+    /// Semantically equal provider manifests must retain one identity even when their Cargo fields are authored in
+    /// different orders by the compiler-suite requester and the SDK publisher.
+    #[test]
+    fn debug_compiler_suite_requester_and_sdk_publisher_agree_on_provider_identity_issue1988() -> TestResult {
+        let publisher = tempfile::tempdir()?;
+        let requester = tempfile::tempdir()?;
+        for root in [publisher.path(), requester.path()] {
+            fs::create_dir_all(root.join("src"))?;
+            fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")?;
+        }
+        fs::write(
+            publisher.path().join("Cargo.toml"),
+            "[package]\nname = \"incan_stdlib_core\"\nversion = \"0.5.0\"\nedition = \"2021\"\n\n[lib]\nname = \"incan_stdlib_core\"\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(
+            requester.path().join("Cargo.toml"),
+            "[lib]\npath = \"src/lib.rs\"\nname = \"incan_stdlib_core\"\n\n[package]\nedition = \"2021\"\nversion = \"0.5.0\"\nname = \"incan_stdlib_core\"\n",
+        )?;
+        let mut manifest = LibraryManifest::new("incan_stdlib_core", "0.5.0");
+        manifest.contract_metadata.provider.semantic_source_digest = Some(format!("sha256:{}", "a".repeat(64)));
+        for root in [publisher.path(), requester.path()] {
+            manifest.write_to_path(&root.join("incan_stdlib_core.incnlib"))?;
+        }
+        let identity = |root: &Path| {
+            digest_provider_semantic_artifact(
+                root,
+                &root.join("incan_stdlib_core.incnlib"),
+                &root.join("Cargo.toml"),
+                &manifest,
+            )
+        };
+
+        assert_eq!(identity(publisher.path())?, identity(requester.path())?);
         Ok(())
     }
 

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::build::output_paths::{
     bake_generated_out_dir_units, project_inspection_root_dependencies, project_inspection_test_dependency_roots,
-    project_relative_entrypoint, validated_project_output_relative_path,
+    project_locked_registry_packages, project_relative_entrypoint, validated_project_output_relative_path,
 };
 use crate::build::output_selection::baked_project_owner_identity;
 use crate::build::{
@@ -38,17 +38,26 @@ use oven_store::store::{
     OvenStoreLease,
 };
 
+/// Project-owned dependency declarations and exact Cargo lock identities used to publish inspection roots.
+pub(crate) struct ProjectInspectionDependencyAuthority<'a> {
+    /// Normal registry dependency declarations owned by this project.
+    pub registry_dependencies: &'a [DependencySpec],
+    /// Development registry dependency declarations owned by this project.
+    pub dev_registry_dependencies: &'a [DependencySpec],
+    /// Exact registry identities retained by the project's Cargo lock projection.
+    pub locked_registry_packages: &'a [crate::build::output_paths::ProjectLockedRegistryPackage],
+}
+
 /// Seal the project's inspection authority: the constituents a normal command may inspect through, the registry
 /// sources each one owns, the test-dependency envelope, and the build-script output the bake's Cargo targets wrote.
 ///
 /// The library constituent, when the bake produced one, joins the constituents under the kind and base its selection
 /// had, and its registry sources are added only where no earlier constituent already names the locked package.
-pub fn publish_project_inspection_authority(
+pub(crate) fn publish_project_inspection_authority(
     store: &OvenStore,
     project_root: &Path,
     source_authority_digest: &str,
-    registry_dependencies: &[DependencySpec],
-    dev_registry_dependencies: &[DependencySpec],
+    dependency_authority: ProjectInspectionDependencyAuthority<'_>,
     test_dependency_envelope: &PreparedOvenTestDependencyEnvelope,
     library: Option<&LibraryInspectionConstituent>,
 ) -> CliResult<PublishedProjectInspectionAuthority> {
@@ -438,10 +447,25 @@ pub fn publish_project_inspection_authority(
         .cloned()
         .collect::<Vec<_>>();
     let publisher_roots = (!publisher_roots.is_empty()).then_some(publisher_roots.as_slice());
-    let registry_source_dependencies =
-        project_inspection_root_dependencies(registry_dependencies, &source_catalog, publisher_roots)?;
-    let dev_registry_source_dependencies =
-        project_inspection_root_dependencies(dev_registry_dependencies, &source_catalog, publisher_roots)?;
+    let owner_locked_registry_packages = if source_catalog.is_empty() {
+        Vec::new()
+    } else {
+        project_locked_registry_packages([lock_path.as_path()])?
+    };
+    let registry_source_dependencies = project_inspection_root_dependencies(
+        dependency_authority.registry_dependencies,
+        &source_catalog,
+        publisher_roots,
+        dependency_authority.locked_registry_packages,
+        &owner_locked_registry_packages,
+    )?;
+    let dev_registry_source_dependencies = project_inspection_root_dependencies(
+        dependency_authority.dev_registry_dependencies,
+        &source_catalog,
+        publisher_roots,
+        dependency_authority.locked_registry_packages,
+        &owner_locked_registry_packages,
+    )?;
     let test_dependency_envelope = test_dependency_constituent_index
         .map(|constituent_index| {
             project_inspection_test_dependency_roots(

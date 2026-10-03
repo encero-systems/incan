@@ -141,6 +141,53 @@ impl OvenRegistryLeafAuthority {
             .any(|entry| participates_in_target_link_collision(&entry.leaf) && entry.leaf.package == package)
     }
 
+    /// Rebind overlapping transitive root externs to this target cohort while preserving direct declarations.
+    ///
+    /// Generated source that links a compiler runtime must use the registry units recorded by that runtime's
+    /// selected Loaf. A project or workspace declaration remains authoritative, so its Cargo package is excluded
+    /// even when this cohort carries a same-named unit. Only names already exposed by `plan` are replaced; this does
+    /// not broaden the generated root's direct dependency surface.
+    pub fn rebind_transitive_target_externs(
+        &self,
+        plan: &mut OvenRustcArtifactPlan,
+        directly_declared_packages: &BTreeSet<String>,
+    ) -> Result<(), OvenRustcError> {
+        for entry in &self.entries {
+            if !participates_in_target_link_collision(&entry.leaf)
+                || directly_declared_packages.contains(&entry.leaf.package.replace('-', "_"))
+            {
+                continue;
+            }
+            let Some((_, selected_path)) = plan
+                .externs
+                .iter_mut()
+                .find(|(crate_name, _)| crate_name == &entry.leaf.crate_name)
+            else {
+                continue;
+            };
+            let artifact = safe_artifact_path(
+                &entry.artifact_root,
+                &entry.leaf.artifact.relative_path,
+                "compiler runtime registry leaf",
+            )?;
+            let bytes = fs::read(&artifact).map_err(|source| OvenRustcError::Io {
+                path: artifact.clone(),
+                source,
+            })?;
+            if digest_bytes(&bytes) != entry.leaf.artifact.digest {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "compiler runtime registry leaf",
+                    message: format!(
+                        "sealed registry leaf at {} failed digest verification",
+                        artifact.display()
+                    ),
+                });
+            }
+            *selected_path = artifact;
+        }
+        Ok(())
+    }
+
     /// Return the first package name this authority's own registry leaves would silently link as a second,
     /// incompatible compiled instance of a crate `plan` already links explicitly.
     ///
@@ -196,12 +243,20 @@ impl OvenRegistryLeafAuthority {
             if fs::canonicalize(&candidate_path).ok().as_deref() == fs::canonicalize(existing_path).ok().as_deref() {
                 continue;
             }
-            if reconciled
-                .map(|authority| authority.has_compatible_unit_at_path(&entry.leaf, existing_path))
+            if let Some(selected_leaf) = reconciled
+                .map(|authority| authority.target_leaf_at_path(existing_path))
                 .transpose()?
-                .unwrap_or(false)
+                .flatten()
             {
-                continue;
+                // One Cargo graph may legitimately contain multiple versions whose crates have the same Rust name.
+                // The extern path identifies which unit this edge selected; leaves for another package version do
+                // not conflict with that edge even though their crate names coincide.
+                if selected_leaf.package != entry.leaf.package || selected_leaf.version != entry.leaf.version {
+                    continue;
+                }
+                if registry_units_are_compatible(selected_leaf, &entry.leaf) {
+                    continue;
+                }
             }
             let existing_bytes = fs::read(existing_path).map_err(|source| OvenRustcError::Io {
                 path: existing_path.clone(),
@@ -310,14 +365,14 @@ impl OvenRegistryLeafAuthority {
         named
     }
 
-    /// Return whether `path` is this authority's selected representative of the same portable unit as `leaf`.
-    fn has_compatible_unit_at_path(&self, leaf: &OvenRustcRegistryLeaf, path: &Path) -> Result<bool, OvenRustcError> {
+    /// Return the target-linked registry leaf whose sealed artifact is `path`.
+    fn target_leaf_at_path(&self, path: &Path) -> Result<Option<&OvenRustcRegistryLeaf>, OvenRustcError> {
         let selected_path = fs::canonicalize(path).map_err(|source| OvenRustcError::Io {
             path: path.to_path_buf(),
             source,
         })?;
         for candidate in &self.entries {
-            if !registry_units_are_compatible(&candidate.leaf, leaf) {
+            if !participates_in_target_link_collision(&candidate.leaf) {
                 continue;
             }
             let candidate_path = safe_artifact_path(
@@ -330,10 +385,10 @@ impl OvenRegistryLeafAuthority {
                 source,
             })?;
             if candidate_path == selected_path {
-                return Ok(true);
+                return Ok(Some(&candidate.leaf));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 }
 

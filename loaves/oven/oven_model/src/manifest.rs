@@ -525,8 +525,7 @@ pub struct RustBinaryRole {
 /// A build script is inert source inventory; what it would have discovered is declared here instead. A probe's
 /// answer is a constant only under one toolchain, target, profile and feature set, so every record binds all four
 /// and a consumer applies a record only when its own selection equals that binding exactly. Script-emitted
-/// environment has no key: a value no compilation observes is not a fact, and a value one does observe is a typed
-/// constant this record does not yet model.
+/// environment is either retained as exact text or rebound below the record's retained `OUT_DIR` tree.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactRecord {
@@ -545,6 +544,9 @@ pub struct RustFactRecord {
     /// Committed generated inputs that replace ambient `OUT_DIR` output.
     #[serde(default)]
     pub out: Vec<RustFactOut>,
+    /// Compile-time `cargo:rustc-env` values, sorted by unique environment name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<RustFactCompileEnvironment>,
     /// Publisher-side native-link declarations; finished archives are registry assets.
     #[serde(default)]
     pub link: Vec<RustFactLink>,
@@ -554,6 +556,20 @@ pub struct RustFactRecord {
     /// The compatibility receipt identity whose capture proposed this record.
     #[serde(rename = "harvested-from", default)]
     pub harvested_from: Option<String>,
+}
+
+/// One declared compile-time environment value emitted by a build script.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactCompileEnvironment {
+    /// Environment variable name supplied to rustc.
+    pub name: String,
+    /// Exact portable non-path text; exactly one of `literal` and `out` is required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub literal: Option<String>,
+    /// Portable path relative to the private `OUT_DIR`; `.` names the directory itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<String>,
 }
 
 /// One committed generated input named by a [`RustFactRecord`].
@@ -2115,99 +2131,9 @@ fn validate_rust_fact_records(
     let sorted_unique = |values: &[String]| values.windows(2).all(|pair| pair[0] < pair[1]);
     let mut bindings = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
-        if record.toolchain.trim().is_empty() || record.target.trim().is_empty() {
-            return Err(invalid(index, "must bind a toolchain and a target".to_string()));
-        }
-        if !matches!(record.profile.as_str(), "release" | "debug") {
-            return Err(invalid(index, "profile must be `release` or `debug`".to_string()));
-        }
-        if !sorted_unique(&record.features) {
-            return Err(invalid(index, "features must be sorted and unique".to_string()));
-        }
-        if !sorted_unique(&record.cfg) || record.cfg.iter().any(|cfg| cfg.trim().is_empty()) {
-            return Err(invalid(
-                index,
-                "cfg must be sorted, unique and non-empty answers".to_string(),
-            ));
-        }
-        let mut names = HashSet::new();
-        let mut out_names = Vec::with_capacity(record.out.len());
-        if record.out.windows(2).any(|pair| pair[0].name >= pair[1].name) {
-            return Err(invalid(index, "out must be sorted by unique name".to_string()));
-        }
-        for out in &record.out {
-            let relative = Path::new(&out.path);
-            if validate_rust_fact_path(&out.name, "out name").is_err()
-                || out.path.trim().is_empty()
-                || relative.is_absolute()
-                || relative
-                    .components()
-                    .any(|component| !matches!(component, Component::Normal(_)))
-            {
-                return Err(invalid(
-                    index,
-                    format!("out `{}` must name a committed file by a plain relative path", out.name),
-                ));
-            }
-            if !is_sha256_identity(&out.digest) {
-                return Err(invalid(
-                    index,
-                    format!("out `{}` digest must be a `sha256:` identity", out.name),
-                ));
-            }
-            if !names.insert(out.name.as_str()) {
-                return Err(invalid(index, format!("out `{}` is declared twice", out.name)));
-            }
-            out_names.push(out.name.as_str());
-        }
-        let mut work_names = HashSet::new();
-        if record.link.windows(2).any(|pair| pair[0].name >= pair[1].name) {
-            return Err(invalid(index, "link must be sorted by unique name".to_string()));
-        }
-        for link in &record.link {
-            validate_rust_fact_link(link)
-                .map_err(|message| invalid(index, format!("link `{}` {message}", link.name)))?;
-            if !work_names.insert(link.name.as_str()) {
-                return Err(invalid(
-                    index,
-                    format!("publisher work name `{}` is declared twice", link.name),
-                ));
-            }
-        }
-        if record.tool.windows(2).any(|pair| pair[0].name >= pair[1].name) {
-            return Err(invalid(index, "tool must be sorted by unique name".to_string()));
-        }
-        for tool in &record.tool {
-            validate_rust_fact_tool(tool)
-                .map_err(|message| invalid(index, format!("tool `{}` {message}", tool.name)))?;
-            if let Some(output) = tool.outputs.iter().find(|output| {
-                out_names
-                    .iter()
-                    .any(|out_name| rust_fact_paths_overlap(out_name, &output.path))
-            }) {
-                return Err(invalid(
-                    index,
-                    format!(
-                        "tool output `{}` overlaps an out member in the shared OUT_DIR namespace",
-                        output.path
-                    ),
-                ));
-            }
-            if !work_names.insert(tool.name.as_str()) {
-                return Err(invalid(
-                    index,
-                    format!("publisher work name `{}` is declared twice", tool.name),
-                ));
-            }
-        }
-        if let Some(harvested) = record.harvested_from.as_deref()
-            && !is_sha256_identity(harvested)
-        {
-            return Err(invalid(
-                index,
-                "harvested-from must be a `sha256:` receipt identity".to_string(),
-            ));
-        }
+        validate_rust_fact_record_selection(record, &sorted_unique).map_err(|message| invalid(index, message))?;
+        validate_rust_fact_compile_environment(record).map_err(|message| invalid(index, message))?;
+        validate_rust_fact_outputs_and_work(record).map_err(|message| invalid(index, message))?;
         let binding = (
             record.toolchain.as_str(),
             record.target.as_str(),
@@ -2221,6 +2147,149 @@ fn validate_rust_fact_records(
             ));
         }
         bindings.push(binding);
+    }
+    Ok(())
+}
+
+/// Validate the compiler selection and optional harvest receipt bound by one fact record.
+fn validate_rust_fact_record_selection(
+    record: &RustFactRecord,
+    sorted_unique: &impl Fn(&[String]) -> bool,
+) -> Result<(), String> {
+    if record.toolchain.trim().is_empty() || record.target.trim().is_empty() {
+        return Err("must bind a toolchain and a target".to_string());
+    }
+    if !matches!(record.profile.as_str(), "release" | "debug") {
+        return Err("profile must be `release` or `debug`".to_string());
+    }
+    if !sorted_unique(&record.features) {
+        return Err("features must be sorted and unique".to_string());
+    }
+    if !sorted_unique(&record.cfg) || record.cfg.iter().any(|cfg| cfg.trim().is_empty()) {
+        return Err("cfg must be sorted, unique and non-empty answers".to_string());
+    }
+    if let Some(harvested) = record.harvested_from.as_deref()
+        && !is_sha256_identity(harvested)
+    {
+        return Err("harvested-from must be a `sha256:` receipt identity".to_string());
+    }
+    Ok(())
+}
+
+/// Validate identity-bound compile-time environment values and their generated-output references.
+fn validate_rust_fact_compile_environment(record: &RustFactRecord) -> Result<(), String> {
+    if record.environment.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("environment must be sorted by unique name".to_string());
+    }
+    for environment in &record.environment {
+        if environment.name.is_empty()
+            || environment.name.contains('=')
+            || !environment
+                .name
+                .bytes()
+                .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+        {
+            return Err(format!("environment name `{}` is invalid", environment.name));
+        }
+        match (&environment.literal, &environment.out) {
+            (Some(literal), None) if literal.contains('\0') => {
+                return Err(format!("environment `{}` literal cannot contain NUL", environment.name));
+            }
+            (Some(_), None) => {}
+            (None, Some(relative)) if relative == "." && !record.out.is_empty() => {}
+            (None, Some(relative)) if relative == "." => {
+                return Err(format!(
+                    "environment `{}` references an absent OUT_DIR tree",
+                    environment.name
+                ));
+            }
+            (None, Some(relative)) => {
+                validate_rust_fact_path(relative, "environment OUT_DIR path")?;
+                let prefix = format!("{relative}/");
+                if !record
+                    .out
+                    .iter()
+                    .any(|output| output.name == *relative || output.name.starts_with(&prefix))
+                {
+                    return Err(format!(
+                        "environment `{}` references absent OUT_DIR path `{relative}`",
+                        environment.name
+                    ));
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "environment `{}` must declare exactly one of literal or out",
+                    environment.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate generated outputs, native links, and tools in one fact record without overlapping work names.
+fn validate_rust_fact_outputs_and_work(record: &RustFactRecord) -> Result<(), String> {
+    let mut names = HashSet::new();
+    let mut out_names = Vec::with_capacity(record.out.len());
+    if record.out.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("out must be sorted by unique name".to_string());
+    }
+    for out in &record.out {
+        let relative = Path::new(&out.path);
+        if validate_rust_fact_path(&out.name, "out name").is_err()
+            || out.path.trim().is_empty()
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(format!(
+                "out `{}` must name a committed file by a plain relative path",
+                out.name
+            ));
+        }
+        if !is_sha256_identity(&out.digest) {
+            return Err(format!("out `{}` digest must be a `sha256:` identity", out.name));
+        }
+        if !names.insert(out.name.as_str()) {
+            return Err(format!("out `{}` is declared twice", out.name));
+        }
+        out_names.push(out.name.as_str());
+    }
+    validate_rust_fact_publisher_work(record, &out_names)
+}
+
+/// Validate native links and tools while enforcing their shared publisher-work namespace.
+fn validate_rust_fact_publisher_work(record: &RustFactRecord, out_names: &[&str]) -> Result<(), String> {
+    let mut work_names = HashSet::new();
+    if record.link.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("link must be sorted by unique name".to_string());
+    }
+    for link in &record.link {
+        validate_rust_fact_link(link).map_err(|message| format!("link `{}` {message}", link.name))?;
+        if !work_names.insert(link.name.as_str()) {
+            return Err(format!("publisher work name `{}` is declared twice", link.name));
+        }
+    }
+    if record.tool.windows(2).any(|pair| pair[0].name >= pair[1].name) {
+        return Err("tool must be sorted by unique name".to_string());
+    }
+    for tool in &record.tool {
+        validate_rust_fact_tool(tool).map_err(|message| format!("tool `{}` {message}", tool.name))?;
+        if let Some(output) = tool.outputs.iter().find(|output| {
+            out_names
+                .iter()
+                .any(|out_name| rust_fact_paths_overlap(out_name, &output.path))
+        }) {
+            return Err(format!(
+                "tool output `{}` overlaps an out member in the shared OUT_DIR namespace",
+                output.path
+            ));
+        }
+        if !work_names.insert(tool.name.as_str()) {
+            return Err(format!("publisher work name `{}` is declared twice", tool.name));
+        }
     }
     Ok(())
 }
