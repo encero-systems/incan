@@ -41,7 +41,11 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 - Incan code drives a Rust layer built against rustc's internals. One driver builds that layer, an Incan unit that fills its body plan, and a Rust executable that calls the Incan unit. The executable runs rustc in its own process and compiles a program whose function body the Incan code planned.
 - Real Body IR runs natively. The driver runs this repository's Incan front end in-process and lowers the unchanged kernels of the `fib` and `collatz` benchmarks to MIR, calling the same stdlib runtime helpers the emitted route calls. The output is identical to the emitted-Rust route's for the same sources, and optimized runtime is on par.
 - Whole programs compile natively. The unchanged `fib`, `collatz` and `mandelbrot` benchmark programs, `main` included, compile from source to native binaries with no Rust source at any point. Their output is identical to the emitted route's, and optimized runtime is at parity.
-- A first corpus native lane runs. It compiles every single-file behavior fixture that records its expected output, runs it natively, and compares stdout and exit code. 22 fixtures pass, none produce wrong output, none fail, and 441 are refused with the construct they need named. The lane caught one miscompile, a `@rust.extern` placeholder run as a body (#2023), and three lowering defects, all fixed.
+- A first corpus native lane runs. It compiles every single-file behavior fixture that records its expected output, runs it natively, and compares stdout and exit code. 23 fixtures pass, none produce wrong output, none fail, and 440 are refused with the construct they need named. The lane caught two behavior differences and three lowering defects, all fixed or refused:
+    - a `@rust.extern` placeholder run as a body (#2023);
+    - an `import this` whose module effect Body IR does not carry.
+
+    The largest refusal is imports, at 113 fixtures: a program that imports from the stdlib needs the stdlib's own units compiled natively, which is where Oven building several units, and the toolchain building its own stdlib, come in.
 
 ## Decision
 
