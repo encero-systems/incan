@@ -488,28 +488,36 @@ pub fn select_exact_published_provider_plan(
         }))
 }
 
-/// Keep a composed package closure only when it links every crate the consumer's source-mounted standard library needs.
+/// Keep a composed package closure only when it links every standard-library crate the consumer needs.
 ///
-/// A consumer with no active provider for a `std` namespace compiles that namespace from source into its own crate,
-/// so its generated root links the namespace's runtime crates directly (see
+/// Generated Rust names each used compiled SDK provider directly, so the closure must expose that provider as an
+/// extern. A consumer with no active provider for a `std` namespace instead compiles that namespace from source into
+/// its own crate, so its generated root links the namespace's runtime crates directly (see
 /// [`incan_provider::inventory::stdlib_namespace_cargo_dependencies`]). A package Loaf extending a compiler base
 /// supplies them through that base; a self-contained package plan supplies only what its own provider linked. A
 /// closure that lacks one of them cannot compile the consumer, so the caller publishes or selects the consumer's own
 /// closure instead, as it does for a consumer that declares its own Rust roots.
-pub fn packaged_provider_selection_links_source_stdlib(
+pub fn packaged_provider_selection_links_required_stdlib(
     selection: Option<OvenDirectRustcPlanSelection>,
     provider_plan: &incan_provider::ProviderPlan,
 ) -> CliResult<Option<OvenDirectRustcPlanSelection>> {
     let Some(selection) = selection else {
         return Ok(None);
     };
-    let required = provider_plan
-        .source_std_namespace_roots()
-        .iter()
-        .filter_map(|root| incan_lang::lang::stdlib::find_namespace(root))
-        .flat_map(incan_provider::inventory::stdlib_namespace_cargo_dependencies)
-        .map(|dependency| dependency.crate_name.replace('-', "_"))
+    let mut required = provider_plan
+        .sdk_link_roots()
+        .into_iter()
+        .filter_map(|provider| provider.artifact.as_ref())
+        .map(|artifact| artifact.dependency_key.replace('-', "_"))
         .collect::<BTreeSet<_>>();
+    required.extend(
+        provider_plan
+            .source_std_namespace_roots()
+            .iter()
+            .filter_map(|root| incan_lang::lang::stdlib::find_namespace(root))
+            .flat_map(incan_provider::inventory::stdlib_namespace_cargo_dependencies)
+            .map(|dependency| dependency.crate_name.replace('-', "_")),
+    );
     if required.is_empty() {
         return Ok(Some(selection));
     }
@@ -643,12 +651,16 @@ mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use std::{env, fs};
 
     use crate::backend::ProjectGenerator;
     use crate::build::output_paths::project_inspection_test_dependency_roots;
     use crate::build::{OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization};
     use crate::build_unit::promoted_oven_test_dependencies;
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+    use incan_frontend::provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
     use incan_provider::dependency_resolver::ResolvedDependencies;
     use oven_interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
     use oven_model::manifest::{DependencySource, DependencySpec};
@@ -1052,14 +1064,109 @@ mod tests {
 
         assert!(closure()?.is_some(), "the fixture closure is selectable on its own");
         assert!(
-            packaged_provider_selection_links_source_stdlib(closure()?, &using("testing")?)?.is_none(),
+            packaged_provider_selection_links_required_stdlib(closure()?, &using("testing")?)?.is_none(),
             "a closure without `incan_std_testing` cannot compile a consumer that mounts std.testing"
         );
         assert!(
-            packaged_provider_selection_links_source_stdlib(closure()?, &using("derives")?)?.is_some(),
+            packaged_provider_selection_links_required_stdlib(closure()?, &using("derives")?)?.is_some(),
             "a namespace with no runtime crate of its own needs nothing beyond the closure"
         );
-        assert!(packaged_provider_selection_links_source_stdlib(None, &using("testing")?)?.is_none());
+        assert!(packaged_provider_selection_links_required_stdlib(None, &using("testing")?)?.is_none());
+        Ok(())
+    }
+
+    /// #2011: a compiled SDK namespace is emitted through its provider crate, so a package closure that omits that
+    /// direct provider extern cannot serve a source program importing the namespace.
+    #[test]
+    fn a_package_closure_without_a_used_compiled_sdk_provider_is_set_aside_issue2011()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let generated = project.path().join("generated/src/main.rs");
+        fs::create_dir_all(generated.parent().ok_or("generated source parent missing")?)?;
+        fs::write(&generated, "fn main() {}\n")?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project.path(),
+                "compiled-sdk-consumer",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &generated),
+        )?;
+        let store = OvenStore::new(
+            project.path().join("oven-store"),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let core_runtime = project.path().join("libincan_std_core.rlib");
+        fs::write(&core_runtime, b"core runtime")?;
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "compiled-sdk-consumer".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&OvenRustcArtifactManifest {
+                schema_version: oven_rustc::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                intent: receipt.intent.clone(),
+                dependency_search_paths: vec!["deps".to_string()],
+                native_search_paths: Vec::new(),
+                externs: vec![oven_rustc::rustc::OvenRustcArtifactExtern {
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core.rlib".to_string(),
+                    digest: digest_bytes(b"core runtime"),
+                }],
+                entrypoint_dependency_search_paths: Default::default(),
+                entrypoint_externs: BTreeMap::new(),
+                registry_leaves: Vec::new(),
+                registry_sources: Vec::new(),
+                compile_environment: BTreeMap::new(),
+                vocab_auxiliary_targets: Vec::new(),
+                supporting_artifacts: Vec::new(),
+            })?,
+            materialized_files: vec![oven_store::store::OvenArtifactMaterializedFile {
+                source_path: core_runtime,
+                relative_path: "deps/libincan_std_core.rlib".to_string(),
+            }],
+            materialized_directories: Vec::new(),
+        })?;
+        let selected = select_published_project_plan(&store, &receipt, OvenToolchainMaterialization::Reused)?
+            .map(|selected| selected.plan_selection);
+        let provider_name = "incan_stdlib_testing";
+        let provider = ProviderRecord {
+            identity: ProviderIdentity {
+                name: provider_name.to_string(),
+                version: "0.6.0".to_string(),
+                digest: "sha256:testing-provider".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.6.0".to_string(),
+                component_id: "stdlib-testing".to_string(),
+                inventory_path: None,
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "testing".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new(provider_name, "0.6.0"))),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root(
+                provider_name,
+                provider_name,
+                project.path().join("stdlib-testing"),
+            )),
+            implementation_facets: Vec::new(),
+        };
+        let provider_plan = incan_provider::ProviderPlan::new(
+            Default::default(),
+            vec![provider],
+            [vec!["std".to_string(), "testing".to_string()]],
+        )?;
+
+        assert!(
+            packaged_provider_selection_links_required_stdlib(selected, &provider_plan)?.is_none(),
+            "a closure without the used compiled provider cannot emit std.testing"
+        );
         Ok(())
     }
 

@@ -20,7 +20,7 @@ use crate::build::plan_authority::{
 };
 use crate::build::plan_selection::{
     format_oven_registry_dependency_requirements, interop_final_plan_required_error,
-    packaged_provider_selection_links_source_stdlib, receipt_requires_final_interop_plan,
+    packaged_provider_selection_links_required_stdlib, receipt_requires_final_interop_plan,
     registry_leaf_authority_for_plan_selection, select_or_bake_generated_project_plan, select_published_project_plan,
 };
 use crate::build::provider_compilation::{
@@ -571,7 +571,7 @@ pub fn prepare_oven_project(
     let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
         || (oven_plan_mode == OvenProjectPlanMode::ExplicitBake && !consumer_declares_registry_roots)
     {
-        packaged_provider_selection_links_source_stdlib(
+        packaged_provider_selection_links_required_stdlib(
             compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
                 .map_err(oven_plan_error)?,
             &provider_plan,
