@@ -115,7 +115,7 @@ if [ -n "${INCAN_SPIKE_FRONTEND_TARGET:-}" ]; then
   "$out/step11_driver" --incan-source "$here/step11_kernels.incn" --sysroot "$sysroot" --edition 2024 --cap-lints allow \
     --crate-type rlib --crate-name kernels --extern incan_std_core="$std_core" -L dependency="$deps" -o "$out/libkernels.rlib" - </dev/null
   rustc +"$toolchain" --edition 2024 --extern kernels="$out/libkernels.rlib" -L "$out" -L dependency="$deps" "$here/step11_app.rs" -o "$out/step11_app"
-  expect_output step11_app "$(printf 'fib(1000000) mod 1000000007 = 918091266\nTotal Collatz steps for 1..1000000: 131434424')"
+  expect_output step11_app "$(printf 'fib(1000000) mod 1000000007 = 918091266\nTotal Collatz steps for 1..1000000: 131434424\nTotal iterations: 97631088')"
 else
   printf 'skip step11 (set INCAN_SPIKE_FRONTEND_TARGET to a target dir holding incan_frontend and incan_std_core)\n'
 fi

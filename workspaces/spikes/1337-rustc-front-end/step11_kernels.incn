@@ -1,4 +1,4 @@
-# Step 11's Incan source: the two kernels of the `fib` and `collatz` benchmarks, unchanged.
+# Step 11's Incan source: the kernels of the `fib`, `collatz` and `mandelbrot` benchmarks, unchanged.
 
 def fib_mod(n: int, modulo: int) -> int:
     if n <= 1:
@@ -24,3 +24,19 @@ def collatz_steps(n: int) -> int:
             num = 3 * num + 1
         count += 1
     return count
+
+def mandelbrot_escape(cr: float, ci: float, max_iter: int) -> int:
+    mut zr = 0.0
+    mut zi = 0.0
+
+    for i in 0..max_iter:
+        zr2 = zr * zr
+        zi2 = zi * zi
+
+        if zr2 + zi2 > 4.0:
+            return i
+
+        zi = 2.0 * zr * zi + ci
+        zr = zr2 - zi2 + cr
+
+    return max_iter

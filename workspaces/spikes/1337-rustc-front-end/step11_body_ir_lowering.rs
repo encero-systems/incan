@@ -14,6 +14,7 @@
 //! This prototype is Rust because it is evidence of the mapping; the product lowering is Incan (DD-0004).
 #![feature(rustc_private)]
 extern crate rustc_abi;
+extern crate rustc_apfloat;
 extern crate rustc_ast;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
@@ -70,6 +71,7 @@ fn type_name(ty: &IncanType) -> Option<&'static str> {
     match ty {
         IncanType::Primitive(IncanPrimitiveType::Int) => Some("i64"),
         IncanType::Primitive(IncanPrimitiveType::Bool) => Some("bool"),
+        IncanType::Primitive(IncanPrimitiveType::Float) => Some("f64"),
         _ => None,
     }
 }
@@ -78,6 +80,7 @@ fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
     match ty {
         IncanType::Primitive(IncanPrimitiveType::Int) => Some(tcx.types.i64),
         IncanType::Primitive(IncanPrimitiveType::Bool) => Some(tcx.types.bool),
+        IncanType::Primitive(IncanPrimitiveType::Float) => Some(tcx.types.f64),
         _ => None,
     }
 }
@@ -189,6 +192,11 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         match operand {
             bir::Operand::Constant(bir::Constant::Int(v)) => Operand::const_from_scalar(self.tcx, self.tcx.types.i64, Scalar::from_i64(*v), span),
             bir::Operand::Constant(bir::Constant::Bool(b)) => Operand::const_from_scalar(self.tcx, self.tcx.types.bool, Scalar::from_bool(*b), span),
+            bir::Operand::Constant(bir::Constant::Float(text)) => {
+                let Ok(value) = text.parse::<f64>() else { self.refuse(&format!("the float literal `{text}`")) };
+                let double = <rustc_apfloat::ieee::Double as rustc_apfloat::Float>::from_bits(u128::from(value.to_bits()));
+                Operand::const_from_scalar(self.tcx, self.tcx.types.f64, Scalar::from_f64(double), span)
+            }
             bir::Operand::Place(source) => match source.fact {
                 bir::OwnershipFact::Copy => Operand::Copy(self.place(&source.place)),
                 bir::OwnershipFact::Move => Operand::Move(self.place(&source.place)),
@@ -251,6 +259,20 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     fn lower_binary(&mut self, op: bir::BinOp, lhs: &bir::Operand, rhs: &bir::Operand, dest: Place<'tcx>, span: Span) {
         let (a, b) = (self.operand(lhs), self.operand(rhs));
         let compare = |op| Rvalue::BinaryOp(op, Box::new((a.clone(), b.clone())));
+        // `float` arithmetic is IEEE arithmetic with no overflow check, as in Rust; `int` arithmetic is checked.
+        if a.ty(&self.cfg.locals, self.tcx).is_floating_point() {
+            let arithmetic = match op {
+                bir::BinOp::Add => Some(BinOp::Add),
+                bir::BinOp::Sub => Some(BinOp::Sub),
+                bir::BinOp::Mul => Some(BinOp::Mul),
+                bir::BinOp::Div => Some(BinOp::Div),
+                _ => None,
+            };
+            if let Some(arithmetic) = arithmetic {
+                self.cfg.assign(self.current, dest, Rvalue::BinaryOp(arithmetic, Box::new((a, b))), span);
+                return;
+            }
+        }
         match op {
             bir::BinOp::Add => self.checked_arithmetic(BinOp::Add, a, b, dest, span),
             bir::BinOp::Sub => self.checked_arithmetic(BinOp::Sub, a, b, dest, span),
