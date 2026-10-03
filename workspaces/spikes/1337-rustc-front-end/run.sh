@@ -119,3 +119,20 @@ if [ -n "${INCAN_SPIKE_FRONTEND_TARGET:-}" ]; then
 else
   printf 'skip step11 (set INCAN_SPIKE_FRONTEND_TARGET to a target dir holding incan_frontend and incan_std_core)\n'
 fi
+
+# Step 12: whole programs. The unchanged `fib`, `collatz` and `mandelbrot` benchmarks, `main` included, compile to native
+# binaries through the step 11 driver; `println` reaches the runtime shim in `step12_runtime.rs`. Same gate as step 11.
+if [ -n "${INCAN_SPIKE_FRONTEND_TARGET:-}" ]; then
+  benchmarks="$here/../../benchmarks/compute"
+  rustc +"$toolchain" --edition 2024 --crate-type rlib --crate-name incan_native_rt "$here/step12_runtime.rs" -o "$out/libincan_native_rt.rlib"
+  for program in fib collatz mandelbrot; do
+    "$out/step11_driver" --incan-source "$benchmarks/$program/$program.incn" --sysroot "$sysroot" --edition 2024 --cap-lints allow \
+      --crate-type bin --crate-name "$program" --extern incan_std_core="$std_core" --extern incan_native_rt="$out/libincan_native_rt.rlib" \
+      -L dependency="$deps" -L "$out" -o "$out/step12_$program" - </dev/null
+  done
+  expect_output step12_fib "fib(1000000) mod 1000000007 = 918091266"
+  expect_output step12_collatz "Total Collatz steps for 1..1000000: 131434424"
+  expect_output step12_mandelbrot "Total iterations: 97631088"
+else
+  printf 'skip step12 (set INCAN_SPIKE_FRONTEND_TARGET, as for step 11)\n'
+fi

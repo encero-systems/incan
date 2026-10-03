@@ -134,7 +134,9 @@ pub fn closure_skeleton(params_list: &[(&str, TySpec)], ret: TySpec, captures: &
 pub fn function_with_closures(name: &str, generics: ast::Generics, params_list: &[(&str, TySpec)], ret: TySpec, closures: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Item> {
     let inputs = params(params_list, span);
     let body = placeholder(closures, span);
-    let sig = ast::FnSig { header: ast::FnHeader::default(), decl: Box::new(ast::FnDecl { inputs, output: ast::FnRetTy::Ty(ty(&ret, span)) }), span };
+    // `()` is the unit return type, spelled by omitting the return type as Rust does.
+    let output = if ret.0 == "()" { ast::FnRetTy::Default(span) } else { ast::FnRetTy::Ty(ty(&ret, span)) };
+    let sig = ast::FnSig { header: ast::FnHeader::default(), decl: Box::new(ast::FnDecl { inputs, output }), span };
     item(ast::ItemKind::Fn(Box::new(ast::Fn {
         defaultness: ast::Defaultness::Implicit, ident: ident(name, span), generics, sig,
         contract: None, define_opaque: None, body: Some(body), eii_impls: ThinVec::new(),

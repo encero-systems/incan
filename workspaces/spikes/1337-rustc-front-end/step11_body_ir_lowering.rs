@@ -72,6 +72,8 @@ fn type_name(ty: &IncanType) -> Option<&'static str> {
         IncanType::Primitive(IncanPrimitiveType::Int) => Some("i64"),
         IncanType::Primitive(IncanPrimitiveType::Bool) => Some("bool"),
         IncanType::Primitive(IncanPrimitiveType::Float) => Some("f64"),
+        IncanType::Primitive(IncanPrimitiveType::Unit) => Some("()"),
+        IncanType::Primitive(IncanPrimitiveType::Str) => Some("String"),
         _ => None,
     }
 }
@@ -81,8 +83,16 @@ fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
         IncanType::Primitive(IncanPrimitiveType::Int) => Some(tcx.types.i64),
         IncanType::Primitive(IncanPrimitiveType::Bool) => Some(tcx.types.bool),
         IncanType::Primitive(IncanPrimitiveType::Float) => Some(tcx.types.f64),
+        IncanType::Primitive(IncanPrimitiveType::Unit) => Some(tcx.types.unit),
+        IncanType::Primitive(IncanPrimitiveType::Str) => Some(string_ty(tcx)),
         _ => None,
     }
+}
+
+/// Incan's `str` is Rust's `String`, the representation RFC 121 gives it.
+fn string_ty<'tcx>(tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
+    let Some(string) = tcx.lang_items().string() else { tcx.dcx().fatal("this sysroot has no `String` lang item") };
+    tcx.type_of(string).instantiate_identity().skip_normalization()
 }
 
 // ============================================================================
@@ -224,6 +234,8 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             bir::StatementKind::Continue => self.jump_out(|(header, _)| header, "continue", span),
             bir::StatementKind::Return { value } => self.lower_return(value.as_ref(), span),
             bir::StatementKind::IterNext { destination, iterator, .. } => self.lower_iter_next(destination, iterator, span),
+            // An expression statement only discards an already-computed value.
+            bir::StatementKind::Expr { .. } => {}
             bir::StatementKind::Drop { local } => {
                 let place = self.places.get(&local.0).copied().unwrap_or_else(|| self.refuse("a drop of an unplanned local"));
                 let next = self.cfg.block();
@@ -252,6 +264,7 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
                 self.cfg.assign(self.current, dest, Rvalue::UnaryOp(UnOp::Not, value), span);
             }
             bir::Rvalue::BinaryOp(op, lhs, rhs) => self.lower_binary(*op, lhs, rhs, dest, span),
+            bir::Rvalue::Format(parts) => self.lower_format(parts, dest, span),
             other => self.refuse(&format!("the rvalue `{}`", rvalue_name(other))),
         }
     }
@@ -343,15 +356,113 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
         if target.builtin == Some(BuiltinFnId::Range) {
             // `range(a, b)` is `core::ops::Range { start: a, end: b }`.
             let Some(range) = self.tcx.lang_items().range_struct() else { self.refuse("ranges without the `Range` lang item") };
-            let [start, end] = <[Operand<'tcx>; 2]>::try_from(operands).unwrap_or_else(|_| self.refuse("`range` with other than two arguments"));
+            let zero = || Operand::const_from_scalar(self.tcx, self.tcx.types.i64, Scalar::from_i64(0), span);
+            let (start, end) = match <[Operand<'tcx>; 2]>::try_from(operands) {
+                Ok([start, end]) => (start, end),
+                Err(operands) => match <[Operand<'tcx>; 1]>::try_from(operands) {
+                    Ok([end]) => (zero(), end),
+                    Err(_) => self.refuse("`range` with other than one or two arguments"),
+                },
+            };
             let kind = AggregateKind::Adt(range, VariantIdx::from_u32(0), self.tcx.mk_args(&[self.tcx.types.i64.into()]), None, None);
             self.cfg.assign(self.current, dest, Rvalue::Aggregate(Box::new(kind), IndexVec::from_raw(vec![start, end])), span);
+            return;
+        }
+        if target.builtin == Some(BuiltinFnId::Float) {
+            // `float(x)` on an `int` is Rust's `x as f64`.
+            let Ok([value]) = <[Operand<'tcx>; 1]>::try_from(operands) else { self.refuse("`float` with other than one argument") };
+            if !value.ty(&self.cfg.locals, self.tcx).is_integral() {
+                self.refuse("`float` of a non-`int` value");
+            }
+            self.cfg.assign(self.current, dest, Rvalue::Cast(CastKind::IntToFloat, value, self.tcx.types.f64), span);
+            return;
+        }
+        if target.builtin == Some(BuiltinFnId::Print) {
+            // The emitter expands `println` into Rust's `println!` macro, which nothing can call. The native route calls
+            // a runtime function instead; here the spike's runtime shim stands in for the stdlib's.
+            let Ok([text]) = <[Operand<'tcx>; 1]>::try_from(operands) else { self.refuse("`println` with other than one argument") };
+            if text.ty(&self.cfg.locals, self.tcx) != string_ty(self.tcx) {
+                self.refuse("`println` of a non-`str` value");
+            }
+            self.call(extern_item(self.tcx, &["incan_native_rt", "println"]), &[], vec![text], dest, span);
             return;
         }
         if target.builtin.is_some() {
             self.refuse(&format!("the builtin `{}`", target.name));
         }
         self.call(local_item(self.tcx, &target.name), &[], operands, dest, span);
+    }
+
+    /// An f-string: `incan_std_core::strings::fstring(parts, args)`, the runtime call the emitted route makes. `parts`
+    /// holds one more literal than there are values, empty where two values or an end meet; each value becomes a
+    /// `String` through `ToString::to_string`, which is `Display` for `int` and `str`.
+    fn lower_format(&mut self, format: &[bir::FormatPart], dest: Place<'tcx>, span: Span) {
+        let tcx = self.tcx;
+        let (mut literals, mut values, mut pending) = (Vec::new(), Vec::new(), String::new());
+        for part in format {
+            match part {
+                bir::FormatPart::Literal(text) => pending.push_str(text),
+                bir::FormatPart::Expr { operand, style: bir::FormatStyle::Display } => {
+                    literals.push(std::mem::take(&mut pending));
+                    values.push(self.display_string(operand, span));
+                }
+                bir::FormatPart::Expr { .. } => self.refuse("`{x!r}`-style debug formatting"),
+            }
+        }
+        literals.push(pending);
+
+        let erased = tcx.lifetimes.re_erased;
+        let str_ref = Ty::new_imm_ref(tcx, erased, tcx.types.str_);
+        let parts: Vec<Operand<'tcx>> = literals.iter().map(|text| common::str_literal(tcx, text, span)).collect();
+        let parts = self.slice_of(str_ref, parts, span);
+        let string = string_ty(tcx);
+        let args_array = self.cfg.temp(Ty::new_array(tcx, string, values.len() as u64));
+        let moved: Vec<Operand<'tcx>> = values.into_iter().map(Operand::Move).collect();
+        self.cfg.assign(self.current, args_array, Rvalue::Aggregate(Box::new(AggregateKind::Array(string)), IndexVec::from_raw(moved)), span);
+        let args = self.borrow_as_slice(args_array, string, span);
+        self.call(extern_item(tcx, &["incan_std_core", "strings", "fstring"]), &[], vec![Operand::Move(parts), Operand::Move(args)], dest, span);
+        let next = self.cfg.block();
+        self.cfg.terminate(self.current, TerminatorKind::Drop { place: args_array, target: next, unwind: UnwindAction::Continue, replace: false, drop: None }, span);
+        self.current = next;
+    }
+
+    /// `ToString::to_string(&value)` into a fresh `String`.
+    fn display_string(&mut self, value: &bir::Operand, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
+        let value = self.operand(value);
+        let value_ty = value.ty(&self.cfg.locals, tcx);
+        if !(value_ty.is_integral() || value_ty == string_ty(tcx)) {
+            self.refuse(&format!("displaying a value of type `{value_ty}`"));
+        }
+        let held = self.cfg.temp(value_ty);
+        self.cfg.assign(self.current, held, Rvalue::Use(value, WithRetag::Yes), span);
+        let erased = tcx.lifetimes.re_erased;
+        let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, value_ty));
+        self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, held), span);
+        let Some(to_string) = tcx.get_diagnostic_item(rustc_span::Symbol::intern("to_string_method")) else { self.refuse("displaying without `ToString`") };
+        let text = self.cfg.temp(string_ty(tcx));
+        self.call(to_string, &[value_ty.into()], vec![Operand::Move(borrowed)], text, span);
+        text
+    }
+
+    /// `&[elements]` as a `&[T]` slice: an array temporary, borrowed, then unsized as Rust coerces `&[T; N]`.
+    fn slice_of(&mut self, element: Ty<'tcx>, elements: Vec<Operand<'tcx>>, span: Span) -> Place<'tcx> {
+        let array = self.cfg.temp(Ty::new_array(self.tcx, element, elements.len() as u64));
+        self.cfg.assign(self.current, array, Rvalue::Aggregate(Box::new(AggregateKind::Array(element)), IndexVec::from_raw(elements)), span);
+        self.borrow_as_slice(array, element, span)
+    }
+
+    fn borrow_as_slice(&mut self, array: Place<'tcx>, element: Ty<'tcx>, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
+        let erased = tcx.lifetimes.re_erased;
+        let array_ty = array.ty(&self.cfg.locals, tcx).ty;
+        let array_ref = self.cfg.temp(Ty::new_imm_ref(tcx, erased, array_ty));
+        self.cfg.assign(self.current, array_ref, Rvalue::Ref(erased, BorrowKind::Shared, array), span);
+        let slice_ref_ty = Ty::new_imm_ref(tcx, erased, Ty::new_slice(tcx, element));
+        let slice = self.cfg.temp(slice_ref_ty);
+        let unsize = CastKind::PointerCoercion(rustc_middle::ty::adjustment::PointerCoercion::Unsize, CoercionSource::Implicit);
+        self.cfg.assign(self.current, slice, Rvalue::Cast(unsize, Operand::Move(array_ref), slice_ref_ty), span);
+        slice
     }
 
     fn lower_if(&mut self, cond: &bir::Operand, then_block: &bir::Block, else_block: Option<&bir::Block>, span: Span) {
@@ -429,6 +540,19 @@ fn local_of(place: &bir::Place) -> Option<u32> {
     }
 }
 
+/// Whether `body` calls the `println` builtin, so the unit needs the runtime crate that provides it.
+fn calls_println(body: &bir::Body) -> bool {
+    let mut found = false;
+    visit_statements(&body.block, &mut |stmt| {
+        if let bir::StatementKind::Call { callee: bir::Callee::Function(bir::CallableTarget::Named(target)), .. } = &stmt.kind
+            && target.builtin == Some(BuiltinFnId::Print)
+        {
+            found = true;
+        }
+    });
+    found
+}
+
 fn is_builtin_range(callee: &bir::Callee) -> bool {
     matches!(callee, bir::Callee::Function(bir::CallableTarget::Named(target)) if target.builtin == Some(BuiltinFnId::Range))
 }
@@ -465,9 +589,16 @@ fn lower_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, body: &bir::Body) -> Bod
     let mut lowering = Lowering { tcx, body, cfg, places: HashMap::new(), current: BasicBlock::from_u32(0), loops: Vec::new(), exit };
     lowering.plan_locals();
     lowering.lower_block(&body.block);
-    // Falling off the end of a body is unreachable for a function that returns a value: the checker proved every
-    // path returns, and the block a `return` leaves behind is never entered.
-    lowering.cfg.terminate(lowering.current, TerminatorKind::Unreachable, lowering.cfg.span);
+    // A `None`-returning function returns `()` when it falls off its end. For a function that returns a value, falling
+    // off the end is unreachable: the checker proved every path returns, and the block a `return` leaves behind is
+    // never entered.
+    if body.return_type == IncanType::Primitive(IncanPrimitiveType::Unit) {
+        let unit = Rvalue::Aggregate(Box::new(AggregateKind::Tuple), IndexVec::new());
+        lowering.cfg.assign(lowering.current, Place::return_place(), unit, lowering.cfg.span);
+        lowering.cfg.terminate(lowering.current, TerminatorKind::Goto { target: exit }, lowering.cfg.span);
+    } else {
+        lowering.cfg.terminate(lowering.current, TerminatorKind::Unreachable, lowering.cfg.span);
+    }
     lowering.cfg.finish()
 }
 
@@ -503,6 +634,9 @@ impl rustc_driver::Callbacks for Callbacks {
         let _ = SOURCE_START.set(file.start_pos);
         let span = krate.spans.inner_span;
         krate.items.push(extern_crate("incan_std_core", span));
+        if module.bodies.iter().any(calls_println) {
+            krate.items.push(extern_crate("incan_native_rt", span));
+        }
         for body in &module.bodies {
             let ty_of = |local: &bir::LocalId| body.locals.iter().find(|l| l.id == *local).and_then(|l| type_name(&l.ty));
             let params: Option<Vec<(&str, common::TySpec)>> = body.param_locals.iter().zip(&body.params)
