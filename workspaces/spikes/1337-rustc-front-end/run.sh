@@ -100,3 +100,22 @@ expect_output step9_target "answer() = 42"
 build_driver step10_drops_and_unwinding
 compile_with step10_drops_and_unwinding step10_program
 expect_output step10_program "10 7 unwound=true drops=1,2,3"
+
+# Step 11: real Body IR, lowered natively. The driver links this checkout's Incan front end, built with the pinned
+# rustc into its own target directory: CARGO_TARGET_DIR=<dir> cargo +1.98.0 build -p incan_frontend -p incan_std_core
+# Set INCAN_SPIKE_FRONTEND_TARGET=<dir> to run it; without it the step is reported as skipped, never as passing.
+if [ -n "${INCAN_SPIKE_FRONTEND_TARGET:-}" ]; then
+  deps="$INCAN_SPIKE_FRONTEND_TARGET/debug/deps"
+  lang=$(ls "$deps"/libincan_lang-*.rlib | head -1)
+  core=$(ls "$deps"/libincan_semantics_core-*.rlib | head -1)
+  RUSTC_BOOTSTRAP=1 rustc +"$toolchain" --edition 2024 -A warnings "$here/step11_body_ir_lowering.rs" -o "$out/step11_driver" \
+    -L dependency="$deps" --extern incan_frontend="$INCAN_SPIKE_FRONTEND_TARGET/debug/libincan_frontend.rlib" \
+    --extern incan_lang="$lang" --extern incan_semantics_core="$core"
+  std_core="$INCAN_SPIKE_FRONTEND_TARGET/debug/libincan_std_core.rlib"
+  "$out/step11_driver" --incan-source "$here/step11_kernels.incn" --sysroot "$sysroot" --edition 2024 --cap-lints allow \
+    --crate-type rlib --crate-name kernels --extern incan_std_core="$std_core" -L dependency="$deps" -o "$out/libkernels.rlib" - </dev/null
+  rustc +"$toolchain" --edition 2024 --extern kernels="$out/libkernels.rlib" -L "$out" -L dependency="$deps" "$here/step11_app.rs" -o "$out/step11_app"
+  expect_output step11_app "$(printf 'fib(1000000) mod 1000000007 = 918091266\nTotal Collatz steps for 1..1000000: 131434424')"
+else
+  printf 'skip step11 (set INCAN_SPIKE_FRONTEND_TARGET to a target dir holding incan_frontend and incan_std_core)\n'
+fi

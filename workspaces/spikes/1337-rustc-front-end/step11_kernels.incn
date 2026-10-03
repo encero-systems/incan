@@ -1,0 +1,26 @@
+# Step 11's Incan source: the two kernels of the `fib` and `collatz` benchmarks, unchanged.
+
+def fib_mod(n: int, modulo: int) -> int:
+    if n <= 1:
+        return n
+
+    mut prev = 0
+    mut curr = 1
+
+    for i in range(2, n + 1):
+        next = (prev + curr) % modulo
+        prev = curr
+        curr = next
+
+    return curr
+
+def collatz_steps(n: int) -> int:
+    mut count = 0
+    mut num = n
+    while num != 1:
+        if num % 2 == 0:
+            num = num // 2
+        else:
+            num = 3 * num + 1
+        count += 1
+    return count
