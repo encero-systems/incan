@@ -1,0 +1,31 @@
+# behavior: a decorator on a `mut self` method returns a function whose first parameter is `mut` in the method's place, and that function's changes to the receiver are visible to the caller after each call (RFC 036)
+# expect-stdout:
+#   main
+#   5
+#   9
+#   9
+
+class Counter:
+    pub value: int
+
+    @doubled
+    def add(mut self, by: int) -> int:
+        self.value += by
+        return self.value
+
+
+def grow(mut counter: Counter, by: int) -> int:
+    counter.value += by * 2
+    return counter.value
+
+
+def doubled(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
+    return grow
+
+
+def main() -> None:
+    println("main")
+    mut counter = Counter(value=1)
+    println(counter.add(2))
+    println(counter.add(2))
+    println(counter.value)

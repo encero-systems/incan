@@ -186,7 +186,7 @@ def numbers() -> Generator[int]:
     --8<-- "_snippets/language/examples/verified_collections_solution.incn"
     ```
 
-`dict.get(...)` returns a borrowed value. Calling `.copied()` turns `Option[&int]` into `Option[int]` before `unwrap_or(0)` supplies the owned fallback.
+`dict.get(...)` returns an `Option[int]`: `Some` holding the stored count, or `None` for a name not counted yet, which `unwrap_or(0)` turns into `0`.
 
 ## Where to learn more
 

@@ -1,0 +1,20 @@
+# behavior: a class satisfies a trait's required method through a keyword-named alias of one of its own methods (#1055)
+# retires: loaves/compiler/incan_emit/src/codegen.rs::trait_method_alias_emits_required_adopted_method_issue1055
+# expect-stdout:
+#   7
+#   8
+
+trait Renamable:
+    def where(self, value: int) -> int: ...
+
+
+class Example with Renamable:
+    where = alias filter
+
+    def filter(self, value: int) -> int:
+        return value
+
+
+def main() -> None:
+    println(Example().where(7))
+    println(Example().filter(8))

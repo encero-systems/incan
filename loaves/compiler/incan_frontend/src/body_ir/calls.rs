@@ -590,13 +590,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let name = name.clone();
 
         // A retained zero-argument constructor fact distinguishes builtin construction from a same-spelled source
-        // callable. Only empty Set/Dict construction is admitted here; iterable conversions stay on their existing
-        // path.
+        // callable. Only empty List/Set/Dict construction is admitted here; iterable conversions stay on their
+        // existing path.
         if args.is_empty()
             && type_args.is_empty()
             && let Some(constructor) = self.type_info.resolved_collection_constructor(span)
         {
             match constructor {
+                CollectionTypeId::List => {
+                    return self.lower_aggregate(bir::AggregateKind::List, &[], span, scope, out);
+                }
                 CollectionTypeId::Set => {
                     return self.lower_aggregate(bir::AggregateKind::Set, &[], span, scope, out);
                 }

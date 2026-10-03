@@ -1,0 +1,5 @@
+pub model Product:
+    pub label: str
+
+
+pub type Answer = Product | int

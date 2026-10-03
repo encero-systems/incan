@@ -1,12 +1,12 @@
 //! A digest over checked meaning, computed from values.
 //!
-//! RFC 106 requires the semantic digest be computed from checked values rather than by normalising a rendered
+//! RFC 106 requires the semantic digest be computed from checked values rather than by normalizing a rendered
 //! form, and the rule is not stylistic. A rendering embeds positional data *inside* composite strings — an identity
 //! spelling carrying its own `@start..end`, for example — so scrubbing text after the fact reliably misses cases
 //! that omitting a field cannot. An earlier probe did exactly that, stripped `span=` and `#decl.`, and still leaked
 //! the offset through a nested identity rendering.
 //!
-//! The approach here is the one RFC 106 cites as prior art: normalise the structured value, then serialise.
+//! The approach here is the one RFC 106 cites as prior art: normalize the structured value, then serialize.
 //! [`DigestSerializer`] walks a value through `serde` and feeds a hasher, dropping fields whose names are
 //! positional. Because it works field-by-field over the real value, a field added to Body IR later is included
 //! automatically — the drift that a hand-written visitor suffers, where a new field is silently omitted and the
@@ -48,9 +48,9 @@ fn is_positional_field(name: &str) -> bool {
     name == "span" || name.ends_with("_span") || POSITIONAL_ID_FIELDS.contains(&name)
 }
 
-/// The error type for digest serialisation.
+/// The error type for digest serialization.
 ///
-/// Serialising into a hasher cannot fail on I/O, so the only error is one `serde` itself raises.
+/// Serializing into a hasher cannot fail on I/O, so the only error is one `serde` itself raises.
 #[derive(Debug)]
 pub struct DigestError(String);
 
@@ -82,7 +82,7 @@ pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
-/// A `serde` serialiser that feeds a hasher instead of producing a document.
+/// A `serde` serializer that feeds a hasher instead of producing a document.
 ///
 /// Every value is written with a type tag and, for anything variable-length, an explicit length. Both matter: a tag
 /// stops two differently-typed values with the same bytes from colliding, and a length stops adjacent values from
@@ -327,7 +327,7 @@ impl ser::SerializeMap for DigestSerializer<'_> {
     }
 }
 
-/// Serialises a struct's fields, dropping the positional ones.
+/// Serializes a struct's fields, dropping the positional ones.
 ///
 /// The field *name* is hashed alongside its value, so moving a value between two same-typed fields is a change
 /// rather than a coincidence.
@@ -445,7 +445,7 @@ mod tests {
     /// A field's name must reach the digest, so moving a value between two same-typed fields is a change.
     ///
     /// Without the name, a struct is just its values in order, and swapping two same-typed fields — a real
-    /// behavioural change — produces an identical digest.
+    /// behavioral change — produces an identical digest.
     #[test]
     fn field_names_reach_the_digest() -> Result<(), Box<dyn std::error::Error>> {
         #[derive(Serialize)]

@@ -9,14 +9,19 @@ impl<'a> Parser<'a> {
         Ok(path)
     }
 
+    /// Require the `::` that separates `pub` from the dependency key in a `pub::<library>` import.
+    ///
+    /// Any other token is refused with the form-specific diagnostic; a `.` in that position is consumed first, so the
+    /// diagnostic points at what follows it.
     fn expect_pub_namespace_separator(&mut self, form: errors::PubImportForm) -> Result<(), CompileError> {
         if self.match_punct(PunctuationId::ColonColon) {
             return Ok(());
         }
-        if self.match_punct(PunctuationId::Dot) {
-            return Err(errors::pub_import_expected_namespace_separator(self.current_span(), form));
-        }
-        Err(errors::pub_import_expected_namespace_separator(self.current_span(), form))
+        self.match_punct(PunctuationId::Dot);
+        Err(errors::pub_import_expected_namespace_separator(
+            self.current_span(),
+            form,
+        ))
     }
 
     /// Parse one source, package, Python, or Rust import declaration after its optional visibility marker.
@@ -27,8 +32,10 @@ impl<'a> Parser<'a> {
             if self.match_keyword(KeywordId::Rust) {
                 // RFC 005: dot-notation `from rust.crate import ...` — warn and recover by treating `.` as `::`.
                 if self.check_punct(PunctuationId::Dot) {
-                    self.warnings
-                        .push(errors::rust_import_dot_notation(self.current_span(), errors::RustImportForm::From));
+                    self.warnings.push(errors::rust_import_dot_notation(
+                        self.current_span(),
+                        errors::RustImportForm::From,
+                    ));
                     self.match_punct(PunctuationId::Dot);
                 } else {
                     self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
@@ -93,8 +100,10 @@ impl<'a> Parser<'a> {
             // Rust crate import: import rust::serde_json or import rust::serde_json::Value
             // RFC 005: dot-notation `import rust.crate` — warn and recover by treating `.` as `::`.
             if self.check_punct(PunctuationId::Dot) {
-                self.warnings
-                    .push(errors::rust_import_dot_notation(self.current_span(), errors::RustImportForm::Import));
+                self.warnings.push(errors::rust_import_dot_notation(
+                    self.current_span(),
+                    errors::RustImportForm::Import,
+                ));
                 self.match_punct(PunctuationId::Dot);
             } else {
                 self.expect_punct(PunctuationId::ColonColon, "Expected '::' after 'rust'")?;
@@ -136,8 +145,8 @@ impl<'a> Parser<'a> {
     /// - `serde_json` -> ("serde_json", [])
     /// - `serde_json::Value` -> ("serde_json", ["Value"])
     /// - `std::collections::HashMap` -> ("std", ["collections", "HashMap"])
-    /// - `substrait::proto::type` -> ("substrait", ["proto", "type"]) — Rust modules may match Incan
-    ///   keywords (e.g. Substrait's `proto::type`); use `identifier_or_any_keyword` for segments.
+    /// - `substrait::proto::type` -> ("substrait", ["proto", "type"]) — Rust modules may match Incan keywords (e.g.
+    ///   Substrait's `proto::type`); use `identifier_or_any_keyword` for segments.
     ///
     /// Both `::` and `.` are accepted as separators here to support dot-notation recovery (`from rust.std.time import
     /// Instant` → same result as `from rust::std::time import Instant`).
@@ -192,6 +201,40 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
+    /// Consume the leading dots of a relative import path and return how many directory levels they climb.
+    ///
+    /// A run of `n` adjacent dots climbs `n - 1` levels: `..` one, `...` two, `....` three. The lexer splits a longer
+    /// run into `...`, `..` and `.` tokens, so the dots are counted across tokens whose spans touch. A run starts with
+    /// `..` or `...`; a lone `.` is not consumed. Runs separated by whitespace (`.. ..`) each climb on their own.
+    fn relative_import_dot_levels(&mut self) -> usize {
+        let mut levels = 0;
+        let mut run: usize = 0;
+        let mut run_end = None;
+        loop {
+            let token = self.peek();
+            let dots = if token.kind.is_operator(OperatorId::DotDot) {
+                2
+            } else if token.kind.is_punctuation(PunctuationId::Ellipsis) {
+                3
+            } else if token.kind.is_punctuation(PunctuationId::Dot) {
+                1
+            } else {
+                break;
+            };
+            if run_end != Some(token.span.start) {
+                if dots < 2 {
+                    break;
+                }
+                levels += run.saturating_sub(1);
+                run = 0;
+            }
+            run += dots;
+            run_end = Some(token.span.end);
+            self.advance();
+        }
+        levels + run.saturating_sub(1)
+    }
+
     /// Parse an import path, supporting:
     /// - Simple: `models`, `utils::helpers`
     /// - Relative with dots: `..common`, `...shared.utils`
@@ -203,19 +246,15 @@ impl<'a> Parser<'a> {
         let mut is_absolute = false;
         let mut segments = Vec::new();
 
-        // Check for leading `..` (Python-style parent navigation)
-        while self.match_op(OperatorId::DotDot) {
-            parent_levels += 1;
-        }
+        // Leading dots climb directories (Python-style parent navigation).
+        parent_levels += self.relative_import_dot_levels();
 
         // Check for `crate` (absolute path)
         if parent_levels == 0 && self.match_keyword(KeywordId::Crate) {
             is_absolute = true;
             // Expect :: or . after crate
             if !self.match_punct(PunctuationId::ColonColon) && !self.match_punct(PunctuationId::Dot) {
-                return Err(errors::import_path_expected_separator_after_crate(
-                    self.current_span(),
-                ));
+                return Err(errors::import_path_expected_separator_after_crate(self.current_span()));
             }
         }
 
@@ -229,9 +268,7 @@ impl<'a> Parser<'a> {
                     && !self.check_keyword(KeywordId::As)
                     && !self.check(&TokenKind::Newline)
                 {
-                    return Err(errors::import_path_expected_separator_after_super(
-                        self.current_span(),
-                    ));
+                    return Err(errors::import_path_expected_separator_after_super(self.current_span()));
                 }
             }
         }

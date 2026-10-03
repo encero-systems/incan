@@ -1,0 +1,15 @@
+# behavior: a Rust standard-output handle is handed to an Incan function that declares its parameter mut, and the function runs with it
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_moves_owned_mutable_rust_handle
+# expect-stdout:
+#   used
+
+from rust::std::io import Stdout, stdout
+
+
+def use_handle(mut output: Stdout) -> str:
+    _ = output.lock()
+    return "used"
+
+
+def main() -> None:
+    println(use_handle(stdout()))

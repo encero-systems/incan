@@ -1,0 +1,5 @@
+from defaults import fallback
+
+
+pub def combine(left: int, middle: int = fallback()) -> int:
+    return left + middle

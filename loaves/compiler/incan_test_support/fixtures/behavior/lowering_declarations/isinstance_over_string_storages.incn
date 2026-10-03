@@ -1,0 +1,25 @@
+# behavior: isinstance against str matches a union value whichever string storage it carries, FrozenStr or str, and not an int, while the int arm matches only the int
+# retires: loaves/compiler/incan_ir/src/types.rs::isinstance_string_storage_identity_is_symmetric_without_widening_union_carriers
+# expect-stdout:
+#   frozen: str
+#   owned: str
+#   number: int
+
+const FROZEN: FrozenStr = "frozen"
+
+type Label = FrozenStr | str | int
+
+
+def classify(value: Label) -> str:
+    if isinstance(value, str):
+        return "str"
+    if isinstance(value, int):
+        return "int"
+    return "other"
+
+
+def main() -> None:
+    println(f"frozen: {classify(FROZEN)}")
+    owned: str = "owned"
+    println(f"owned: {classify(owned)}")
+    println(f"number: {classify(7)}")

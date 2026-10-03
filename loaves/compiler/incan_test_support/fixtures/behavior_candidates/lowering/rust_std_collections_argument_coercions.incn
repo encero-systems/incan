@@ -1,0 +1,30 @@
+# behavior: a str literal passed to a Rust method expecting a borrowed str is borrowed, a lookup method keeps its argument shape, and an argument a Rust method takes by mutable reference is borrowed mutably
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_method_call_wraps_args_with_rust_arg_coercion
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_method_call_threads_arg_shape_hint_from_typechecker
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_method_call_applies_required_concrete_borrow_despite_arg_shape_hint
+# expect-stdout:
+#   11
+#   1
+#   3
+
+from rust::std::string import String as RustString
+from rust::std::collections import HashMap
+from rust::std::vec import Vec
+
+
+def main() -> None:
+    mut text = RustString.from("hello")
+    text.push_str(" world")
+    println(text.len())
+    mut table: HashMap[str, int] = HashMap.new()
+    table.insert("one", 1)
+    match table.get("one"):
+        Some(found) => println(found)
+        None => println("missing")
+    mut left: Vec[int] = Vec.new()
+    left.push(1)
+    mut right: Vec[int] = Vec.new()
+    right.push(2)
+    right.push(3)
+    left.append(right)
+    println(left.len())

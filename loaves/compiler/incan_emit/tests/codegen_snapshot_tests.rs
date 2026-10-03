@@ -37,6 +37,18 @@ fn generate_rust(source: &str) -> String {
 
 /// Generate Rust while retaining RFC 120's exact physical symbol projections.
 fn generate_projected_rust(source: &str) -> String {
+    generate_projected_rust_as(source, false)
+}
+
+/// Generate Rust code for one standard-library source module, which the checker checks as the standard library's own
+/// source, as a project build does.
+fn generate_standard_library_module_rust(source: &str) -> String {
+    normalize_projected_symbols_for_readable_codegen(&generate_projected_rust_as(source, true))
+}
+
+/// Generate Rust while retaining RFC 120's exact physical symbol projections; `standard_library_source` says whether
+/// the source is a module of the standard library.
+fn generate_projected_rust_as(source: &str, standard_library_source: bool) -> String {
     let source = source.to_string();
     incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let Ok(tokens) = lexer::lex(&source) else {
@@ -45,7 +57,9 @@ fn generate_projected_rust(source: &str) -> String {
         let Ok(ast) = parser::parse(&tokens) else {
             panic!("parser failed");
         };
-        let code = match codegen_with_builtin_stdlib_inventory().try_generate(&ast) {
+        let mut codegen = codegen_with_builtin_stdlib_inventory();
+        codegen.set_standard_library_source(standard_library_source);
+        let code = match codegen.try_generate(&ast) {
             Ok(code) => code,
             Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
         };
@@ -125,6 +139,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "name".to_string(),
             ty: TypeRef::Named {
                 origin: None,
@@ -605,6 +620,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str, keyword_
         emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "value".to_string(),
             ty: TypeRef::Named {
                 origin: None,
@@ -1670,10 +1686,10 @@ def main() -> None:
     fn trait_method_keeps_abi_slot_and_exposes_one_recoverable_concrete_projection() -> TestResult {
         let rust_code = generate_registry_rust(
             r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str
 
-class Item with Labelled:
+class Item with Labeled:
   value: str
 
   def label(self) -> str:
@@ -1806,11 +1822,11 @@ def main() -> None:
     fn adopted_default_method_exposes_a_recoverable_projection_beside_the_trait_slot() -> TestResult {
         let rust_code = generate_registry_rust(
             r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str:
     return "default"
 
-class Item with Labelled:
+class Item with Labeled:
   value: str
 
 def main() -> None:
@@ -2231,13 +2247,13 @@ def main() -> None:
 import std.async
 from std.web import route, POST
 
-@route("/things", methods=[POST])
-async def create(id: int) -> int:
-  return id
+@route("/things/{id}", methods=[POST])
+async def create(id: int) -> str:
+  return str(id)
 
-@route("/search")
-async def search(id: int) -> int:
-  return id
+@route("/search/{id}")
+async def search(id: int) -> str:
+  return str(id)
 "#;
 
     let Ok(main_tokens) = lexer::lex(main_source) else {
@@ -2688,6 +2704,7 @@ def main() -> None:
                     origin: ImplementationTraitBoundOriginExport::Standard,
                 }],
             }],
+            inferred: false,
         }],
         derives: Vec::new(),
         fields: Vec::new(),
@@ -2742,7 +2759,7 @@ pub def consume[R with BinaryReader](reader: R) -> Result[None, str]:
 #[test]
 fn test_fallible_iterator_adapter_chain_codegen() {
     let source = r#"
-trait FallibleStream[T, E]:
+trait FallibleStream[T with Clone, E]:
   def __next__(mut self) -> Result[Option[T], E]: ...
 
   def map[U with Clone](self, f: (T) -> U) -> FallibleStream[U, E]:
@@ -2779,7 +2796,7 @@ model NumberStream with FallibleStream[int, str]:
     self.index += 1
     return Ok(Some(item))
 
-model MappedStream[T, E, Source with FallibleStream[T, E], Output] with FallibleStream[Output, E]:
+model MappedStream[T with Clone, E, Source with FallibleStream[T, E], Output with Clone] with FallibleStream[Output, E]:
   source: Source
   f: (T) -> Output
   error_marker: Option[E] = None
@@ -2792,7 +2809,7 @@ model MappedStream[T, E, Source with FallibleStream[T, E], Output] with Fallible
       Ok(None) => return Ok(None)
       Err(error) => return Err(error)
 
-model ErrorMappedStream[T, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
+model ErrorMappedStream[T with Clone, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
   source: Source
   f: (E) -> MappedError
   item_marker: Option[T] = None
@@ -2894,6 +2911,25 @@ fn test_mixed_numeric_codegen() {
     assert_codegen_snapshot!("mixed_numeric", rust_code);
 }
 
+/// Issue #1372: every display position of a `float` -- f-string interpolation, `str(x)`, and `println(x)` -- routes
+/// through `incan_std_core::strings::float_to_string` so an integral value renders as `100.0`, an `f64` included,
+/// since it is a `float` (RFC 009), while Debug interpolation keeps Rust's own formatting.
+#[test]
+fn test_float_display_codegen() {
+    let source = load_test_file("float_display");
+    let rust_code = generate_rust(&source);
+    assert_eq!(
+        rust_code.matches("incan_std_core::strings::float_to_string(").count(),
+        9,
+        "four interpolations, three `str()` calls, and two printed floats route through the runtime spelling:\n{rust_code}"
+    );
+    assert!(
+        compact_rust(&rust_code).contains("format!(\"{:?}\",total)"),
+        "Debug interpolation keeps Rust's Debug formatting:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("float_display", rust_code);
+}
+
 #[test]
 fn test_std_math_codegen() {
     let source = load_test_file("std_math");
@@ -2914,6 +2950,192 @@ fn test_std_fs_import_codegen() {
         "std.fs Path must not reuse the std.web Path extractor path; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("std_fs_import", rust_code);
+}
+
+#[test]
+fn test_issue1668_std_environ_args_codegen() {
+    let source = load_test_file("issue1668_std_environ_args");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::environ::args;"),
+        "std.environ args import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::environ::args()"),
+        "the argument vector read should call the source-defined std.environ.args; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_std_environ_args", rust_code);
+}
+
+#[test]
+fn test_issue1668_str_encode_bytes_decode_codegen() {
+    let source = load_test_file("issue1668_str_encode_bytes_decode");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains(".as_bytes().to_vec()"),
+        "str.encode should materialize owned UTF-8 bytes; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("::std::str::from_utf8(") && rust_code.contains("String::from_utf8_lossy("),
+        "bytes.decode should emit strict and replacing UTF-8 decoding; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("raise_value_error"),
+        "unsupported runtime labels and malformed input must raise ValueError; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_str_encode_bytes_decode", rust_code);
+}
+
+#[test]
+fn test_issue1668_dict_contains_key_codegen() {
+    let source = load_test_file("issue1668_dict_contains_key");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("files.contains_key(") && rust_code.contains("counts.contains_key(&id)"),
+        "mutable Dict.contains_key should emit HashMap::contains_key on owned and borrowed receivers; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_dict_contains_key", rust_code);
+}
+
+/// Indexed assignment, `in`, and `.get()` on a `mut Dict` parameter take the same route a local dict takes.
+#[test]
+fn test_issue1668_mut_dict_param_codegen() {
+    let source = load_test_file("issue1668_mut_dict_param");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("files.insert(key, value);"),
+        "indexed assignment into a mut Dict parameter must insert; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("files[key]") && !rust_code.contains(".contains(&key)"),
+        "a mut Dict parameter must never be indexed or probed with `.contains`; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("files.get(<_ as AsRef<str>>::as_ref(&key))"),
+        "`.get()` on a mut Dict[str, _] parameter must borrow its key; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_mut_dict_param", rust_code);
+}
+
+/// Guard for the 0.5.1 report that a `mut str` local reassigned inside a `match` arm emitted a bare `&str`; the
+/// shape does not reproduce on the 0.6 line and the snapshot keeps it that way.
+#[test]
+fn test_issue1668_mut_str_match_arm_codegen() {
+    let source = load_test_file("issue1668_mut_str_match_arm");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("label = \"admitted\".to_string();") && rust_code.contains("kind = \"alpha\".to_string();"),
+        "a mut str local reassigned inside a match arm must own its literal; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("label = \"admitted\";") && !rust_code.contains("kind = \"alpha\";"),
+        "a bare &str assignment into a String local would not compile; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_mut_str_match_arm", rust_code);
+}
+
+/// `dict.keys()` / `dict.values()` materialize a list in value position and stay direct iterators in loops.
+#[test]
+fn test_issue1668_dict_keys_outside_comprehension_codegen() {
+    let source = load_test_file("issue1668_dict_keys_outside_comprehension");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("d.keys().cloned().collect::<Vec<_>>()")
+            && rust_code.contains("d.values().cloned().collect::<Vec<_>>()"),
+        "value-position keys()/values() must materialize the list the typechecker reports; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("for value in (d).values().cloned()")
+            && rust_code.contains("for key in (d).keys().cloned()"),
+        "loops over keys()/values() must iterate owned items directly; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("(d.keys()).clone()") && !rust_code.contains("d.keys().iter()"),
+        "the Keys iterator must never be cloned for sorting or re-iterated; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_dict_keys_outside_comprehension", rust_code);
+}
+
+/// `sorted(dict.keys())` / `sorted(dict.values())` sort the materialized list the typechecker reports, including as a
+/// `for` iterable (#1461); the `HashMap::Keys` iterator itself is never cloned or sorted.
+#[test]
+fn test_issue1461_sorted_dict_keys_codegen() {
+    let source = load_test_file("issue1461_sorted_dict_keys");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("let mut __v = (values.keys().cloned().collect::<Vec<_>>()).clone();")
+            && rust_code.contains("let mut __v = (values.values().cloned().collect::<Vec<_>>()).clone();"),
+        "sorted() over a dict view must sort a materialized Vec; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("(values.keys()).clone()") && !rust_code.contains("(values.values()).clone()"),
+        "the Keys / Values iterator must never be cloned for sorting; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1461_sorted_dict_keys", rust_code);
+}
+
+/// `list(source)` lowers through the checker's collection-constructor fact and collects the items a loop over the
+/// same source yields (#1464); it must never reach emission as a call to an undefined Rust `list` function.
+#[test]
+fn test_issue1464_list_constructor_codegen() {
+    let source = load_test_file("issue1464_list_constructor");
+    let rust_code = generate_rust(&source);
+    let calls_undefined_list = rust_code.match_indices("list(").any(|(index, _)| {
+        !rust_code[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|previous| previous.is_alphanumeric() || previous == '_')
+    });
+    assert!(
+        !calls_undefined_list,
+        "list() must never emit an undefined Rust function call; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((values).keys().cloned()).collect::<Vec<_>>()")
+            && rust_code.contains("((values).values().cloned()).collect::<Vec<_>>()"),
+        "list() over a dict view must collect the view directly; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("(args()).into_iter().collect::<Vec<_>>()"),
+        "list() over an opaque Rust iterable must consume it through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let names: Vec<String> = Vec::<String>::new();"),
+        "an empty list() must adopt its annotated element type; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("::std::iter::Iterator::collect::<Vec<_>>(source)"),
+        "list() over a generator must collect it through the Iterator trait, not the wrapper's inherent collect; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let mut __incan_iter = pairs;"),
+        "list() over an Iterator[T] must poll the source-owned iterator; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1464_list_constructor", rust_code);
+}
+
+/// A comprehension over a by-value Rust iterator (or a generator) consumes it through `IntoIterator`, as the `for`
+/// statement over the same value already does, instead of borrowing it with `.iter()` (#1490). A generator moves as
+/// the `Iterator` trait's iterator so the chain's adapters are the trait's, not the runtime wrapper's (#1464).
+#[test]
+fn test_issue1490_comprehension_over_rust_iterator_codegen() {
+    let source = load_test_file("issue1490_comprehension_over_rust_iterator");
+    let rust_code = generate_rust(&source);
+    // prettyplease breaks a method chain across lines, so the guard compares without whitespace.
+    let compact = rust_code.split_whitespace().collect::<String>();
+    assert!(
+        !compact.contains("(args()).iter()") && !compact.contains("(args()).clone()"),
+        "a by-value Rust iterator must be neither borrowed with .iter() nor cloned; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((args()).into_iter())"),
+        "the comprehension must consume the iterator through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("(::std::iter::Iterator::fuse(source).into_iter())"),
+        "a generator source must be consumed by value as the Iterator trait's iterator; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1490_comprehension_over_rust_iterator", rust_code);
 }
 
 #[test]
@@ -2995,7 +3217,7 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.split_whitespace().collect::<String>();
     assert!(
-        compact.contains("letmut__incan_list=Vec::new();forvaluein(values).iter().copied(){__incan_list.push(parse_value(value)?);}__incan_list"),
+        compact.contains("letmut__incan_list=Vec::new();forvaluein((values).into_iter()){__incan_list.push(parse_value(value)?);}__incan_list"),
         "expected issue633 comprehension to lower to an outer-function loop, got:\n{rust_code}"
     );
     assert!(
@@ -3152,6 +3374,46 @@ fn test_generic_model_field_access_codegen() {
     let source = load_test_file("generic_model_field_access");
     let rust_code = generate_rust(&source);
     assert_codegen_snapshot!("generic_model_field_access", rust_code);
+}
+
+/// Issue #1370: a model type parameter that no field mentions is a phantom parameter. Lowering records it on the
+/// struct; emission carries it as one `PhantomData` marker field, initializes the marker at every struct literal,
+/// and threads the explicit constructor type argument so a binding without an annotation still names `T`. The
+/// marker is invisible to `Debug` and `HasFieldInfo`, which are written by hand over the source fields instead of
+/// derived.
+#[test]
+fn test_issue1370_phantom_type_param_codegen() {
+    let source = load_test_file("issue1370_phantom_type_param");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub __incan_phantom: std::marker::PhantomData<T>,"),
+        "a phantom type parameter must be carried by a marker field; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("#[derive(Clone, incan_derive::IncanClass)]\nstruct Column<T> {"),
+        "Debug and FieldInfo must not be derived on a phantom struct; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("#[automatically_derived]\nimpl<T: std::fmt::Debug> std::fmt::Debug for Column<T> {")
+            && rust_code.contains("formatter.debug_struct(\"Column\").field(\"sql\", &self.sql).finish()"),
+        "Debug must render only the source fields and count as a derive for dead-code analysis; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("impl<T> incan_std_core::HasFieldInfo for Column<T> {")
+            && rust_code.contains("vec![\"sql\"]")
+            && !rust_code.contains("\"__incan_phantom\""),
+        "HasFieldInfo must list only the source fields; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("Column::<T> {") && rust_code.contains("Column::<String> {"),
+        "explicit constructor type arguments must reach the constructed path; generated:\n{rust_code}"
+    );
+    assert_eq!(
+        rust_code.matches("__incan_phantom: std::marker::PhantomData,").count(),
+        3,
+        "every struct literal must initialize the marker; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1370_phantom_type_param", rust_code);
 }
 
 #[test]
@@ -3550,15 +3812,15 @@ fn test_issue241_field_backed_method_arg_clone_codegen() {
     assert_codegen_snapshot!("issue241_field_backed_method_arg_clone", rust_code);
 }
 
-/// Issue #364: filtered list comprehensions over non-Copy values must not destructure `&item` in `filter(...)`.
+/// Issue #364: filtered list comprehensions over owned non-Copy values consume the source without borrowing items.
 #[test]
 fn test_issue364_filtered_list_comp_borrow_codegen() {
     let source = load_test_file("issue364_filtered_list_comp_borrow");
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains(".iter().filter_map(|stored|{letstored=(*stored).clone();ifstored.store_id_raw==store_id{Some(stored.node)}else{None}})"),
-        "expected filtered list comprehension to clone inside filter_map for non-Copy items; generated:\n{rust_code}"
+        compact.contains("((stored_nodes).into_iter()).filter_map(|stored|{ifstored.store_id_raw==store_id{Some(stored.node)}else{None}})"),
+        "expected the last-use filtered list source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
         !compact.contains(".filter(|&stored|"),
@@ -3636,7 +3898,7 @@ fn test_issue366_clone_self_string_field_codegen() {
     assert_codegen_snapshot!("issue366_clone_self_string_field", rust_code);
 }
 
-/// Filtered dict comprehensions over borrowed iterables must own the item before evaluating the predicate.
+/// Filtered dict comprehensions over last-use owned iterables evaluate their predicate on the moved item.
 #[test]
 fn test_filtered_dict_comp_predicate_codegen() {
     let source = load_test_file("filtered_dict_comp_predicate");
@@ -3644,9 +3906,9 @@ fn test_filtered_dict_comp_predicate_codegen() {
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
         compact.contains(
-            ".iter().filter_map(|x|{letx=*x;ifincan_std_core::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"
+            "((xs).into_iter()).filter_map(|x|{ifincan_std_core::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"
         ),
-        "expected filtered dict comprehension over Copy items to copy inside filter_map before evaluating the predicate; generated:\n{rust_code}"
+        "expected the last-use filtered dict source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
         !compact.contains(".filter(|x|incan_std_core::num::py_mod_i64(x,2)==0)"),
@@ -3659,23 +3921,23 @@ fn test_filtered_dict_comp_predicate_codegen() {
     assert_codegen_snapshot!("filtered_dict_comp_predicate", rust_code);
 }
 
-/// Issue #602: comprehensions over Copy item types should use copied values rather than `.clone()` hot paths.
+/// Issue #602: comprehensions over last-use owned sources consume them without copy or clone adapters.
 #[test]
 fn test_issue602_comprehension_copy_hotpaths_codegen() {
     let source = load_test_file("issue602_comprehension_copy_hotpaths");
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("(xs).iter().copied().map(|x|x*x).collect::<Vec<_>>()"),
-        "expected unfiltered Copy list comprehension to use copied(), generated:\n{rust_code}"
+        compact.contains("((xs).into_iter()).map(|x|x*x).collect::<Vec<_>>()"),
+        "expected the last-use unfiltered list source to move into map, generated:\n{rust_code}"
     );
     assert!(
-        compact.contains(".iter().filter_map(|x|{letx=*x;ifx>0{Some(x*x)}else{None}})"),
-        "expected filtered Copy list comprehension to copy the borrowed item without clone; generated:\n{rust_code}"
+        compact.contains("((xs).into_iter()).filter_map(|x|{ifx>0{Some(x*x)}else{None}})"),
+        "expected the last-use filtered list source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains(".iter().filter_map(|x|{letx=*x;ifx>0{Some((x,x*x))}else{None}})"),
-        "expected filtered Copy dict comprehension to copy the borrowed item without clone; generated:\n{rust_code}"
+        compact.contains("((xs).into_iter()).filter_map(|x|{ifx>0{Some((x,x*x))}else{None}})"),
+        "expected the last-use filtered dict source to move into filter_map; generated:\n{rust_code}"
     );
     assert!(
         !compact.contains("(*x).clone()") && !compact.contains(".iter().cloned().map(|x|x*x)"),
@@ -3763,7 +4025,7 @@ fn test_models_codegen() {
 
 /// Power lowers as a Rust method call, so its receiver must retain the source expression's grouping.
 #[test]
-fn test_power_receiver_parenthesisation_codegen() {
+fn test_power_receiver_parenthesization_codegen() {
     let source = r#"
 def compound(left: float, right: float) -> float:
     return (left + right) ** 0.5
@@ -3780,11 +4042,11 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("return(left+right).powf(0.5);"),
-        "compound power receiver must remain grouped; generated:\n{rust_code}"
+        compact.contains("return({left+right}asf64).powf(0.5);"),
+        "compound power receiver must remain grouped inside its result-type conversion (#1811); generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("return((base)asf64).powf((exponent)asf64);"),
+        compact.contains("return(baseasf64).powf((exponent)asf64);"),
         "coerced power receiver must be parenthesized before the method call; generated:\n{rust_code}"
     );
 }
@@ -3805,10 +4067,13 @@ pub def ordinary(value: str) -> float:
     return float(value)
 "#;
     let rust_code = generate_rust(source);
-    assert_eq!(
-        rust_code.matches("incan_std_core::num::require_finite_f64").count(),
-        2,
-        "ordinary float must remain unguarded while exact f64 returns and f32 widening are guarded:\n{rust_code}"
+    assert!(
+        !rust_code.contains("require_finite_f64"),
+        "f64 is float (RFC 009), so neither an f64 return nor an ordinary float is guarded:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("(value) as f64"),
+        "an f32 returned as f64 must be widened:\n{rust_code}"
     );
     assert_eq!(
         rust_code.matches("incan_std_core::num::require_finite_f32").count(),
@@ -3844,14 +4109,8 @@ pub def printed_f64(left: f64, right: f64) -> None:
         "exact f32 arithmetic must be checked before return or comparison:\n{rust_code}"
     );
     assert!(
-        compact.contains("require_finite_f64(left*right)"),
-        "exact f64 arithmetic must be checked before storage or printing:\n{rust_code}"
-    );
-    assert!(
-        compact.contains(
-            "println!(\"{}\",incan_std_core::num::require_finite_f64(incan_std_core::num::require_finite_f64(left*right)))"
-        ),
-        "print must not observe a non-finite exact f64 arithmetic result:\n{rust_code}"
+        compact.contains("letvalue:f64=left*right;") && !compact.contains("require_finite_f64"),
+        "f64 arithmetic is float arithmetic (RFC 009) and is stored and printed unguarded:\n{rust_code}"
     );
     assert!(
         compact.contains(">incan_std_core::num::require_finite_f32(left)"),
@@ -3889,11 +4148,9 @@ pub def observe_ieee(value: float) -> bool:
         // prettyplease wraps the nested call across lines and leaves a trailing comma behind the inner one
         "incan_std_core::num::require_finite_f32(incan_std_core::num::require_finite_f32(value),)",
         "let_=incan_std_core::num::require_finite_f32(left);",
-        "let_=incan_std_core::num::require_finite_f64(right);",
         "println!(\"{}\",incan_std_core::num::require_finite_f32(left))",
-        "incan_std_core::num::require_finite_f64(right).to_string()",
         "format!(\"{}\",incan_std_core::num::require_finite_f32(left))",
-        "((incan_std_core::num::require_finite_f32(left))asf64)<incan_std_core::num::require_finite_f64(right)",
+        "((incan_std_core::num::require_finite_f32(left))asf64)<right",
     ] {
         assert!(
             compact.contains(expected),
@@ -3901,7 +4158,15 @@ pub def observe_ieee(value: float) -> bool:
         );
     }
     assert!(
-        compact.contains("pubfnobserve_ieee(value:f64)->bool{let_=println!(\"{}\",value);returnvalue<value;"),
+        !compact.contains("require_finite_f64"),
+        "an f64 is a float (RFC 009) and is not finite-checked:\n{rust_code}"
+    );
+    // The ordinary `float` prints through the runtime's spelling (#1372) but stays unguarded: no finite check
+    // wraps its read or its comparison.
+    assert!(
+        compact.contains(
+            "pubfnobserve_ieee(value:f64)->bool{let_=println!(\"{}\",incan_std_core::strings::float_to_string(value));returnvalue<value;"
+        ),
         "ordinary float must retain unguarded IEEE observation behavior:\n{rust_code}"
     );
 }
@@ -3932,8 +4197,6 @@ pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
 
     for expected in [
         "require_finite_f32(samples.narrow).is_nan()",
-        "require_finite_f64(*incan_std_core::collections::list_get(&values,(0)asi64)",
-        "require_finite_f64(samples.wide).is_finite()",
         "consume_exact(incan_std_core::num::require_finite_f32",
     ] {
         assert!(
@@ -3946,10 +4209,9 @@ pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
         2,
         "field value reflection and field-item reflection must guard exact f32 values:\n{rust_code}"
     );
-    assert_eq!(
-        compact.matches("require_finite_f64(self.wide)").count(),
-        2,
-        "field value reflection and field-item reflection must guard exact f64 values:\n{rust_code}"
+    assert!(
+        !compact.contains("require_finite_f64"),
+        "an f64 field or element is a float (RFC 009) and is not finite-checked:\n{rust_code}"
     );
     assert_eq!(
         compact.matches("require_finite_f32(*value)").count(),
@@ -3985,7 +4247,7 @@ pub def with_int(left: f32, right: int) -> float:
         "incan_std_core::num::py_div((left)asf64,right)",
         "incan_std_core::num::py_floor_div_f64((left)asf64,right)",
         "incan_std_core::num::py_mod_f64((left)asf64,right)",
-        "((left)asf64).powf(right)",
+        "(leftasf64).powf(right)",
         "return(left)asf64+right;",
         "return(left)asf64+(right)asf64;",
     ] {
@@ -4370,7 +4632,7 @@ fn test_enum_methods_traits_codegen() {
         "expected enum inherent methods to emit in an impl block; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("implLabelledforSignal{"),
+        compact.contains("implLabeledforSignal{"),
         "expected enum trait adoption to emit a trait impl block; generated:\n{rust_code}"
     );
     assert!(
@@ -4418,7 +4680,7 @@ fn test_rfc043_rust_derive_passthrough_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("#[derive(serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
+        compact.contains("#[derive(::serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
         "expected @rust.derive to emit imported and built-in Rust derives; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("rfc043_rust_derive_passthrough", rust_code);
@@ -4676,15 +4938,15 @@ fn test_issue367_result_ok_string_literal_emits_owned_strings() {
     let rust_code = generate_rust(&source);
 
     assert!(
-        rust_code.contains("(\"from_call\").to_string()"),
+        rust_code.contains("\"from_call\".to_string()"),
         "expected call-argument seeding path to coerce Ok string literals to owned String"
     );
     assert!(
-        rust_code.contains("(\"from_local\").to_string()"),
+        rust_code.contains("\"from_local\".to_string()"),
         "expected assignment seeding path to coerce Ok string literals to owned String"
     );
     assert!(
-        rust_code.contains("(\"from_return\").to_string()"),
+        rust_code.contains("\"from_return\".to_string()"),
         "expected return-context seeding path to coerce Ok string literals to owned String"
     );
     assert!(
@@ -4895,6 +5157,158 @@ fn test_issue1493_empty_list_comparison_codegen() {
 }
 
 #[test]
+fn test_issue1462_named_constructor_evaluation_order_codegen() {
+    let source = load_test_file("issue1462_named_constructor_evaluation_order");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1462_named_constructor_evaluation_order", rust_code);
+    let compact = compact_rust(&rust_code);
+    let intent = compact.find("__incan_ctor_arg_0=inspect(source.to_string())");
+    let evidence = compact.find("__incan_ctor_arg_1=Evidence{source:source}");
+    assert!(
+        intent.is_some() && evidence.is_some(),
+        "reordered named arguments must be bound to temporaries in written order:\n{rust_code}"
+    );
+    assert!(
+        intent < evidence,
+        "`intent` was written first, so its read of `source` must precede the move into `evidence`:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Document{evidence:__incan_ctor_arg_1,intent:__incan_ctor_arg_0,}"),
+        "the construction must read the temporaries rather than re-evaluate the arguments:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue1489_loop_variable_returned_owned_codegen() {
+    let source = load_test_file("issue1489_loop_variable_returned_owned");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_loop_variable_returned_owned", rust_code);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("returnOk::<Vec<String>,String>(row.clone());"),
+        "a loop binding iterated by reference must be materialized when it becomes the `Ok` payload:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnOk::<String,String>(candidate.to_string());"),
+        "a borrowed string loop binding must become an owned `String` payload:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnOk::<Vec<String>,String>(found);"),
+        "an owned local returned inside the loop is its last use and must move, not clone:\n{rust_code}"
+    );
+}
+
+/// Issue #1489: a loop binding returned as an `Ok` payload is cloned, and the `T` it clones needs `Clone`. Free
+/// functions already received the bound; a method's own type parameters were never augmented, which surfaced as
+/// E0599 in `std.data.toml` once the payload went through planning. The field read out of a last-use local is the
+/// contrast: it moves the field, so `decode` and `unwrap` need no bound at all.
+#[test]
+fn test_issue1489_method_type_param_clone_bound_codegen() {
+    let source = load_test_file("issue1489_method_type_param_clone_bound");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_method_type_param_clone_bound", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "pubfnpick<T:Marker+Clone>(&self,items:Vec<T>)->Result<T,String>",
+        "pubfnpick_plain<T:Clone>(&self,items:Vec<T>)->Result<T,String>",
+        "pubfnfirst<T:Clone>(items:Vec<T>)->Result<T,String>",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a cloned loop binding must bind `Clone` on the callable's own type parameter: {expected}\n{rust_code}"
+        );
+    }
+    for expected in [
+        "pubfndecode<T:Marker>(&self,decoded:Decoded<T>)->Result<T,String>",
+        "pubfnunwrap<T>(decoded:Decoded<T>)->Result<T,String>",
+        "returnOk::<T,String>(decoded.value);",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a field moved out of a last-use local plans no clone and needs no bound: {expected}\n{rust_code}"
+        );
+    }
+}
+
+/// Issue #1489: the owned-storage policy lets a field move out of a last-use local, but a field the checker resolved
+/// through `Json[T]` or `Query[T]` is reached through the wrapper's `Deref`, so it must still clone at a struct
+/// field, a collection element, and an assignment; a bare `query.q` there is E0507 (found by
+/// `build_typed_web_extractors_and_scalar_captures_issue867` in `cli_rust_interop_tests`).
+#[test]
+fn test_issue1489_web_extractor_field_read_clones_codegen() {
+    let source = load_test_file("issue1489_web_extractor_field_read_clones");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_web_extractor_field_read_clones", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "Reply{value:query.q.clone()}",
+        "letpicked=query.q.clone();",
+        "letvalues=vec![query.q.clone()];",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a field read through the extractor's `Deref` must clone: {expected}\n{rust_code}"
+        );
+    }
+    assert!(
+        !compact.contains("value:query.q}") && !compact.contains("=query.q;") && !compact.contains("vec![query.q]"),
+        "a move out of the wrapper's dereference is E0507:\n{rust_code}"
+    );
+}
+
+/// Issue #1494: a string literal handed to a collection method must reach the `String` parameter owned. The
+/// `Deque[str]` case was the live one -- `resolve_type_index_expression` dropped the type application's argument, so
+/// the receiver reached emission as `Deque[Unknown]` and the literal had no target to convert toward (fixed in #1529);
+/// the builtin list, set and dict receivers already converted through `CollectionElement`.
+#[test]
+fn test_issue1494_collection_method_literal_arguments_codegen() {
+    let source = load_test_file("issue1494_collection_method_literal_arguments");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1494_collection_method_literal_arguments", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "Deque::<String>::from_iter(requested)",
+        "pending.append(\"default\".into())",
+        "pending.appendleft(\"first\".into())",
+        "names.push(\"default\".to_string())",
+        "(&mutseen).insert(\"default\".to_string())",
+        "labels.insert(\"default\".to_string(),\"value\".to_string())",
+        "labels.insert(\"first\".to_string(),\"value\".to_string())",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "expected the literal to reach the collection method owned: {expected}\n{rust_code}"
+        );
+    }
+    assert!(
+        !compact.contains("Deque::<Unknown>") && !compact.contains("append(\"default\")"),
+        "the receiver must keep its element type and the literal must not pass unconverted:\n{rust_code}"
+    );
+}
+
+/// Issue #1476: the element type of an empty list operand is recorded by the checker and carried by lowering, so
+/// emission spells it from the literal's own type in either operand position and for either equality operator.
+#[test]
+fn test_issue1476_empty_list_equality_operands_codegen() {
+    let source = load_test_file("issue1476_empty_list_equality_operands");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1476_empty_list_equality_operands", rust_code);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("returnvalues==Vec::<String>::new();"),
+        "the right-hand empty operand must name the element type:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnVec::<String>::new()!=values;"),
+        "the left-hand empty operand must name the element type:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("Vec::<_>::new()") && !compact.contains("vec![]"),
+        "an untyped empty operand leaves `PartialEq` ambiguous (E0283):\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_rfc041_std_rust_capability_bounds_codegen() {
     let source = load_test_file("rfc041_std_rust_capability_bounds");
     let rust_code = generate_rust(&source);
@@ -5021,7 +5435,7 @@ fn test_validated_newtype_json_deserialization_uses_canonical_hook() {
         "validated newtypes must not derive unchecked deserialization:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("#[derive(Debug, Clone, serde::Serialize)]\nstruct ShortId"),
+        rust_code.contains("#[derive(Debug, Clone, ::serde::Serialize)]\nstruct ShortId"),
         "checked deserialization must preserve newtype serialization:\n{rust_code}"
     );
     assert!(
@@ -5246,23 +5660,24 @@ pub async def fastest() -> int:
     assert_codegen_snapshot!("race_for_expression_codegen", rust_code);
 }
 
-/// Awaiting a declared wrapper must delegate to the proven awaitable field.
+/// A generic `F with Awaitable[T]` bound names the async runtime's `Awaitable<T>` trait, the one realization of RFC
+/// 039's protocol in generated Rust; the awaited operand stays a plain `.await` (#1711).
 #[test]
-fn test_awaitable_wrapper_delegation_codegen() {
+fn test_awaitable_bound_lowers_to_runtime_trait_codegen() {
     let source = r#"
 import std.async
-from std.async.task import JoinHandle, TaskJoinError
 
-pub model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
-  pub handle: JoinHandle[T]
-
-pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
-  return await box
+pub async def wait_for[T, F with Awaitable[T]](task: F) -> T:
+  return await task
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains("r#box.handle.await"),
-        "awaitable wrapper should lower through its awaitable field, got:\n{rust_code}"
+        rust_code.contains("F: incan_std_async::task::Awaitable<T>"),
+        "an Awaitable bound should name the runtime trait, got:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("task.await"),
+        "the bound operand should be awaited directly, got:\n{rust_code}"
     );
 }
 
@@ -5313,7 +5728,7 @@ fn test_std_derives_collection_compiled_codegen() {
     let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
-    let rust_code = generate_rust(&source);
+    let rust_code = generate_standard_library_module_rust(&source);
     assert!(
         rust_code.contains("StoredMapFn: Clone + Callable1<T, Output>"),
         "fallible adapter storage must retain the nominal source callable bound:\n{rust_code}"
@@ -5533,6 +5948,76 @@ fn test_std_serde_with_serialize_trait_codegen() {
     assert_codegen_snapshot!("std_serde_with_serialize_trait", rust_code);
 }
 
+/// #1431: a source trait that only shares the spelling of `std.serde.json.Serialize` / `Deserialize` carries no
+/// JSON protocol. Its adoption must not inject serde derives or the `to_json` / `from_json` backend defaults; the
+/// stdlib JSON behavior keys on the canonical trait identity, never on the basename.
+#[test]
+fn test_newtype_local_serde_named_traits_codegen() {
+    let source = load_test_file("newtype_local_serde_named_traits");
+    let rust_code = generate_rust(&source);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("implSerializeforNumber{}") && compact.contains("implDeserializeforNumber{}"),
+        "expected empty impls for the local traits; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("serde::") && !compact.contains("to_json") && !compact.contains("from_json"),
+        "local traits spelled like the stdlib JSON traits must not receive serde derives or JSON methods; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("newtype_local_serde_named_traits", rust_code);
+}
+
+/// #1431: a `std.serde.json` trait imported through a facade re-export is still the stdlib trait. The consumer's
+/// written import names only the facade, so the protocol must key on the identity the frontend proved through the
+/// re-export: the serde derives are forwarded, the backend default `to_json` is emitted for `Serialize`, and the
+/// adopter's own `from_json` lands inside the `Deserialize` impl rather than being dropped as an unknown method.
+#[test]
+fn test_facade_reexported_std_serde_json_traits_keep_their_protocol() -> Result<(), Box<dyn std::error::Error>> {
+    let facade_source = "from std.serde.json import Serialize, Deserialize\n";
+    let consumer_source = r#"
+from facade import Serialize, Deserialize
+
+model Payload with Serialize, Deserialize:
+  value: int
+
+  def from_json(json_str: str) -> Result[Payload, str]:
+    return Ok(Payload(value=len(json_str)))
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+  match Payload.from_json("{}"):
+    case Ok(restored):
+      println(restored.value)
+    case Err(message):
+      println(message)
+"#;
+    let facade_ast = parse_incan_program(facade_source, "facade");
+    let consumer_ast = parse_incan_program(consumer_source, "consumer");
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
+    codegen.add_module_with_path_segments("facade", &facade_ast, vec!["facade".to_string()]);
+    let (consumer_code, _modules) = codegen
+        .try_generate_multi_file_nested(&consumer_ast, &[vec!["facade".to_string()]])
+        .map_err(|err| std::io::Error::other(format!("facade re-export should codegen: {err:?}")))?;
+    let compact = compact_rust(&consumer_code);
+    assert!(
+        compact.contains("serde::Serialize,") && compact.contains("serde::Deserialize,"),
+        "serde derives must be forwarded for the re-exported stdlib traits; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("implSerializeforPayload{fnto_json(&self)->String"),
+        "the stdlib backend default must be emitted for the re-exported Serialize; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("implDeserializeforPayload{fnfrom_json(json_str:String)->Result<Payload,String>"),
+        "the adopter's from_json must land in the re-exported Deserialize impl; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("usecrate::facade::Serialize;") && compact.contains("usecrate::facade::Deserialize;"),
+        "the facade bindings must stay imported; generated:\n{consumer_code}"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_newtype_with_serialize_trait_forwards_rust_derive() {
     let source = r#"
@@ -5546,8 +6031,8 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("#[derive(Debug,serde::Serialize)]structWrapped(pubString);")
-            || compact.contains("#[derive(Debug,Clone,serde::Serialize)]structWrapped(pubString);"),
+        compact.contains("#[derive(Debug,::serde::Serialize)]structWrapped(pubString);")
+            || compact.contains("#[derive(Debug,Clone,::serde::Serialize)]structWrapped(pubString);"),
         "expected newtype `with Serialize` to forward the Rust serde derive; generated:\n{rust_code}"
     );
     assert!(
@@ -5663,7 +6148,7 @@ fn test_rfc024_module_derive_json_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("serde::Serialize,serde::Deserialize"),
+        compact.contains("::serde::Serialize,::serde::Deserialize"),
         "expected @derive(json) to forward serde derives; generated:\n{rust_code}"
     );
     assert!(
@@ -6096,6 +6581,75 @@ fn test_trait_bound_explicit_codegen() {
     let source = load_test_file("trait_bound_explicit");
     let rust_code = generate_rust(&source);
     assert_codegen_snapshot!("trait_bound_explicit", rust_code);
+}
+
+/// #1427: a source trait inherits an imported Rust trait, and the generated declaration keeps the foreign bound.
+#[test]
+fn test_rust_supertrait_imported_codegen() {
+    let source = load_test_file("rust_supertrait_imported");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub trait Labeled: ::std::fmt::Display"),
+        "the imported supertrait must survive as an absolute Rust bound:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_supertrait_imported", rust_code);
+}
+
+/// #1450: a metadata-free extension-trait import survives pruning when a method call may reach it.
+#[test]
+fn test_rust_trait_import_without_metadata_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("use ::std::borrow::Borrow;"),
+        "the trait providing `.borrow()` must stay in scope:\n{rust_code}"
+    );
+    assert!(rust_code.contains("value.borrow()"), "{rust_code}");
+    assert_codegen_snapshot!("rust_trait_import_without_metadata", rust_code);
+}
+
+/// #1450: the retained metadata-free trait import keeps its alias.
+#[test]
+fn test_rust_trait_import_without_metadata_alias_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata_alias");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("use ::std::borrow::Borrow as Borrowed;"),
+        "the aliased trait import must stay in scope under its alias:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_trait_import_without_metadata_alias", rust_code);
+}
+
+/// #1450 control: without an unresolved method call the metadata-free import is still pruned.
+#[test]
+fn test_rust_trait_import_without_metadata_unused_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata_unused");
+    let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("std::borrow::Borrow"),
+        "an import no method call can reach must not be retained:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_trait_import_without_metadata_unused", rust_code);
+}
+
+/// #1374: a `Default` bound must name the Rust `Default` trait that `@derive(Default)` implements.
+///
+/// The bound comes from the trait-bound registry, so the generic function compiles against the derived
+/// implementation instead of a source-owned `__incan_std` trait that no generated program implements.
+#[test]
+fn test_trait_bound_default_codegen() {
+    let source = load_test_file("trait_bound_default");
+    let rust_code = generate_rust(&source);
+    let default_bound = incan_lang::lang::trait_bounds::rust::DEFAULT;
+    assert!(
+        rust_code.contains(&format!("fn make<T: {default_bound}>() -> T")),
+        "expected the registry's Rust `Default` bound in the generated signature:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::derives::copying::Default"),
+        "a `Default` bound must not point at the source-owned trait:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("trait_bound_default", rust_code);
 }
 
 #[test]

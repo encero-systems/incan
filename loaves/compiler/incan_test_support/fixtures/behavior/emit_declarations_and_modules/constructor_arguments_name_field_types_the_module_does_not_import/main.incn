@@ -1,0 +1,49 @@
+# behavior: a module passes empty collections where imported model fields supply their element types, retaining both an explicitly imported model used only by that expectation and paths for types it does not import, and a type parameter of its own named like one of those types stays its own
+# retires: loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs::empty_collections_and_none_for_types_the_module_does_not_import_build_issue1561
+# retires: loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs::a_type_the_module_imports_keeps_its_import_beside_an_unimported_one_issue1561
+# retires: loaves/compiler/incan_emit/src/tests/unimported_nominal_types.rs::an_empty_list_keeps_the_import_of_its_expected_model_element_type
+# retires: loaves/compiler/incan_ir/src/lower/tests/unbound_nominals.rs::types_a_module_names_without_binding_them_are_placed_at_their_declaring_module_issue1561
+# retires: loaves/compiler/incan_ir/src/lower/tests/unbound_nominals.rs::a_type_parameter_named_like_an_unbound_type_keeps_its_spelling_issue1561
+# expect-stdout:
+#   0
+#   true
+#   1
+#   true
+#   1
+#   0
+#   none
+#   1
+#   p
+#   0
+#   3
+
+from ids import Evidence, Evidence as Proof
+from records import Decision, make_id, count_kinds, describe
+
+
+model Shelf[Tag]:
+    items: list[Tag]
+
+    def emptied(self) -> list[Tag]:
+        out: list[Tag] = []
+        return out
+
+
+def main() -> None:
+    empty = Decision(name="a", admitted_evidence_ids=[], scores={}, seen=set(), first=None, nested=[[]], pairs=[], kinds={})
+    println(len(empty.admitted_evidence_ids) + len(empty.scores) + len(empty.seen) + len(empty.pairs) + len(empty.kinds))
+    println(empty.first is None)
+    println(len(empty.nested))
+    println(empty.admitted_evidence_ids == [])
+    full = Decision(name="b", admitted_evidence_ids=[make_id("e1")], scores={make_id("e1"): 3}, seen=set(), first=Some(make_id("e2")), nested=[], pairs=[], kinds={})
+    println(len(full.admitted_evidence_ids))
+    println(count_kinds([]))
+    println(describe(None))
+    mut proofs: list[Proof] = []
+    proofs.append(Proof(id="p"))
+    println(len(proofs))
+    println(proofs[0].id)
+    expected_only = Decision(name="expected", admitted_evidence_ids=[], scores={}, seen=set(), first=None, nested=[], pairs=[], kinds={})
+    println(len(expected_only.nested))
+    shelf = Shelf[int](items=[3])
+    println(len(shelf.emptied()) + shelf.items[0])

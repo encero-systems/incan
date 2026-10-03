@@ -160,3 +160,62 @@ The action is intentionally smaller than a reusable workflow: it installs the co
 - name: Type check (machine-readable)
   run: incan check src/main.incn --format json
 ```
+
+## Read compiler reports from another tool
+
+Documentation generators, package browsers, editor integrations, CI jobs, architecture review tools and agents can read what the compiler knows about a project without scraping `.incn` text, terminal output or generated Rust. The [inspection reports](../reference/cli_reference.md#inspection-reports) are separate, stable outputs rather than one semantic database; each answers one question:
+
+- `incan check --format json` for diagnostics;
+- `incan build --report json` for build and artifact metadata;
+- `incan inspect codegraph --format jsonl` for the structure of the source, with compiler-owned provenance;
+- `incan inspect registry` for one complete checked registry;
+- `incan inspect rust --format json` for the generated Rust files, which carry no graph records;
+- `incan tools metadata api --format json` for the checked public API.
+
+Join them on the compiler-owned fields they share: identity fields, source paths, compiler version, project identity, and the explicit degraded state and diagnostic records. Check each report's `schema_version` before reading it, and read the structured fields rather than the human-readable output.
+
+### Read diagnostics
+
+Use `incan check` as the type-check command in CI, editor integrations and agents. `incan FILE` and the debug spelling `incan --check FILE --format json` still work, but new tooling should call `incan check FILE --format json`.
+
+`diagnostics` holds warnings as well as errors, and a check with only warnings reports `ok: true`. Filter on `severity` to separate them. When a diagnostic compares two values, read `expected` and `actual` instead of parsing the message, and send people to the command in `explain` (`incan explain <CODE>`) for the longer explanation.
+
+### Consume the codegraph
+
+Run `incan inspect codegraph` without `--allow-errors` in release gates that need a fully checked graph. Add `--allow-errors` for work-in-progress packages and agent context, where a partial graph marked `degraded` is more useful than none.
+
+When you consume the stream:
+
+- treat a record kind you do not know as an opaque record rather than failing;
+- store the header's `schema_version` and `compiler_version` with any index you persist, since record ids can change with file moves, renames and schema versions;
+- anchor into a source buffer with a span's byte offsets, and show its line and column values rather than recomputing them from bytes under an assumed encoding;
+- read a schema-7 export's `stable_identity` by its `nested: bool` field, and a schema-8 export's by its `location`: branch on the header's `schema_version`, since a schema-7 stable identity is not valid under schema 8;
+- read the `origin` of a schema-1 diagnostic record, which has none, as `unknown`.
+
+Programs that need graph values at run time use `std.graph`; runtime code does not depend on `incan inspect codegraph`.
+
+`examples/pro/codegraph_importer` is a runnable Incan consumer of the stream. From that directory, export a graph and import it:
+
+```bash
+incan inspect codegraph ../../simple/hello.incn --format jsonl > codegraph.jsonl
+incan run src/main.incn
+```
+
+It accepts schema versions 1 through 8, counts the record kinds it knows, keeps unknown kinds as opaque records, and prints a deterministic JSON summary. It does not parse `.incn`, resolve names, infer missing edges or store graph data. Build your own importer the same way: validate, persist, compare or visualize the compiler's records, but do not become their semantic authority, and add support for a later schema version deliberately rather than accepting a changed contract silently.
+
+### Consume checked API metadata
+
+`incan tools metadata api --format json` prints the checked public API; editors show the same facts through `textDocument/hover`. When you build on it:
+
+- read a decorator's `decorated_callable` for the decorated function's identity and signature, rather than asking authors to repeat them in decorator arguments;
+- let a re-export-only facade module publish its functions through the `projected_function` of its public aliases; it needs no loader function or runtime initialization hook;
+- show a partial's presets as the parameters with `has_default: true`, and use `presets` to explain where a default came from;
+- expect schema-1 metadata to carry no `is_mut` parameter flag and no `MutParam` type;
+- expect metadata that predates `NativeUnion` to encode unions as `Applied` types named `Union`; a reader that does not know `NativeUnion` refuses it rather than reading it as an ordinary union;
+- treat docstrings and decorator payloads as data, never as trusted executable input.
+
+Use `incan build --lib` to produce the library artifact, and `incan tools metadata model` to inspect a model bundle.
+
+### Map generated Rust names back to source
+
+In generated Rust, each linker-visible Incan declaration has a reversible `incan-v1` identifier. To show a source name, decode the identifier's payload rather than reading the identifier literally.

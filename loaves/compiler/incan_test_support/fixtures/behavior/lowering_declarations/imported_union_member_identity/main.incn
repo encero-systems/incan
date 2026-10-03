@@ -1,0 +1,12 @@
+# behavior: a module that imports a model from one of two modules declaring the same name keeps that declaration as its union member
+# retires: loaves/compiler/incan_ir/src/lower/tests/union_member_identity.rs::an_imported_shared_nominal_of_this_package_is_spelled_by_its_declaring_module_issue1796
+# expect-stdout:
+#   product 3
+#   text ok
+
+from third import Product, describe
+
+
+def main() -> None:
+    println(describe(Product(value=3)))
+    println(describe("ok"))

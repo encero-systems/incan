@@ -1,0 +1,7 @@
+# behavior: a decimal value assigned to a decimal type that keeps fewer digits before or after the point is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    price: decimal[10, 2] = 12345678.90d
+    tiny: decimal[1, 1] = price
+    println(tiny)

@@ -1,0 +1,12 @@
+# behavior: a local variable spelled with a capital letter is a value, and field access on it reads the model's field
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_uppercase_var_field_access_codegen
+# expect-stdout:
+#   Ada
+
+model Person:
+    name: str
+
+
+def main() -> None:
+    mut User: Person = Person(name="Ada")
+    println(User.name)

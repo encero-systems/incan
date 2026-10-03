@@ -1,0 +1,23 @@
+# behavior: reading a bounded number of bytes from a BytesIO buffer returns exactly those bytes, and the next bounded read continues from where the first stopped
+# retires: loaves/compiler/incan_emit/src/ownership.rs::plan_read_by_ref_receiver_reborrows_refmut_guard
+# expect-stdout:
+#   2 true
+#   4 true
+#   0
+
+from std.io import BytesIO, IoError
+
+
+def report(outcome: Result[bytes, IoError], expected: bytes) -> None:
+    match outcome:
+        Ok(data) => println(f"{len(data)} {data == expected}")
+        Err(error) => println(f"error {error.kind}")
+
+
+def main() -> None:
+    buffer = BytesIO(b"abcdef")
+    report(buffer.read(2), b"ab")
+    report(buffer.read(10), b"cdef")
+    match buffer.read(1):
+        Ok(data) => println(len(data))
+        Err(error) => println(f"error {error.kind}")

@@ -1,0 +1,29 @@
+from units import Size
+
+
+pub enum Corner:
+    Top
+    Bottom
+
+
+def doubled(n: int) -> int:
+    return n * 2
+
+
+pub trait Plain:
+    def label(self) -> str: ...
+
+
+pub trait Measured:
+    def width(self) -> int: ...
+
+    def corner(self) -> Corner:
+        return Corner.Top
+
+    def is_top(self) -> bool:
+        match self.corner():
+            Corner.Top => return true
+            _ => return false
+
+    def size(self) -> Size:
+        return Size(n=doubled(self.width()))

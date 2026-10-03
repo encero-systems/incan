@@ -1,0 +1,52 @@
+# behavior: a local partial of a method of a value holds the receiver it was built with and calls the method with its presets, through a method alias, on a generic type and on self
+# retires: loaves/compiler/incan_emit/src/tests/capturing_closures.rs::local_partials_of_methods_of_values_build_issue1561
+# expect-stdout:
+#   xann!
+#   yann?
+#   <bob.
+#   [1, 2]
+#   hi you!
+#   hi me?
+
+model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+    tag = label
+
+
+model Box[T]:
+    value: T
+
+    def pair(self, other: T, sep: str) -> list[T]:
+        return [self.value, other]
+
+
+class Greeter:
+    pub greeting: str
+
+    def greet(self, name: str, punct: str) -> str:
+        return self.greeting + " " + name + punct
+
+    def make(self) -> str:
+        hello = partial self.greet(punct="!")
+        return hello("you")
+
+
+def main() -> None:
+    mut user = User(name="ann")
+    tag = partial user.label(prefix="x")
+    user = User(name="bob")
+    println(tag(suffix="!"))
+    println(tag("?", prefix="y"))
+    aliased = partial user.tag(suffix=".")
+    println(aliased("<"))
+    b = Box(value=1)
+    joined = partial b.pair(sep="-")
+    println(joined(2))
+    g = Greeter(greeting="hi")
+    println(g.make())
+    holder = partial g.greet(name="me")
+    println(holder(punct="?"))

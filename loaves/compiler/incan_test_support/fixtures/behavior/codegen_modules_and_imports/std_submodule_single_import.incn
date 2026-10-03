@@ -1,0 +1,12 @@
+# behavior: one function imported from a std submodule is callable, and gzip decompression of bytes that are not gzip is an error, not a value
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_prunes_unreachable_stdlib_dependency_public_items_for_generated_projects
+# expect-stdout:
+#   error
+
+from std.compression.gzip import decompress
+
+
+def main() -> None:
+    match decompress(b"data"):
+        Ok(_) => println("value")
+        Err(_) => println("error")

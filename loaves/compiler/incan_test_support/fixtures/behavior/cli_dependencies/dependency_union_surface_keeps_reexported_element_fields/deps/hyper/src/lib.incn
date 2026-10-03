@@ -1,0 +1,6 @@
+pub from search import (
+    ExactResult,
+    Nomination,
+    exact_query,
+    weigh,
+)

@@ -30,7 +30,10 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CORPUS = REPO_ROOT / "loaves" / "compiler" / "incan_driver" / "tests" / "parity_corpus_tests.rs"
+# The corpus is one integration root split into subject submodules: the root file plus every `.rs` beside it under
+# the directory of the same name (the seed corpus lives in `parity_corpus_tests/seed.rs`).
+CORPUS_ROOT = REPO_ROOT / "loaves" / "compiler" / "incan_driver" / "tests" / "parity_corpus_tests.rs"
+CORPUS_FILES = [CORPUS_ROOT, *sorted(CORPUS_ROOT.with_suffix("").glob("*.rs"))]
 
 # `parity-987-unsupported-no-issue` is a deliberate red-state fixture proving the
 # corpus rejects a missing owner. It is never a real deferral.
@@ -51,7 +54,7 @@ def owning_issues() -> dict[int, int]:
     *expected* to be closed, and flagging them would report seven false positives for
     every real one.
     """
-    text = CORPUS.read_text(encoding="utf-8")
+    text = "\n".join(path.read_text(encoding="utf-8") for path in CORPUS_FILES)
     counts: dict[int, int] = {}
     for match in re.finditer(r"Disposition::(\w+)\s*\{", text):
         if match.group(1) not in DEFERRING_DISPOSITIONS:

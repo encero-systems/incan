@@ -1,0 +1,32 @@
+# behavior: a trait default whose item type parameter is bounded by Clone appends each item its own method returns, and an adopter drains its items into a list
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::trait_default_appending_its_own_item_copies_it_issue1561
+# expect-stdout:
+#   3
+#   20
+
+trait Source[T with Clone]:
+    def pull(mut self) -> Option[T]: ...
+
+    def drain(mut self) -> list[T]:
+        mut items: list[T] = []
+        while true:
+            match self.pull():
+                Some(item) => items.append(item)
+                None => return items
+
+
+model Countdown with Source[list[int]]:
+    n: int
+
+    def pull(mut self) -> Option[list[int]]:
+        if self.n <= 0:
+            return None
+        self.n -= 1
+        return Some([self.n])
+
+
+def main() -> None:
+    mut c = Countdown(n=3)
+    items = c.drain()
+    println(len(items))
+    println(items[0][0] * 10 + items[2][0])

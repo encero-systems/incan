@@ -5,26 +5,32 @@
 //! immutable root. Both direct Rustc publication and Rust inspection can use this adapter; neither gets a second
 //! graphing path.
 
-#![allow(
-    dead_code,
-    reason = "the source publisher wires this adapter after its selected runtime provider lands"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use oven_model::manifest::{RustFactArtifactKind, RustFactLibraryKind};
+use oven_model::oven_interop::{
+    OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+    OvenInteropExecutionProvenance, verify_interop_execution_receipt_identity,
+};
+use oven_store::publisher_execution::{OvenPublisherToolReceipt, verify_publisher_tool_receipt};
+
+use super::direct_compiler::OvenPublisherLinkProduct;
 use super::{
     OvenCompiledRustUnitIdentity, OvenRustcError, OvenSelectedRustFacetEnvironmentValue,
-    OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetPath,
-    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit, ValidatedOvenSelectedRustFacetGraph,
-    compiled_rust_unit_identities, digest_regular_file,
+    OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary,
+    OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
+    OvenSelectedRustFacetPath, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit,
+    ValidatedOvenSelectedRustFacetGraph, compiled_rust_unit_identities, digest_regular_file,
+    selected_graph_generated_input_digest, selected_graph_unit_identity,
 };
 
 /// One physical root for an owner named by a validated selected facet graph.
 ///
 /// The caller obtains these roots only from retained Store/Loaf/provider owners. This shape carries no authority to
-/// search a checkout, registry cache, Cargo home, or neighbouring artifact directory.
+/// search a checkout, registry cache, Cargo home, or neighboring artifact directory.
 #[derive(Debug, Clone)]
 pub struct OvenSelectedRustFacetOwnerRoot {
     pub identity: String,
@@ -35,7 +41,7 @@ pub struct OvenSelectedRustFacetOwnerRoot {
 ///
 /// The selected unit's source root is the compiler-visible root. A provider/package root may be the same root or an
 /// ancestor below the same retained owner, for example a package root `.` above a compiler root `src`. These members
-/// never enter the selected unit's compiler-visible source catalogue or compiled identity. The higher-level record
+/// never enter the selected unit's compiler-visible source catalog or compiled identity. The higher-level record
 /// must already bind their owner, root and bytes; this adapter only verifies that exact physical tree and refuses any
 /// hidden file.
 #[derive(Debug, Clone)]
@@ -48,14 +54,236 @@ pub struct OvenSelectedRustFacetSupplementalSourceMembers {
     pub members: Vec<OvenSelectedRustFacetSourceMember>,
 }
 
+/// Receipt-bound generated inputs and their immutable owner for one consuming Rust unit.
+#[derive(Debug, Clone)]
+pub struct OvenPublisherToolGeneratedInputs {
+    /// Generated-output owner whose identity is the verified publisher receipt identity.
+    pub owner: OvenSelectedRustFacetOwner,
+    /// Asset-side products projected as compiler inputs; no executable fact crosses this boundary.
+    pub generated_inputs: Vec<OvenSelectedRustFacetGeneratedInput>,
+}
+
+/// Project verified publisher-tool products into one consumer's selected generated inputs.
+///
+/// The adapter admits no executable path or invocation authority. It requires the receipt to bind the selected host,
+/// target and consuming-unit identity, then makes the receipt identity the `GeneratedOutput` owner. A later physical
+/// materializer verifies every product byte below that owner before Rustc can read it.
+pub fn publisher_tool_generated_inputs(
+    receipt: &OvenPublisherToolReceipt,
+    host: &str,
+    target: &str,
+    consuming_unit: &str,
+) -> Result<OvenPublisherToolGeneratedInputs, OvenRustcError> {
+    verify_publisher_tool_receipt(receipt).map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher tool receipt",
+        message: error.to_string(),
+    })?;
+    if receipt.host != host || receipt.target != target {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: "host/target association does not match the selected consumer".to_string(),
+        });
+    }
+    if receipt
+        .consuming_units
+        .binary_search_by(|candidate| candidate.as_str().cmp(consuming_unit))
+        .is_err()
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: format!("does not name consuming unit `{consuming_unit}`"),
+        });
+    }
+    let generated_inputs = receipt
+        .outputs
+        .iter()
+        .map(|output| {
+            let (root, members) = match output.kind {
+                RustFactArtifactKind::File => {
+                    let path = Path::new(&output.path);
+                    let name =
+                        path.file_name()
+                            .and_then(OsStr::to_str)
+                            .ok_or_else(|| OvenRustcError::InvalidInput {
+                                field: "publisher tool receipt",
+                                message: format!("file output `{}` has no portable file name", output.path),
+                            })?;
+                    let parent = path
+                        .parent()
+                        .and_then(Path::to_str)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or(".");
+                    (
+                        parent.to_string(),
+                        vec![OvenSelectedRustFacetSourceMember {
+                            path: name.to_string(),
+                            digest: output.digest.clone(),
+                        }],
+                    )
+                }
+                RustFactArtifactKind::Tree => (
+                    output.path.clone(),
+                    output
+                        .members
+                        .iter()
+                        .map(|member| OvenSelectedRustFacetSourceMember {
+                            path: member.path.clone(),
+                            digest: member.digest.clone(),
+                        })
+                        .collect(),
+                ),
+            };
+            let digest =
+                selected_graph_generated_input_digest(&members).map_err(|error| OvenRustcError::InvalidInput {
+                    field: "publisher tool product",
+                    message: error.to_string(),
+                })?;
+            Ok(OvenSelectedRustFacetGeneratedInput {
+                name: output.name.clone(),
+                source: OvenSelectedRustFacetPath {
+                    owner: receipt.identity.clone(),
+                    path: root,
+                },
+                digest,
+                members,
+            })
+        })
+        .collect::<Result<Vec<_>, OvenRustcError>>()?;
+    Ok(OvenPublisherToolGeneratedInputs {
+        owner: OvenSelectedRustFacetOwner {
+            identity: receipt.identity.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        },
+        generated_inputs,
+    })
+}
+
+/// Attach one finished publisher-tool receipt to every selected consumer it names and rekey the graph closure.
+///
+/// The receipt is projected through [`publisher_tool_generated_inputs`] before any graph mutation, so executable
+/// authority never crosses into the consumer graph. Every named consumer must exist in the pre-product graph. The
+/// receipt identity becomes the generated-output owner and the exact products become compiler inputs of each
+/// consumer; dependent identities are then recomputed over that new input closure.
+pub fn finalize_publisher_tool_product(
+    selected: ValidatedOvenSelectedRustFacetGraph,
+    receipt: &OvenPublisherToolReceipt,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    verify_publisher_tool_receipt(receipt).map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher tool receipt",
+        message: error.to_string(),
+    })?;
+    let mut graph = selected.into_graph();
+    if receipt.host != graph.selection.host || receipt.target != graph.selection.intent.target {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: "host/target association does not match the selected graph".to_string(),
+        });
+    }
+    if graph.owners.iter().any(|owner| owner.identity == receipt.identity) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: "receipt owner collides with an existing selected owner".to_string(),
+        });
+    }
+    let consumers = receipt.consuming_units.iter().cloned().collect::<BTreeSet<_>>();
+    let present = graph
+        .units
+        .iter()
+        .filter(|unit| consumers.contains(&unit.identity))
+        .map(|unit| unit.identity.clone())
+        .collect::<BTreeSet<_>>();
+    if present != consumers {
+        let missing = consumers.difference(&present).cloned().collect::<Vec<_>>();
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool consumer",
+            message: format!("selected graph has no unit(s) {}", missing.join(", ")),
+        });
+    }
+    graph.owners.push(OvenSelectedRustFacetOwner {
+        identity: receipt.identity.clone(),
+        kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+    });
+    for unit in &mut graph.units {
+        if !consumers.contains(&unit.identity) {
+            continue;
+        }
+        let projected = publisher_tool_generated_inputs(
+            receipt,
+            &graph.selection.host,
+            &graph.selection.intent.target,
+            &unit.identity,
+        )?;
+        for input in projected.generated_inputs {
+            if unit.generated_inputs.iter().any(|existing| existing.name == input.name) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "publisher tool product",
+                    message: format!(
+                        "generated-input name `{}` collides in unit `{}`",
+                        input.name, unit.crate_name
+                    ),
+                });
+            }
+            unit.generated_inputs.push(input);
+        }
+        unit.generated_inputs.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    rekey_selected_graph(&mut graph)?;
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher tool selected graph",
+        message: error.to_string(),
+    })
+}
+
 /// Exact additional members grouped by one selected owner/root pair.
 type SupplementalSourceTrees = BTreeMap<(String, String), BTreeMap<String, String>>;
 
 /// A compiler-visible environment value rebound from a portable selected graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OvenMaterializedRustFacetEnvironmentValue {
+    /// Exact scalar text admitted by the selected graph.
     Text(String),
+    /// Path resolved beneath an admitted owner.
     Path(PathBuf),
+    /// Path resolved beneath the unit-private staged generated-output tree.
+    OutDir(String),
+}
+
+/// One ordered linked-library input after its declared owner has been physically admitted.
+///
+/// Archives carry an exact verified file. Providers carry the target-specific capability, receipt and artifact
+/// admitted from their complete owner tree, so the executor never needs to discover a same-named host library.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OvenMaterializedRustFacetLinkedLibrary {
+    /// Exact static or dynamic archive bytes retained beneath an admitted owner.
+    Archive {
+        /// Linker-visible declared name retained for evidence and diagnostics.
+        name: String,
+        /// Declared static or dynamic linkage class.
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        /// Canonical path of the verified regular non-symlink file.
+        artifact: PathBuf,
+        /// Digest of the exact verified bytes.
+        digest: String,
+    },
+    /// Logical framework or system capability beneath an admitted provider owner.
+    Provider {
+        /// Linker-visible declared capability name.
+        name: String,
+        /// Declared framework or system linkage class.
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        /// Exact target verified against the held provider provenance.
+        target: String,
+        /// Provider-declared capability verified against the held provenance.
+        capability: String,
+        /// Exact provider receipt identity verified against the held provenance.
+        receipt_identity: String,
+        /// Canonical directory containing the physically admitted link input.
+        search_root: PathBuf,
+        /// Canonical path of the exact selected provider artifact.
+        artifact: PathBuf,
+        /// Digest of the exact selected provider artifact.
+        digest: String,
+    },
 }
 
 /// A physically verified selected source unit ready for the direct-Rustc publisher.
@@ -71,20 +299,221 @@ pub struct OvenMaterializedRustFacetUnit {
     pub exclude_dirs: Vec<PathBuf>,
     pub environment: BTreeMap<String, OvenMaterializedRustFacetEnvironmentValue>,
     pub generated_inputs: Vec<(String, PathBuf, String)>,
+    /// Compiler-owned bare externs admitted by the validated selected graph.
+    pub sysroot_externs: Vec<String>,
+    /// Ordered linked-library inputs. Order and repeated entries are compiler-visible and are preserved exactly.
+    pub linked_libraries: Vec<OvenMaterializedRustFacetLinkedLibrary>,
 }
 
 /// A physically admitted selected graph and its source-unit projection.
 #[derive(Debug, Clone)]
 pub struct OvenMaterializedRustFacetGraph {
-    target_spec: PathBuf,
+    target: OvenMaterializedRustTarget,
     units: BTreeMap<String, OvenMaterializedRustFacetUnit>,
     supplemental_source_roots: BTreeMap<(String, String), PathBuf>,
 }
 
+/// Attach one finished publisher-native product to its consuming selected unit and rekey the graph closure.
+///
+/// Passing no product is the ordinary-consumer path: it refuses immediately and never gains an executable or source
+/// root from which it could compile C. A present product must carry a valid receipt for the pre-product consumer
+/// identity, selected target and toolchain. The receipt identity becomes the generated-output owner folded into the
+/// final selected-unit identity, avoiding a receipt/unit identity cycle while retaining both authorities.
+pub fn finalize_publisher_link_product(
+    selected: ValidatedOvenSelectedRustFacetGraph,
+    consuming_unit_identity: &str,
+    product: Option<&OvenPublisherLinkProduct>,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    let product = product.ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "publisher link product",
+        message: "consumer bake requires an admitted finished archive and never compiles native sources".to_string(),
+    })?;
+    product
+        .receipt
+        .verify_identity()
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "publisher link receipt",
+            message: error.to_string(),
+        })?;
+    let mut graph = selected.into_graph();
+    if product.target != graph.selection.intent.target
+        || product.receipt.target != graph.selection.intent.target
+        || product.receipt.toolchain != graph.selection.intent.toolchain
+        || product.receipt.consuming_unit_identity != consuming_unit_identity
+        || product.receipt.role != "link"
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: "receipt does not bind the selected consumer, target and toolchain".to_string(),
+        });
+    }
+    let receipt_output = match product.receipt.outputs.as_slice() {
+        [output]
+            if output.name == "archive"
+                && output.kind == RustFactArtifactKind::File
+                && output.path == product.archive_relative_path
+                && output.members.is_empty() =>
+        {
+            output
+        }
+        _ => {
+            return Err(OvenRustcError::InvalidInput {
+                field: "publisher link product",
+                message: "receipt must declare only the verified archive product".to_string(),
+            });
+        }
+    };
+    if receipt_output.digest != product.archive_digest {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: "archive digest is detached from its receipt".to_string(),
+        });
+    }
+    let actual_digest = digest_regular_file(&product.archive_path, "publisher link archive")?;
+    if actual_digest != product.archive_digest {
+        return Err(OvenRustcError::ArtifactDigestMismatch {
+            path: product.archive_path.clone(),
+            expected: product.archive_digest.clone(),
+            actual: actual_digest,
+        });
+    }
+    let target_index = graph
+        .units
+        .iter()
+        .position(|unit| unit.identity == consuming_unit_identity)
+        .ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "publisher link consumer",
+            message: format!("selected graph has no unit `{consuming_unit_identity}`"),
+        })?;
+    if graph.units.iter().any(|unit| {
+        unit.linked_libraries.iter().any(|library| match library {
+            OvenSelectedRustFacetLinkedLibrary::Archive { name, .. } => name == &product.library_name,
+            OvenSelectedRustFacetLinkedLibrary::Provider { details } => details.name == product.library_name,
+        })
+    }) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: format!(
+                "linked-library identity `{}` collides with an existing product",
+                product.library_name
+            ),
+        });
+    }
+    if graph
+        .owners
+        .iter()
+        .any(|owner| owner.identity == product.receipt.identity)
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: "receipt owner collides with an existing selected owner".to_string(),
+        });
+    }
+    graph.owners.push(OvenSelectedRustFacetOwner {
+        identity: product.receipt.identity.clone(),
+        kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+    });
+    let kind = match product.library_kind {
+        RustFactLibraryKind::Static => OvenSelectedRustFacetLinkedLibraryKind::Static,
+        RustFactLibraryKind::Dynamic => OvenSelectedRustFacetLinkedLibraryKind::Dynamic,
+    };
+    graph.units[target_index]
+        .linked_libraries
+        .push(OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: product.library_name.clone(),
+            kind,
+            artifact: OvenSelectedRustFacetPath {
+                owner: product.receipt.identity.clone(),
+                path: product.archive_relative_path.clone(),
+            },
+            digest: product.archive_digest.clone(),
+        });
+    rekey_selected_graph(&mut graph)?;
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher link selected graph",
+        message: error.to_string(),
+    })
+}
+
+/// Recompute every selected identity after one product changes a unit and therefore its dependent Merkle closure.
+fn rekey_selected_graph(graph: &mut OvenSelectedRustFacetGraph) -> Result<(), OvenRustcError> {
+    let original_identities = graph.units.iter().map(|unit| unit.identity.clone()).collect::<Vec<_>>();
+    let mut pending = (0..graph.units.len()).collect::<BTreeSet<_>>();
+    let mut remapped = BTreeMap::new();
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .copied()
+            .filter(|index| {
+                graph.units[*index]
+                    .dependencies
+                    .iter()
+                    .all(|dependency| remapped.contains_key(&dependency.unit))
+            })
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            return Err(OvenRustcError::InvalidInput {
+                field: "publisher link selected graph",
+                message: "has no dependency frontier while rekeying product consumers".to_string(),
+            });
+        }
+        for index in ready {
+            pending.remove(&index);
+            for dependency in &mut graph.units[index].dependencies {
+                dependency.unit =
+                    remapped
+                        .get(&dependency.unit)
+                        .cloned()
+                        .ok_or_else(|| OvenRustcError::InvalidInput {
+                            field: "publisher link selected graph",
+                            message: "dependency disappeared while rekeying".to_string(),
+                        })?;
+            }
+            let identity = selected_graph_unit_identity(&graph.selection, &graph.units[index]).map_err(|error| {
+                OvenRustcError::InvalidInput {
+                    field: "publisher link selected graph",
+                    message: error.to_string(),
+                }
+            })?;
+            remapped.insert(original_identities[index].clone(), identity.clone());
+            graph.units[index].identity = identity;
+        }
+    }
+    for root in graph.exposed_roots.values_mut() {
+        root.unit = remapped
+            .get(&root.unit)
+            .cloned()
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "publisher link selected graph",
+                message: "exposed root disappeared while rekeying".to_string(),
+            })?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+enum OvenMaterializedRustTarget {
+    BuiltIn(String),
+    Custom(PathBuf),
+}
+
 impl OvenMaterializedRustFacetGraph {
-    /// Return the compiler-selected target-spec JSON after digest verification.
-    pub fn target_spec(&self) -> &Path {
-        &self.target_spec
+    /// Return the exact custom target-spec JSON after digest verification.
+    ///
+    /// Built-in targets return `None`: the selected compiler owns those targets directly and no JSON file exists.
+    pub fn custom_target_spec(&self) -> Option<&Path> {
+        match &self.target {
+            OvenMaterializedRustTarget::BuiltIn(_) => None,
+            OvenMaterializedRustTarget::Custom(path) => Some(path),
+        }
+    }
+
+    /// Return the exact `rustc --target` argument admitted by the selected target descriptor.
+    pub fn compiler_target(&self) -> &OsStr {
+        match &self.target {
+            OvenMaterializedRustTarget::BuiltIn(target) => OsStr::new(target),
+            OvenMaterializedRustTarget::Custom(path) => path.as_os_str(),
+        }
     }
 
     /// Look up one selected source unit by its source-selection identity.
@@ -130,7 +559,7 @@ pub fn materialize_selected_rust_facet_graph(
 /// Bind a selected graph while retaining a higher-level, already admitted source closure in the exact physical tree.
 ///
 /// Provider-only supplemental members do not enter [`compiled_rust_unit_identities`]; an overlapping member already
-/// enters through the selected unit's ordinary source catalogue. Every supplemental member is checked solely to make
+/// enters through the selected unit's ordinary source catalog. Every supplemental member is checked solely to make
 /// sure a physical source root contains neither hidden files nor undeclared provider inputs. Callers must provide
 /// them from an authority record that has already selected their owner, source root and byte identities.
 pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
@@ -152,12 +581,16 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, OvenRustcError>>()?;
-    let target_spec = resolve_file(
-        &owners,
-        &graph.selection.target_spec.source,
-        &graph.selection.target_spec.digest,
-        "selected Rust target spec",
-    )?;
+    let target = match &graph.selection.target_spec {
+        super::OvenSelectedRustFacetTargetSpec::BuiltIn { target, .. } => {
+            OvenMaterializedRustTarget::BuiltIn(target.clone())
+        }
+        super::OvenSelectedRustFacetTargetSpec::Custom { source, digest } => {
+            let path = resolve_file(&owners, source, digest, "selected Rust target spec")?;
+            validate_custom_target_spec(&path)?;
+            OvenMaterializedRustTarget::Custom(path)
+        }
+    };
     let compiled_identities = compiled_rust_unit_identities(selected, compiler_closure_digest)?;
     let mut verified_source_trees = BTreeSet::new();
     let compiler_source_roots = graph
@@ -212,6 +645,7 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
             .iter()
             .map(|input| materialize_generated_input(&owners, input))
             .collect::<Result<Vec<_>, _>>()?;
+        let linked_libraries = materialize_linked_libraries(graph, &owners, unit)?;
         let compiled_identity =
             compiled_identities
                 .get(&unit.identity)
@@ -232,6 +666,8 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
                     exclude_dirs,
                     environment,
                     generated_inputs,
+                    sysroot_externs: unit.sysroot_externs.clone(),
+                    linked_libraries,
                 },
             )
             .is_some()
@@ -255,10 +691,29 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
         verify_supplemental_source_tree(source_root, members)?;
     }
     Ok(OvenMaterializedRustFacetGraph {
-        target_spec,
+        target,
         units,
         supplemental_source_roots,
     })
+}
+
+/// Require a custom target spec to be an actual JSON object before it can reach rustc.
+fn validate_custom_target_spec(path: &Path) -> Result<(), OvenRustcError> {
+    let bytes = fs::read(path).map_err(|source| OvenRustcError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| OvenRustcError::InvalidInput {
+        field: "selected Rust target spec",
+        message: format!("is not valid JSON: {error}"),
+    })?;
+    if !value.is_object() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust target spec",
+            message: "must be a JSON object".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Validate and group admitted supplemental source members by their existing physical source root.
@@ -415,7 +870,8 @@ fn materialize_environment(
         .iter()
         .map(|(name, value)| {
             let value = match value {
-                OvenSelectedRustFacetEnvironmentValue::Text { value } => {
+                OvenSelectedRustFacetEnvironmentValue::Text { value }
+                | OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
                     OvenMaterializedRustFacetEnvironmentValue::Text(value.clone())
                 }
                 OvenSelectedRustFacetEnvironmentValue::Path { value } => {
@@ -424,6 +880,9 @@ fn materialize_environment(
                         value,
                         "selected Rust environment path",
                     )?)
+                }
+                OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => {
+                    OvenMaterializedRustFacetEnvironmentValue::OutDir(relative.clone())
                 }
                 OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {
                     return Err(OvenRustcError::InvalidInput {
@@ -468,7 +927,7 @@ fn materialize_generated_input(
             .into_iter()
             .map(|(path, digest)| OvenSelectedRustFacetSourceMember { path, digest })
             .collect::<Vec<_>>();
-        super::selected_graph_source_digest(&members).map_err(|error| OvenRustcError::InvalidInput {
+        super::selected_graph_generated_input_digest(&members).map_err(|error| OvenRustcError::InvalidInput {
             field: "selected Rust generated input",
             message: error.to_string(),
         })?
@@ -481,6 +940,160 @@ fn materialize_generated_input(
         });
     }
     Ok((input.name.clone(), path, input.digest.clone()))
+}
+
+/// Resolve one unit's ordered linked-library inputs without introducing linker discovery.
+///
+/// Archive bytes use the same contained owner-relative file admission as every other selected file. A provider is
+/// retained only when its identity names an admitted `LinkedLibraryProvider`; its root is evidence of that held
+/// owner, not permission to search the root or the host by name.
+fn materialize_linked_libraries(
+    graph: &OvenSelectedRustFacetGraph,
+    owners: &BTreeMap<String, PathBuf>,
+    unit: &OvenSelectedRustFacetUnit,
+) -> Result<Vec<OvenMaterializedRustFacetLinkedLibrary>, OvenRustcError> {
+    unit.linked_libraries
+        .iter()
+        .map(|library| match library {
+            OvenSelectedRustFacetLinkedLibrary::Archive {
+                name,
+                kind,
+                artifact,
+                digest,
+            } => Ok(OvenMaterializedRustFacetLinkedLibrary::Archive {
+                name: name.clone(),
+                kind: *kind,
+                artifact: resolve_file(owners, artifact, digest, "selected Rust linked archive")?,
+                digest: digest.clone(),
+            }),
+            OvenSelectedRustFacetLinkedLibrary::Provider { details } => {
+                let crate::rustc::OvenSelectedRustFacetLinkedLibraryProvider {
+                    name,
+                    kind,
+                    provider,
+                    target,
+                    capability,
+                    receipt_identity,
+                    provenance,
+                    provenance_digest,
+                    search_root,
+                    artifact,
+                    digest,
+                    members,
+                } = details.as_ref();
+                let declared = graph
+                    .owners
+                    .iter()
+                    .find(|owner| owner.identity == *provider)
+                    .ok_or_else(|| OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider",
+                        message: format!("names absent owner `{provider}`"),
+                    })?;
+                if declared.kind != OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider",
+                        message: format!("owner `{provider}` is not a linked-library provider"),
+                    });
+                }
+                let expected_target = match unit.domain {
+                    super::OvenSelectedRustFacetDomain::Host => graph.selection.host.as_str(),
+                    super::OvenSelectedRustFacetDomain::Target => graph.selection.intent.target.as_str(),
+                };
+                if target != expected_target {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider",
+                        message: format!("target `{target}` does not match unit target `{expected_target}`"),
+                    });
+                }
+                validate_provider_target(*kind, target)?;
+                let provenance_path = resolve_file(
+                    owners,
+                    provenance,
+                    provenance_digest,
+                    "selected Rust linked provider provenance",
+                )?;
+                let provenance_bytes = fs::read(&provenance_path).map_err(|source| OvenRustcError::Io {
+                    path: provenance_path.clone(),
+                    source,
+                })?;
+                let held: OvenInteropExecutionProvenance =
+                    serde_json::from_slice(&provenance_bytes).map_err(|error| OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider provenance",
+                        message: error.to_string(),
+                    })?;
+                verify_interop_execution_receipt_identity(&held.receipt).map_err(|error| {
+                    OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider provenance",
+                        message: error,
+                    }
+                })?;
+                if held.schema_version != OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION
+                    || held.receipt.schema_version != OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION
+                    || held.receipt.target != target.as_str()
+                    || held.receipt.identity != receipt_identity.as_str()
+                    || !held.system_capabilities.iter().any(|held| held == capability)
+                {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider provenance",
+                        message: "does not bind the selected schema, target, receipt and capability".to_string(),
+                    });
+                }
+                let search_root = resolve_directory_path(owners, search_root, "selected Rust linked provider root")?;
+                let member_digest =
+                    super::selected_graph_source_digest(members).map_err(|error| OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider members",
+                        message: error.to_string(),
+                    })?;
+                verify_source_tree(&search_root, members, &member_digest, None)?;
+                let artifact = resolve_file(owners, artifact, digest, "selected Rust linked provider artifact")?;
+                if !artifact.starts_with(&search_root) {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider artifact",
+                        message: "is outside its exact provider search root".to_string(),
+                    });
+                }
+                if *kind == OvenSelectedRustFacetLinkedLibraryKind::Framework {
+                    validate_framework_artifact(&search_root, &artifact, name)?;
+                }
+                Ok(OvenMaterializedRustFacetLinkedLibrary::Provider {
+                    name: name.clone(),
+                    kind: *kind,
+                    target: target.clone(),
+                    capability: capability.clone(),
+                    receipt_identity: receipt_identity.clone(),
+                    search_root,
+                    artifact,
+                    digest: digest.clone(),
+                })
+            }
+        })
+        .collect()
+}
+
+/// Require an admitted framework artifact to be the named binary inside the exact named framework directory.
+fn validate_framework_artifact(search_root: &Path, artifact: &Path, name: &str) -> Result<(), OvenRustcError> {
+    let expected = search_root.join(format!("{name}.framework")).join(name);
+    if artifact != expected {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust linked framework",
+            message: format!(
+                "{} is not the exact `{name}.framework/{name}` artifact",
+                artifact.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Refuse framework linkage outside an Apple target instead of passing a meaningless framework flag to its linker.
+fn validate_provider_target(kind: OvenSelectedRustFacetLinkedLibraryKind, target: &str) -> Result<(), OvenRustcError> {
+    if kind == OvenSelectedRustFacetLinkedLibraryKind::Framework && target.split('-').nth(1) != Some("apple") {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust linked framework",
+            message: format!("framework linkage is unsupported for non-Apple target `{target}`"),
+        });
+    }
+    Ok(())
 }
 
 /// Require the physical tree under `root` to be exactly the member set the selection declared.
@@ -834,15 +1447,21 @@ mod tests {
 
     use super::*;
     use crate::rustc::{
-        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain,
-        OvenSelectedRustFacetGraph, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-        OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnitRole,
-        compiled_rust_unit_identities, selected_graph_sha256, selected_graph_source_digest,
-        selected_graph_unit_identity,
+        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain, OvenSelectedRustFacetGraph,
+        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPurpose,
+        OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+        OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnitRole, compiled_rust_unit_identities,
+        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
+    };
+    use oven_model::manifest::RustFactLibraryKind;
+    use oven_store::publisher_execution::{
+        PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION, PublisherExecutionObjectReceipt, PublisherExecutionProduct,
+        PublisherExecutionReceipt, publisher_execution_receipt_identity,
     };
 
     const COMPILER_CLOSURE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const PUBLISHER_TOOL_CONSUMER: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
     fn source_owner() -> String {
         selected_graph_sha256(b"selected-unit source owner")
@@ -852,26 +1471,125 @@ mod tests {
         selected_graph_sha256(b"selected-unit toolchain owner")
     }
 
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: super::super::OvenSelectedRustFacetIntent {
-                target: "x86_64-unknown-linux-gnu".to_string(),
+                target: "aarch64-apple-darwin".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "debug".to_string(),
-                features: Vec::new(),
             },
             host: "x86_64-unknown-linux-gnu".to_string(),
+            host_cfg: cfg_snapshot("x86_64", "linux"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: false,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),
                 },
-                digest: selected_graph_sha256(b"target spec"),
+                digest: selected_graph_sha256(br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#),
             },
         }
+    }
+
+    /// An ordinary consumer cannot turn declared native work into execution when no admitted product exists.
+    #[test]
+    fn consumer_refuses_missing_publisher_link_product() -> Result<(), Box<dyn std::error::Error>> {
+        let graph = selected_graph()?;
+        let identity = graph
+            .graph()
+            .units
+            .first()
+            .ok_or("fixture graph has no unit")?
+            .identity
+            .clone();
+        let error = super::finalize_publisher_link_product(graph, &identity, None)
+            .err()
+            .ok_or("consumer accepted missing native product")?;
+        assert!(error.to_string().contains("never compiles native sources"));
+        Ok(())
+    }
+
+    /// A verified archive receipt becomes a selected owner and changes the consuming unit identity.
+    #[test]
+    fn publisher_link_product_is_bound_into_consuming_unit_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let graph = selected_graph()?;
+        let original_identity = graph
+            .graph()
+            .units
+            .first()
+            .ok_or("fixture graph has no unit")?
+            .identity
+            .clone();
+        let product_root = tempfile::tempdir()?;
+        let archive_path = product_root.path().join("libfixture.a");
+        fs::write(&archive_path, b"native archive")?;
+        let archive_digest = selected_graph_sha256(b"native archive");
+        let mut receipt = PublisherExecutionReceipt {
+            schema_version: PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION,
+            identity: String::new(),
+            role: "link".to_string(),
+            name: "fixture-native".to_string(),
+            consuming_unit_identity: original_identity.clone(),
+            target: graph.graph().selection.intent.target.clone(),
+            archive_format: "darwin".to_string(),
+            toolchain: graph.graph().selection.intent.toolchain.clone(),
+            executable_owner: selected_graph_sha256(b"compiler owner"),
+            executable_digest: selected_graph_sha256(b"compiler"),
+            objects: vec![PublisherExecutionObjectReceipt {
+                name: "fixture.o".to_string(),
+                logical_argv: vec!["input:source".to_string(), "output:fixture.o".to_string()],
+                digest: selected_graph_sha256(b"fixture object"),
+            }],
+            logical_environment: BTreeMap::new(),
+            inputs: BTreeMap::from([("source".to_string(), selected_graph_sha256(b"source"))]),
+            outputs: vec![PublisherExecutionProduct {
+                name: "archive".to_string(),
+                kind: oven_model::manifest::RustFactArtifactKind::File,
+                path: "libfixture.a".to_string(),
+                digest: archive_digest.clone(),
+                members: Vec::new(),
+            }],
+        };
+        receipt.identity = publisher_execution_receipt_identity(&receipt)?;
+        let product = super::OvenPublisherLinkProduct {
+            library_name: "fixture".to_string(),
+            library_kind: RustFactLibraryKind::Static,
+            target: graph.graph().selection.intent.target.clone(),
+            archive_relative_path: "libfixture.a".to_string(),
+            archive_path,
+            product_root: product_root.path().to_path_buf(),
+            archive_digest,
+            receipt: receipt.clone(),
+        };
+
+        let finalized = super::finalize_publisher_link_product(graph, &original_identity, Some(&product))?;
+        let unit = finalized.graph().units.first().ok_or("finalized graph has no unit")?;
+        assert_ne!(unit.identity, original_identity);
+        assert!(
+            finalized
+                .graph()
+                .owners
+                .iter()
+                .any(|owner| owner.identity == receipt.identity)
+        );
+        assert!(matches!(
+            unit.linked_libraries.as_slice(),
+            [OvenSelectedRustFacetLinkedLibrary::Archive { name, digest, .. }]
+                if name == "fixture" && digest == &selected_graph_sha256(b"native archive")
+        ));
+        Ok(())
     }
 
     fn selected_graph() -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
@@ -882,6 +1600,7 @@ mod tests {
         }];
         let owner = source_owner();
         let mut unit = OvenSelectedRustFacetUnit {
+            sysroot_externs: Vec::new(),
             identity: String::new(),
             package: "fixture".to_string(),
             package_version: "1.0.0".to_string(),
@@ -900,8 +1619,10 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
+            compiler_crate_type: "lib".to_string(),
+            compiler_paths: crate::rustc::fixture_compiler_paths(),
+            compiler_arguments: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.clone(),
@@ -910,6 +1631,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(&selection, &unit)?;
         let identity = unit.identity.clone();
@@ -927,7 +1649,15 @@ mod tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner(),
+                },
+            )]),
         }
         .validated()?)
     }
@@ -950,7 +1680,15 @@ mod tests {
             path: "src".to_string(),
         }];
         unit.identity = selected_graph_unit_identity(&selection, unit)?;
-        graph.exposed_roots = BTreeMap::from([("fixture".to_string(), unit.identity.clone())]);
+        graph.exposed_roots = BTreeMap::from([(
+            "fixture".to_string(),
+            crate::rustc::OvenSelectedRustFacetRoot {
+                unit: unit.identity.clone(),
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner(),
+            },
+        )]);
         Ok(graph.validated()?)
     }
 
@@ -960,7 +1698,10 @@ mod tests {
         fs::write(source.join("src/lib.rs"), b"pub fn marker() -> u8 { 7 }\n")?;
         let toolchain = root.join("toolchain");
         fs::create_dir_all(&toolchain)?;
-        fs::write(toolchain.join("target-spec.json"), b"target spec")?;
+        fs::write(
+            toolchain.join("target-spec.json"),
+            br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#,
+        )?;
         Ok(vec![
             OvenSelectedRustFacetOwnerRoot {
                 identity: source_owner(),
@@ -978,7 +1719,11 @@ mod tests {
         let root = tempfile::tempdir()?;
         let selected = selected_graph()?;
         let materialized = materialize_selected_rust_facet_graph(&selected, COMPILER_CLOSURE, &roots(root.path())?)?;
-        assert!(materialized.target_spec().ends_with("target-spec.json"));
+        assert!(
+            materialized
+                .custom_target_spec()
+                .is_some_and(|path| path.ends_with("target-spec.json"))
+        );
         let unit = materialized
             .units()
             .next()
@@ -987,6 +1732,262 @@ mod tests {
         assert!(unit.root_module.ends_with("src/lib.rs"));
         assert_eq!(unit.include_dirs, vec![unit.source_root.clone()]);
         assert!(unit.generated_inputs.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn custom_target_spec_refuses_invalid_json_before_compiler_execution() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("custom-target.json");
+        fs::write(&path, b"not json")?;
+        assert!(matches!(
+            validate_custom_target_spec(&path),
+            Err(OvenRustcError::InvalidInput {
+                field: "selected Rust target spec",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn materializes_linked_archives_in_declared_order_with_repetition() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let archive_owner = selected_graph_sha256(b"linked archive owner");
+        let archive_root = root.path().join("linked");
+        fs::create_dir_all(&archive_root)?;
+        fs::write(archive_root.join("libfixture.a"), b"linked archive")?;
+        let digest = selected_graph_sha256(b"linked archive");
+        let mut graph = selected_graph()?.graph().clone();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: archive_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        let archive = crate::rustc::OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: archive_owner.clone(),
+                path: "libfixture.a".to_string(),
+            },
+            digest: digest.clone(),
+        };
+        unit.linked_libraries = vec![archive.clone(), archive];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(archive_owner, fs::canonicalize(&archive_root)?);
+
+        let linked = materialize_linked_libraries(&graph, &owner_roots, &unit)?;
+        assert_eq!(linked.len(), 2);
+        assert_eq!(linked[0], linked[1]);
+        assert!(matches!(
+            &linked[0],
+            OvenMaterializedRustFacetLinkedLibrary::Archive { artifact, digest: actual, .. }
+                if artifact.ends_with("libfixture.a") && actual == &digest
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn linked_archive_materialization_refuses_tampered_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let archive_owner = selected_graph_sha256(b"linked archive owner");
+        let archive_root = root.path().join("linked");
+        fs::create_dir_all(&archive_root)?;
+        fs::write(archive_root.join("libfixture.a"), b"tampered")?;
+        let mut graph = selected_graph()?.graph().clone();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: archive_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        unit.linked_libraries = vec![crate::rustc::OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: archive_owner.clone(),
+                path: "libfixture.a".to_string(),
+            },
+            digest: selected_graph_sha256(b"expected"),
+        }];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(archive_owner, fs::canonicalize(&archive_root)?);
+
+        assert!(materialize_linked_libraries(&graph, &owner_roots, &unit).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_archive_materialization_refuses_symlinks() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let archive_owner = selected_graph_sha256(b"linked archive owner");
+        let archive_root = root.path().join("linked");
+        fs::create_dir_all(&archive_root)?;
+        fs::write(archive_root.join("actual.a"), b"linked archive")?;
+        symlink("actual.a", archive_root.join("libfixture.a"))?;
+        let mut graph = selected_graph()?.graph().clone();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: archive_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        unit.linked_libraries = vec![crate::rustc::OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: archive_owner.clone(),
+                path: "libfixture.a".to_string(),
+            },
+            digest: selected_graph_sha256(b"linked archive"),
+        }];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(archive_owner, fs::canonicalize(&archive_root)?);
+
+        assert!(materialize_linked_libraries(&graph, &owner_roots, &unit).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn materializes_provider_only_from_declared_provider_owner() -> Result<(), Box<dyn std::error::Error>> {
+        use oven_model::oven_interop::{
+            OvenInteropExecutionProvenance, OvenInteropExecutionReceipt, interop_execution_receipt_identity,
+        };
+
+        let root = tempfile::tempdir()?;
+        let provider = selected_graph_sha256(b"linked provider");
+        let provider_root = root.path().join("provider");
+        let framework = provider_root.join("Security.framework/Security");
+        let provenance = provider_root.join("provenance/interop-execution.json");
+        fs::create_dir_all(framework.parent().ok_or("framework has no parent")?)?;
+        fs::create_dir_all(provenance.parent().ok_or("provenance has no parent")?)?;
+        fs::write(&framework, b"framework")?;
+        let mut receipt = OvenInteropExecutionReceipt {
+            schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+            locked_target_identity: selected_graph_sha256(b"locked target"),
+            target: "aarch64-apple-darwin".to_string(),
+            toolchain: None,
+            sdk: None,
+            identity: String::new(),
+        };
+        receipt.identity = interop_execution_receipt_identity(&receipt)?;
+        let receipt_identity = receipt.identity.clone();
+        let held = OvenInteropExecutionProvenance {
+            schema_version: OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION,
+            receipt,
+            archives: Vec::new(),
+            bundles: Vec::new(),
+            system_capabilities: vec!["apple.framework.Security".to_string()],
+        };
+        let provenance_bytes = serde_json::to_vec_pretty(&held)?;
+        fs::write(&provenance, &provenance_bytes)?;
+        let members = vec![
+            OvenSelectedRustFacetSourceMember {
+                path: "Security.framework/Security".to_string(),
+                digest: selected_graph_sha256(b"framework"),
+            },
+            OvenSelectedRustFacetSourceMember {
+                path: "provenance/interop-execution.json".to_string(),
+                digest: selected_graph_sha256(&provenance_bytes),
+            },
+        ];
+        let mut graph = selected_graph()?.graph().clone();
+        graph.selection.intent.target = "aarch64-apple-darwin".to_string();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: provider.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        unit.linked_libraries = vec![crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider {
+            details: Box::new(crate::rustc::OvenSelectedRustFacetLinkedLibraryProvider {
+                name: "Security".to_string(),
+                kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+                provider: provider.clone(),
+                target: "aarch64-apple-darwin".to_string(),
+                capability: "apple.framework.Security".to_string(),
+                receipt_identity: receipt_identity.clone(),
+                provenance: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "provenance/interop-execution.json".to_string(),
+                },
+                provenance_digest: selected_graph_sha256(&provenance_bytes),
+                search_root: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: ".".to_string(),
+                },
+                artifact: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "Security.framework/Security".to_string(),
+                },
+                digest: selected_graph_sha256(b"framework"),
+                members,
+            }),
+        }];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(provider, fs::canonicalize(&provider_root)?);
+
+        let linked = materialize_linked_libraries(&graph, &owner_roots, &unit)?;
+        assert!(matches!(
+            &linked[0],
+            OvenMaterializedRustFacetLinkedLibrary::Provider {
+                receipt_identity: actual_receipt,
+                search_root: actual_root,
+                artifact: actual_artifact,
+                ..
+            } if actual_receipt == &receipt_identity
+                && actual_root == &fs::canonicalize(&provider_root)?
+                && actual_artifact == &fs::canonicalize(&framework)?
+        ));
+        let mut unheld = unit.clone();
+        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider { details } = &mut unheld.linked_libraries[0]
+        {
+            details.capability = "apple.framework.Unheld".to_string();
+        }
+        assert!(materialize_linked_libraries(&graph, &owner_roots, &unheld).is_err());
+
+        let mut tampered = held;
+        tampered.receipt.locked_target_identity = selected_graph_sha256(b"substituted locked target");
+        let tampered_bytes = serde_json::to_vec_pretty(&tampered)?;
+        fs::write(&provenance, &tampered_bytes)?;
+        let mut tampered_unit = unit;
+        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider { details } =
+            &mut tampered_unit.linked_libraries[0]
+        {
+            details.provenance_digest = selected_graph_sha256(&tampered_bytes);
+            let provenance_member = details
+                .members
+                .iter_mut()
+                .find(|member| member.path == "provenance/interop-execution.json")
+                .ok_or("provider fixture has no provenance member")?;
+            provenance_member.digest = selected_graph_sha256(&tampered_bytes);
+        }
+        let Err(error) = materialize_linked_libraries(&graph, &owner_roots, &tampered_unit) else {
+            return Err("provider with a self-asserted receipt identity materialized".into());
+        };
+        assert!(error.to_string().contains("does not match canonical identity"));
+        assert!(
+            validate_provider_target(
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+                "x86_64-unknown-linux-gnu",
+            )
+            .is_err()
+        );
         Ok(())
     }
 
@@ -1249,6 +2250,139 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    fn publisher_tool_receipt() -> Result<OvenPublisherToolReceipt, Box<dyn std::error::Error>> {
+        use oven_model::manifest::{RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactExecutable};
+        use oven_store::digest_bytes;
+        use oven_store::publisher_execution::{OvenPublisherToolProduct, publisher_tool_receipt_identity};
+
+        let mut receipt = OvenPublisherToolReceipt {
+            identity: String::new(),
+            producer: "isle-meta".to_string(),
+            fact_owner: digest_bytes(b"cranelift source owner"),
+            executable: RustFactExecutable {
+                name: "isle".to_string(),
+                owner: digest_bytes(b"isle executable owner"),
+                path: "bin/isle".to_string(),
+                digest: digest_bytes(b"isle executable"),
+            },
+            arguments: vec![
+                RustFactArgument::Input {
+                    input: "definitions".to_string(),
+                },
+                RustFactArgument::Output {
+                    output: "generated-rust".to_string(),
+                },
+            ],
+            environment: Vec::new(),
+            inputs: vec![RustFactArtifact {
+                name: "definitions".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "isle/lower.isle".to_string(),
+                digest: digest_bytes(b"isle definitions"),
+                members: Vec::new(),
+            }],
+            outputs: vec![OvenPublisherToolProduct {
+                name: "generated-rust".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "generated/isle.rs".to_string(),
+                digest: digest_bytes(b"generated Rust"),
+                members: Vec::new(),
+            }],
+            host: "aarch64-apple-darwin".to_string(),
+            target: "aarch64-apple-darwin".to_string(),
+            consuming_units: vec![PUBLISHER_TOOL_CONSUMER.to_string()],
+        };
+        receipt.identity = publisher_tool_receipt_identity(&receipt)?;
+        Ok(receipt)
+    }
+
+    #[test]
+    fn publisher_tool_products_become_consumer_generated_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let receipt = publisher_tool_receipt()?;
+        let projected = publisher_tool_generated_inputs(
+            &receipt,
+            "aarch64-apple-darwin",
+            "aarch64-apple-darwin",
+            PUBLISHER_TOOL_CONSUMER,
+        )?;
+        assert_eq!(projected.owner.identity, receipt.identity);
+        assert_eq!(projected.owner.kind, OvenSelectedRustFacetOwnerKind::GeneratedOutput);
+        assert_eq!(projected.generated_inputs.len(), 1);
+        assert_eq!(projected.generated_inputs[0].source.owner, receipt.identity);
+        assert_eq!(projected.generated_inputs[0].source.path, "generated");
+        assert_eq!(projected.generated_inputs[0].members[0].path, "isle.rs");
+        assert_eq!(
+            projected.generated_inputs[0].members[0].digest,
+            receipt.outputs[0].digest
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn publisher_tool_product_is_bound_into_consumer_and_rekeys_dependents() -> Result<(), Box<dyn std::error::Error>> {
+        use oven_store::publisher_execution::publisher_tool_receipt_identity;
+
+        let selected = selected_graph()?;
+        let original = selected
+            .graph()
+            .units
+            .first()
+            .map(|unit| unit.identity.clone())
+            .ok_or("fixture graph has no unit")?;
+        let mut receipt = publisher_tool_receipt()?;
+        receipt.consuming_units = vec![original.clone()];
+        receipt.host = selected.graph().selection.host.clone();
+        receipt.target = selected.graph().selection.intent.target.clone();
+        receipt.identity = publisher_tool_receipt_identity(&receipt)?;
+
+        let finalized = finalize_publisher_tool_product(selected, &receipt)?;
+        let unit = finalized.graph().units.first().ok_or("finalized graph has no unit")?;
+        assert_ne!(unit.identity, original);
+        assert_eq!(unit.generated_inputs.len(), 1);
+        assert_eq!(unit.generated_inputs[0].source.owner, receipt.identity);
+        assert!(finalized.graph().owners.iter().any(|owner| {
+            owner.identity == receipt.identity && owner.kind == OvenSelectedRustFacetOwnerKind::GeneratedOutput
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn publisher_tool_projection_refuses_tamper_target_and_unlisted_consumer() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let receipt = publisher_tool_receipt()?;
+        assert!(
+            publisher_tool_generated_inputs(
+                &receipt,
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin",
+                PUBLISHER_TOOL_CONSUMER,
+            )
+            .is_err()
+        );
+        assert!(
+            publisher_tool_generated_inputs(
+                &receipt,
+                "aarch64-apple-darwin",
+                "aarch64-apple-darwin",
+                "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            )
+            .is_err()
+        );
+
+        let mut tampered = receipt;
+        tampered.outputs[0].digest = selected_graph_sha256(b"tampered output");
+        assert!(
+            publisher_tool_generated_inputs(
+                &tampered,
+                "aarch64-apple-darwin",
+                "aarch64-apple-darwin",
+                PUBLISHER_TOOL_CONSUMER,
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

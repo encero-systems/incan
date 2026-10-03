@@ -94,8 +94,7 @@ pub trait Ord with Eq:
 pub trait Hash:
     """
     Hash trait - Enables use as Dict keys or in Sets
-    Python equivalent: `__hash__`
-    
+
     WHY IT'S NEEDED:
     Sets and Dicts use hashing internally for fast lookups. Without Hash,
     you get a compile error when trying to use your type in a Set or as a Dict key.
@@ -113,16 +112,17 @@ pub trait Hash:
     model UserId:
         value: int
 
-    ids: Set[UserId] = Set()
+    mut ids: Set[UserId] = Set()
     ids.add(UserId(value=1))
     ids.add(UserId(value=2))
     
     # Also required for Dict keys:
-    names: Dict[UserId, str] = Dict()
+    mut names: Dict[UserId, str] = Dict()
     names[UserId(value=1)] = "Alice"
     ```
     
-    ⚠️ Important: If you override `__eq__`, you must also override `__hash__`
-    to ensure equal objects have equal hashes. Otherwise Set/Dict lookups break.
+    A Set or Dict hashes a type only through `@derive(Hash)` (or `Hash` in
+    `@rust.derive(...)`). A method named `__hash__`, including the one this trait
+    declares, is an ordinary method: a Set or Dict does not call it.
     """
     def __hash__(self) -> int: ...

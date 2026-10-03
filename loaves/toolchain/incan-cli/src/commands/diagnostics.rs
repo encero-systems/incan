@@ -41,7 +41,7 @@ pub enum DiagnosticOutputFormat {
 /// and is also stamped onto `incan explain` output and the backend execution receipt. Version 2 changed only this
 /// envelope — `diagnostics` now carries non-fatal warnings alongside errors, so `ok` means "no error-severity
 /// diagnostics" rather than "no diagnostics at all". Bumping the shared constant instead would have falsely
-/// signalled a payload or receipt contract change to consumers of those other surfaces.
+/// signaled a payload or receipt contract change to consumers of those other surfaces.
 pub(crate) const CHECK_REPORT_SCHEMA_VERSION: u32 = 2;
 
 /// One complete typecheck result, retained independently from CLI rendering so workspace orchestration can emit one

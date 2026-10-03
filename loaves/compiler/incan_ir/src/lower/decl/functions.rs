@@ -349,12 +349,32 @@ impl AstLowering {
     /// # Returns
     ///
     /// The corresponding IR function.
+    ///
+    /// A private function a parameter default of the module calls is published, because the default is expanded at
+    /// call sites outside the module.
     pub(in crate::lower) fn lower_function(&mut self, f: &ast::FunctionDecl) -> Result<IrFunction, LoweringError> {
-        self.lower_function_named(f, f.name.clone(), self.map_callable_visibility(f.visibility))
+        let visibility = self.default_reachable_visibility(&f.name, self.map_callable_visibility(f.visibility));
+        self.lower_function_named(f, f.name.clone(), visibility)
     }
 
     /// Lower a function declaration using an explicit emitted name and visibility.
+    ///
+    /// The function's `mut` locals and parameters are its own: the set starts empty and the caller's set is restored
+    /// afterwards, so a `mut x` in one function does not keep a later function's `x` from moving on its final read.
     pub(in crate::lower) fn lower_function_named(
+        &mut self,
+        f: &ast::FunctionDecl,
+        name: String,
+        visibility: super::super::super::decl::Visibility,
+    ) -> Result<IrFunction, LoweringError> {
+        let outer_mutable_vars = std::mem::take(&mut self.mutable_vars);
+        let lowered = self.lower_function_named_body(f, name, visibility);
+        self.mutable_vars = outer_mutable_vars;
+        lowered
+    }
+
+    /// Lower a function declaration's signature and body; [`Self::lower_function_named`] scopes its `mut` locals.
+    fn lower_function_named_body(
         &mut self,
         f: &ast::FunctionDecl,
         name: String,
@@ -387,7 +407,7 @@ impl AstLowering {
                 );
                 let base_ty = self.apply_mutable_rust_type_argument_projections(p.node.is_mut, &p.node.ty, base_ty);
                 let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                let mutability = self.lower_parameter_mutability(p.node.is_mut, &p.node.ty.node);
+                let mutability = self.lower_parameter_mutability(p);
                 // Ordinary mutable Incan parameters are references. Direct Rust handles keep owned ABI identity.
                 let ty = if mutability == Mutability::Mutable {
                     IrType::RefMut(Box::new(param_ty.clone()))
@@ -436,6 +456,18 @@ impl AstLowering {
         }
         self.pop_callable_param_scope();
         self.pop_callable_return_type();
+        // A function-typed parameter the body only calls, and a function type the function returns a capturing
+        // closure through, hold any callable of their type (#1561).
+        for (param, source) in params.iter_mut().zip(&f.params) {
+            if self.is_closure_holding_param(source.span) {
+                param.ty = Self::closure_holding_type(std::mem::take(&mut param.ty));
+            }
+        }
+        let return_type = if self.is_closure_returning_type(f.return_type.span) {
+            Self::closure_holding_type(return_type)
+        } else {
+            return_type
+        };
         let body = match body_result {
             Ok(body) => body,
             Err(err) => {
@@ -450,7 +482,7 @@ impl AstLowering {
         let rust_attributes = self.extract_passthrough_attributes(&f.decorators);
         let lint_allows = self.extract_rust_lint_allows(&f.decorators);
 
-        let mut all_type_params = self.lower_type_params(&f.type_params);
+        let mut all_type_params = self.lower_callable_type_params(&f.type_params);
         all_type_params.extend(hidden_type_params);
         let mut callable_name_type_params = Vec::new();
         collect_generic_callable_name_type_params_from_stmts(&body, &mut callable_name_type_params);

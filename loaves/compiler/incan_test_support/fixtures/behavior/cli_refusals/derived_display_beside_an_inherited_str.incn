@@ -1,0 +1,17 @@
+# behavior: a class that inherits __str__ from the class it extends and also derives Display is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+class Base:
+    pub id: int
+
+    def __str__(self) -> str:
+        return "base"
+
+
+@derive(Display)
+class Child extends Base:
+    pub extra: int
+
+
+def main() -> None:
+    println(Child(id=1, extra=2))

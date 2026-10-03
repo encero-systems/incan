@@ -811,7 +811,9 @@ pub def label() -> str:
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         json.pointer("/schema_version").and_then(serde_json::Value::as_u64),
-        Some(1)
+        Some(u64::from(
+            incan_frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION
+        ))
     );
     assert_eq!(
         json.pointer("/package/name").and_then(serde_json::Value::as_str),

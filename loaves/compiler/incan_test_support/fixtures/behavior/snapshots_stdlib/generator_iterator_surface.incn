@@ -1,0 +1,93 @@
+# behavior: a generator takes the iterator adapters and terminal consumers, is accepted where an Iterator[int] parameter is declared, and keeps its own map, filter, take and collect
+# retires: loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs::generator_adapters_and_consumers_compile
+# expect-stdout:
+#   4
+#   6
+#   16
+#   true
+#   false
+#   1
+#   0
+#   1
+#   3
+#   2
+#   1
+#   5
+#   2
+#   2
+#   3
+#   6
+#   6
+#   12
+#   2
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+
+def is_odd(n: int) -> bool:
+    return n % 2 == 1
+
+
+def is_small(n: int) -> bool:
+    return n < 2
+
+
+def add(acc: int, n: int) -> int:
+    return acc + n
+
+
+def show(n: int) -> None:
+    println(n)
+
+
+def inc(n: int) -> int:
+    return n + 1
+
+
+def pair(n: int) -> list[int]:
+    return [n, n]
+
+
+def consume(items: Iterator[int]) -> int:
+    mut total = 0
+    for item in items:
+        total += item
+    return total
+
+
+def main() -> None:
+    println(numbers(4).count())
+    println(numbers(4).sum())
+    println(numbers(4).fold(10, add))
+    println(numbers(4).any(is_even))
+    println(numbers(4).all(is_even))
+    match numbers(4).find(is_odd):
+        Some(value) => println(value)
+        None => println("none")
+    numbers(2).for_each(show)
+    pairs: list[tuple[int, int]] = numbers(3).enumerate().collect()
+    println(len(pairs))
+    zipped: list[tuple[int, int]] = numbers(3).zip(numbers(2)).collect()
+    println(len(zipped))
+    rest: list[int] = numbers(4).skip(1).collect()
+    println(rest[0])
+    chained: list[int] = numbers(2).chain(numbers(3)).collect()
+    println(len(chained))
+    small: list[int] = numbers(4).take_while(is_small).collect()
+    println(len(small))
+    large: list[int] = numbers(4).skip_while(is_small).collect()
+    println(large[0])
+    batches: list[list[int]] = numbers(5).batch(2).collect()
+    println(len(batches))
+    doubled: list[int] = numbers(3).flat_map(pair).collect()
+    println(len(doubled))
+    println(consume(numbers(4)))
+    println((n * 2 for n in [1, 2, 3]).sum())
+    kept: list[int] = numbers(4).map(inc).filter(is_even).take(1).collect()
+    println(kept[0])

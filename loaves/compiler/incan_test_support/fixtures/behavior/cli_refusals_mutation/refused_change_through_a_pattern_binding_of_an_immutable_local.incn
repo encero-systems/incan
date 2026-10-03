@@ -1,0 +1,9 @@
+# behavior: a change through a name a match pattern binds from a local declared without mut is refused at check time, rather than applied to a copy
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    fixed = Some([1])
+    match fixed:
+        Some(xs) => xs.append(2)
+        None => pass
+    println(fixed)

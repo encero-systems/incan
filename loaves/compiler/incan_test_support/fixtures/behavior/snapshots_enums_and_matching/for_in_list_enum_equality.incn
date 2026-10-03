@@ -1,0 +1,24 @@
+# behavior: iterating a list of enum values compares each against another enum value with == (#195)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_for_in_list_enum_equality_codegen
+# expect-stdout:
+#   true
+#   false
+
+"""Issue #195: for-in over list[E] must allow E == E in generated Rust."""
+
+
+enum RootKind:
+    A
+    B
+
+
+def matches_any(root_kind: RootKind, required: list[RootKind]) -> bool:
+    for expected in required:
+        if expected == root_kind:
+            return true
+    return false
+
+
+def main() -> None:
+    print(matches_any(RootKind.A, [RootKind.B, RootKind.A]))
+    print(matches_any(RootKind.B, [RootKind.A]))

@@ -11,32 +11,12 @@
 //! expressions, lvalue emission, and assignment targets.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
+use crate::ownership::{frozen_dict_entry_types, list_read_element_type, plan_dict_lookup_key};
 use incan_ir::expr::{IrExprKind, TypedExpr, UnaryOp, VarRefKind};
 use incan_ir::types::IrType;
-
-/// Normalize dictionary index probes to the borrow shape expected by runtime lookup helpers.
-///
-/// `Dict[str, V]` should accept borrowed string probes (`"x"`, `&str`, `String`) without forcing owned `String`
-/// materialization at every `dict[key]` read site. Non-string dictionaries keep the ordinary `&key` lookup shape.
-fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: TokenStream) -> TokenStream {
-    match &object.ty {
-        IrType::Dict(key_ty, _)
-            if matches!(
-                key_ty.as_ref(),
-                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
-            ) =>
-        {
-            match &index.ty {
-                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => emitted,
-                _ => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
-            }
-        }
-        _ => quote! { &#emitted },
-    }
-}
 
 impl<'a> IrEmitter<'a> {
     /// Emit the stable source name for a function-typed value when the value points at a registered generated
@@ -156,23 +136,57 @@ impl<'a> IrEmitter<'a> {
             return Ok(quote! { incan_std_core::strings::str_index(&#o, (#idx_tokens) as i64) });
         }
 
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1757 -- `TABLE["names"]` on a `const` `FrozenDict` fell through to Rust indexing,
+        //   which the runtime wrapper does not offer (E0608).
+        // - Behavior evidence: the `const_frozen_collection_reads` behavior fixture and the lowering test
+        //   `frozen_dict_index_carries_the_value_type_issue1757`.
+        // - Semantic owner: the checked index type (`FrozenDict[K, V][K]` is `V`), lowering's `Index` node carrying it,
+        //   and the ownership planner's dict key probe (`plan_dict_lookup_key`); this arm only spells the lookup.
+        // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the lookup from the same
+        //   checked facts.
+        if let Some((_, value_ty)) = frozen_dict_entry_types(obj_ty) {
+            let i = self.emit_expr(index)?;
+            let key = plan_dict_lookup_key(&object.ty, &index.ty).apply(i);
+            let lookup = quote! { incan_std_core::collections::frozen_dict_get(&#o, #key) };
+            // The frozen wrapper stores Incan `str` as `'static` text; the checked value type is an owned `str`.
+            return Ok(match value_ty {
+                IrType::String => quote! { (#lookup).to_string() },
+                value_ty if value_ty.is_copy() => quote! { *#lookup },
+                _ => quote! { (#lookup).clone() },
+            });
+        }
+
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1757 -- `NAMES[i]` on a `const` `FrozenList` fell through to raw Rust indexing, which
+        //   casts a negative index to a huge `usize`, reports an out-of-range index as a Rust panic instead of
+        //   `IndexError`, and moves a non-`Copy` element out of the storage.
+        // - Behavior evidence: the `const_frozen_collection_reads` behavior fixtures and the lowering test
+        //   `frozen_list_index_reads_the_owned_element_issue1757`.
+        // - Semantic owner: the checked index type (`FrozenList[T][int]` is `T`) and `list_read_element_type` in the
+        //   ownership planner; this arm only spells the list read both families share.
+        // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the read from the same
+        //   checked facts.
+        if let Some(elem) = list_read_element_type(obj_ty) {
+            let idx_tokens = self.emit_expr(index)?;
+            let idx_i64 = quote! { (#idx_tokens) as i64 };
+            return if elem.is_copy() {
+                Ok(quote! { *incan_std_core::collections::list_get(&#o, #idx_i64) })
+            } else {
+                Ok(quote! { incan_std_core::collections::list_get(&#o, #idx_i64).clone() })
+            };
+        }
+
         match obj_ty {
             IrType::Dict(_, v) => {
                 let i = self.emit_expr(index)?;
-                let key = emit_dict_lookup_index_key(object, index, i);
+                // The planner sees through a `mut` dict parameter's reference, so a literal `str` key is borrowed as
+                // `str` there too (#1561).
+                let key = plan_dict_lookup_key(&object.ty, &index.ty).apply(i);
                 if v.is_copy() {
                     Ok(quote! { *incan_std_core::collections::dict_get(&#o, #key) })
                 } else {
                     Ok(quote! { incan_std_core::collections::dict_get(&#o, #key).clone() })
-                }
-            }
-            IrType::List(elem) => {
-                let idx_tokens = self.emit_expr(index)?;
-                let idx_i64 = quote! { (#idx_tokens) as i64 };
-                if elem.is_copy() {
-                    Ok(quote! { *incan_std_core::collections::list_get(&#o, #idx_i64) })
-                } else {
-                    Ok(quote! { incan_std_core::collections::list_get(&#o, #idx_i64).clone() })
                 }
             }
             // Fallback for unknown/unsupported index targets.
@@ -300,7 +314,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     path
                 } else {
-                    let ident = format_ident!("{}", name);
+                    let ident = Self::rust_ident(name);
                     quote! { #ident }
                 };
                 let f = Self::rust_ident(canonical_field);
@@ -312,7 +326,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     path
                 } else {
-                    let ident = format_ident!("{}", name);
+                    let ident = Self::rust_ident(name);
                     quote! { #ident }
                 };
                 let f = Self::rust_ident(field);
@@ -324,6 +338,13 @@ impl<'a> IrEmitter<'a> {
         }
 
         let o = self.emit_expr(object)?;
+        // A `Copy` item read out of a collection is emitted as a dereference, and a field access binds tighter than a
+        // dereference: `*list_get(&pts, 0).0` dereferences the field, so the dereference is grouped first (#1861).
+        let o = if starts_with_dereference(&o) {
+            quote! { (#o) }
+        } else {
+            o
+        };
         // Check if field is a numeric index (tuple access)
         if field.chars().all(|c| c.is_ascii_digit()) {
             let idx: syn::Index = field
@@ -401,6 +422,16 @@ impl<'a> IrEmitter<'a> {
             }
         }
     }
+}
+
+/// Whether emitted tokens begin with a prefix `*`, so a following field access would bind to the operand rather than to
+/// the dereferenced value.
+fn starts_with_dereference(tokens: &TokenStream) -> bool {
+    tokens
+        .clone()
+        .into_iter()
+        .next()
+        .is_some_and(|token| matches!(token, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '*'))
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ use crate::lock::{
 };
 use crate::session::CompilationSession;
 use incan_provider::dependency_resolver::ResolvedDependencies;
+use incan_provider::inventory::prepare_or_discover_sdk_inventory;
 use incan_provider::requirements::{
     ProjectRequirements, merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
 };
@@ -84,6 +85,27 @@ pub fn collect_and_publish_project_lock(
         None,
     )?;
     Ok(context)
+}
+
+/// Prepare a component SDK inventory when this toolchain has a source catalog, then publish the canonical lock.
+///
+/// `incan lock` owns this explicit preparation path. Oven publishers use [`collect_and_publish_project_lock`]
+/// directly so a bake can discover prepared state but can never launch the legacy SDK provider builder itself.
+pub fn prepare_sdk_and_publish_project_lock(
+    manifest: &ProjectManifest,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> CliResult<ProjectLockContext> {
+    let _inventory = prepare_or_discover_sdk_inventory().map_err(|error| CliError::failure(error.to_string()))?;
+    collect_and_publish_project_lock(
+        manifest,
+        entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+    )
 }
 
 /// Read the compiler-owned Cargo.lock payload override used while building an internal artifact.
@@ -523,27 +545,29 @@ pub fn publish_oven_project_lock(
         .ok_or_else(|| CliError::failure("explicit Oven project bake requires a loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
     let cargo_features = CargoFeatureSelection::default().normalized();
-    let context = match collect_and_publish_project_lock_for_provider_bake(
+    let project_dependency_surface = match collect_and_publish_project_lock_for_provider_bake(
         &manifest,
         entrypoint,
         &cargo_features,
         package_features,
     )? {
-        ProviderBakeLockPublication::Published(context) => context,
+        ProviderBakeLockPublication::Published {
+            project_dependency_surface,
+        } => project_dependency_surface,
         ProviderBakeLockPublication::Deferred {
             member,
-            context,
+            project_dependency_surface,
             reason,
         } => {
             eprintln!(
                 "note: workspace lock published without member `{member}`, which cannot resolve until its providers \
                  are baked ({reason}); the next bake or `incan lock` that can see the whole workspace completes it"
             );
-            context
+            project_dependency_surface
         }
     };
     Ok(PublishedOvenProjectLock {
-        dependency_surface: context.resolved,
+        dependency_surface: project_dependency_surface,
     })
 }
 
@@ -568,7 +592,10 @@ fn collect_and_publish_project_lock_for_provider_bake(
     else {
         let context =
             collect_and_publish_project_lock(manifest, Some(entrypoint), cargo_features, package_features, None)?;
-        return Ok(ProviderBakeLockPublication::Published(context));
+        let project_dependency_surface = context.resolved.clone();
+        return Ok(ProviderBakeLockPublication::Published {
+            project_dependency_surface,
+        });
     };
     let lock_path = workspace.root().join(LOCK_FILENAME);
     let publication_lock = oven_model::lock::acquire_publication_lock(&lock_path)
@@ -593,10 +620,12 @@ fn collect_and_publish_project_lock_for_provider_bake(
     )?;
     let mut unresolved = collection.unresolved.into_iter();
     match unresolved.next() {
-        None => Ok(ProviderBakeLockPublication::Published(collection.context)),
+        None => Ok(ProviderBakeLockPublication::Published {
+            project_dependency_surface: collection.project_dependency_surface,
+        }),
         Some((member, error)) => Ok(ProviderBakeLockPublication::Deferred {
             member,
-            context: collection.context,
+            project_dependency_surface: collection.project_dependency_surface,
             reason: error.message,
         }),
     }

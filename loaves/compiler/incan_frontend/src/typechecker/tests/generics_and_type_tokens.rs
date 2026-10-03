@@ -1,0 +1,1470 @@
+//! Generic functions and methods: `Self` substitution at call sites (#237, #388), bounds enforced at call sites,
+//! explicit call type arguments and RFC 054 inference placeholders, the #1373 hints, local inference after factory
+//! calls, `Type[...]` tokens as values, reflection magic methods, the arithmetic a type parameter admits (#1715), the
+//! `unwrap_or` default a type-parameter payload admits, and the values a type parameter's own declaration admits for it
+//! (#1561).
+
+use super::*;
+
+#[test]
+fn test_type_name_value_requires_type_token_expected_context() {
+    let source = r#"
+def accepts_any[T](value: T) -> None:
+  return
+
+def use() -> None:
+  accepts_any(int)
+"#;
+    let errs = check_str_err(
+        source,
+        "bare primitive type value should require Type[T] expected context",
+    );
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Cannot use type 'int' as a value")),
+        "expected type-name-as-value diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_generic_type_token_parameter_accepts_type_name_value() {
+    let source = r#"
+def accepts_type[T](value: Type[T]) -> str:
+  return "ok"
+
+def use() -> str:
+  return accepts_type(int)
+"#;
+    let result = check_str(source);
+    assert!(
+        result.is_ok(),
+        "expected generic Type[T] parameter to accept primitive type token, got {result:?}"
+    );
+}
+
+#[test]
+fn test_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def describe(u: User) -> None:
+  class_name = u.__class_name__()
+  fields = u.__fields__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::Str)),
+        "expected __class_name__() to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_generic_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def reflected_field_count[T](value: T) -> int:
+  fields = value.__fields__()
+  return len(fields)
+
+def reflected_class_name[T](value: T) -> str:
+  return value.__class_name__()
+
+def reflected_field_value[T](value: T) -> Option[str]:
+  return value.__field_value__("name")
+
+def reflected_field_items[T](value: T) -> list[tuple[str, str]]:
+  return value.__field_items__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected generic __class_name__() to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected generic __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::Generic(name, args)
+                    if collection_types::from_str(name.as_str()) == Some(CollectionTypeId::Option)
+                        && matches!(args.as_slice(), [ResolvedType::Str])
+            )
+        }),
+        "expected generic __field_value__() to resolve to Option[str], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::Generic(name, args)
+                    if collection_types::from_str(name.as_str()) == Some(CollectionTypeId::List)
+                        && matches!(
+                            args.as_slice(),
+                            [ResolvedType::Tuple(items)]
+                                if matches!(items.as_slice(), [ResolvedType::Str, ResolvedType::Str])
+                        )
+            )
+        }),
+        "expected generic __field_items__() to resolve to list[tuple[str, str]], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_type_parameter_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def reflected_field_count[T]() -> int:
+  fields = T.__fields__()
+  return len(fields)
+
+def reflected_class_name[T]() -> str:
+  return T.__class_name__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected type-parameter __class_name__() to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected type-parameter __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_model_type_name_is_type_token_value() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def accepts_user_type(value: Type[User]) -> str:
+  return "ok"
+
+def main() -> None:
+  accepts_user_type(User)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::TypeToken(inner) if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "User")
+            )
+        }),
+        "expected model type name to resolve as Type[User], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_type_token_does_not_satisfy_model_value_context() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def accepts_user(value: User) -> str:
+  return value.name
+
+def main() -> None:
+  accepts_user(User)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        return Err(std::io::Error::other("expected bare User type name to be rejected as a value").into());
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Cannot use type 'User' as a value")),
+        "expected type-name-as-value diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_reflection_fieldinfo_members_typecheck_without_explicit_import() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name [alias="display_name"]: str = "Alice"
+
+def describe(u: User) -> None:
+  for info in u.__fields__():
+    type_name = info.type_name
+    alias = info.alias
+    extra = info.extra
+    has_default = info.has_default
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::FrozenStr)),
+        "expected FieldInfo.name/type_name access to resolve to FrozenStr, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::Generic(name, args)
+                    if crate::typechecker::helpers::collection_type_id(name.as_str())
+                        == Some(CollectionTypeId::Option)
+                        && args.len() == 1
+                        && matches!(args.first(), Some(ResolvedType::FrozenStr))
+            )
+        }),
+        "expected FieldInfo.alias access to resolve to Option[FrozenStr], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::FrozenDict(key, value)
+                    if matches!(key.as_ref(), ResolvedType::FrozenStr)
+                        && matches!(value.as_ref(), ResolvedType::FrozenStr)
+            )
+        }),
+        "expected FieldInfo.extra access to resolve to FrozenDict[FrozenStr, FrozenStr], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::Bool)),
+        "expected FieldInfo.has_default access to resolve to bool, got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+/// Regression for #237: `-> Self` on a generic class method must type as the instantiated receiver at the call site,
+/// not bare `Self`, so annotations and chaining against `Carrier[Order]` succeed.
+#[test]
+fn test_issue_237_self_return_substituted_at_call_site() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Carrier[T]:
+  _m: T
+
+  def filter(self, _p: bool) -> Self:
+    return self
+
+model Order:
+  id: int
+
+def use_filter(x: Carrier[Order]) -> Carrier[Order]:
+  return x.filter(true)
+
+def use_annotated_local(x: Carrier[Order]) -> Carrier[Order]:
+  y: Carrier[Order] = x.filter(true)
+  return y
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+/// An annotated destination flows backward through `-> Self` methods so a generic method deeper in the chain can bind
+/// a type parameter that appears only in its return type. Without the destination, the bounded parameter stays open.
+#[test]
+fn expected_type_flows_through_self_returning_method_chain() -> Result<(), String> {
+    let accepted = r#"
+@derive(Clone)
+model InputRow:
+  value: int
+
+@derive(Clone)
+model OutputRow:
+  value: int
+
+class Frame[T with Clone]:
+  rows: list[T]
+
+  def select[U with Clone](self) -> Frame[U]:
+    return Frame[U](rows=[])
+
+  def order_by(self) -> Self:
+    return self
+
+  def limit(self, _count: int) -> Self:
+    return self
+
+def plan(source: Frame[InputRow]) -> Frame[OutputRow]:
+  result: Frame[OutputRow] = source.select().order_by().limit(10)
+  return result
+"#;
+    check_str(accepted).map_err(|errors| format!("expected chained contextual inference to pass: {errors:?}"))?;
+
+    let refused = r#"
+@derive(Clone)
+model InputRow:
+  value: int
+
+class Frame[T with Clone]:
+  rows: list[T]
+
+  def select[U with Clone](self) -> Frame[U]:
+    return Frame[U](rows=[])
+
+  def order_by(self) -> Self:
+    return self
+
+def plan(source: Frame[InputRow]) -> None:
+  source.select().order_by()
+"#;
+    let errors = check_str_err(refused, "an uncontextualized bounded method parameter must stay open");
+    if errors
+        .iter()
+        .any(|error| error.message.contains("Cannot infer type parameter 'U' of 'select'"))
+    {
+        Ok(())
+    } else {
+        Err(format!("expected the bounded inference diagnostic, got: {errors:?}"))
+    }
+}
+
+/// A dependency method's exported return type keeps its provider-qualified owner while the consumer annotation uses
+/// the imported spelling; contextual generic inference must compare their shared identity before walking arguments.
+#[test]
+fn expected_type_infers_through_public_library_owner_alias() {
+    let mut checker = TypeChecker::new();
+    let identity = PublicLibraryTypeIdentity::new("incql", &["dataset".to_string(), "LazyFrame".to_string()]);
+    checker
+        .public_library_type_identities
+        .insert("LazyFrame".to_string(), identity.clone());
+    checker
+        .public_library_type_identities
+        .insert("pub::incql::LazyFrame".to_string(), identity);
+
+    let returned = ResolvedType::Generic(
+        "pub::incql::LazyFrame".to_string(),
+        vec![ResolvedType::TypeVar("U".to_string())],
+    );
+    let destination = ResolvedType::Generic(
+        "LazyFrame".to_string(),
+        vec![ResolvedType::Named("PaidOrderReview".to_string())],
+    );
+    let mut bindings = std::collections::HashMap::new();
+    checker.infer_type_param_bindings(&returned, &destination, &mut bindings);
+
+    assert_eq!(
+        bindings.get("U"),
+        Some(&ResolvedType::Named("PaidOrderReview".to_string()))
+    );
+}
+
+/// `Self` in non-receiver parameters must use the same call-site substitution as the return type (#237 follow-up).
+#[test]
+fn test_self_param_substituted_at_call_site_for_method_args() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Carrier[T]:
+  _m: T
+
+  def join(self, other: Self, cond: bool) -> Self:
+    return self
+
+model Order:
+  id: int
+
+def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
+  return left.join(right, true)
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+#[test]
+fn test_issue_388_generic_classmethod_cls_constructor_typechecks() {
+    let source = r#"
+@derive(Clone)
+class Box[T with Clone]:
+  value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+"#;
+
+    assert_check_ok(source);
+}
+
+/// Trait **default** methods are not copied into `ClassInfo.methods`; dispatch goes through the trait branch of
+/// `resolve_named_method`. Call-site `Self` substitution must still apply (#237).
+#[test]
+fn test_issue_237_self_substitution_trait_default_methods_not_on_class_map() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self, _p: bool) -> Self:
+    return self
+
+  def join(self, other: Self, cond: bool) -> Self:
+    return self
+
+class Carrier[T] with DataSet:
+  _m: T
+
+model Order:
+  id: int
+
+def use_filter(x: Carrier[Order]) -> Carrier[Order]:
+  return x.filter(true)
+
+def use_annotated_local(x: Carrier[Order]) -> Carrier[Order]:
+  y: Carrier[Order] = x.filter(true)
+  return y
+
+def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
+  return left.join(right, true)
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+#[test]
+fn test_generic_bound_enforced_at_callsite_negative() {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class NotDisplayable:
+  value: int
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show(NotDisplayable(value=1))
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected generic bound failure");
+    };
+    assert!(errs.iter().any(|e| e.message.contains("violates generic bound")));
+}
+
+#[test]
+fn test_generic_bound_enforced_at_callsite_positive() {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class User with Displayable:
+  message: str
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show(User(message="ok"))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_generic_bound_propagates_through_nested_generic_call() {
+    let source = r#"
+trait Reader:
+  def read_bytes(self, size: int) -> bytes: ...
+
+model Buffer with Reader:
+  data: bytes
+
+  def read_bytes(self, _size: int) -> bytes:
+    return self.data
+
+def feed[R with Reader](reader: R) -> bytes:
+  return reader.read_bytes(1)
+
+def outer[R with Reader](reader: R) -> bytes:
+  return feed(reader)
+
+def main() -> bytes:
+  return outer(Buffer(data=b"abc"))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_inference_preserves_method_result_field_access_after_factory_call() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session = Session.default()
+  let backend = session.backend()
+  let enabled = backend.enable_optimizer
+  let _ = enabled
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_inference_preserves_result_match_after_factory_call() {
+    let source = r#"
+@derive(Clone)
+class Source:
+  value: str
+
+model SessionError:
+  kind: str
+
+class Session:
+  regs: list[Source]
+
+  @staticmethod
+  def default() -> Session:
+    return Session(regs=[])
+
+  def register(mut self, logical_name: str, source: Source) -> Result[None, SessionError]:
+    self.regs.append(source)
+    return Ok(None)
+
+def main() -> None:
+  mut session = Session.default()
+  match session.register("x", Source(value="y")):
+    Ok(_) => pass
+    Err(err) => pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_inference_preserves_generic_result_match_after_factory_call() {
+    let source = r#"
+model SessionError:
+  kind: str
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def table[T with Clone](self, logical_name: str, marker: T) -> Result[T, SessionError]:
+    return Ok(marker)
+
+def main() -> None:
+  let session = Session.default()
+  match session.table("x", 1):
+    Ok(value) => pass
+    Err(err) => pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_inference_annotation_control_still_typechecks() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session: Session = Session.default()
+  let backend: Backend = session.backend()
+  let _ = backend.enable_optimizer
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_direct_construction_method_result_field_access_control_typechecks() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session = Session()
+  let backend = session.backend()
+  let _ = backend.enable_optimizer
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_direct_construction_with_static_factory_present_still_typechecks() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session = Session()
+  let backend = session.backend()
+  let _ = backend.enable_optimizer
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn explicit_call_type_args_specialize_generic_function_params() {
+    assert_check_ok(
+        r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[int](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_call_type_args_enforce_function_type_arg_arity() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[int, str](1)
+"#;
+    let errs = check_str_err(source, "expected explicit type arg arity error");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expects 1 explicit type argument(s), got 2")),
+        "expected explicit type argument arity diagnostic, got {errs:?}"
+    );
+}
+
+/// Issue #1373 (1): a `with` bound naming a type is not a trait, so the hint must not ask for an implementation of
+/// `float`, and it must not point at the value arguments when the explicit type argument is what mismatched.
+#[test]
+fn issue1373_type_bound_violation_hint_names_the_type_not_an_implementation() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def main() -> None:
+  a = cast[int](1)
+"#;
+    let errs = check_str_err(source, "expected the float bound to reject cast[int]");
+    let bound_error = errs
+        .iter()
+        .find(|e| {
+            e.message == "Call to 'cast' violates generic bound: type parameter 'T' requires 'float' but got 'int'"
+        })
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("'float' is a type, not a trait") && hint.contains("declare the parameter as 'float'"),
+        "the hint must explain that a type in bound position cannot be implemented, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("implements 'float'") && !hint.contains("the argument type"),
+        "the hint must not ask to implement a type or blame the value arguments, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (1): with a trait bound, an explicit type argument that fails it is named as the type argument.
+#[test]
+fn issue1373_explicit_type_argument_bound_violation_hint_names_the_type_argument() -> Result<(), String> {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class NotDisplayable:
+  value: int
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show[NotDisplayable](NotDisplayable(value=1))
+"#;
+    let errs = check_str_err(source, "expected the Displayable bound to reject show[NotDisplayable]");
+    let bound_error = errs
+        .iter()
+        .find(|e| e.message.contains("violates generic bound"))
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("Type argument 'NotDisplayable' for 'T' must implement 'Displayable'"),
+        "an explicit type argument is named as such, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("the argument type"),
+        "the value arguments are not what mismatched, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (2): a call that no overload accepts lists every candidate and what each one wanted, instead of only
+/// the first-declared candidate's bound.
+#[test]
+fn issue1373_overload_set_rejection_lists_every_candidate() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def cast[T with int](x: int) -> int:
+  return 1
+
+def main() -> None:
+  c = cast[str](1)
+"#;
+    let errs = check_str_err(source, "expected cast[str] to match no overload");
+    let summary = errs
+        .iter()
+        .find(|e| e.message == "Call to 'cast' matches none of its 2 overloads")
+        .ok_or_else(|| format!("expected the overload summary diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        summary.notes,
+        vec![
+            "candidate `cast[T with float](x: int) -> float` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'float' but got 'str'",
+            "candidate `cast[T with int](x: int) -> int` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'int' but got 'str'",
+        ],
+        "each candidate is listed with the reason it was rejected"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (3): an unknown name in a signature's type position is most likely an undeclared type parameter, so
+/// the hint shows the declaration rather than sending the reader to their imports.
+#[test]
+fn issue1373_undeclared_type_parameter_suggests_declaring_it() -> Result<(), String> {
+    let source = r#"
+model Column[T]:
+  name: str
+
+def widen(x: Column[U]) -> None:
+  println(f"{x.name}")
+"#;
+    let errs = check_str_err(source, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'widen'; did you mean `def widen[U](...)`?"),
+        "the first hint shows where the declaration goes, got {:?}",
+        unknown.hints
+    );
+    assert!(
+        !unknown.hints.iter().any(|hint| hint.contains("forget to import")),
+        "the generic import hint must not lead, got {:?}",
+        unknown.hints
+    );
+
+    let generic_owner = r#"
+def pair[T](x: T, y: U) -> T:
+  return x
+"#;
+    let errs = check_str_err(generic_owner, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'pair'; did you mean `def pair[T, U](...)`?"),
+        "declared parameters are kept ahead of the missing one, got {:?}",
+        unknown.hints
+    );
+    Ok(())
+}
+
+/// Issue #1373 (4): RFC 054 keeps an explicit bracket list arity-complete, so a short list names the parameters it
+/// left unbound and shows the `_` placeholder that infers them, rather than only counting.
+#[test]
+fn issue1373_partial_explicit_type_arguments_hint_shows_the_inference_placeholder() -> Result<(), String> {
+    let source = r#"
+def convert[T, U](x: U) -> T:
+  return x
+
+def main() -> None:
+  a: float = convert[float](1)
+"#;
+    let errs = check_str_err(source, "expected the partial bracket list to be rejected");
+    let arity = errs
+        .iter()
+        .find(|e| e.message == "convert expects 2 explicit type argument(s), got 1")
+        .ok_or_else(|| format!("expected the arity error, got {errs:?}"))?;
+    assert_eq!(
+        arity.notes,
+        vec!["'convert' declares type parameters [T, U]; an explicit list binds every one of them in that order"],
+        "the note names the declared parameters"
+    );
+    assert_eq!(
+        arity.hints,
+        vec!["Write `_` for a parameter the value arguments determine (U): convert[float, _](...)"],
+        "the hint completes the written list with the inference placeholder"
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_method_type_args_specialize_generic_method_params() {
+    assert_check_ok(
+        r#"
+class Box:
+  def get[T](self, value: T) -> T:
+    return value
+
+def run() -> int:
+  let b = Box()
+  return b.get[int](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_method_type_args_enforce_generic_contract() {
+    let source = r#"
+class Box:
+  def get[T](self, value: T) -> T:
+    return value
+
+def run() -> int:
+  let b = Box()
+  return b.get[int](str("x"))
+"#;
+    let errs = check_str_err(source, "expected explicit method type arg mismatch");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expected 'int', found 'str'")),
+        "expected type mismatch after explicit method type specialization, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_call_type_args_infer_placeholder_filled_from_value_args() {
+    assert_check_ok(
+        r#"
+def pair_map[T, U](x: T, y: U) -> int:
+  return 0
+
+def run() -> int:
+  return pair_map[int, _](1, 2)
+"#,
+    );
+}
+
+#[test]
+fn explicit_call_type_args_all_infer_placeholders_filled_from_value_args() {
+    assert_check_ok(
+        r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[_](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_call_type_args_infer_placeholder_reports_when_unresolved() {
+    let source = r#"
+def mystery[T]() -> int:
+  return 0
+
+def run() -> int:
+  return mystery[_]()
+"#;
+    let errs = check_str_err(source, "expected inference unresolved when no value args bind T");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Could not infer type parameter")),
+        "expected call-site `_` unresolved diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_call_type_args_rejected_on_builtin_callee() {
+    let source = r#"
+def run() -> int:
+  return len[int]([1, 2])
+"#;
+    let errs = check_str_err(source, "expected unsupported explicit type args on builtin");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("not supported for this call form")),
+        "expected unsupported call-site type args diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_call_type_args_rejected_on_indirect_function_value_call() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  let f = id
+  return f[int](1)
+"#;
+    let errs = check_str_err(source, "expected unsupported explicit type args on indirect call");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("not supported for this call form")),
+        "expected unsupported call-site type args diagnostic, got {errs:?}"
+    );
+}
+
+// ---- #1715: `/`, `//`, `%` and `**` have no bound a type parameter could carry ----
+
+#[test]
+fn numeric_only_operators_on_a_type_parameter_are_refused_with_the_operator_named_issue1715() {
+    // The program from #1715 plus the two operators that share its root: each is refused once, at the operator,
+    // naming the operator, the parameter and the trait hook a bound could define instead.
+    let source = r#"
+def modulo[T](a: T, b: T) -> T:
+    return a % b
+
+def divide[T](a: T, b: T) -> T:
+    return a / b
+
+def floor[T](a: T, b: T) -> T:
+    return a // b
+
+def power[T](a: T, b: T) -> T:
+    return a ** b
+
+def main() -> None:
+    println(modulo(8, 3))
+    println(divide(8.0, 2.0))
+"#;
+    let errors = check_str_err(source, "arithmetic without a bound on a type parameter must be refused");
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0109"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        refused.iter().map(|error| error.message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "Operator '%' cannot be applied to values of type parameter 'T'",
+            "Operator '/' cannot be applied to values of type parameter 'T'",
+            "Operator '//' cannot be applied to values of type parameter 'T'",
+            "Operator '**' cannot be applied to values of type parameter 'T'",
+        ],
+        "one report per operator, in source order; got {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+    const HOOKS: [&str; 4] = ["'__mod__'", "'__div__'", "'__floordiv__'", "'__pow__'"];
+    let hooks = refused
+        .iter()
+        .map(|error| {
+            error
+                .hints
+                .iter()
+                .find_map(|hint| HOOKS.into_iter().find(|hook| hint.contains(*hook)))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        hooks,
+        vec![
+            Some("'__mod__'"),
+            Some("'__div__'"),
+            Some("'__floordiv__'"),
+            Some("'__pow__'")
+        ],
+        "each hint names its operator's trait hook, got {:?}",
+        refused.iter().map(|error| &error.hints).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inferred_bound_operators_and_concrete_numeric_operands_are_accepted_issue1715() {
+    // `+`, `-` and `*` keep their RFC 023 inferred bounds; the four numeric-only operators are accepted on the
+    // concrete numeric types, which is the first remedy the diagnostic names.
+    assert_check_ok(
+        r#"
+def add[T](a: T, b: T) -> T:
+    return a + b
+
+def subtract[T](a: T, b: T) -> T:
+    return a - b
+
+def multiply[T](a: T, b: T) -> T:
+    return a * b
+
+def modulo(a: int, b: int) -> int:
+    return a % b
+
+def divide(a: float, b: float) -> float:
+    return a / b
+
+def main() -> None:
+    println(f"{add(2, 3)} {subtract(3, 2)} {multiply(2, 3)}")
+    println(modulo(8, 3))
+    println(divide(8.0, 2.0))
+"#,
+    );
+}
+
+#[test]
+fn a_bound_trait_defining_the_operator_hook_resolves_it_on_a_type_parameter_issue1715() {
+    // The second remedy the diagnostic names: the operator resolves through the bound trait's RFC 028 hook, so the
+    // refusal does not apply.
+    assert_check_ok(
+        r#"
+trait Remainder[Rhs, Output]:
+  def __mod__(self, other: Rhs) -> Output: ...
+
+model Cents with Remainder[Cents, Cents]:
+  value: int
+
+  def __mod__(self, other: Cents) -> Cents:
+    return Cents(value=self.value % other.value)
+
+def modulo[T with Remainder[T, T]](a: T, b: T) -> T:
+    return a % b
+
+def main() -> None:
+    println(modulo(Cents(value=8), Cents(value=3)).value)
+"#,
+    );
+}
+
+/// RFC 009: the canonical stdlib `Mod` bound exposes `__mod__` to operator resolution just like a local trait.
+#[test]
+fn stdlib_mod_bound_resolves_modulo_on_a_type_parameter_numeric_contract() -> Result<(), String> {
+    let mut checker = TypeChecker::new();
+    let prelude = ["std".to_string(), "traits".to_string(), "prelude".to_string()];
+    assert!(
+        checker.lookup_imported_module_trait(&prelude, "Mod").is_some(),
+        "the standard prelude must expose the source-defined Mod contract"
+    );
+    let source = r#"
+def modulo[T with Mod[T, T]](a: T, b: T) -> T:
+    return a % b
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+
+    let function = checker.lookup_symbol("modulo").ok_or("missing modulo function")?;
+    let SymbolKind::Function(info) = &function.kind else {
+        return Err("modulo is not a function".to_string());
+    };
+    let bound = info
+        .type_param_bound_details
+        .get("T")
+        .and_then(|bounds| bounds.first())
+        .ok_or("missing Mod bound metadata")?;
+    assert_eq!(bound.module_path.as_deref(), Some(prelude.as_slice()));
+    assert_eq!(bound.source_name.as_deref(), Some("Mod"));
+    Ok(())
+}
+
+/// A local trait named `Mod` keeps its own contract instead of inheriting the standard prelude trait's operator hook.
+#[test]
+fn local_mod_bound_does_not_acquire_stdlib_modulo_hook_numeric_contract() {
+    let errors = check_str_err(
+        r#"
+trait Mod[Rhs, Output]:
+  def combine(self, other: Rhs) -> Output: ...
+
+def modulo[T with Mod[T, T]](a: T, b: T) -> T:
+  return a % b
+"#,
+        "a local Mod trait without __mod__ must not inherit the standard prelude hook",
+    );
+    assert!(
+        errors.iter().any(|error| error.stable_code() == Some("INCAN-T0109")),
+        "the local trait contract must still refuse `%`: {errors:?}"
+    );
+}
+
+/// RFC 054 applies to every generic function, the `std.async.channel` constructors included: `channel[str](4)`,
+/// `unbounded_channel[int]()` and `oneshot[int]()` fix the element type of the channel they return.
+#[test]
+fn channel_constructors_accept_an_explicit_element_type() -> Result<(), String> {
+    check_str(
+        r#"
+import std.async
+from std.async.channel import channel, oneshot, unbounded_channel, OneshotSender, Receiver, Sender
+
+
+async def main() -> None:
+    tx, rx = channel[str](4)
+    unbounded_tx, unbounded_rx = unbounded_channel[int]()
+    once_tx, once_rx = oneshot[int]()
+    sender: Sender[str] = tx
+    receiver: Receiver[str] = rx
+    unbounded_receiver: Receiver[int] = unbounded_rx
+    single: OneshotSender[int] = once_tx
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "the channel constructors must take an explicit element type, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// An explicit element type is checked like any other: a channel end of another element type, and a second type
+/// argument, are refused.
+#[test]
+fn channel_constructor_type_argument_is_checked() {
+    for (body, needle) in [
+        (
+            "    tx, rx = channel[str](4)\n    wrong: Sender[int] = tx\n",
+            "Sender[int]",
+        ),
+        ("    tx, rx = channel[str, int](4)\n", "type argument"),
+    ] {
+        let source = format!(
+            "import std.async\nfrom std.async.channel import channel, Sender\n\n\nasync def main() -> None:\n{body}"
+        );
+        let errors = check_str_err(&source, "the explicit channel type argument must be checked");
+        assert!(
+            errors.iter().any(|error| error.message.contains(needle)),
+            "expected a refusal naming `{needle}` for {body:?}, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.message.contains("not supported for this call form")),
+            "the explicit type argument itself must be accepted: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// A type parameter is one fixed type inside its generic declaration, so the default an `Option` or `Result`
+/// `unwrap_or` returns in place of a `T` payload must be a `T`: `0`, `"x"` and a `list[int]` for a `list[T]` payload
+/// are refused, in a generic function and a generic model's method alike, where a value of `T`, `[]` and `None` are
+/// accepted (#1561).
+#[test]
+fn unwrap_or_defaults_of_a_type_parameter_payload_are_that_parameter_issue1561() {
+    let errors = check_str_err(
+        r#"
+model Box[T]:
+    r: Result[T, str]
+
+    def get(self) -> T:
+        return self.r.unwrap_or(0)
+
+def pick[T](r: Result[T, int]) -> T:
+    return r.unwrap_or(0)
+
+def first[T](o: Option[T]) -> T:
+    return o.unwrap_or("x")
+
+def count[T](r: Result[list[T], int], fallback: list[int]) -> int:
+    return len(r.unwrap_or(fallback))
+
+def main() -> None:
+    println(pick(Ok(1)))
+"#,
+        "unwrap_or defaults against a type parameter",
+    );
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    for needle in [
+        "expected 'T', found 'int'",
+        "expected 'T', found 'str'",
+        "expected 'List[T]', found 'List[int]'",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected an error containing `{needle}`, got {messages:?}"
+        );
+    }
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("expected 'T', found 'int'"))
+            .count(),
+        2,
+        "both `unwrap_or(0)` defaults are refused: {messages:?}"
+    );
+    assert_check_ok(
+        r#"
+model Box[T]:
+    r: Result[T, str]
+
+    def get(self, d: T) -> T:
+        return self.r.unwrap_or(d)
+
+def pick[T](r: Result[T, int], o: Option[T], d: T) -> list[T]:
+    return [r.unwrap_or(d), o.unwrap_or(d)]
+
+def count[T](r: Result[list[T], int], nested: Option[Option[T]]) -> int:
+    inner = nested.unwrap_or(None)
+    return len(r.unwrap_or([]))
+
+def main() -> None:
+    println(len(pick(Ok(1), None, 2)))
+    r: Result[int, str] = Err("e")
+    println(r.unwrap_or(0))
+"#,
+    );
+}
+
+/// A type parameter is one fixed type inside its generic declaration, whatever a caller picks for it, so a value of a
+/// concrete type, or of another type parameter, is not a value of it: returning, binding, assigning, appending,
+/// yielding or passing one where a `T` is expected is refused, in a generic function, a generic method and a generic
+/// model's or class's methods through `self`, bare and as a list, `Option`, `Result`, dict or closure part, and as the
+/// argument of a callee whose own type parameter the call fixes to `T`. A value of `T`, a borrowed `&T`, `[]`, `None`
+/// and a callee's type parameter fixed to a concrete type at the call are accepted (#1561).
+#[test]
+fn concrete_values_are_not_values_of_a_type_parameter_issue1561() {
+    let errors = check_str_err(
+        r#"
+model Box[T]:
+    value: T
+    items: list[T]
+
+    def reset(mut self) -> None:
+        self.value = 0
+
+    def grow(mut self) -> None:
+        self.items.append(0)
+
+    def keep(mut self, v: T) -> None:
+        self.value = v
+
+    def refill(mut self) -> None:
+        self.keep("s")
+
+model Conv:
+    n: int
+
+    def same[T](self, x: T) -> T:
+        return 1.5
+
+def zero[T](x: T) -> T:
+    return 0
+
+def local[T](x: T) -> T:
+    y: T = "s"
+    return y
+
+def listed[T](x: T) -> list[T]:
+    return [x, 0]
+
+def fallback[T](r: Result[list[T], int]) -> list[T]:
+    return r.unwrap_or([0])
+
+def maybe[T](x: T) -> Option[T]:
+    return Some(true)
+
+def keyed[K, V](k: K, v: V) -> dict[K, V]:
+    return {k: 0}
+
+def other[T, U](x: T, y: U) -> T:
+    return y
+
+def both[T](a: T, b: T) -> T:
+    return a
+
+def forwarded[T](x: T) -> T:
+    return both(x, 0)
+
+def apply[T](f: (T) -> T, x: T) -> T:
+    return f(x)
+
+def mapped[T](x: T) -> T:
+    return apply((v) => 0, x)
+
+def gen[T](x: T) -> Generator[T]:
+    yield 0
+"#,
+        "concrete values where a type parameter is expected",
+    );
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    for needle in [
+        "Cannot assign 'int' to field 'value' of type 'T'",
+        "Argument 'v' of 'keep' has type mismatch: expected 'T', found 'str'",
+        "Return type mismatch: expected 'T', found 'float'",
+        "Return type mismatch: expected 'T', found 'int'",
+        "Assignment to 'y' has type mismatch: expected 'T', found 'str'",
+        "Return type mismatch: expected 'Option[T]', found 'Option[bool]'",
+        "Type mismatch: expected 'V', found 'int'",
+        "Return type mismatch: expected 'T', found 'U'",
+        "Argument 'b' of 'both' has type mismatch: expected 'T', found 'int'",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected an error containing `{needle}`, got {messages:?}"
+        );
+    }
+    assert!(
+        messages
+            .iter()
+            .filter(|message| message.contains("Type mismatch: expected 'T', found 'int'"))
+            .count()
+            >= 5,
+        "the appended, listed, defaulted, closure-returned and yielded `0` are each refused: {messages:?}"
+    );
+    assert_check_ok(
+        r#"
+model Box[T]:
+    value: T
+    items: list[T]
+
+    def keep(mut self, v: T) -> None:
+        self.value = v
+
+    def copy_from(mut self, other: Box[T]) -> None:
+        self.value = other.value
+        self.items.append(other.value)
+
+    def swap(mut self, v: T) -> T:
+        old = self.value
+        self.value = v
+        return old
+
+    def wrapped(self) -> Option[T]:
+        return Some(self.value)
+
+    def first(self) -> Option[T]:
+        if len(self.items) == 0:
+            return None
+        return Some(self.items[0])
+
+def ident[T](x: T) -> T:
+    return x
+
+def replace[T](first: T, second: &T) -> T:
+    mut current = first
+    current = second
+    return current
+
+def empty[T](x: T) -> list[T]:
+    return []
+
+def nothing[T](x: T) -> Option[T]:
+    return None
+
+def counted[T](x: T) -> int:
+    return ident(0)
+
+def paired[T](x: T) -> list[T]:
+    return [x, ident(x)]
+
+def main() -> None:
+    mut b = Box(value=1, items=[2])
+    b.keep(3)
+    println(b.swap(4))
+    println(ident("a"))
+    println(counted(1.5))
+    println(len(paired(1)))
+"#,
+    );
+}

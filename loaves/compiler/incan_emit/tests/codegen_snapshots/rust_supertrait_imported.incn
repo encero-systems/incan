@@ -1,0 +1,27 @@
+# #1427: a source trait may name an imported Rust trait as its supertrait.
+# The foreign parent keeps its absolute Rust path (through the import alias) in the
+# generated trait declaration, and adopters satisfy it with their own Rust implementation.
+
+from rust::std::fmt import Display as RustDisplay
+
+
+pub trait Labeled with RustDisplay:
+    """A value whose label is its Rust `Display` rendering."""
+
+    def label(self) -> str:
+        return f"{self}"
+
+
+model Tag with Labeled:
+    name: str
+
+    def __str__(self) -> str:
+        return self.name
+
+
+def describe[T with Labeled](value: T) -> str:
+    return value.label()
+
+
+def main() -> None:
+    println(describe(Tag(name="release")))

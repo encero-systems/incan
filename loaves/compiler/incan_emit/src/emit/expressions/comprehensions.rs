@@ -5,16 +5,21 @@
 //! - Dict comprehensions: `{key: value for var in iter if cond}`
 //! - Generator expressions: `(expr for var in iter if cond)`
 
+use std::collections::HashSet;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
+use crate::emit::statements::{expr_contains_mutation, pattern_mutated_bindings_in_expr};
 use crate::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
-    plan_list_comprehension_iteration, plan_owned_iterator_source,
+    plan_direct_comprehension_source, plan_list_comprehension_iteration, plan_mutating_derived_loop,
+    plan_owned_iterator_source,
 };
 use incan_ir::expr::{
-    BuiltinFn, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, Pattern, TypedExpr,
+    BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry,
+    MethodKind, Pattern, TypedExpr,
 };
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::IrType;
@@ -43,7 +48,15 @@ impl<'a> IrEmitter<'a> {
 
         match head {
             IrGeneratorClause::For { pattern, iterable } => {
-                let pattern_tokens = self.emit_pattern(pattern);
+                // A generator owns the items it yields from; one its element or a later clause changes is `mut`
+                // (#1561).
+                let later_clauses = tail.iter().map(|clause| match clause {
+                    IrGeneratorClause::For { iterable, .. } => Some(iterable.as_ref()),
+                    IrGeneratorClause::If(condition) => Some(condition),
+                });
+                let changed =
+                    Self::comprehension_changed_bindings(pattern, std::iter::once(Some(element)).chain(later_clauses));
+                let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &changed);
                 let iter = self.emit_generator_iterable(iterable)?;
                 let body = self.emit_generator_chain(element, tail)?;
                 Ok(quote! {
@@ -53,7 +66,7 @@ impl<'a> IrEmitter<'a> {
                 })
             }
             IrGeneratorClause::If(condition) => {
-                let condition_tokens = self.emit_expr(condition)?;
+                let condition_tokens = self.emit_condition_position_expr(condition)?;
                 let body = self.emit_generator_chain(element, tail)?;
                 Ok(quote! {
                     if #condition_tokens {
@@ -92,6 +105,18 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return the names `pattern` binds that one of `parts` (a comprehension's element, key, value or filter) changes.
+    fn comprehension_changed_bindings<'e>(
+        pattern: &Pattern,
+        parts: impl IntoIterator<Item = Option<&'e TypedExpr>>,
+    ) -> HashSet<String> {
+        parts
+            .into_iter()
+            .flatten()
+            .flat_map(|part| pattern_mutated_bindings_in_expr(pattern, part))
+            .collect()
+    }
+
     /// Return whether an iterable expression already yields owned generator items.
     fn is_generator_iterable(iterable: &TypedExpr) -> bool {
         matches!(&iterable.ty, IrType::NamedGeneric(name, _)
@@ -116,9 +141,45 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         // ---- Context: iterator setup ----
-        let pattern_tokens = self.emit_pattern(pattern);
+        // A binding the element or the filter changes is `mut`: an item read in place is changed in its source, and an
+        // item of a temporary is the comprehension's own (#1561).
+        let changed = Self::comprehension_changed_bindings(pattern, [Some(element), filter]);
+        let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &changed);
         let elem = self.emit_expr(element)?;
         let body_can_propagate = Self::expr_contains_try(element) || filter.is_some_and(Self::expr_contains_try);
+
+        // A binding mutated by the element or by the filter is reached in place, so the change lands in the source.
+        if let Pattern::Var(name) = pattern
+            && (expr_contains_mutation(element, name)
+                || filter.is_some_and(|filter| expr_contains_mutation(filter, name)))
+            && matches!(iterable.ty, IrType::List(_) | IrType::RefMut(_))
+            && matches!(
+                iterable.kind,
+                IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
+            )
+        {
+            let source = self.emit_lvalue_expr(iterable)?;
+            let iter = quote! { (#source).iter_mut() };
+            // The binding is a `&mut` item; a mutating helper borrows it mutably, which needs the binding declared
+            // `mut` (the extra reference coerces back to the item).
+            let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &HashSet::from([name.clone()]));
+            if body_can_propagate {
+                return self.emit_direct_list_comp_loop(iter, pattern_tokens, elem, filter);
+            }
+            return self.emit_direct_list_comp(iter, pattern_tokens, elem, filter);
+        }
+
+        // A derived iterable (`enumerate`, `zip`, `values()`, an element) whose items the element or filter changes is
+        // read in place as a `for` loop over it is (#1561).
+        if !changed.is_empty()
+            && let Some(plan) = plan_mutating_derived_loop(iterable, pattern, &changed, |ty| self.type_is_user_enum(ty))
+        {
+            let iter = self.emit_mutating_derived_for_iterable(&plan)?;
+            if body_can_propagate {
+                return self.emit_direct_list_comp_loop(iter, pattern_tokens, elem, filter);
+            }
+            return self.emit_direct_list_comp(iter, pattern_tokens, elem, filter);
+        }
 
         if let Some(iter) = self.emit_direct_comprehension_iterable(iterable)? {
             if body_can_propagate {
@@ -161,7 +222,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter_wrapped
@@ -183,7 +244,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter_wrapped
@@ -223,7 +284,10 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         // ---- Context: iterator setup ----
-        let pattern_tokens = self.emit_pattern(pattern);
+        // As for a list comprehension, a changed binding is `mut` and its items are read in place when they belong to a
+        // place (#1561).
+        let changed = Self::comprehension_changed_bindings(pattern, [Some(key), Some(value), filter]);
+        let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &changed);
         let key_tokens = self.emit_expr(key)?;
         let value_tokens = self.emit_expr(value)?;
         let body_can_propagate = Self::expr_contains_try(key)
@@ -241,7 +305,26 @@ impl<'a> IrEmitter<'a> {
             quote! { #key_tokens }
         };
 
-        if let Some(iter) = self.emit_direct_comprehension_iterable(iterable)? {
+        let in_place = if changed.is_empty() {
+            None
+        } else if matches!(pattern, Pattern::Var(_))
+            && matches!(iterable.ty, IrType::List(_) | IrType::RefMut(_))
+            && matches!(
+                iterable.kind,
+                IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
+            )
+        {
+            let source = self.emit_lvalue_expr(iterable)?;
+            Some(quote! { (#source).iter_mut() })
+        } else {
+            plan_mutating_derived_loop(iterable, pattern, &changed, |ty| self.type_is_user_enum(ty))
+                .map(|plan| self.emit_mutating_derived_for_iterable(&plan))
+                .transpose()?
+        };
+        if let Some(iter) = in_place.map_or_else(
+            || self.emit_direct_comprehension_iterable(iterable),
+            |iter| Ok(Some(iter)),
+        )? {
             if body_can_propagate {
                 return self.emit_direct_dict_comp_loop(iter, pattern_tokens, cloned_key, value_tokens, filter);
             }
@@ -269,7 +352,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered dict comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter
@@ -291,7 +374,7 @@ impl<'a> IrEmitter<'a> {
                         "filtered dict comprehension plan requires a filter".to_string(),
                     ));
                 };
-                let filter_tokens = self.emit_expr(filter)?;
+                let filter_tokens = self.emit_condition_position_expr(filter)?;
                 let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter
@@ -358,14 +441,62 @@ impl<'a> IrEmitter<'a> {
                 func: BuiltinFn::Enumerate,
                 args,
             } => self.emit_owned_enumerate_iter(args).map(Some),
-            IrExprKind::MethodCall {
-                receiver, method, args, ..
-            } if method == "keys" && args.is_empty() && matches!(receiver.ty, IrType::Dict(_, _)) => {
-                let receiver_tokens = self.emit_expr(receiver)?;
-                Ok(Some(quote! { (#receiver_tokens).keys().cloned() }))
+            _ => {
+                if let Some(iter) = self.emit_direct_dict_view_iter(iterable)? {
+                    return Ok(Some(iter));
+                }
+                self.emit_planned_comprehension_source(iterable)
             }
-            _ => Ok(None),
         }
+    }
+
+    /// Emit a comprehension source that the ownership planner can consume as an owned `IntoIterator`, or `None` when
+    /// the source must retain its borrowed-item plan.
+    ///
+    /// Migration note (rust_source_backend_deprecation.md):
+    /// - Compatibility issue: #1490 -- `[argument for argument in args()]` over the by-value `std::env::Args` iterator
+    ///   emitted `.iter()`, which the type does not have, while `for argument in args()` compiled.
+    /// - Compatibility issue: #1983 -- a last-use `list[T]` parameter was borrowed and cloned item by item, adding an
+    ///   undeclared `T: Clone` requirement instead of consuming the owned parameter.
+    /// - Behavior evidence: the `issue1490_comprehension_over_rust_iterator` snapshot and CLI program, plus the
+    ///   `generic_list_comprehension_consumes_parameter` behavior fixture.
+    /// - Semantic owner: the checked source type and `plan_direct_comprehension_source` in the ownership planner; this
+    ///   helper only realizes that plan.
+    /// - Retirement condition: the Rust-source backend is deleted (#654); Body IR already lowers a comprehension clause
+    ///   and a `for` statement through the same general-iteration path.
+    fn emit_planned_comprehension_source(&self, iterable: &TypedExpr) -> Result<Option<TokenStream>, EmitError> {
+        let Some(plan) = plan_direct_comprehension_source(iterable) else {
+            return Ok(None);
+        };
+        let source = plan.apply(self.emit_expr(iterable)?);
+        Ok(Some(quote! { #source.into_iter() }))
+    }
+
+    /// Emit `dict.keys()` / `dict.values()` as a direct owned-item iterator for a loop or comprehension source.
+    ///
+    /// In value position those calls materialize the `list` the typechecker reports (see `emit_collection_method`);
+    /// a loop or comprehension does not need the allocation, only owned items that match the typechecker's `K` / `V`
+    /// item typing, so the borrowed view is cloned per item instead of collected (#1668).
+    pub(in crate::emit) fn emit_direct_dict_view_iter(
+        &self,
+        iterable: &TypedExpr,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Collection(kind @ (CollectionMethodKind::Keys | CollectionMethodKind::Values)),
+            args,
+        } = &iterable.kind
+        else {
+            return Ok(None);
+        };
+        if !args.is_empty() {
+            return Ok(None);
+        }
+        let receiver_tokens = self.emit_expr(receiver)?;
+        Ok(Some(match kind {
+            CollectionMethodKind::Keys => quote! { (#receiver_tokens).keys().cloned() },
+            _ => quote! { (#receiver_tokens).values().cloned() },
+        }))
     }
 
     /// Emit `enumerate(xs)` for comprehension closures, cloning values to match the typechecker's owned tuple item
@@ -387,7 +518,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 (#iter)
                     .filter_map(|#pattern| {
@@ -490,7 +621,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 if #filter_tokens {
                     __incan_list.push(#elem);
@@ -511,7 +642,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 (#iter)
                     .filter_map(|#pattern| {
@@ -610,7 +741,7 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         if let Some(filter) = filter {
-            let filter_tokens = self.emit_expr(filter)?;
+            let filter_tokens = self.emit_condition_position_expr(filter)?;
             Ok(quote! {
                 if #filter_tokens {
                     __incan_dict.insert(#key, #value);

@@ -1,0 +1,12 @@
+# behavior: a provider's facade alias resolves to the declaration it was published from, so its str signature is used even though the provider also exports a same-named int function
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::imported_pub_callable_signature_uses_identity_graph_before_short_name_lookup
+# expect-stdout:
+#   <text>
+#   3
+
+from pub::mylib import cast, safe_cast
+
+
+def main() -> None:
+    println(safe_cast("text"))
+    println(cast(2))

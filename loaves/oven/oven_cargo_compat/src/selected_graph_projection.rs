@@ -1,0 +1,5318 @@
+//! Projection of sealed Cargo capture facts into Oven's portable selected Rust graph.
+//!
+//! Cargo capture observes compiled units, but it intentionally has no authority to assign portable source owners or
+//! authored feature requests. This module joins that observation to publisher-retained physical bindings and emits a
+//! rootless graph. The caller must bind roots with an admitted project or compiler-support authority afterwards.
+//!
+//! TODO(#1561): observation-governed build-script facts are transitional capture evidence. Registry declarations
+//! replace them as the release graph becomes fully governed.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
+
+use oven_model::manifest::ProjectManifest;
+use oven_rustc::loaf::OvenLoaf;
+use oven_rustc::rustc::{
+    OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION, OvenCompilerSupportRootIntentAuthority, OvenRuntimeFoundation,
+    OvenRuntimeFoundationPackageSource, OvenRuntimeFoundationSourceInventory, OvenRuntimeFoundationUnit,
+    OvenRuntimeFoundationUnitExecution, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
+    OvenRustcSupportingArtifact, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency,
+    OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput,
+    OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner,
+    OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose,
+    OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit,
+    OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents,
+    selected_graph_sha256, selected_graph_unit_identity,
+};
+use oven_store::OvenReceipt;
+use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
+use serde::{Deserialize, Serialize};
+
+use super::LoafRegistryAuthority;
+use super::{
+    OvenLegacyCargoBuildScriptToolProbe, OvenLegacyCargoError, OvenLegacyCargoInspectionSource,
+    OvenLegacyCargoSelectedGeneratedOutput, OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture,
+    legacy_cargo_selected_unit_capture_identity,
+};
+
+/// Receipt key binding the complete selected build-script closure to a final publisher transaction.
+pub const OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT: &str =
+    oven_store::OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT;
+
+/// Publisher-retained physical binding for one Cargo-selected unit.
+///
+/// The capture owns the observed package, target, feature and edge facts. This record supplies only the portable
+/// owner-relative source facts that the capture cannot safely derive from local paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OvenLegacyCargoSelectedGraphUnitBinding {
+    /// Complete source identity already retained beneath an immutable publisher owner.
+    pub source: OvenSelectedRustFacetSource,
+    /// Complete source members retained under that owner; never reconstructed from a capture checkout path.
+    pub source_members: Vec<OvenSelectedRustFacetSourceMember>,
+    /// Exact sealed registry catalog record when this selected unit came from a registry package.
+    pub registry_source: Option<OvenRustcRegistrySourcePackage>,
+    /// Source directories visible to inspection, expressed under retained owners.
+    pub include_dirs: Vec<OvenSelectedRustFacetPath>,
+    /// Source directories intentionally excluded from inspection, expressed under retained owners.
+    pub exclude_dirs: Vec<OvenSelectedRustFacetPath>,
+}
+
+/// One retained generated-output binding consumed through an exact build-script edge.
+///
+/// The binding names the already copied output owner. It does not authorize executing the build script again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OvenLegacyCargoSelectedGeneratedBinding {
+    /// Stable generated input name consumed by the selected unit.
+    pub name: String,
+    /// Exact retained output tree reference.
+    pub source: OvenSelectedRustFacetPath,
+    /// Complete digest of the retained output tree.
+    pub digest: String,
+}
+
+/// One selected environment value matched to an exact build-script observation.
+///
+/// Every `rustc-env` line a build script emitted gets one binding, so the closure digest states what was observed
+/// and what became of it; the binding decides whether the graph carries the exact text or a private-OUT_DIR path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OvenLegacyCargoSelectedEnvironmentBinding {
+    /// Exact raw Cargo observation retained only for producer-side comparison.
+    pub observed_value: String,
+    /// Portable selected value that enters graph identity after the comparison succeeds.
+    pub value: Option<OvenSelectedRustFacetEnvironmentValue>,
+}
+
+/// Complete typed linked-library closure matched to one build-script observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OvenLegacyCargoSelectedLinkedLibraryBinding {
+    /// Exact raw Cargo library directives in compiler-observed order, including duplicates.
+    pub observed_libraries: Vec<String>,
+    /// Exact raw Cargo search-path directives in compiler-observed order, including duplicates.
+    pub observed_paths: Vec<String>,
+    /// Ordered typed archive or provider facts that enter graph identity without deduplication.
+    pub libraries: Vec<OvenSelectedRustFacetLinkedLibrary>,
+}
+
+/// One complete selected build-script closure consumed by an exact physical unit edge.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct OvenLegacyCargoSelectedBuildScriptBinding {
+    /// Each exact selected environment key and its portable representation.
+    pub environment: BTreeMap<String, OvenLegacyCargoSelectedEnvironmentBinding>,
+    /// The exact typed linked-library closure, when the build script emitted link facts.
+    pub linked_libraries: Option<OvenLegacyCargoSelectedLinkedLibraryBinding>,
+    /// The registry declaration that governs this edge in place of its observation, when one was adopted.
+    ///
+    /// Absent for an observation-governed edge, so such edges keep their closure identity unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<OvenLegacyCargoDeclaredBuildScriptFacts>,
+}
+
+/// The registry declaration one adopted build-script edge is sealed under.
+///
+/// The declaration names the exact registry content it came from, so the build-script closure digest, and with it
+/// the capture receipt, binds which published facts replaced the observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OvenLegacyCargoDeclaredBuildScriptFacts {
+    /// Package name as the registry publishes it.
+    pub package: String,
+    /// Exact version.
+    pub version: String,
+    /// Canonical checksum of the source both the capture and the registry describe.
+    pub checksum: String,
+    /// Identity of the exact index line the declaration was selected from.
+    pub index_line_digest: String,
+    /// Declared `cfg` answers, which the observation was required to match.
+    pub cfg: Vec<String>,
+    /// Declared generated inputs by name and digest, which the observation was required to match.
+    pub out: BTreeMap<String, String>,
+    /// Declared compile-time environment values required to match the observation.
+    pub environment: Vec<oven_model::manifest::RustFactCompileEnvironment>,
+}
+
+/// All non-Cargo physical facts needed to turn one capture into a portable raw graph.
+///
+/// Every member is publisher-retained evidence. The projection compares it to capture where a common fact exists;
+/// it never turns an absolute Cargo path, effective feature, or package name into an authority identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OvenLegacyCargoSelectedGraphProjection {
+    /// Frozen target, toolchain, profile, purpose and compiler cfg snapshots.
+    pub selection: OvenSelectedRustFacetSelection,
+    /// Complete owner table for sources, generated output and the selected toolchain.
+    pub owners: Vec<OvenSelectedRustFacetOwner>,
+    /// One binding for every non-build-script capture unit, keyed by capture index.
+    pub units: BTreeMap<usize, OvenLegacyCargoSelectedGraphUnitBinding>,
+    /// Generated-output bindings keyed by `(consumer unit, run-custom-build unit)` capture indices.
+    pub generated: BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
+    /// Environment and linked-library closures keyed by the same consuming build-script edge.
+    pub build_scripts: BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
+}
+
+/// Final receipt and selected graph produced by one physical capture and one authored compiler-support declaration.
+pub struct OvenFinalizedCompilerSupportSelectedGraph {
+    /// Pruned physical capture the graph was projected from; run-custom-build units stay as edge endpoints.
+    pub capture: OvenLegacyCargoSelectedUnitCapture,
+    /// Receipt retaining the physical build-script closure before authored roots are attached.
+    pub capture_receipt: OvenReceipt,
+    /// Distinct final receipt binding the exact compiler-support root authority.
+    pub final_receipt: OvenReceipt,
+    /// Rooted graph validated against both receipts; its units are in canonical identity order.
+    pub graph: ValidatedOvenSelectedRustFacetGraph,
+    /// The selected unit identity projected from each compiled `capture` unit, by capture index.
+    ///
+    /// Run-custom-build units have no entry: they are not graph units. This is the only authenticated
+    /// correspondence between a physical unit and its selected identity once the graph is canonicalized.
+    pub unit_identities: BTreeMap<usize, String>,
+    /// For each pruned `capture` index, the index of the same physical unit in the capture the finalizer was given.
+    ///
+    /// Pruning renumbers dependency edges, so a pruned unit's capture identity differs from the original's; a
+    /// publisher that binds artifacts observed in a fresh capture must derive identities from the original units.
+    pub source_indices: Vec<usize>,
+}
+
+/// Bind every selected immutable registry unit to the exact artifact in its compiled Loaf.
+///
+/// The foundation's artifact owner is the graph's one Constituent owner: the identity every registry source in the
+/// graph is rooted under, which the asset later maps to the foundation root. It is read from the graph rather than
+/// recomputed by the caller because the projection labels sources with the receipt it was given, and the finalized
+/// capture receipt is derived from the pruned capture, so the two identities need not agree.
+pub fn runtime_foundation_from_compiled_loaf(
+    finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+    loaf: &OvenLoaf,
+    compiled_plan_identity: &str,
+) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
+    let graph = finalized.graph.graph();
+    let constituents = graph
+        .owners
+        .iter()
+        .filter(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
+        .collect::<Vec<_>>();
+    let [artifact_owner] = constituents.as_slice() else {
+        return Err(projection_error(
+            "runtime foundation artifact owner",
+            "the selected graph does not name exactly one Constituent owner",
+        ));
+    };
+    let artifact_owner = artifact_owner.identity.as_str();
+    if loaf.plan.intent.target != graph.selection.intent.target
+        || loaf.plan.intent.toolchain != graph.selection.intent.toolchain
+        || loaf.plan.intent.profile != graph.selection.intent.profile
+    {
+        return Err(projection_error(
+            "runtime foundation compiled Loaf",
+            "target, toolchain or profile differs from the selected graph",
+        ));
+    }
+    let mut units = Vec::with_capacity(graph.units.len());
+    let mut selected_artifacts = BTreeMap::new();
+    for unit in &graph.units {
+        if unit.source.kind != OvenSelectedRustFacetSourceKind::Registry {
+            return Err(projection_error(
+                "runtime foundation unit",
+                "is not an immutable registry-backed prebuilt unit",
+            ));
+        }
+        let matches = loaf
+            .registry_leaves
+            .iter()
+            .filter(|leaf| {
+                leaf.package == unit.package
+                    && leaf.selected_unit_identity.as_deref() == Some(unit.identity.as_str())
+                    && leaf_domain_matches(leaf, unit)
+                    && leaf.version == unit.package_version
+                    && leaf.crate_name == unit.crate_name
+                    && leaf.features == unit.features
+                    && registry_source_identity(&leaf.package, &leaf.version) == unit.source.identity
+                    && leaf.source.digest == unit.source.digest
+            })
+            .collect::<Vec<_>>();
+        let [leaf] = matches.as_slice() else {
+            return Err(projection_error(
+                "runtime foundation unit",
+                "does not have exactly one matching compiled registry artifact",
+            ));
+        };
+        if selected_artifacts
+            .insert(leaf.artifact.relative_path.clone(), (unit.domain, unit.crate_kind))
+            .is_some()
+        {
+            return Err(projection_error(
+                "runtime foundation compiled artifact",
+                "does not carry an exact one-to-one selected-unit binding",
+            ));
+        }
+        units.push(OvenRuntimeFoundationUnit {
+            selected_identity: unit.identity.clone(),
+            domain: unit.domain,
+            execution: OvenRuntimeFoundationUnitExecution::Prebuilt {
+                artifact: leaf.artifact.clone(),
+            },
+        });
+    }
+    Ok(OvenRuntimeFoundation {
+        schema_version: OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION,
+        compiler_closure_digest: compiled_plan_identity.to_string(),
+        artifact_owner: artifact_owner.to_string(),
+        artifacts: loaf.plan.clone(),
+        selected_graph: graph.clone(),
+        units,
+    })
+}
+
+/// Construct the Cargo-free publisher foundation that rebuilds every selected registry unit with direct rustc.
+///
+/// The compatibility Loaf contributes its complete compiled manifest, while the selected graph adds any generated
+/// products and native archives attached after that Loaf was first sealed. Keeping the compiled closure intact lets
+/// the release envelope bind one exact plan for normal consumers and for the rebuild foundation; the selected graph
+/// remains the sole authority for which units the publisher rebuilds.
+pub fn runtime_foundation_for_publisher_rebuild(
+    finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+    loaf: &OvenLoaf,
+    compiler_closure_identity: &str,
+) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
+    let graph = finalized.graph.graph();
+    let constituents = graph
+        .owners
+        .iter()
+        .filter(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
+        .collect::<Vec<_>>();
+    let [artifact_owner] = constituents.as_slice() else {
+        return Err(projection_error(
+            "runtime foundation artifact owner",
+            "the selected graph does not name exactly one Constituent owner",
+        ));
+    };
+    if loaf.plan.intent.target != graph.selection.intent.target
+        || loaf.plan.intent.toolchain != graph.selection.intent.toolchain
+        || loaf.plan.intent.profile != graph.selection.intent.profile
+    {
+        return Err(projection_error(
+            "runtime foundation publisher Loaf",
+            "target, toolchain or profile differs from the selected graph",
+        ));
+    }
+    let mut artifacts = loaf.plan.clone();
+    artifacts.supporting_artifacts = publisher_rebuild_supporting_artifacts(graph, &loaf.plan)?;
+    artifacts
+        .validate_shape(&artifacts.intent)
+        .map_err(|error| projection_error("runtime foundation publisher artifacts", &error.to_string()))?;
+    let units = graph
+        .units
+        .iter()
+        .map(|unit| OvenRuntimeFoundationUnit {
+            selected_identity: unit.identity.clone(),
+            domain: unit.domain,
+            execution: OvenRuntimeFoundationUnitExecution::Rebuild,
+        })
+        .collect();
+    Ok(OvenRuntimeFoundation {
+        schema_version: OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION,
+        compiler_closure_digest: compiler_closure_identity.to_string(),
+        artifact_owner: artifact_owner.identity.clone(),
+        artifacts,
+        selected_graph: graph.clone(),
+        units,
+    })
+}
+
+/// Project every retained registry manifest and publisher-produced compiler input into the rebuild plan.
+///
+/// Registry source declarations remain valid only with their exact plan-declared `Cargo.toml`. Generated trees and
+/// native archives come from the already-validated selected graph and become supporting artifacts here, so the asset
+/// publisher cannot carry bytes that the immutable artifact manifest omits. Repeated identical paths collapse to one
+/// declaration; conflicting claims refuse the projection.
+fn publisher_rebuild_supporting_artifacts(
+    graph: &OvenSelectedRustFacetGraph,
+    source_plan: &oven_rustc::rustc::OvenRustcArtifactManifest,
+) -> Result<Vec<OvenRustcSupportingArtifact>, OvenLegacyCargoError> {
+    let mut declared = BTreeMap::new();
+    let mut retained = source_plan.supporting_artifacts.clone();
+    let retained_paths = retained
+        .iter()
+        .map(|artifact| artifact.relative_path.clone())
+        .collect::<BTreeSet<_>>();
+    for artifact in &source_plan.supporting_artifacts {
+        insert_publisher_rebuild_artifact(&mut declared, &artifact.relative_path, &artifact.digest)?;
+    }
+    for source in &source_plan.registry_sources {
+        let manifest_path = if source.source.relative_root == "." {
+            "Cargo.toml".to_string()
+        } else {
+            format!("{}/Cargo.toml", source.source.relative_root)
+        };
+        let matches = source_plan
+            .supporting_artifacts
+            .iter()
+            .filter(|artifact| artifact.relative_path == manifest_path)
+            .collect::<Vec<_>>();
+        let [manifest] = matches.as_slice() else {
+            return Err(projection_error(
+                "runtime foundation registry source",
+                &format!(
+                    "`{}` {} has {} immutable-plan manifest declarations",
+                    source.package,
+                    source.version,
+                    matches.len()
+                ),
+            ));
+        };
+        insert_publisher_rebuild_artifact(&mut declared, &manifest.relative_path, &manifest.digest)?;
+    }
+    for unit in &graph.units {
+        for generated in &unit.generated_inputs {
+            for member in &generated.members {
+                let path = if generated.source.path == "." {
+                    member.path.clone()
+                } else {
+                    format!("{}/{}", generated.source.path, member.path)
+                };
+                insert_publisher_rebuild_artifact(&mut declared, &path, &member.digest)?;
+            }
+        }
+        for library in &unit.linked_libraries {
+            if let OvenSelectedRustFacetLinkedLibrary::Archive { artifact, digest, .. } = library {
+                insert_publisher_rebuild_artifact(&mut declared, &artifact.path, digest)?;
+            }
+        }
+    }
+    retained.extend(
+        declared
+            .into_iter()
+            .filter(|(relative_path, _)| !retained_paths.contains(relative_path))
+            .map(|(relative_path, digest)| OvenRustcSupportingArtifact { relative_path, digest }),
+    );
+    Ok(retained)
+}
+
+/// Insert one publisher-rebuild artifact while refusing two byte identities for the same portable path.
+fn insert_publisher_rebuild_artifact(
+    declared: &mut BTreeMap<String, String>,
+    relative_path: &str,
+    digest: &str,
+) -> Result<(), OvenLegacyCargoError> {
+    if let Some(existing) = declared.insert(relative_path.to_string(), digest.to_string())
+        && existing != digest
+    {
+        return Err(projection_error(
+            "runtime foundation publisher artifact",
+            &format!("`{relative_path}` has conflicting immutable-plan digests"),
+        ));
+    }
+    Ok(())
+}
+
+/// The one portable identity a registry-backed selected unit's source carries: the `registry:` coordinate.
+///
+/// Every consumer of a selected graph — its validator, the policy exchange, the runtime foundation and executor —
+/// names a registry source this way; the registry URL and checksum stay in the sealed catalog beside it.
+pub fn registry_source_identity(package: &str, version: &str) -> String {
+    format!("registry:{package}@{version}")
+}
+
+/// Whether a sealed registry leaf serves the same domain and unit kind as a selected graph unit.
+fn leaf_domain_matches(leaf: &oven_rustc::rustc::OvenRustcRegistryLeaf, unit: &OvenSelectedRustFacetUnit) -> bool {
+    use oven_rustc::rustc::{OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind};
+    let domain = match unit.domain {
+        OvenSelectedRustFacetDomain::Host => OvenRustcRegistryLeafDomain::Host,
+        OvenSelectedRustFacetDomain::Target => OvenRustcRegistryLeafDomain::Target,
+    };
+    let kind = match unit.crate_kind {
+        OvenSelectedRustFacetCrateKind::ProcMacro => OvenRustcRegistryLeafKind::ProcMacro,
+        _ => OvenRustcRegistryLeafKind::Rlib,
+    };
+    leaf.domain == domain && leaf.crate_kind == kind
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyManifestInventory {
+    path: String,
+    bytes_hex: String,
+    sha256_hex: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyPackageIdentity {
+    name: String,
+    version: String,
+    source: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicySourceInventory {
+    package: PolicyPackageIdentity,
+    domain: OvenSelectedRustFacetDomain,
+    owner: String,
+    package_root: String,
+    manifest: PolicyManifestInventory,
+    members: Vec<String>,
+    build_unit_present: bool,
+    effective_features: Vec<String>,
+}
+
+/// One inert build-script warning selected by the policy engine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OvenRustPolicyWarning {
+    /// Package name whose discovered script is inert.
+    pub package: String,
+}
+
+/// Strictly parsed selected-policy output consumed at the release bake boundary.
+pub struct OvenRustPolicySelection {
+    /// Source inventories joined to selected physical units.
+    pub inventories: Vec<OvenRuntimeFoundationSourceInventory>,
+    /// One warning per selected package whose build script is inert.
+    pub warnings: Vec<OvenRustPolicyWarning>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyWarning {
+    owner: String,
+    package_root: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicySelectedResponse {
+    schema: String,
+    operation: String,
+    status: String,
+    graph_digest: String,
+    #[serde(default)]
+    rounds: Option<serde_json::Value>,
+    #[serde(default)]
+    activations: Option<serde_json::Value>,
+    #[serde(default)]
+    units: Option<serde_json::Value>,
+    #[serde(default)]
+    bindings: Option<serde_json::Value>,
+    inventories: Vec<PolicySourceInventory>,
+    #[serde(default)]
+    warnings: Vec<PolicyWarning>,
+}
+
+/// Join selected policy inventories to every physical unit sharing the exact retained source.
+pub fn runtime_foundation_inventories_from_policy_response(
+    selected: &ValidatedOvenSelectedRustFacetGraph,
+    response: &serde_json::Value,
+) -> Result<OvenRustPolicySelection, OvenLegacyCargoError> {
+    if response.get("schema").and_then(serde_json::Value::as_str) != Some("incan.oven.rust-policy-exchange/5")
+        || response.get("operation").and_then(serde_json::Value::as_str) != Some("validate_selected_rust_graph")
+        || response.get("status").and_then(serde_json::Value::as_str) != Some("selected")
+        || response.get("graph_digest").and_then(serde_json::Value::as_str) != Some(selected.digest())
+    {
+        // A refusal names a structural kind and the exchange path it applies to; neither is prose, and both are
+        // what a producer needs to act on. The engine may add the rule that refused, in words, for the operator.
+        let status = response
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("absent");
+        let error = response.get("error");
+        let kind = error
+            .and_then(|error| error.get("kind"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("-");
+        let fields = error
+            .and_then(|error| error.get("fields"))
+            .and_then(serde_json::Value::as_array)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(".")
+            })
+            .unwrap_or_default();
+        let detail = error
+            .and_then(|error| error.get("detail"))
+            .and_then(serde_json::Value::as_str)
+            .map(|detail| format!(": {detail}"))
+            .unwrap_or_default();
+        return Err(projection_error(
+            "Rust policy response",
+            &format!(
+                "does not select the exact requested graph (status `{status}`, error `{kind}` at `{fields}`{detail})"
+            ),
+        ));
+    }
+    let parsed: PolicySelectedResponse = serde_json::from_value(response.clone())
+        .map_err(|error| projection_error("Rust policy response", &error.to_string()))?;
+    if parsed.schema != "incan.oven.rust-policy-exchange/5"
+        || parsed.operation != "validate_selected_rust_graph"
+        || parsed.status != "selected"
+        || parsed.graph_digest != selected.digest()
+    {
+        return Err(projection_error(
+            "Rust policy response",
+            "changed after selection validation",
+        ));
+    }
+    let _ = (&parsed.rounds, &parsed.activations, &parsed.units, &parsed.bindings);
+    let warning_packages = parsed
+        .warnings
+        .into_iter()
+        .map(|warning| {
+            parsed
+                .inventories
+                .iter()
+                .find(|inventory| inventory.owner == warning.owner && inventory.package_root == warning.package_root)
+                .map(|inventory| ((warning.owner, warning.package_root), inventory.package.name.clone()))
+                .ok_or_else(|| projection_error("Rust policy warning", "does not name one selected package"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let records = parsed.inventories;
+    let mut catalogs = BTreeMap::new();
+    for record in records {
+        let bytes = hex::decode(&record.manifest.bytes_hex)
+            .map_err(|_| projection_error("Rust policy manifest", "contains invalid byte hex"))?;
+        let digest = selected_graph_sha256(&bytes);
+        if digest.strip_prefix("sha256:") != Some(record.manifest.sha256_hex.as_str()) {
+            return Err(projection_error(
+                "Rust policy manifest",
+                "bytes do not match its declared digest",
+            ));
+        }
+        let key = (
+            record.owner,
+            record.package_root,
+            record.package.name,
+            record.package.version,
+            record.package.source,
+            selected_domain_key(record.domain),
+        );
+        if catalogs
+            .insert(
+                key,
+                (
+                    record.manifest.path,
+                    digest,
+                    record.members,
+                    record.build_unit_present,
+                    record.effective_features,
+                ),
+            )
+            .is_some()
+        {
+            return Err(projection_error(
+                "Rust policy inventory",
+                "duplicates one retained source",
+            ));
+        }
+    }
+    let mut used = BTreeSet::new();
+    let mut inventories = Vec::with_capacity(selected.graph().units.len());
+    for unit in &selected.graph().units {
+        let key = (
+            unit.source.owner.clone(),
+            unit.source.root.clone(),
+            unit.package.clone(),
+            unit.package_version.clone(),
+            unit.source.identity.clone(),
+            selected_domain_key(unit.domain),
+        );
+        let (manifest_path, manifest_digest, member_paths, _, effective_features) = catalogs
+            .get(&key)
+            .ok_or_else(|| projection_error("Rust policy inventories", "omit one selected source"))?;
+        if effective_features != &unit.features {
+            return Err(projection_error(
+                "Rust policy inventory",
+                "features differ from selected physical evidence",
+            ));
+        }
+        let manifest = unit
+            .source_members
+            .iter()
+            .find(|member| member.path == *manifest_path && member.digest == *manifest_digest)
+            .ok_or_else(|| projection_error("Rust policy manifest", "does not match selected source evidence"))?;
+        let members = unit
+            .source_members
+            .iter()
+            .filter(|member| member.path != *manifest_path)
+            .cloned()
+            .collect::<Vec<_>>();
+        if members.iter().map(|member| &member.path).collect::<Vec<_>>() != member_paths.iter().collect::<Vec<_>>() {
+            return Err(projection_error(
+                "Rust policy inventory",
+                "does not exhaust selected source members",
+            ));
+        }
+        inventories.push(OvenRuntimeFoundationSourceInventory {
+            selected_identity: unit.identity.clone(),
+            package: OvenRuntimeFoundationPackageSource {
+                root: OvenSelectedRustFacetPath {
+                    owner: unit.source.owner.clone(),
+                    path: unit.source.root.clone(),
+                },
+                manifest: manifest.clone(),
+                members,
+            },
+            build_unit_present: catalogs[&key].3,
+        });
+        used.insert(key);
+    }
+    if used.len() != catalogs.len() {
+        return Err(projection_error(
+            "Rust policy inventories",
+            "contain an unselected source",
+        ));
+    }
+    Ok(OvenRustPolicySelection {
+        inventories,
+        warnings: warning_packages
+            .into_values()
+            .map(|package| OvenRustPolicyWarning { package })
+            .collect(),
+    })
+}
+
+/// Return a stable internal ordering key without changing the public wire spelling.
+fn selected_domain_key(domain: OvenSelectedRustFacetDomain) -> u8 {
+    match domain {
+        OvenSelectedRustFacetDomain::Host => 0,
+        OvenSelectedRustFacetDomain::Target => 1,
+    }
+}
+
+/// Encode one environment value in the closed v5 policy vocabulary.
+///
+/// Captured text and private `OUT_DIR` locations keep their distinct selected-graph identity forms, but the policy
+/// exchange needs only exact text or an owner-relative path. This prevents capture provenance from expanding the
+/// exchange vocabulary while preserving the graph digest that authenticates that provenance.
+fn encode_policy_environment_value(
+    value: &OvenSelectedRustFacetEnvironmentValue,
+    generated_inputs: &[OvenSelectedRustFacetGeneratedInput],
+) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    match value {
+        OvenSelectedRustFacetEnvironmentValue::Text { value }
+        | OvenSelectedRustFacetEnvironmentValue::CapturedText { value } => {
+            Ok(serde_json::json!({"kind": "text", "value": value}))
+        }
+        OvenSelectedRustFacetEnvironmentValue::Path { value } => {
+            Ok(serde_json::json!({"kind": "path", "value": value}))
+        }
+        OvenSelectedRustFacetEnvironmentValue::OutDir { relative } => {
+            let mut matching = generated_inputs.iter().filter(|input| input.name == "out_dir");
+            let Some(generated) = matching.next() else {
+                return Err(projection_error(
+                    "policy environment OUT_DIR",
+                    "does not bind exactly one generated out_dir input",
+                ));
+            };
+            if matching.next().is_some() {
+                return Err(projection_error(
+                    "policy environment OUT_DIR",
+                    "does not bind exactly one generated out_dir input",
+                ));
+            }
+            let path = if relative == "." {
+                generated.source.path.clone()
+            } else {
+                format!("{}/{relative}", generated.source.path.trim_end_matches('/'))
+            };
+            Ok(serde_json::json!({
+                "kind": "path",
+                "value": {"owner": generated.source.owner, "path": path},
+            }))
+        }
+        OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { hmac_sha256 } => {
+            Ok(serde_json::json!({"kind": "sensitive_digest", "hmac_sha256": hmac_sha256}))
+        }
+    }
+}
+
+/// Encode every selected environment entry using only kinds accepted by the v5 Incan decoder.
+fn encode_policy_environment(
+    unit: &OvenSelectedRustFacetUnit,
+) -> Result<serde_json::Map<String, serde_json::Value>, OvenLegacyCargoError> {
+    unit.environment
+        .iter()
+        .map(|(name, value)| {
+            encode_policy_environment_value(value, &unit.generated_inputs).map(|encoded| (name.clone(), encoded))
+        })
+        .collect()
+}
+
+/// Encode one physical unit while keeping compiler-only cfg and argument facts behind its authenticated identity.
+fn encode_policy_unit(unit: &OvenSelectedRustFacetUnit) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    Ok(serde_json::json!({
+        "identity": unit.identity,
+        "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
+        "domain": serde_json::to_value(unit.domain).map_err(|error| projection_error("policy unit domain", &error.to_string()))?,
+        "role": serde_json::to_value(unit.role).map_err(|error| projection_error("policy unit role", &error.to_string()))?,
+        "crate_kind": serde_json::to_value(unit.crate_kind).map_err(|error| projection_error("policy crate kind", &error.to_string()))?,
+        "closure": {
+            "environment": encode_policy_environment(unit)?,
+            "generated_inputs": unit.generated_inputs,
+            "linked_libraries": unit.linked_libraries,
+            "sysroot_externs": unit.sysroot_externs,
+        },
+        "features": unit.features,
+    }))
+}
+
+/// Encode retained package catalogs for the selected physical units.
+fn encode_policy_catalogs(
+    graph: &OvenSelectedRustFacetGraph,
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sources: &[OvenLegacyCargoInspectionSource],
+    intent_owner: &str,
+) -> Result<Vec<serde_json::Value>, OvenLegacyCargoError> {
+    let mut catalogs = Vec::new();
+    let mut seen = BTreeSet::new();
+    for unit in &graph.units {
+        let key = (
+            unit.package.clone(),
+            unit.package_version.clone(),
+            unit.source.identity.clone(),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        let matched = sources
+            .iter()
+            .filter(|source| {
+                source.package == unit.package
+                    && source.version == unit.package_version
+                    && registry_source_identity(&source.package, &source.version) == unit.source.identity
+            })
+            .collect::<Vec<_>>();
+        let [source] = matched.as_slice() else {
+            return Err(projection_error(
+                "policy catalog",
+                "does not bind exactly one retained source",
+            ));
+        };
+        let manifest_bytes = fs::read(source.source_root.join("Cargo.toml"))
+            .map_err(|error| projection_error("policy catalog manifest", &error.to_string()))?;
+        let manifest_digest = selected_graph_sha256(&manifest_bytes);
+        let declared_manifest = source
+            .members
+            .iter()
+            .find(|member| member.path == "Cargo.toml")
+            .ok_or_else(|| projection_error("policy catalog manifest", "is absent from retained members"))?;
+        if declared_manifest.digest != manifest_digest {
+            return Err(projection_error(
+                "policy catalog manifest",
+                "bytes differ from retained digest",
+            ));
+        }
+        let build_unit_present = capture.units.iter().enumerate().any(|(consumer_index, captured)| {
+            captured.package == unit.package
+                && captured.package_version == unit.package_version
+                && captured.dependencies.iter().any(|dependency| {
+                    capture
+                        .units
+                        .get(dependency.unit_index)
+                        .is_some_and(is_build_script_unit)
+                        && dependency.build_script.is_some()
+                        && consumer_index != dependency.unit_index
+                })
+        });
+        catalogs.push(serde_json::json!({
+            "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
+            "manifest": {
+                "path": "Cargo.toml",
+                "bytes_hex": hex::encode(&manifest_bytes),
+                "sha256_hex": manifest_digest.trim_start_matches("sha256:"),
+            },
+            "owner": unit.source.owner,
+            "intent_owner": intent_owner,
+            "package_root": unit.source.root,
+            "members": source.members.iter().filter(|member| member.path != "Cargo.toml").map(|member| member.path.clone()).collect::<Vec<_>>(),
+            "build_unit_present": build_unit_present,
+        }));
+    }
+    Ok(catalogs)
+}
+
+/// Encode the strict Incan policy request from validated physical facts and retained package sources.
+pub fn encode_selected_graph_policy_request(
+    selected: &ValidatedOvenSelectedRustFacetGraph,
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sources: &[OvenLegacyCargoInspectionSource],
+    intent_owner: &str,
+) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    let graph = selected.graph();
+    let units = graph
+        .units
+        .iter()
+        .map(encode_policy_unit)
+        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
+    let roots = graph
+        .exposed_roots
+        .values()
+        .map(|root| serde_json::to_value(root).map_err(|error| projection_error("policy root", &error.to_string())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let bindings = graph
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.dependencies.iter().map(move |dependency| {
+                serde_json::json!({
+                    "parent_unit": unit.identity,
+                    "alias": dependency.alias,
+                    "child_unit": dependency.unit,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let catalogs = encode_policy_catalogs(graph, capture, sources, intent_owner)?;
+    Ok(serde_json::json!({
+        "schema": "incan.oven.rust-policy-exchange/5",
+        "operation": "validate_selected_rust_graph",
+        "graph_digest": selected.digest(),
+        "context": {
+            "host": {"triple": graph.selection.host, "cfg": graph.selection.host_cfg},
+            "target": {"triple": graph.selection.intent.target, "cfg": graph.selection.target_cfg},
+            "selection_purpose": serde_json::to_value(graph.selection.purpose).map_err(|error| projection_error("policy purpose", &error.to_string()))?,
+        },
+        "units": units,
+        "roots": roots,
+        "bindings": bindings,
+        "catalogs": catalogs,
+        "max_rounds": graph.units.len().saturating_mul(graph.units.len()).saturating_add(1),
+    }))
+}
+
+/// Complete the capture-to-final-receipt transition for one compiler-support selected graph.
+///
+/// The base receipt authorizes the initial stable Cargo observation. This function binds the observed build-script
+/// closure, projects exact physical identities, joins authored root intent, derives the distinct final receipt, and
+/// admits the rooted graph. Final artifacts must be published only under `final_receipt`.
+pub fn finalize_compiler_support_selected_graph(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
+    intent_owner: &str,
+    base_receipt: &OvenReceipt,
+) -> Result<OvenFinalizedCompilerSupportSelectedGraph, OvenLegacyCargoError> {
+    let (capture, sealed, root_units, source_indices) =
+        compiler_support_capture(capture, sealed, manifest, active_optional_dependencies)?;
+    if base_receipt
+        .sources
+        .build_unit_inputs
+        .contains_key(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT)
+    {
+        return Err(projection_error(
+            "compiler-support base receipt",
+            "already carries a selected build-script closure",
+        ));
+    }
+    let closure_digest = legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?;
+    let capture_receipt = receipt_with_build_unit_input(
+        base_receipt,
+        OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
+        closure_digest,
+    )
+    .map_err(|error| projection_error("compiler-support capture receipt", &error.to_string()))?;
+    let projected = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&capture_receipt))?;
+    let referenced_owners = selected_graph_referenced_owners(&projected);
+    let mut sealed = sealed;
+    sealed
+        .owners
+        .retain(|owner| referenced_owners.contains(owner.identity.as_str()));
+    let authority = compiler_support_root_intent_authority_with_roots(
+        &capture,
+        &sealed,
+        Some(&capture_receipt),
+        manifest,
+        active_optional_dependencies,
+        intent_owner,
+        &capture_receipt,
+        &root_units,
+    )?;
+    let authority_digest = oven_rustc::rustc::compiler_support_root_intent_digest(&authority)
+        .map_err(|error| projection_error("compiler-support root intent", &error.to_string()))?;
+    let final_receipt = receipt_with_compiler_support_root_intent(&capture_receipt, authority_digest)
+        .map_err(|error| projection_error("compiler-support final receipt", &error.to_string()))?;
+    let (graph, unit_identities) = project_and_bind_compiler_support_selected_graph(
+        &capture,
+        &sealed,
+        &authority,
+        &capture_receipt,
+        &final_receipt,
+    )?;
+    Ok(OvenFinalizedCompilerSupportSelectedGraph {
+        capture,
+        capture_receipt,
+        final_receipt,
+        graph,
+        unit_identities,
+        source_indices,
+    })
+}
+
+/// Collect every physical owner referenced by compiler-visible selected graph facts.
+fn selected_graph_referenced_owners(graph: &OvenSelectedRustFacetGraph) -> BTreeSet<&str> {
+    let mut owners = BTreeSet::new();
+    match &graph.selection.target_spec {
+        OvenSelectedRustFacetTargetSpec::BuiltIn { toolchain_owner, .. } => {
+            owners.insert(toolchain_owner.as_str());
+        }
+        OvenSelectedRustFacetTargetSpec::Custom { source, .. } => {
+            owners.insert(source.owner.as_str());
+        }
+    }
+    for unit in &graph.units {
+        owners.insert(unit.source.owner.as_str());
+        owners.extend(unit.include_dirs.iter().map(|path| path.owner.as_str()));
+        owners.extend(unit.exclude_dirs.iter().map(|path| path.owner.as_str()));
+        owners.extend(unit.generated_inputs.iter().map(|input| input.source.owner.as_str()));
+        for value in unit.environment.values() {
+            if let OvenSelectedRustFacetEnvironmentValue::Path { value } = value {
+                owners.insert(value.owner.as_str());
+            }
+        }
+        for library in &unit.linked_libraries {
+            match library {
+                OvenSelectedRustFacetLinkedLibrary::Archive { artifact, .. } => {
+                    owners.insert(artifact.owner.as_str());
+                }
+                OvenSelectedRustFacetLinkedLibrary::Provider { details } => {
+                    owners.insert(details.provenance.owner.as_str());
+                    owners.insert(details.search_root.owner.as_str());
+                    owners.insert(details.artifact.owner.as_str());
+                }
+            }
+        }
+    }
+    owners
+}
+
+/// Preserve the authored alias of each exact direct edge before removing Cargo transport roots.
+fn compiler_support_root_indices(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
+) -> Result<BTreeMap<String, usize>, OvenLegacyCargoError> {
+    let mut roots = BTreeMap::new();
+    for (alias, declaration) in manifest.rust_dependencies() {
+        let rust_alias = alias.replace('-', "_");
+        let mut matches = BTreeSet::new();
+        for root_index in &capture.roots {
+            let root = capture
+                .units
+                .get(*root_index)
+                .ok_or_else(|| projection_error("compiler-support capture root", "names an absent physical unit"))?;
+            for dependency in &root.dependencies {
+                if dependency.extern_crate_name.as_deref() == Some(rust_alias.as_str()) {
+                    matches.insert(dependency.unit_index);
+                }
+            }
+        }
+        if declaration.optional {
+            let active = active_optional_dependencies.contains(alias);
+            if !active && matches.is_empty() {
+                continue;
+            }
+            if !active {
+                return Err(projection_error(
+                    "compiler-support declaration",
+                    &format!("optional alias `{alias}` was selected without authored activation"),
+                ));
+            }
+        }
+        if matches.len() != 1 {
+            return Err(projection_error(
+                "compiler-support declaration",
+                &format!(
+                    "alias `{alias}` binds {} direct physical units; captured roots: {}",
+                    matches.len(),
+                    capture
+                        .roots
+                        .iter()
+                        .filter_map(|index| capture.units.get(*index))
+                        .map(|root| {
+                            let aliases = root
+                                .dependencies
+                                .iter()
+                                .filter_map(|dependency| dependency.extern_crate_name.as_deref())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            format!("{}@{} [{}]", root.package, root.package_version, aliases)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ),
+            ));
+        }
+        let index = matches
+            .into_iter()
+            .next()
+            .ok_or_else(|| projection_error("compiler-support declaration", "lost its exact captured edge"))?;
+        roots.insert(alias.clone(), index);
+    }
+    Ok(roots)
+}
+
+/// The pruned capture and projection, the authored root indices, and each pruned index's original index.
+type CompilerSupportCapture = (
+    OvenLegacyCargoSelectedUnitCapture,
+    OvenLegacyCargoSelectedGraphProjection,
+    BTreeMap<String, usize>,
+    Vec<usize>,
+);
+
+/// Remove the generated Cargo transport root while retaining exactly the authored dependency closure it selected.
+fn compiler_support_capture(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
+) -> Result<CompilerSupportCapture, OvenLegacyCargoError> {
+    let root_units = compiler_support_root_indices(capture, manifest, active_optional_dependencies)?;
+    let mut selected = root_units.values().copied().collect::<BTreeSet<_>>();
+    let roots = selected.clone();
+    let mut pending = selected.iter().copied().collect::<Vec<_>>();
+    while let Some(index) = pending.pop() {
+        let unit = capture
+            .units
+            .get(index)
+            .ok_or_else(|| projection_error("compiler-support closure", "names an absent physical unit"))?;
+        // A run-custom-build unit is retained as the endpoint of its consumer's edge, for the facts sealed there.
+        // Its own dependencies are inputs to an inert script Oven never selects or executes, not units the
+        // consumer's compilation links, so the closure stops at the script.
+        if is_build_script_unit(unit) {
+            continue;
+        }
+        for dependency in &unit.dependencies {
+            if selected.insert(dependency.unit_index) {
+                pending.push(dependency.unit_index);
+            }
+        }
+    }
+    let old_indices = selected.into_iter().collect::<Vec<_>>();
+    let remap = old_indices
+        .iter()
+        .enumerate()
+        .map(|(new, old)| (*old, new))
+        .collect::<BTreeMap<_, _>>();
+    let mut units = Vec::with_capacity(old_indices.len());
+    for old in &old_indices {
+        let mut unit = capture.units[*old].clone();
+        if is_build_script_unit(&unit) {
+            // The script's own edges name its inputs, which the closure deliberately stopped at.
+            unit.dependencies.clear();
+        }
+        for dependency in &mut unit.dependencies {
+            dependency.unit_index = *remap.get(&dependency.unit_index).ok_or_else(|| {
+                projection_error(
+                    "compiler-support closure",
+                    "omits one dependency of a retained physical unit",
+                )
+            })?;
+        }
+        units.push(unit);
+    }
+    let map_edge = |(consumer, build_unit): &(usize, usize)| Some((*remap.get(consumer)?, *remap.get(build_unit)?));
+    let projection = OvenLegacyCargoSelectedGraphProjection {
+        selection: sealed.selection.clone(),
+        owners: sealed.owners.clone(),
+        units: sealed
+            .units
+            .iter()
+            .filter_map(|(old, binding)| remap.get(old).map(|new| (*new, binding.clone())))
+            .collect(),
+        generated: sealed
+            .generated
+            .iter()
+            .filter_map(|(edge, binding)| map_edge(edge).map(|mapped| (mapped, binding.clone())))
+            .collect(),
+        build_scripts: sealed
+            .build_scripts
+            .iter()
+            .filter_map(|(edge, binding)| map_edge(edge).map(|mapped| (mapped, binding.clone())))
+            .collect(),
+    };
+    let build_script_tool_probes = capture
+        .build_script_tool_probes
+        .iter()
+        .filter(|probe| {
+            units.iter().any(|consumer| {
+                consumer.dependencies.iter().any(|dependency| {
+                    units.get(dependency.unit_index).is_some_and(|build_unit| {
+                        let facts = dependency.build_script.as_ref().or(build_unit.build_script.as_ref());
+                        facts.is_some_and(|facts| build_script_probe_matches_edge(probe, consumer, build_unit, facts))
+                    })
+                })
+            })
+        })
+        .cloned()
+        .collect();
+    let capture = OvenLegacyCargoSelectedUnitCapture {
+        roots: roots
+            .iter()
+            .map(|old| {
+                remap
+                    .get(old)
+                    .copied()
+                    .ok_or_else(|| projection_error("compiler-support root", "was not retained in its closure"))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        units,
+        rustc_invocations_observed: capture.rustc_invocations_observed,
+        build_script_tool_probes,
+        compiler: capture.compiler.clone(),
+    };
+    let root_units = root_units
+        .into_iter()
+        .map(|(alias, old)| {
+            remap.get(&old).copied().map(|index| (alias, index)).ok_or_else(|| {
+                projection_error(
+                    "compiler-support root",
+                    "lost its authored alias during capture pruning",
+                )
+            })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    Ok((capture, projection, root_units, old_indices))
+}
+
+/// Bind a verified stable-compiler capture to a built-in target description without inventing target-spec JSON.
+///
+/// The caller supplies the Store-owned Toolchain closure identity. The returned descriptor repeats only facts that
+/// the stable capture already proved from the selected compiler, and binds its canonical target cfg snapshot.
+pub fn legacy_cargo_builtin_target_spec(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    toolchain_owner: impl Into<String>,
+) -> Result<OvenSelectedRustFacetTargetSpec, OvenLegacyCargoError> {
+    let compiler = capture
+        .compiler
+        .as_ref()
+        .ok_or_else(|| projection_error("selected compiler capture", "is absent"))?;
+    if compiler.toolchain != compiler.rustc_identity {
+        return Err(projection_error(
+            "selected compiler capture",
+            "toolchain intent does not match the verified rustc identity",
+        ));
+    }
+    let target_cfg = serde_json::to_vec(&compiler.target_cfg)
+        .map_err(|error| projection_error("selected target cfg", &error.to_string()))?;
+    Ok(OvenSelectedRustFacetTargetSpec::BuiltIn {
+        toolchain_owner: toolchain_owner.into(),
+        target: compiler.target.clone(),
+        rustc_identity: compiler.rustc_identity.clone(),
+        target_cfg_digest: oven_rustc::rustc::selected_graph_sha256(&target_cfg),
+    })
+}
+
+/// Construct exact portable registry-unit bindings from the publisher's retained inspection source catalog.
+///
+/// The returned paths name the layout written by the Loaf source publisher. Package names alone never select a
+/// source: version, registry, checksum, complete tree digest, root module and member inventory must all agree with
+/// the stable capture before a binding is returned.
+pub fn legacy_cargo_registry_unit_bindings(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sources: &[OvenLegacyCargoInspectionSource],
+    foundation_owner: &str,
+) -> Result<BTreeMap<usize, OvenLegacyCargoSelectedGraphUnitBinding>, OvenLegacyCargoError> {
+    if foundation_owner.trim().is_empty() {
+        return Err(projection_error("registry foundation owner", "is empty"));
+    }
+    let mut bindings = BTreeMap::new();
+    for (index, unit) in capture.units.iter().enumerate() {
+        // A run-custom-build unit is an execution node, not an inspection crate: its registry source authenticates
+        // the build-script closure sealed on each consumer edge, and it must not receive a graph unit binding.
+        if is_build_script_unit(unit) {
+            continue;
+        }
+        let Some(captured) = unit.registry_source.as_ref() else {
+            continue;
+        };
+        let candidates = sources
+            .iter()
+            .filter(|source| {
+                source.package == unit.package
+                    && source.version == unit.package_version
+                    && source.registry == captured.registry
+                    && source.checksum == captured.checksum
+            })
+            .collect::<Vec<_>>();
+        let [source] = candidates.as_slice() else {
+            return Err(projection_error(
+                "selected registry source",
+                "does not bind exactly one retained inspection source",
+            ));
+        };
+        if source.source_digest != captured.digest || source.members != captured.members {
+            return Err(projection_error(
+                "selected registry source",
+                "differs from the captured source digest or member inventory",
+            ));
+        }
+        let directory = source
+            .source_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| projection_error("selected registry source", "has no portable directory name"))?;
+        let relative_root = format!("registry-sources/{directory}");
+        let source_members = source
+            .members
+            .iter()
+            .map(|member| OvenSelectedRustFacetSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        bindings.insert(
+            index,
+            OvenLegacyCargoSelectedGraphUnitBinding {
+                source: OvenSelectedRustFacetSource {
+                    kind: OvenSelectedRustFacetSourceKind::Registry,
+                    // The portable `registry:` coordinate, never Cargo's machine-facing package-id URL.
+                    identity: registry_source_identity(&unit.package, &unit.package_version),
+                    owner: foundation_owner.to_string(),
+                    root: relative_root.clone(),
+                    digest: source.source_digest.clone(),
+                },
+                source_members,
+                registry_source: Some(OvenRustcRegistrySourcePackage {
+                    package: unit.package.clone(),
+                    version: unit.package_version.clone(),
+                    features: source.features.clone(),
+                    source: OvenRustcRegistrySource {
+                        registry: source.registry.clone(),
+                        checksum: source.checksum.clone(),
+                        relative_root: relative_root.clone(),
+                        digest: source.source_digest.clone(),
+                    },
+                }),
+                include_dirs: vec![OvenSelectedRustFacetPath {
+                    owner: foundation_owner.to_string(),
+                    path: relative_root,
+                }],
+                exclude_dirs: Vec::new(),
+            },
+        );
+    }
+    Ok(bindings)
+}
+
+/// Captured generated-output owners paired with their consumer/build-unit edge bindings.
+pub type OvenLegacyCargoGeneratedOutputBindings = (
+    Vec<OvenSelectedRustFacetOwner>,
+    BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
+);
+
+/// Construct generated-output owners and bindings from exact edge-scoped stable capture facts.
+///
+/// Empty member inventories are preserved: their canonical digest and declared directory remain distinct from an
+/// absent output, allowing the foundation asset catalog to reproduce the empty `OUT_DIR` after mirroring.
+pub fn legacy_cargo_generated_output_bindings(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+) -> Result<OvenLegacyCargoGeneratedOutputBindings, OvenLegacyCargoError> {
+    let mut owners = BTreeMap::new();
+    let mut bindings = BTreeMap::new();
+    for (consumer, unit) in capture.units.iter().enumerate() {
+        for dependency in &unit.dependencies {
+            let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+                return Err(projection_error(
+                    "selected generated output",
+                    "names an absent build-script unit",
+                ));
+            };
+            if !is_build_script_unit(build_unit) {
+                continue;
+            }
+            let facts = dependency
+                .build_script
+                .as_ref()
+                .or(build_unit.build_script.as_ref())
+                .ok_or_else(|| projection_error("selected generated output", "has no retained build-script facts"))?;
+            let Some(output) = facts.output.as_ref() else {
+                continue;
+            };
+            let owner_identity = oven_rustc::rustc::selected_graph_sha256(
+                format!("generated-output\0{}\0{}", output.relative_root, output.digest).as_bytes(),
+            );
+            owners.insert(
+                owner_identity.clone(),
+                OvenSelectedRustFacetOwner {
+                    identity: owner_identity.clone(),
+                    kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+                },
+            );
+            if bindings
+                .insert(
+                    (consumer, dependency.unit_index),
+                    OvenLegacyCargoSelectedGeneratedBinding {
+                        name: "out_dir".to_string(),
+                        source: OvenSelectedRustFacetPath {
+                            owner: owner_identity,
+                            path: output.relative_root.clone(),
+                        },
+                        digest: output.digest.clone(),
+                    },
+                )
+                .is_some()
+            {
+                return Err(projection_error(
+                    "selected generated output",
+                    "is bound more than once for one physical edge",
+                ));
+            }
+        }
+    }
+    Ok((owners.into_values().collect(), bindings))
+}
+
+/// Bind Cargo static/dynamic link directives to exact retained build-script output members.
+///
+/// System and framework directives require a separately admitted provider and are refused here. Archive selection is
+/// exact by platform filename and must resolve to one retained output member; raw search paths never authorize a
+/// filesystem lookup.
+pub fn legacy_cargo_generated_archive_bindings(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    generated: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
+) -> Result<BTreeMap<(usize, usize), OvenLegacyCargoSelectedLinkedLibraryBinding>, OvenLegacyCargoError> {
+    let mut bindings = BTreeMap::new();
+    for (consumer, unit) in capture.units.iter().enumerate() {
+        for dependency in &unit.dependencies {
+            let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+                return Err(projection_error(
+                    "selected linked library",
+                    "names an absent build-script unit",
+                ));
+            };
+            if !is_build_script_unit(build_unit) {
+                continue;
+            }
+            let facts = dependency
+                .build_script
+                .as_ref()
+                .or(build_unit.build_script.as_ref())
+                .ok_or_else(|| projection_error("selected linked library", "has no retained build-script facts"))?;
+            if facts.linked_libraries.is_empty() && facts.linked_paths.is_empty() {
+                continue;
+            }
+            let edge = (consumer, dependency.unit_index);
+            let output = facts.output.as_ref().ok_or_else(|| {
+                projection_error("selected linked library", "has no retained generated output inventory")
+            })?;
+            let generated = generated.get(&edge).ok_or_else(|| {
+                projection_error("selected linked library", "has no exact generated-output owner binding")
+            })?;
+            let mut libraries = Vec::new();
+            for directive in &facts.linked_libraries {
+                let target = unit
+                    .platform
+                    .as_deref()
+                    .ok_or_else(|| projection_error("selected linked library", "has no captured compilation target"))?;
+                if facts.linked_paths.iter().any(|path| !path.starts_with("native=")) {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "contains an unsupported non-native search-path directive",
+                    ));
+                }
+                let compiler = capture
+                    .compiler
+                    .as_ref()
+                    .ok_or_else(|| projection_error("selected linked library", "has no captured compiler cfg"))?;
+                let cfg = if target == compiler.host {
+                    &compiler.host_cfg
+                } else if target == compiler.target {
+                    &compiler.target_cfg
+                } else {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "uses a platform outside the captured host/target selection",
+                    ));
+                };
+                let target_os = cfg.values.get("target_os").and_then(|values| values.first());
+                let target_env = cfg.values.get("target_env").and_then(|values| values.first());
+                let (kind, name, expected_file) = if let Some(name) = directive.strip_prefix("static=") {
+                    (
+                        oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                        name,
+                        if target_os.is_some_and(|value| value == "windows")
+                            && target_env.is_some_and(|value| value == "msvc")
+                        {
+                            format!("{name}.lib")
+                        } else if target_os.is_some_and(|value| value != "windows")
+                            || (target_os.is_some_and(|value| value == "windows")
+                                && target_env.is_some_and(|value| value == "gnu"))
+                        {
+                            format!("lib{name}.a")
+                        } else {
+                            return Err(projection_error(
+                                "selected linked library",
+                                "has no supported target archive convention",
+                            ));
+                        },
+                    )
+                } else if let Some(name) = directive.strip_prefix("dylib=") {
+                    (
+                        oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic,
+                        name,
+                        if target_os.is_some_and(|value| value == "macos") {
+                            format!("lib{name}.dylib")
+                        } else if target_os.is_some_and(|value| value == "windows")
+                            && target_env.is_some_and(|value| value == "msvc")
+                        {
+                            format!("{name}.lib")
+                        } else if target_os.is_some_and(|value| value != "windows") {
+                            format!("lib{name}.so")
+                        } else {
+                            return Err(projection_error(
+                                "selected linked library",
+                                "has no supported target dynamic-library convention",
+                            ));
+                        },
+                    )
+                } else {
+                    return Err(projection_error(
+                        "selected linked library",
+                        &format!(
+                            "directive `{directive}` from package `{}` for target `{target}` requires a separately admitted system or framework provider",
+                            unit.package
+                        ),
+                    ));
+                };
+                let search_roots = facts
+                    .linked_paths
+                    .iter()
+                    .filter_map(|path| path.strip_prefix("native="))
+                    .map(Path::new)
+                    .map(|path| path.strip_prefix(&facts.out_dir))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| {
+                        projection_error(
+                            "selected linked library",
+                            "search path is outside its retained generated-output directory",
+                        )
+                    })?;
+                if search_roots.is_empty() {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "has no retained native search path",
+                    ));
+                }
+                let candidates = output
+                    .members
+                    .iter()
+                    .filter(|member| {
+                        let member_path = Path::new(&member.path);
+                        member_path
+                            .file_name()
+                            .and_then(|file| file.to_str())
+                            .is_some_and(|file| file == expected_file)
+                            && search_roots.iter().any(|root| member_path.parent() == Some(*root))
+                    })
+                    .collect::<Vec<_>>();
+                let [member] = candidates.as_slice() else {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "does not name exactly one retained build-script output member",
+                    ));
+                };
+                libraries.push(OvenSelectedRustFacetLinkedLibrary::Archive {
+                    name: name.to_string(),
+                    kind,
+                    artifact: OvenSelectedRustFacetPath {
+                        owner: generated.source.owner.clone(),
+                        path: format!("{}/{}", output.relative_root, member.path),
+                    },
+                    digest: member.digest.clone(),
+                });
+            }
+            bindings.insert(
+                edge,
+                OvenLegacyCargoSelectedLinkedLibraryBinding {
+                    observed_libraries: facts.linked_libraries.clone(),
+                    observed_paths: facts.linked_paths.clone(),
+                    libraries,
+                },
+            );
+        }
+    }
+    Ok(bindings)
+}
+
+/// Assemble the portable projection facts already owned by the explicit release publisher.
+///
+/// Registry and generated-output bindings come from retained capture evidence. Native linked inputs remain an
+/// explicit argument because their typed archive/provider authority is established by the final Loaf publisher,
+/// never reconstructed from raw Cargo `-l`/`-L` strings here.
+pub fn legacy_cargo_foundation_projection(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    receipt: &OvenReceipt,
+    sources: &[OvenLegacyCargoInspectionSource],
+    foundation_owner: &str,
+    toolchain_owner: &str,
+    linked_libraries: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedLinkedLibraryBinding>,
+    authority: &LoafRegistryAuthority,
+) -> Result<OvenLegacyCargoSelectedGraphProjection, OvenLegacyCargoError> {
+    let compiler = capture
+        .compiler
+        .as_ref()
+        .ok_or_else(|| projection_error("selected compiler capture", "is absent"))?;
+    if receipt.intent.target != compiler.target || receipt.intent.toolchain != compiler.toolchain {
+        return Err(projection_error(
+            "foundation receipt intent",
+            "does not match the captured compiler target and toolchain",
+        ));
+    }
+    let toolchain_version = compiler
+        .toolchain
+        .split_whitespace()
+        .find(|part| semver::Version::parse(part.trim_start_matches('v')).is_ok())
+        .map(|part| part.trim_start_matches('v').to_string())
+        .ok_or_else(|| projection_error("selected compiler toolchain", "contains no exact semantic version"))?;
+    let mut owners = vec![
+        OvenSelectedRustFacetOwner {
+            identity: foundation_owner.to_string(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        },
+        OvenSelectedRustFacetOwner {
+            identity: toolchain_owner.to_string(),
+            kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+        },
+    ];
+    let (generated_owners, generated) = legacy_cargo_generated_output_bindings(capture)?;
+    owners.extend(generated_owners);
+    owners.sort_by(|left, right| left.identity.cmp(&right.identity));
+    if owners.windows(2).any(|pair| pair[0].identity == pair[1].identity) {
+        return Err(projection_error("foundation owners", "contain a duplicate identity"));
+    }
+
+    // An adopted unit without a build-script edge still has a declaration to hold to: it must state no answers.
+    for (index, adoption) in authority.adoptions() {
+        let Some(unit) = capture.units.get(index) else {
+            return Err(projection_error(
+                "Loaf registry adoption",
+                "names an absent physical unit",
+            ));
+        };
+        let has_build_script = unit.dependencies.iter().any(|dependency| {
+            capture
+                .units
+                .get(dependency.unit_index)
+                .is_some_and(is_build_script_unit)
+        });
+        if !has_build_script {
+            LoafRegistryAuthority::check_observation(adoption, None, false)?;
+        }
+    }
+    let mut build_scripts = BTreeMap::new();
+    for (consumer, unit) in capture.units.iter().enumerate() {
+        for dependency in &unit.dependencies {
+            let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+                return Err(projection_error(
+                    "selected build-script edge",
+                    "names an absent physical unit",
+                ));
+            };
+            if !is_build_script_unit(build_unit) {
+                continue;
+            }
+            let facts = dependency
+                .build_script
+                .as_ref()
+                .or(build_unit.build_script.as_ref())
+                .ok_or_else(|| projection_error("selected build-script edge", "has no retained facts"))?;
+            // Where a registry declaration governs this consumer, the observation must agree with it, and the
+            // projection carries the declaration: nothing the script emitted outside it, environment included.
+            let adoption = authority.adoption(consumer);
+            if let Some(adoption) = adoption {
+                let has_tool_probes = capture
+                    .build_script_tool_probes
+                    .iter()
+                    .any(|probe| build_script_probe_matches_edge(probe, unit, build_unit, facts));
+                LoafRegistryAuthority::check_observation(adoption, Some(facts), has_tool_probes)?;
+            }
+            let edge = (consumer, dependency.unit_index);
+            let typed_linked = linked_libraries.get(&edge).cloned();
+            let has_linked = !facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty();
+            if has_linked != typed_linked.is_some() {
+                return Err(projection_error(
+                    "selected linked-library closure",
+                    "does not have one exact final publisher binding",
+                ));
+            }
+            let environment = facts
+                .environment
+                .iter()
+                .map(|(name, value)| {
+                    let binding = adoption
+                        .and_then(|adoption| adoption.record.environment.iter().find(|item| item.name == *name))
+                        .map(|declared| declared_environment_binding(declared, value))
+                        .transpose()?
+                        .unwrap_or_else(|| observed_environment_binding(name, value));
+                    Ok((name.clone(), binding))
+                })
+                .collect::<Result<BTreeMap<_, _>, OvenLegacyCargoError>>()?;
+            build_scripts.insert(
+                edge,
+                OvenLegacyCargoSelectedBuildScriptBinding {
+                    environment,
+                    linked_libraries: typed_linked,
+                    declaration: adoption.map(|adoption| OvenLegacyCargoDeclaredBuildScriptFacts {
+                        package: adoption.package.clone(),
+                        version: adoption.version.clone(),
+                        checksum: adoption.checksum.clone(),
+                        index_line_digest: adoption.index_line_digest.clone(),
+                        cfg: adoption.record.cfg.clone(),
+                        out: adoption
+                            .record
+                            .out
+                            .iter()
+                            .map(|out| (out.name.clone(), out.digest.clone()))
+                            .collect(),
+                        environment: adoption.record.environment.clone(),
+                    }),
+                },
+            );
+        }
+    }
+    if linked_libraries.keys().any(|edge| !build_scripts.contains_key(edge)) {
+        return Err(projection_error(
+            "selected linked-library closure",
+            "binds an absent build-script edge",
+        ));
+    }
+    Ok(OvenLegacyCargoSelectedGraphProjection {
+        selection: OvenSelectedRustFacetSelection {
+            intent: oven_rustc::rustc::OvenSelectedRustFacetIntent {
+                target: receipt.intent.target.clone(),
+                toolchain: receipt.intent.toolchain.clone(),
+                profile: receipt.intent.profile.clone(),
+            },
+            host: compiler.host.clone(),
+            host_cfg: compiler.host_cfg.clone(),
+            target_cfg: compiler.target_cfg.clone(),
+            purpose: OvenSelectedRustFacetPurpose::Normal,
+            toolchain_version,
+            target_spec: legacy_cargo_builtin_target_spec(capture, toolchain_owner)?,
+        },
+        owners,
+        units: legacy_cargo_registry_unit_bindings(capture, sources, foundation_owner)?,
+        generated,
+        build_scripts,
+    })
+}
+
+/// Bind one observed `rustc-env` line of an observation-governed build-script edge.
+///
+/// The exact captured text becomes selected-unit authority and stays identity-bound through both the graph and the
+/// build-script closure digest. It is never recovered from the publisher's ambient environment.
+fn observed_environment_binding(_name: &str, observed: &str) -> OvenLegacyCargoSelectedEnvironmentBinding {
+    OvenLegacyCargoSelectedEnvironmentBinding {
+        observed_value: observed.to_string(),
+        value: Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+            value: observed.to_string(),
+        }),
+    }
+}
+
+/// Convert one registry-declared rustc environment value into its portable selected-graph representation.
+fn declared_environment_binding(
+    declared: &oven_model::manifest::RustFactCompileEnvironment,
+    observed: &str,
+) -> Result<OvenLegacyCargoSelectedEnvironmentBinding, OvenLegacyCargoError> {
+    let value = match (&declared.literal, &declared.out) {
+        (Some(value), None) if value == observed => {
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: value.clone() }
+        }
+        (None, Some(relative)) => OvenSelectedRustFacetEnvironmentValue::OutDir {
+            relative: relative.clone(),
+        },
+        _ => {
+            return Err(projection_error(
+                "selected build-script environment",
+                "does not match its declared literal or OUT_DIR-relative value",
+            ));
+        }
+    };
+    Ok(OvenLegacyCargoSelectedEnvironmentBinding {
+        observed_value: observed.to_string(),
+        value: Some(value),
+    })
+}
+
+/// Identify the execution node that supplies retained build-script facts to a consumer edge.
+fn is_build_script_unit(unit: &OvenLegacyCargoSelectedUnit) -> bool {
+    unit.mode == "run-custom-build" && unit.target_kinds.iter().any(|kind| kind == "custom-build")
+}
+
+/// Project one exact physical Cargo capture into a rootless selected Rust graph.
+///
+/// The result deliberately has no exposed roots. Cargo's observed effective features become only per-unit compiler
+/// evidence; the caller must add authored root request/default intent using a separately admitted authority before
+/// validating or publishing the graph.
+pub fn project_legacy_cargo_selected_graph(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    final_receipt: Option<&OvenReceipt>,
+) -> Result<OvenSelectedRustFacetGraph, OvenLegacyCargoError> {
+    project_legacy_cargo_selected_graph_with_identities(capture, sealed, final_receipt).map(|(graph, _)| graph)
+}
+
+/// Project the graph and return, beside it, the selected identity of each compiled capture unit by index.
+pub fn project_legacy_cargo_selected_graph_with_identities(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    final_receipt: Option<&OvenReceipt>,
+) -> Result<(OvenSelectedRustFacetGraph, BTreeMap<usize, String>), OvenLegacyCargoError> {
+    validate_projection_compiler(capture, sealed)?;
+    validate_projection_bindings(capture, sealed)?;
+    validate_build_script_authority(capture, sealed, final_receipt)?;
+
+    let mut pending = (0..capture.units.len())
+        .filter(|index| !is_build_script_unit(&capture.units[*index]))
+        .collect::<BTreeSet<_>>();
+    let mut units = BTreeMap::new();
+
+    while !pending.is_empty() {
+        let mut progressed = false;
+        for index in pending.clone() {
+            let capture_unit = capture
+                .units
+                .get(index)
+                .ok_or_else(|| projection_error("selected unit", "is absent"))?;
+            let binding = sealed
+                .units
+                .get(&index)
+                .ok_or_else(|| projection_error("selected graph unit binding", "is absent"))?;
+            let dependencies = match projected_dependencies(capture, index, &units)? {
+                Some(dependencies) => dependencies,
+                None => continue,
+            };
+            let build_script_facts = projected_build_script_facts(capture, sealed, index)?;
+            let environment = projected_compile_environment(capture_unit, binding, &build_script_facts)?;
+            let crate_kind = captured_crate_kind(capture_unit)?;
+            let domain = captured_domain(capture_unit, &sealed.selection)?;
+            let role = captured_role(capture_unit, crate_kind, domain)?;
+            validate_registry_binding(capture_unit, binding, &sealed.owners)?;
+            validate_source_owner(binding, &sealed.owners)?;
+            let compiler_crate_type = capture_unit.compiler_crate_type.clone().ok_or_else(|| {
+                projection_error("selected compiler crate type", "is absent from the traced invocation")
+            })?;
+            let compiler_paths = capture_unit
+                .compiler_paths
+                .clone()
+                .ok_or_else(|| projection_error("selected compiler paths", "are absent from the traced invocation"))?;
+
+            let mut unit = OvenSelectedRustFacetUnit {
+                identity: String::new(),
+                package: capture_unit.package.clone(),
+                package_version: capture_unit.package_version.clone(),
+                crate_name: capture_unit.target_name.replace('-', "_"),
+                crate_kind,
+                role,
+                domain,
+                edition: capture_unit.edition.clone(),
+                source: binding.source.clone(),
+                root_module: capture_unit.root_module.clone(),
+                source_members: source_members(capture_unit, binding)?,
+                features: capture_unit.effective_features.clone(),
+                cfg: build_script_facts.cfg,
+                compiler_crate_type,
+                compiler_paths,
+                compiler_arguments: capture_unit.compiler_arguments.clone(),
+                sysroot_externs: capture_unit.sysroot_externs.clone(),
+                environment,
+                include_dirs: binding.include_dirs.clone(),
+                exclude_dirs: binding.exclude_dirs.clone(),
+                dependencies,
+                generated_inputs: build_script_facts.generated_inputs,
+                linked_libraries: build_script_facts.linked_libraries,
+            };
+            unit.identity = selected_graph_unit_identity(&sealed.selection, &unit)
+                .map_err(|error| projection_error("selected graph unit identity", &error.to_string()))?;
+            units.insert(index, unit);
+            pending.remove(&index);
+            progressed = true;
+        }
+        if !progressed {
+            return Err(projection_error(
+                "selected Cargo unit graph",
+                "has a cycle or dependency whose physical unit cannot be projected",
+            ));
+        }
+    }
+
+    let unit_identities = units
+        .iter()
+        .map(|(index, unit)| (*index, unit.identity.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let graph = OvenSelectedRustFacetGraph {
+        schema_version: oven_rustc::rustc::OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+        selection: sealed.selection.clone(),
+        owners: sealed.owners.clone(),
+        units: units.into_values().collect(),
+        exposed_roots: BTreeMap::new(),
+    };
+    Ok((graph, unit_identities))
+}
+
+/// Project physical capture and bind compiler-release roots under the verified final receipt.
+///
+/// This is the compiler-release publisher path: the capture receipt authorizes observation, then the distinct final
+/// receipt seals the exact authored root-intent digest before this function admits the fully rooted graph.
+pub fn project_and_bind_compiler_support_selected_graph(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    authority: &OvenCompilerSupportRootIntentAuthority,
+    capture_receipt: &OvenReceipt,
+    final_receipt: &OvenReceipt,
+) -> Result<(ValidatedOvenSelectedRustFacetGraph, BTreeMap<usize, String>), OvenLegacyCargoError> {
+    let (graph, unit_identities) =
+        project_legacy_cargo_selected_graph_with_identities(capture, sealed, Some(final_receipt))?;
+    let bound = bind_compiler_support_root_intents(graph, authority, capture_receipt, final_receipt)
+        .map_err(|error| projection_error("compiler-support selected graph", &error.to_string()))?;
+    // Root binding and validation canonicalize the graph; a unit's identity is content-derived and must survive.
+    let identities = bound
+        .graph()
+        .units
+        .iter()
+        .map(|unit| unit.identity.as_str())
+        .collect::<BTreeSet<_>>();
+    if unit_identities.len() != identities.len()
+        || unit_identities
+            .values()
+            .any(|identity| !identities.contains(identity.as_str()))
+    {
+        return Err(projection_error(
+            "compiler-support selected graph",
+            "does not preserve the projected identity of every compiled physical unit",
+        ));
+    }
+    Ok((bound, unit_identities))
+}
+
+/// Bind authored compiler-support declarations to the exact physical units reached from captured Cargo roots.
+///
+/// The manifest owns aliases and requested/default feature intent. The stable capture owns physical edges, and the
+/// rootless projected graph owns selected identities and source owners. This join deliberately does not recover
+/// declaration policy from effective Cargo features or target names.
+pub fn compiler_support_root_intent_authority(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    projection_receipt: Option<&OvenReceipt>,
+    manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
+    intent_owner: &str,
+    capture_receipt: &OvenReceipt,
+) -> Result<OvenCompilerSupportRootIntentAuthority, OvenLegacyCargoError> {
+    let roots = compiler_support_root_indices(capture, manifest, active_optional_dependencies)?;
+    compiler_support_root_intent_authority_with_roots(
+        capture,
+        sealed,
+        projection_receipt,
+        manifest,
+        active_optional_dependencies,
+        intent_owner,
+        capture_receipt,
+        &roots,
+    )
+}
+
+/// Bind retained direct-edge aliases; never search another authored root's transitive dependencies.
+#[allow(clippy::too_many_arguments)]
+fn compiler_support_root_intent_authority_with_roots(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    projection_receipt: Option<&OvenReceipt>,
+    manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
+    intent_owner: &str,
+    capture_receipt: &OvenReceipt,
+    root_units: &BTreeMap<String, usize>,
+) -> Result<OvenCompilerSupportRootIntentAuthority, OvenLegacyCargoError> {
+    capture_receipt
+        .verify_identity()
+        .map_err(|error| projection_error("compiler-support capture receipt", &error.to_string()))?;
+    if intent_owner.trim().is_empty() {
+        return Err(projection_error("compiler-support declaration owner", "is empty"));
+    }
+
+    // Re-project from the exact sealed bindings here. Accepting a caller-supplied graph and positionally zipping its
+    // units to capture indices would let omission, reordering, or substitution choose another physical unit.
+    let projected = project_legacy_cargo_selected_graph(capture, sealed, projection_receipt)?;
+    let selected_by_capture_index = capture
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| !is_build_script_unit(unit))
+        .zip(projected.units.iter())
+        .map(|((index, _), unit)| (index, unit))
+        .collect::<BTreeMap<_, _>>();
+    if selected_by_capture_index.len() != projected.units.len() {
+        return Err(projection_error(
+            "compiler-support selected units",
+            "do not correspond exhaustively to the physical capture",
+        ));
+    }
+
+    let mut roots = Vec::new();
+    for (alias, declaration) in manifest.rust_dependencies() {
+        let matches = root_units.get(alias).copied().into_iter().collect::<Vec<_>>();
+        // Authored activation chooses optional roots. Physical edges must agree with that choice; their presence
+        // never supplies missing feature intent.
+        if declaration.optional {
+            let active = active_optional_dependencies.contains(alias);
+            if !active && matches.is_empty() {
+                continue;
+            }
+            if !active {
+                return Err(projection_error(
+                    "compiler-support declaration",
+                    &format!("optional alias `{alias}` was selected without authored activation"),
+                ));
+            }
+        }
+        if matches.len() != 1 {
+            return Err(projection_error(
+                "compiler-support declaration",
+                &format!("alias `{alias}` does not bind exactly one captured physical unit"),
+            ));
+        }
+        let selected = selected_by_capture_index.get(&matches[0]).ok_or_else(|| {
+            projection_error(
+                "compiler-support declaration",
+                &format!("alias `{alias}` binds a build-script or absent selected unit"),
+            )
+        })?;
+        let selected_package = declaration
+            .package
+            .as_deref()
+            .unwrap_or(declaration.crate_name.as_str());
+        if selected.package != selected_package {
+            return Err(projection_error(
+                "compiler-support declaration",
+                &format!(
+                    "alias `{alias}` declares package `{selected_package}` but the captured edge selects `{}`",
+                    selected.package
+                ),
+            ));
+        }
+        let mut requested_features = declaration.features.clone();
+        requested_features.sort();
+        requested_features.dedup();
+        roots.push(oven_rustc::rustc::OvenCompilerSupportRootIntent {
+            alias: alias.clone(),
+            unit: selected.identity.clone(),
+            requested_features,
+            default_features: declaration.default_features,
+            intent_owner: intent_owner.to_string(),
+            source_owner: selected.source.owner.clone(),
+        });
+    }
+    roots.sort_by(|left, right| left.alias.cmp(&right.alias));
+    if roots.is_empty() {
+        return Err(projection_error(
+            "compiler-support declarations",
+            "contain no required Rust dependency roots",
+        ));
+    }
+    Ok(OvenCompilerSupportRootIntentAuthority {
+        schema_version: oven_rustc::rustc::OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION,
+        capture_receipt_identity: capture_receipt.identity.clone(),
+        roots,
+    })
+}
+
+/// Reject a capture whose compiler facts differ from the sealed selection snapshots.
+fn validate_projection_compiler(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+) -> Result<(), OvenLegacyCargoError> {
+    let compiler = capture
+        .compiler
+        .as_ref()
+        .ok_or_else(|| projection_error("selected compiler capture", "is absent"))?;
+    if !capture.rustc_invocations_observed {
+        return Err(projection_error(
+            "selected compiler capture",
+            "has no bijectively matched stable rustc invocation trace",
+        ));
+    }
+    if compiler.host != sealed.selection.host
+        || compiler.target != sealed.selection.intent.target
+        || compiler.toolchain != sealed.selection.intent.toolchain
+        || compiler.rustc_identity != sealed.selection.intent.toolchain
+        || compiler.host_cfg != sealed.selection.host_cfg
+        || compiler.target_cfg != sealed.selection.target_cfg
+    {
+        return Err(projection_error(
+            "selected compiler capture",
+            "does not exactly match the sealed host, target, toolchain and cfg selection",
+        ));
+    }
+    Ok(())
+}
+
+/// One canonical capture-to-binding record folded into the final receipt.
+#[derive(Serialize)]
+struct BuildScriptAuthorityRecord {
+    consumer: String,
+    build_unit: String,
+    package: String,
+    package_version: String,
+    package_source: Option<String>,
+    facts: serde_json::Value,
+    tool_probes: Vec<PortableBuildScriptToolProbe>,
+    binding: Option<serde_json::Value>,
+}
+
+/// One probe without capture-only package and staging coordinates.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+struct PortableBuildScriptToolProbe {
+    target_context: String,
+    rustc_target: String,
+    digest: String,
+}
+
+/// Digest every selected build-script observation and its typed closure binding in canonical edge order.
+pub fn legacy_cargo_build_script_closure_digest(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    bindings: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
+) -> Result<String, OvenLegacyCargoError> {
+    let mut records = Vec::new();
+    let mut probe_matches = vec![0_usize; capture.build_script_tool_probes.len()];
+    for (consumer, unit) in capture.units.iter().enumerate() {
+        for dependency in &unit.dependencies {
+            let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+                return Err(projection_error(
+                    "selected Cargo dependency",
+                    "names an absent capture unit",
+                ));
+            };
+            if !is_build_script_unit(build_unit) {
+                continue;
+            }
+            let facts = dependency
+                .build_script
+                .as_ref()
+                .or(build_unit.build_script.as_ref())
+                .ok_or_else(|| projection_error("selected build-script unit", "has no structured retained facts"))?;
+            let tool_probes = build_script_tool_probes(capture, unit, build_unit, facts, &mut probe_matches)?;
+            let mut portable_probes = tool_probes
+                .into_iter()
+                .map(|probe| PortableBuildScriptToolProbe {
+                    target_context: probe.target_context.clone(),
+                    rustc_target: probe.rustc_target.clone(),
+                    digest: probe.digest.clone(),
+                })
+                .collect::<Vec<_>>();
+            portable_probes.sort();
+            let mut portable_facts = serde_json::to_value(facts)
+                .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
+            normalize_build_script_staging_paths(&mut portable_facts, &facts.out_dir);
+            let mut portable_binding = bindings
+                .get(&(consumer, dependency.unit_index))
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
+            if let Some(binding) = portable_binding.as_mut() {
+                normalize_build_script_staging_paths(binding, &facts.out_dir);
+            }
+            records.push(BuildScriptAuthorityRecord {
+                consumer: legacy_cargo_selected_unit_capture_identity(capture, consumer)?,
+                build_unit: legacy_cargo_selected_unit_capture_identity(capture, dependency.unit_index)?,
+                package: build_unit.package.clone(),
+                package_version: build_unit.package_version.clone(),
+                package_source: build_unit.package_source.clone(),
+                facts: portable_facts,
+                tool_probes: portable_probes,
+                binding: portable_binding,
+            });
+        }
+    }
+    if probe_matches.iter().any(|matches| *matches != 1) {
+        return Err(projection_error(
+            "selected build-script tool probe",
+            "is not consumed by one exact selected build-script edge",
+        ));
+    }
+    records.sort_by(|left, right| {
+        (&left.consumer, &left.build_unit, &left.package).cmp(&(&right.consumer, &right.build_unit, &right.package))
+    });
+    let bytes = oven_model::digest::canonical_json_bytes(&("incan.oven.legacy-cargo-build-script-closure/2", records))
+        .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
+    Ok(oven_rustc::rustc::selected_graph_sha256(&bytes))
+}
+
+/// Replace one capture-only OUT_DIR prefix throughout serialized closure evidence.
+fn normalize_build_script_staging_paths(value: &mut serde_json::Value, out_dir: &Path) {
+    let staging = out_dir.to_string_lossy();
+    match value {
+        serde_json::Value::String(text) => {
+            if !staging.is_empty() && text.contains(staging.as_ref()) {
+                *text = text.replace(staging.as_ref(), "@oven-out-dir");
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                normalize_build_script_staging_paths(value, out_dir);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                normalize_build_script_staging_paths(value, out_dir);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+/// Bind every transient compiler probe to one exact captured run-custom-build record.
+fn build_script_tool_probes<'a>(
+    capture: &'a OvenLegacyCargoSelectedUnitCapture,
+    consumer: &'a OvenLegacyCargoSelectedUnit,
+    build_unit: &'a OvenLegacyCargoSelectedUnit,
+    facts: &'a super::OvenLegacyCargoBuildScriptFacts,
+    probe_matches: &mut [usize],
+) -> Result<Vec<&'a OvenLegacyCargoBuildScriptToolProbe>, OvenLegacyCargoError> {
+    if consumer.platform.is_none() {
+        return Err(projection_error(
+            "selected build-script consumer",
+            "has no captured target domain",
+        ));
+    }
+    let mut selected = Vec::new();
+    for (probe_index, probe) in capture.build_script_tool_probes.iter().enumerate() {
+        let matches_unit = build_script_probe_matches_edge(probe, consumer, build_unit, facts);
+        if matches_unit {
+            selected.push(probe);
+            probe_matches[probe_index] += 1;
+        }
+    }
+    Ok(selected)
+}
+
+/// Whether one transient probe belongs to one exact selected build-script edge.
+fn build_script_probe_matches_edge(
+    probe: &OvenLegacyCargoBuildScriptToolProbe,
+    consumer: &OvenLegacyCargoSelectedUnit,
+    build_unit: &OvenLegacyCargoSelectedUnit,
+    facts: &super::OvenLegacyCargoBuildScriptFacts,
+) -> bool {
+    consumer.platform.as_deref().is_some_and(|domain| {
+        probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir && probe.target_context == domain
+    })
+}
+
+/// Require every selected build-script closure to be sealed by the verified final publisher receipt.
+fn validate_build_script_authority(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    final_receipt: Option<&OvenReceipt>,
+) -> Result<(), OvenLegacyCargoError> {
+    let has_build_script = capture.units.iter().any(is_build_script_unit);
+    if !has_build_script {
+        return Ok(());
+    }
+    let receipt = final_receipt
+        .ok_or_else(|| projection_error("selected build-script closure", "has no final receipt authority"))?;
+    receipt
+        .verify_identity()
+        .map_err(|error| projection_error("selected build-script closure receipt", &error.to_string()))?;
+    let digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
+    if receipt
+        .sources
+        .build_unit_inputs
+        .get(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT)
+        != Some(&digest)
+    {
+        return Err(projection_error(
+            "selected build-script closure receipt",
+            "does not bind the exact capture-to-typed-closure digest",
+        ));
+    }
+    Ok(())
+}
+
+/// Verify that every physical selected unit has one sealed binding and build scripts have none of their own.
+fn validate_projection_bindings(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+) -> Result<(), OvenLegacyCargoError> {
+    for (index, unit) in capture.units.iter().enumerate() {
+        if is_build_script_unit(unit) {
+            if sealed.units.contains_key(&index) {
+                return Err(projection_error(
+                    "selected graph unit binding",
+                    "must not model a run-custom-build unit as an inspection crate",
+                ));
+            }
+        } else if !sealed.units.contains_key(&index) {
+            return Err(projection_error(
+                "selected graph unit binding",
+                "is missing a selected unit",
+            ));
+        }
+    }
+    if sealed.units.keys().any(|index| *index >= capture.units.len()) {
+        return Err(projection_error(
+            "selected graph unit binding",
+            "names an absent capture unit",
+        ));
+    }
+    for &(consumer, build_unit) in sealed.generated.keys() {
+        let Some(consumer_unit) = capture.units.get(consumer) else {
+            return Err(projection_error(
+                "selected generated output binding",
+                "names an absent consumer unit",
+            ));
+        };
+        let Some(build_script_unit) = capture.units.get(build_unit) else {
+            return Err(projection_error(
+                "selected generated output binding",
+                "names an absent build-script unit",
+            ));
+        };
+        let facts = consumer_unit
+            .dependencies
+            .iter()
+            .find(|edge| edge.unit_index == build_unit)
+            .and_then(|edge| edge.build_script.as_ref().or(build_script_unit.build_script.as_ref()));
+        if !is_build_script_unit(build_script_unit) || facts.and_then(|facts| facts.output.as_ref()).is_none() {
+            return Err(projection_error(
+                "selected generated output binding",
+                "does not name one consumed retained build-script output",
+            ));
+        }
+    }
+    for &(consumer, build_unit) in sealed.build_scripts.keys() {
+        let Some(consumer_unit) = capture.units.get(consumer) else {
+            return Err(projection_error(
+                "selected build-script binding",
+                "names an absent consumer unit",
+            ));
+        };
+        let Some(build_script_unit) = capture.units.get(build_unit) else {
+            return Err(projection_error(
+                "selected build-script binding",
+                "names an absent build-script unit",
+            ));
+        };
+        let facts = consumer_unit
+            .dependencies
+            .iter()
+            .find(|edge| edge.unit_index == build_unit)
+            .and_then(|edge| edge.build_script.as_ref().or(build_script_unit.build_script.as_ref()));
+        if !is_build_script_unit(build_script_unit) || facts.is_none() {
+            return Err(projection_error(
+                "selected build-script binding",
+                "does not name one consumed retained build-script fact set",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Return one projected dependency list once all non-build-script children have identities.
+fn projected_dependencies(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    parent: usize,
+    projected: &BTreeMap<usize, OvenSelectedRustFacetUnit>,
+) -> Result<Option<Vec<OvenSelectedRustFacetDependency>>, OvenLegacyCargoError> {
+    let unit = capture
+        .units
+        .get(parent)
+        .ok_or_else(|| projection_error("selected unit", "is absent"))?;
+    let mut dependencies = Vec::new();
+    for dependency in &unit.dependencies {
+        let child = capture
+            .units
+            .get(dependency.unit_index)
+            .ok_or_else(|| projection_error("selected Cargo dependency", "names an absent capture unit"))?;
+        if is_build_script_unit(child) {
+            continue;
+        }
+        let alias = dependency.extern_crate_name.clone().ok_or_else(|| {
+            projection_error(
+                "selected Cargo dependency",
+                "has no exact rustc extern alias and cannot be represented as a portable graph edge",
+            )
+        })?;
+        let Some(child) = projected.get(&dependency.unit_index) else {
+            return Ok(None);
+        };
+        dependencies.push(OvenSelectedRustFacetDependency {
+            alias,
+            unit: child.identity.clone(),
+        });
+    }
+    Ok(Some(dependencies))
+}
+
+/// Complete selected build-script facts after every raw observation matches a typed sealed closure.
+struct ProjectedBuildScriptFacts {
+    cfg: Vec<String>,
+    environment: BTreeMap<String, OvenSelectedRustFacetEnvironmentValue>,
+    generated_inputs: Vec<OvenSelectedRustFacetGeneratedInput>,
+    linked_libraries: Vec<OvenSelectedRustFacetLinkedLibrary>,
+}
+
+/// Merge Cargo's exact compile-time environment with the build-script values selected for one unit.
+fn projected_compile_environment(
+    unit: &OvenLegacyCargoSelectedUnit,
+    binding: &OvenLegacyCargoSelectedGraphUnitBinding,
+    build_script: &ProjectedBuildScriptFacts,
+) -> Result<BTreeMap<String, OvenSelectedRustFacetEnvironmentValue>, OvenLegacyCargoError> {
+    let mut environment = build_script.environment.clone();
+    for (name, observed) in &unit.compile_environment {
+        let value = match name.as_str() {
+            "CARGO_MANIFEST_DIR" => {
+                validate_captured_manifest_environment(unit, name, observed)?;
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: binding.source.owner.clone(),
+                        path: binding.source.root.clone(),
+                    },
+                }
+            }
+            "CARGO_MANIFEST_PATH" => {
+                validate_captured_manifest_environment(unit, name, observed)?;
+                let manifest = format!("{}/Cargo.toml", binding.source.root.trim_end_matches('/'));
+                if !binding.source_members.iter().any(|member| member.path == "Cargo.toml") {
+                    return Err(projection_error(
+                        "selected compile environment",
+                        "CARGO_MANIFEST_PATH has no retained Cargo.toml source member",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: binding.source.owner.clone(),
+                        path: manifest,
+                    },
+                }
+            }
+            "OUT_DIR" => {
+                let captured_out_dir = unit
+                    .dependencies
+                    .iter()
+                    .filter_map(|dependency| dependency.build_script.as_ref())
+                    .any(|facts| facts.out_dir.to_string_lossy() == observed.as_str());
+                if !captured_out_dir
+                    || !build_script
+                        .generated_inputs
+                        .iter()
+                        .any(|input| input.name == "out_dir")
+                {
+                    return Err(projection_error(
+                        "selected compile environment",
+                        "captured OUT_DIR does not match a retained generated output",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: ".".to_string(),
+                }
+            }
+            _ => OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: observed.clone(),
+            },
+        };
+        match environment.insert(name.clone(), value.clone()) {
+            Some(previous) if previous != value => {
+                return Err(projection_error(
+                    "selected compile environment",
+                    &format!("`{name}` has conflicting Cargo and build-script values"),
+                ));
+            }
+            Some(_) | None => {}
+        }
+    }
+    Ok(environment)
+}
+
+/// Check a transient Cargo manifest path before rebinding it beneath the unit's admitted source owner.
+fn validate_captured_manifest_environment(
+    unit: &OvenLegacyCargoSelectedUnit,
+    name: &str,
+    observed: &str,
+) -> Result<(), OvenLegacyCargoError> {
+    let module = Path::new(&unit.root_module);
+    let mut source_root = unit.source_path.as_path();
+    for _ in module.components() {
+        source_root = source_root.parent().ok_or_else(|| {
+            projection_error(
+                "selected compile environment",
+                "captured source does not contain its declared root module",
+            )
+        })?;
+    }
+    if source_root.join(module) != unit.source_path {
+        return Err(projection_error(
+            "selected compile environment",
+            "captured source does not end in its declared root module",
+        ));
+    }
+    let expected = match name {
+        "CARGO_MANIFEST_DIR" => source_root.to_path_buf(),
+        "CARGO_MANIFEST_PATH" => source_root.join("Cargo.toml"),
+        _ => {
+            return Err(projection_error(
+                "selected compile environment",
+                "requested manifest validation for an unsupported variable",
+            ));
+        }
+    };
+    if Path::new(observed) != expected {
+        return Err(projection_error(
+            "selected compile environment",
+            &format!("{name} does not match the captured unit source"),
+        ));
+    }
+    Ok(())
+}
+
+/// Attach checked build-script cfg, environment, generated output and linked-library facts to one consumer.
+fn projected_build_script_facts(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    consumer: usize,
+) -> Result<ProjectedBuildScriptFacts, OvenLegacyCargoError> {
+    let unit = capture
+        .units
+        .get(consumer)
+        .ok_or_else(|| projection_error("selected unit", "is absent"))?;
+    let mut cfg = unit.cfg.clone();
+    let mut environment = BTreeMap::new();
+    let mut generated_inputs = Vec::new();
+    let mut linked_libraries = Vec::new();
+    for dependency in &unit.dependencies {
+        let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+            return Err(projection_error(
+                "selected Cargo dependency",
+                "names an absent capture unit",
+            ));
+        };
+        if !is_build_script_unit(build_unit) {
+            continue;
+        }
+        let facts = dependency
+            .build_script
+            .as_ref()
+            .or(build_unit.build_script.as_ref())
+            .ok_or_else(|| projection_error("selected build-script unit", "has no structured retained facts"))?;
+        let edge = (consumer, dependency.unit_index);
+        let binding = sealed.build_scripts.get(&edge).cloned().unwrap_or_default();
+        for (name, observed) in &facts.environment {
+            let Some(bound) = binding.environment.get(name) else {
+                // A registry declaration governs this edge: what the script emitted outside the declaration is
+                // provenance in the capture, not a fact of the unit.
+                if binding.declaration.is_some() {
+                    continue;
+                }
+                return Err(projection_error(
+                    "selected build-script environment",
+                    "has no typed sealed binding",
+                ));
+            };
+            if &bound.observed_value != observed {
+                return Err(projection_error(
+                    "selected build-script environment",
+                    "does not match its exact captured value",
+                ));
+            }
+            // Older sealed bindings may withhold an entry. Current projections carry exact captured text or a
+            // declared OUT_DIR-relative path, while the comparison above still checks every value against capture.
+            let Some(value) = &bound.value else {
+                continue;
+            };
+            match value {
+                OvenSelectedRustFacetEnvironmentValue::Text { value } if value == observed => {}
+                OvenSelectedRustFacetEnvironmentValue::CapturedText { value } if value == observed => {}
+                OvenSelectedRustFacetEnvironmentValue::Text { .. } => {
+                    return Err(projection_error(
+                        "selected build-script environment",
+                        "text value does not exactly match its captured value",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::OutDir { .. } => {}
+                OvenSelectedRustFacetEnvironmentValue::CapturedText { .. }
+                | OvenSelectedRustFacetEnvironmentValue::Path { .. }
+                | OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {
+                    return Err(projection_error(
+                        "selected build-script environment",
+                        "requires a receipt-bound owner rebinding or keyed capture digest",
+                    ));
+                }
+            }
+            if environment.insert(name.clone(), value.clone()).is_some() {
+                return Err(projection_error(
+                    "selected build-script environment",
+                    "is supplied by more than one build-script edge",
+                ));
+            }
+        }
+        // Every sealed key was matched to an observation above; a declared edge legitimately binds fewer keys than
+        // the script emitted, an observed edge binds exactly as many.
+        let bound_keys = binding.environment.len();
+        let observed_keys = facts.environment.len();
+        if bound_keys > observed_keys || (binding.declaration.is_none() && bound_keys != observed_keys) {
+            return Err(projection_error(
+                "selected build-script environment",
+                "binds an unobserved environment key",
+            ));
+        }
+        let has_link_facts = !facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty();
+        match (has_link_facts, binding.linked_libraries.as_ref()) {
+            (false, None) => {}
+            (true, Some(bound)) => {
+                if bound.observed_libraries != facts.linked_libraries || bound.observed_paths != facts.linked_paths {
+                    return Err(projection_error(
+                        "selected linked-library closure",
+                        "does not match exact captured Cargo link facts",
+                    ));
+                }
+                linked_libraries.extend(bound.libraries.iter().cloned());
+            }
+            (true, None) => {
+                return Err(projection_error(
+                    "selected linked-library closure",
+                    "has no typed sealed binding",
+                ));
+            }
+            (false, Some(_)) => {
+                return Err(projection_error(
+                    "selected linked-library closure",
+                    "binds no captured link facts",
+                ));
+            }
+        }
+        cfg.extend(facts.cfgs.iter().cloned());
+        if let Some(output) = &facts.output {
+            generated_inputs.push(projected_generated_input(
+                sealed,
+                consumer,
+                dependency.unit_index,
+                output,
+            )?);
+        }
+    }
+    cfg.sort();
+    cfg.dedup();
+    generated_inputs.sort_by(|left, right| left.name.cmp(&right.name).then_with(|| left.digest.cmp(&right.digest)));
+    // Cargo's link-directive order and multiplicity are compiler-visible; preserve both exactly.
+    Ok(ProjectedBuildScriptFacts {
+        cfg,
+        environment,
+        generated_inputs,
+        linked_libraries,
+    })
+}
+
+/// Verify one retained build-script output binding and convert it to the graph's generated-input form.
+fn projected_generated_input(
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    consumer: usize,
+    build_unit: usize,
+    output: &OvenLegacyCargoSelectedGeneratedOutput,
+) -> Result<OvenSelectedRustFacetGeneratedInput, OvenLegacyCargoError> {
+    let binding = sealed
+        .generated
+        .get(&(consumer, build_unit))
+        .ok_or_else(|| projection_error("selected generated output", "has no sealed owner binding"))?;
+    let captured_members = output
+        .members
+        .iter()
+        .map(|member| OvenSelectedRustFacetSourceMember {
+            path: member.path.clone(),
+            digest: member.digest.clone(),
+        })
+        .collect::<Vec<_>>();
+    if binding.digest != output.digest
+        || binding.source.path != output.relative_root
+        // A generated inventory may be a checked empty directory; only authored source refuses an empty member set.
+        || oven_rustc::rustc::selected_graph_generated_input_digest(&captured_members)
+            .map_err(|error| projection_error("selected generated output", &error.to_string()))?
+            != output.digest
+    {
+        return Err(projection_error(
+            "selected generated output",
+            "does not match the exact retained output digest and owner-relative root",
+        ));
+    }
+    let owner = sealed
+        .owners
+        .iter()
+        .find(|owner| owner.identity == binding.source.owner)
+        .ok_or_else(|| projection_error("selected generated output", "names an absent owner"))?;
+    if owner.kind != OvenSelectedRustFacetOwnerKind::GeneratedOutput {
+        return Err(projection_error(
+            "selected generated output",
+            "must use a GeneratedOutput owner",
+        ));
+    }
+    Ok(OvenSelectedRustFacetGeneratedInput {
+        name: binding.name.clone(),
+        source: binding.source.clone(),
+        digest: binding.digest.clone(),
+        members: captured_members,
+    })
+}
+
+/// Return a source catalog only after checking it against the capture's registry evidence where available.
+fn source_members(
+    unit: &OvenLegacyCargoSelectedUnit,
+    binding: &OvenLegacyCargoSelectedGraphUnitBinding,
+) -> Result<Vec<OvenSelectedRustFacetSourceMember>, OvenLegacyCargoError> {
+    let members = binding.source_members.clone();
+    if members.is_empty() || !members.iter().any(|member| member.path == unit.root_module) {
+        return Err(projection_error(
+            "selected unit source",
+            "does not retain the captured root module",
+        ));
+    }
+    Ok(members)
+}
+
+/// Require each portable source owner to be declared with the provenance class its source kind permits.
+fn validate_source_owner(
+    binding: &OvenLegacyCargoSelectedGraphUnitBinding,
+    owners: &[OvenSelectedRustFacetOwner],
+) -> Result<(), OvenLegacyCargoError> {
+    let owner = owners
+        .iter()
+        .find(|owner| owner.identity == binding.source.owner)
+        .ok_or_else(|| projection_error("selected unit source", "names an absent sealed owner"))?;
+    let valid = match binding.source.kind {
+        OvenSelectedRustFacetSourceKind::Registry
+        | OvenSelectedRustFacetSourceKind::Git
+        | OvenSelectedRustFacetSourceKind::Path => matches!(
+            owner.kind,
+            OvenSelectedRustFacetOwnerKind::ProjectAuthority | OvenSelectedRustFacetOwnerKind::Constituent
+        ),
+        OvenSelectedRustFacetSourceKind::Generated => owner.kind == OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        OvenSelectedRustFacetSourceKind::Compiler => owner.kind == OvenSelectedRustFacetOwnerKind::Toolchain,
+    };
+    if !valid {
+        return Err(projection_error(
+            "selected unit source",
+            "owner kind does not prove the declared source provenance",
+        ));
+    }
+    Ok(())
+}
+
+/// Require a registry capture to agree with its sealed source catalog without interpreting local source paths.
+fn validate_registry_binding(
+    unit: &OvenLegacyCargoSelectedUnit,
+    binding: &OvenLegacyCargoSelectedGraphUnitBinding,
+    owners: &[OvenSelectedRustFacetOwner],
+) -> Result<(), OvenLegacyCargoError> {
+    if let Some(registry) = &unit.registry_source {
+        let captured_members = registry
+            .members
+            .iter()
+            .map(|member| OvenSelectedRustFacetSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let catalog = binding
+            .registry_source
+            .as_ref()
+            .ok_or_else(|| projection_error("selected registry source", "has no sealed registry catalog record"))?;
+        let expected_identity = registry_source_identity(&unit.package, &unit.package_version);
+        if unit.package_source.as_deref() != Some(registry.registry.as_str())
+            || catalog.package != unit.package
+            || catalog.version != unit.package_version
+            || catalog.source.registry != registry.registry
+            || catalog.source.checksum != registry.checksum
+            || catalog.source.digest != registry.digest
+            || catalog.source.relative_root != binding.source.root
+            || binding.source.kind != OvenSelectedRustFacetSourceKind::Registry
+            || binding.source.identity != expected_identity
+            || binding.source.digest != registry.digest
+            || registry.root_module != unit.root_module
+            || binding.source_members != captured_members
+            || !owners.iter().any(|owner| {
+                owner.identity == binding.source.owner
+                    && matches!(
+                        owner.kind,
+                        OvenSelectedRustFacetOwnerKind::ProjectAuthority | OvenSelectedRustFacetOwnerKind::Constituent
+                    )
+            })
+        {
+            return Err(projection_error(
+                "selected registry source",
+                "does not match its captured digest, member catalog, kind and root module",
+            ));
+        }
+    } else if binding.registry_source.is_some() {
+        return Err(projection_error(
+            "selected unit source",
+            "retains a registry catalog for a non-registry capture unit",
+        ));
+    }
+    Ok(())
+}
+
+/// Derive only the output class that Cargo's observed `--crate-type` exactly establishes.
+fn captured_crate_kind(
+    unit: &OvenLegacyCargoSelectedUnit,
+) -> Result<OvenSelectedRustFacetCrateKind, OvenLegacyCargoError> {
+    let kinds = unit.crate_types.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    match kinds.into_iter().collect::<Vec<_>>().as_slice() {
+        ["lib"] | ["rlib"] => Ok(OvenSelectedRustFacetCrateKind::Rlib),
+        ["bin"] => Ok(OvenSelectedRustFacetCrateKind::Binary),
+        ["proc-macro"] => Ok(OvenSelectedRustFacetCrateKind::ProcMacro),
+        _ => Err(projection_error(
+            "selected Cargo crate type",
+            "is not one supported unambiguous schema-4 inspection output class",
+        )),
+    }
+}
+
+/// Derive compilation domain from the matched rustc invocation's explicit-target provenance.
+///
+/// Host and target triples can be equal in a normal native build. The exact `--target` presence, not a comparison
+/// order between equal strings, distinguishes a host proc macro from a target binary in that case.
+fn captured_domain(
+    unit: &OvenLegacyCargoSelectedUnit,
+    selection: &OvenSelectedRustFacetSelection,
+) -> Result<OvenSelectedRustFacetDomain, OvenLegacyCargoError> {
+    let platform = unit.platform.as_deref().ok_or_else(|| {
+        projection_error(
+            "selected Cargo unit platform",
+            "is absent; projection cannot infer host or target domain",
+        )
+    })?;
+    match unit.target_is_explicit {
+        Some(false) if platform == selection.host => Ok(OvenSelectedRustFacetDomain::Host),
+        Some(true) if platform == selection.intent.target => Ok(OvenSelectedRustFacetDomain::Target),
+        Some(false) => Err(projection_error(
+            "selected Cargo unit platform",
+            "has no `--target` but does not match the sealed compiler host",
+        )),
+        Some(true) => Err(projection_error(
+            "selected Cargo unit platform",
+            "has `--target` but does not match the sealed target",
+        )),
+        None => Err(projection_error(
+            "selected Cargo unit platform",
+            "has no traced `--target` provenance",
+        )),
+    }
+}
+
+/// Derive an inspection role from Cargo's traced target kind and mode without accepting caller relabeling.
+fn captured_role(
+    unit: &OvenLegacyCargoSelectedUnit,
+    crate_kind: OvenSelectedRustFacetCrateKind,
+    domain: OvenSelectedRustFacetDomain,
+) -> Result<OvenSelectedRustFacetUnitRole, OvenLegacyCargoError> {
+    let kinds = unit.target_kinds.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let role = match (
+        kinds.into_iter().collect::<Vec<_>>().as_slice(),
+        unit.mode.as_str(),
+        crate_kind,
+        domain,
+    ) {
+        (["proc-macro"], "build", OvenSelectedRustFacetCrateKind::ProcMacro, OvenSelectedRustFacetDomain::Host) => {
+            OvenSelectedRustFacetUnitRole::ProcMacro
+        }
+        (["lib"], "build", OvenSelectedRustFacetCrateKind::Rlib, _) => OvenSelectedRustFacetUnitRole::Library,
+        (["bin"], "build", OvenSelectedRustFacetCrateKind::Binary, OvenSelectedRustFacetDomain::Target) => {
+            OvenSelectedRustFacetUnitRole::Binary
+        }
+        (["lib"] | ["bin"], "test", OvenSelectedRustFacetCrateKind::Binary, OvenSelectedRustFacetDomain::Target) => {
+            OvenSelectedRustFacetUnitRole::UnitTest
+        }
+        (["test"], "test", OvenSelectedRustFacetCrateKind::Binary, OvenSelectedRustFacetDomain::Target) => {
+            OvenSelectedRustFacetUnitRole::IntegrationTest
+        }
+        (["example"], "build", OvenSelectedRustFacetCrateKind::Binary, OvenSelectedRustFacetDomain::Target) => {
+            OvenSelectedRustFacetUnitRole::Example
+        }
+        (["bench"], "bench", OvenSelectedRustFacetCrateKind::Binary, OvenSelectedRustFacetDomain::Target) => {
+            OvenSelectedRustFacetUnitRole::Benchmark
+        }
+        _ => {
+            return Err(projection_error(
+                "selected Cargo target",
+                "has no supported unambiguous target-kind, mode, crate-kind and domain role",
+            ));
+        }
+    };
+    Ok(role)
+}
+
+/// Return a bounded producer refusal without exposing a local path from capture.
+fn projection_error(field: &str, message: &str) -> OvenLegacyCargoError {
+    OvenLegacyCargoError::Plan(format!("{field} {message}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::path::PathBuf;
+
+    use oven_rustc::loaf::{
+        OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafAccounting, OvenLoafCompatibility, OvenLoafProvenance,
+        stage_release_runtime_foundation_toolchain,
+    };
+    use oven_rustc::rustc::OvenRustcRegistrySource;
+    use oven_rustc::rustc::{
+        OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenCompilerSupportRootIntent,
+        OvenCompilerSupportRootIntentAuthority, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset,
+        OvenRustcArtifactManifest, OvenRustcRegistrySourcePackage, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetCompilerArgument, OvenSelectedRustFacetIntent, OvenSelectedRustFacetPurpose,
+        OvenSelectedRustFacetTargetSpec, compiler_support_root_intent_digest, execute_runtime_foundation_rebuild,
+        publish_runtime_foundation_asset_with_generated_owners, rustc_host_and_target_cfg_snapshots, rustc_host_target,
+        rustc_identity, selected_graph_sha256, selected_graph_source_digest,
+    };
+    use oven_store::{
+        OvenGeneratedProjectRequest, receipt_generated_project, receipt_with_compiler_support_root_intent,
+    };
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn digest(bytes: &[u8]) -> String {
+        selected_graph_sha256(bytes)
+    }
+
+    /// Return complete canonical cfg evidence for the retained fixture compiler.
+    fn fixture_cfg_snapshot() -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec!["x86_64".to_string()]),
+                ("target_os".to_string(), vec!["linux".to_string()]),
+            ]),
+        }
+    }
+
+    /// Create the minimum generated source closure required for an honest fixture receipt.
+    fn fixture_receipt_request(
+        directory: &Path,
+        name: &str,
+    ) -> Result<OvenGeneratedProjectRequest, Box<dyn std::error::Error>> {
+        let source = directory.join("generated.rs");
+        fs::write(&source, b"pub fn fixture() {}\n")?;
+        Ok(OvenGeneratedProjectRequest::new(
+            directory,
+            name,
+            "1.0.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.98.0",
+            "release",
+            Vec::new(),
+        )
+        .with_generated_source("generated.rs", source))
+    }
+
+    fn members() -> Vec<OvenSelectedRustFacetSourceMember> {
+        vec![
+            OvenSelectedRustFacetSourceMember {
+                path: "Cargo.toml".to_string(),
+                digest: digest(b"[package]\nname='serde'\nversion='1.0.0'\n"),
+            },
+            OvenSelectedRustFacetSourceMember {
+                path: "src/lib.rs".to_string(),
+                digest: digest(b"pub fn fixture() {}\n"),
+            },
+        ]
+    }
+
+    fn selection() -> OvenSelectedRustFacetSelection {
+        let toolchain_owner = digest(b"toolchain owner");
+        OvenSelectedRustFacetSelection {
+            intent: OvenSelectedRustFacetIntent {
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                toolchain: "rustc 1.98.0".to_string(),
+                profile: "release".to_string(),
+            },
+            host: "x86_64-unknown-linux-gnu".to_string(),
+            host_cfg: fixture_cfg_snapshot(),
+            target_cfg: fixture_cfg_snapshot(),
+            purpose: OvenSelectedRustFacetPurpose::Normal,
+            toolchain_version: "1.98.0".to_string(),
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
+                source: OvenSelectedRustFacetPath {
+                    owner: toolchain_owner,
+                    path: "target-specs/x86_64-unknown-linux-gnu.json".to_string(),
+                },
+                digest: digest(b"target spec"),
+            },
+        }
+    }
+
+    fn capture() -> Result<OvenLegacyCargoSelectedUnitCapture, Box<dyn std::error::Error>> {
+        let source_members = members();
+        Ok(OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: Some(super::super::OvenLegacyCargoSelectedCompilerContext {
+                host: "x86_64-unknown-linux-gnu".to_string(),
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                toolchain: "rustc 1.98.0".to_string(),
+                rustc_identity: "rustc 1.98.0".to_string(),
+                host_cfg: fixture_cfg_snapshot(),
+                target_cfg: fixture_cfg_snapshot(),
+            }),
+            units: vec![OvenLegacyCargoSelectedUnit {
+                package_id: "registry+https://example.invalid/index#serde@1.0.0".to_string(),
+                package: "serde".to_string(),
+                package_version: "1.0.0".to_string(),
+                package_source: Some("registry+https://example.invalid/index".to_string()),
+                target_name: "serde".to_string(),
+                target_kinds: vec!["lib".to_string()],
+                crate_types: vec!["lib".to_string()],
+                source_path: PathBuf::from("/transient/serde/src/lib.rs"),
+                artifact_paths: Vec::new(),
+                retained_artifacts: Vec::new(),
+                root_module: "src/lib.rs".to_string(),
+                edition: "2021".to_string(),
+                mode: "build".to_string(),
+                platform: Some("x86_64-unknown-linux-gnu".to_string()),
+                target_is_explicit: Some(true),
+                cfg: vec!["target_has_atomic=\"8\"".to_string()],
+                compiler_crate_type: Some("lib".to_string()),
+                compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+                compiler_arguments: vec![OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "embed-bitcode".to_string(),
+                    value: "no".to_string(),
+                }],
+                compile_environment: BTreeMap::new(),
+                effective_features: vec!["derive".to_string()],
+                dependencies: Vec::new(),
+                sysroot_externs: Vec::new(),
+                build_script: None,
+                registry_source: Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "sha256:fixture".to_string(),
+                    digest: selected_graph_source_digest(&source_members)?,
+                    root_module: "src/lib.rs".to_string(),
+                    members: source_members
+                        .iter()
+                        .map(|member| super::super::OvenLegacyCargoInspectionSourceMember {
+                            path: member.path.clone(),
+                            digest: member.digest.clone(),
+                        })
+                        .collect(),
+                }),
+            }],
+        })
+    }
+
+    /// A registry package with a build script captures two registry-backed units: the library and the
+    /// run-custom-build execution node. Only the library is an inspection crate.
+    #[test]
+    fn registry_unit_bindings_never_model_a_build_script_as_an_inspection_crate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        let library = capture.units[0].clone();
+        let registry = library
+            .registry_source
+            .clone()
+            .ok_or("fixture library must carry a registry source")?;
+        let mut build_script = library.clone();
+        build_script.target_name = "build-script-build".to_string();
+        build_script.target_kinds = vec!["custom-build".to_string()];
+        build_script.crate_types = vec!["bin".to_string()];
+        build_script.source_path = PathBuf::from("/transient/serde/build.rs");
+        build_script.root_module = "build.rs".to_string();
+        build_script.mode = "run-custom-build".to_string();
+        build_script.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            root_module: "build.rs".to_string(),
+            ..registry.clone()
+        });
+        capture.units.push(build_script);
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: None,
+            });
+        let members = registry
+            .members
+            .iter()
+            .map(|member| super::super::OvenLegacyCargoInspectionSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let source = super::super::OvenLegacyCargoInspectionSource {
+            package: library.package.clone(),
+            version: library.package_version.clone(),
+            registry: registry.registry.clone(),
+            checksum: registry.checksum.clone(),
+            features: vec!["derive".to_string()],
+            source_root: PathBuf::from("/staged/registry-sources/serde-1.0.0"),
+            source_digest: registry.digest.clone(),
+            members,
+        };
+        let bindings = legacy_cargo_registry_unit_bindings(&capture, std::slice::from_ref(&source), "sha256:owner")?;
+        assert_eq!(
+            bindings.keys().copied().collect::<Vec<_>>(),
+            vec![0],
+            "only the library unit is an inspection crate; the run-custom-build unit is sealed on its consumer edge"
+        );
+        let binding = bindings.get(&0).ok_or("library binding must exist")?;
+        assert_eq!(binding.source.identity, "registry:serde@1.0.0");
+        // The binder's own output must satisfy the registry validation the projection later applies to it.
+        let owners = vec![OvenSelectedRustFacetOwner {
+            identity: "sha256:owner".to_string(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        }];
+        validate_registry_binding(&capture.units[0], binding, &owners)?;
+        Ok(())
+    }
+
+    /// A transport root, one registry library with a build script, and the catalog that describes it: the shape
+    /// the Release publisher captures. `checksum` is the registry source both the capture and a registry name.
+    fn release_shaped_capture(
+        checksum: &str,
+        script_environment: BTreeMap<String, String>,
+    ) -> Result<
+        (
+            OvenLegacyCargoSelectedUnitCapture,
+            Vec<super::super::OvenLegacyCargoInspectionSource>,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let mut capture = capture()?;
+        let mut library = capture.units[0].clone();
+        let mut registry = library
+            .registry_source
+            .clone()
+            .ok_or("fixture library must carry a registry source")?;
+        registry.checksum = checksum.to_string();
+        library.registry_source = Some(registry.clone());
+        capture.units[0] = library.clone();
+        let mut build_script = library.clone();
+        build_script.target_name = "build-script-build".to_string();
+        build_script.target_kinds = vec!["custom-build".to_string()];
+        build_script.crate_types = vec!["bin".to_string()];
+        build_script.source_path = PathBuf::from("/transient/serde/build.rs");
+        build_script.root_module = "build.rs".to_string();
+        build_script.mode = "run-custom-build".to_string();
+        build_script.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            root_module: "build.rs".to_string(),
+            ..registry.clone()
+        });
+        let mut root = library.clone();
+        root.package_id = "path+file:///fixture#oven_release_stdlib@0.1.0".to_string();
+        root.package = "oven_release_stdlib".to_string();
+        root.package_version = "0.1.0".to_string();
+        root.package_source = None;
+        root.target_name = "oven_release_stdlib".to_string();
+        root.registry_source = None;
+        root.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: Some("serde".to_string()),
+            build_script: None,
+        }];
+        // Indices are pre-shift: the root is inserted at 0 below, moving the library to 1 and its edge target to 2.
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                    cfgs: Vec::new(),
+                    environment: script_environment,
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: PathBuf::from("/transient/serde/out"),
+                    output: None,
+                    publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
+                }),
+            });
+        capture.units.insert(0, root);
+        for edge in &mut capture.units[1].dependencies {
+            edge.unit_index += 1;
+        }
+        capture.units.push(build_script);
+        capture.roots = vec![0];
+        let members = registry
+            .members
+            .iter()
+            .map(|member| super::super::OvenLegacyCargoInspectionSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let sources = vec![super::super::OvenLegacyCargoInspectionSource {
+            package: library.package.clone(),
+            version: library.package_version.clone(),
+            registry: registry.registry.clone(),
+            checksum: registry.checksum.clone(),
+            features: vec!["derive".to_string()],
+            source_root: PathBuf::from("/staged/registry-sources/serde-1.0.0"),
+            source_digest: registry.digest.clone(),
+            members,
+        }];
+        Ok((capture, sources))
+    }
+
+    /// The publisher's own sequence: provisional projection, closure digest, capture receipt, sealed projection,
+    /// then compiler-support finalization under the given registry authority.
+    fn finalize_release_shaped(
+        capture: &OvenLegacyCargoSelectedUnitCapture,
+        sources: &[super::super::OvenLegacyCargoInspectionSource],
+        authority: &LoafRegistryAuthority,
+    ) -> Result<OvenFinalizedCompilerSupportSelectedGraph, Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "release-stdlib")?)?;
+        let toolchain_owner = digest(b"release toolchain owner");
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"oven_release_stdlib\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n",
+            Path::new("loaf.toml"),
+        )?;
+        let (_, generated) = legacy_cargo_generated_output_bindings(capture)?;
+        let linked = legacy_cargo_generated_archive_bindings(capture, &generated)?;
+        let provisional = legacy_cargo_foundation_projection(
+            capture,
+            &receipt,
+            sources,
+            &receipt.identity,
+            &toolchain_owner,
+            &linked,
+            authority,
+        )?;
+        let closure_digest = legacy_cargo_build_script_closure_digest(capture, &provisional.build_scripts)?;
+        let capture_receipt =
+            receipt_with_build_unit_input(&receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)?;
+        let projection = legacy_cargo_foundation_projection(
+            capture,
+            &receipt,
+            sources,
+            &capture_receipt.identity,
+            &toolchain_owner,
+            &linked,
+            authority,
+        )?;
+        assert!(
+            projection.units.contains_key(&1)
+                && !projection.units.contains_key(&0)
+                && !projection.units.contains_key(&2),
+            "the binder seals registry units: the transport root is pruned later and the build script is an edge, got {:?}",
+            projection.units.keys().collect::<Vec<_>>()
+        );
+        Ok(finalize_compiler_support_selected_graph(
+            capture,
+            &projection,
+            &manifest,
+            &BTreeSet::new(),
+            &toolchain_owner,
+            &receipt,
+        )?)
+    }
+
+    /// Physical source facts prepared before the synthetic Cargo capture is assembled.
+    struct PublisherRebuildSourceFixture {
+        package_root: PathBuf,
+        out_dir: PathBuf,
+        members: Vec<super::super::OvenLegacyCargoInspectionSourceMember>,
+        source_digest: String,
+        proc_macro_root: PathBuf,
+        proc_macro_members: Vec<super::super::OvenLegacyCargoInspectionSourceMember>,
+        proc_macro_digest: String,
+    }
+
+    /// Capture and retained registry-source facts consumed by the synthetic publisher pipeline.
+    struct PublisherRebuildCaptureFixture {
+        capture: OvenLegacyCargoSelectedUnitCapture,
+        sources: Vec<super::super::OvenLegacyCargoInspectionSource>,
+        loaf_root: PathBuf,
+    }
+
+    /// Write the exact source and generated trees used by the publisher rebuild pipeline fixture.
+    fn write_publisher_rebuild_sources(
+        scratch: &Path,
+    ) -> Result<PublisherRebuildSourceFixture, Box<dyn std::error::Error>> {
+        let package_root = scratch.join("loaf/registry-sources/aurora-codec-7.4.2");
+        let out_dir = scratch.join("cargo-out");
+        fs::create_dir_all(package_root.join("src"))?;
+        fs::create_dir_all(out_dir.join("nested"))?;
+        fs::write(
+            package_root.join("Cargo.toml"),
+            b"[package]\nname = \"aurora-codec\"\nversion = \"7.4.2\"\nedition = \"2021\"\nbuild = \"build.rs\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(package_root.join("build.rs"), b"fn main() {}\n")?;
+        fs::write(
+            package_root.join("src/lib.rs"),
+            b"#![deny(warnings)]\nuse aurora_macro::marker;\nmarker!();\ninclude!(concat!(env!(\"OUT_DIR\"), \"/nested/generated.rs\"));\n#[cfg(aurora_generated)]\npub const BUILD_MARKER: &str = env!(\"AURORA_BUILD_MARKER\");\n#[cfg(not(aurora_generated))]\ncompile_error!(\"captured rustc-cfg was not replayed\");\npub const PACKAGE: &str = env!(\"CARGO_PKG_NAME\");\npub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\nfn lint_cap_probe() {}\n",
+        )?;
+        fs::write(
+            out_dir.join("nested/generated.rs"),
+            b"pub const GENERATED_VALUE: u32 = 47;\n",
+        )?;
+        let member = |path: &str| -> Result<super::super::OvenLegacyCargoInspectionSourceMember, std::io::Error> {
+            Ok(super::super::OvenLegacyCargoInspectionSourceMember {
+                path: path.to_string(),
+                digest: digest(&fs::read(package_root.join(path))?),
+            })
+        };
+        let members = vec![member("Cargo.toml")?, member("build.rs")?, member("src/lib.rs")?];
+        let selected_members = members
+            .iter()
+            .map(|member| OvenSelectedRustFacetSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let source_digest = selected_graph_source_digest(&selected_members)?;
+        let proc_macro_root = scratch.join("loaf/registry-sources/aurora-macro-2.1.0");
+        fs::create_dir_all(proc_macro_root.join("src"))?;
+        fs::write(
+            proc_macro_root.join("Cargo.toml"),
+            b"[package]\nname = \"aurora-macro\"\nversion = \"2.1.0\"\nedition = \"2021\"\n\n[lib]\nproc-macro = true\npath = \"src/lib.rs\"\n",
+        )?;
+        fs::write(
+            proc_macro_root.join("src/lib.rs"),
+            b"extern crate proc_macro;\nuse proc_macro::TokenStream;\n#[proc_macro]\npub fn marker(_input: TokenStream) -> TokenStream { TokenStream::new() }\n",
+        )?;
+        let proc_macro_members = ["Cargo.toml", "src/lib.rs"]
+            .into_iter()
+            .map(|path| {
+                Ok(super::super::OvenLegacyCargoInspectionSourceMember {
+                    path: path.to_string(),
+                    digest: digest(&fs::read(proc_macro_root.join(path))?),
+                })
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        let proc_macro_digest = selected_graph_source_digest(
+            &proc_macro_members
+                .iter()
+                .map(|member| OvenSelectedRustFacetSourceMember {
+                    path: member.path.clone(),
+                    digest: member.digest.clone(),
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(PublisherRebuildSourceFixture {
+            package_root,
+            out_dir,
+            members,
+            source_digest,
+            proc_macro_root,
+            proc_macro_members,
+            proc_macro_digest,
+        })
+    }
+
+    /// Build the release-profile proc-macro unit whose strip helper must come from the retained Rust sysroot.
+    fn publisher_rebuild_proc_macro_unit(
+        source: &PublisherRebuildSourceFixture,
+        host: &str,
+    ) -> Result<super::super::OvenLegacyCargoSelectedUnit, Box<dyn std::error::Error>> {
+        let mut unit = capture()?.units.remove(0);
+        unit.package_id = "registry+https://example.invalid/aurora-index#aurora-macro@2.1.0".to_string();
+        unit.package = "aurora-macro".to_string();
+        unit.package_version = "2.1.0".to_string();
+        unit.package_source = Some("registry+https://example.invalid/aurora-index".to_string());
+        unit.target_name = "aurora_macro".to_string();
+        unit.target_kinds = vec!["proc-macro".to_string()];
+        unit.crate_types = vec!["proc-macro".to_string()];
+        unit.compiler_crate_type = Some("proc-macro".to_string());
+        unit.source_path = source.proc_macro_root.join("src/lib.rs");
+        unit.platform = Some(host.to_string());
+        unit.target_is_explicit = Some(false);
+        unit.effective_features.clear();
+        unit.cfg.clear();
+        unit.compiler_arguments = vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "strip".to_string(),
+                value: "debuginfo".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "extra-filename".to_string(),
+                value: "-fixture".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+        ];
+        unit.compile_environment.clear();
+        unit.sysroot_externs = vec!["proc_macro".to_string()];
+        unit.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            registry: "registry+https://example.invalid/aurora-index".to_string(),
+            checksum: "aurora-macro-checksum".to_string(),
+            digest: source.proc_macro_digest.clone(),
+            root_module: "src/lib.rs".to_string(),
+            members: source.proc_macro_members.clone(),
+        });
+        Ok(unit)
+    }
+
+    /// Observe the real compiler context used by the end-to-end publisher fixture.
+    fn publisher_rebuild_compiler_context(
+        rustc: &Path,
+    ) -> Result<super::super::OvenLegacyCargoSelectedCompilerContext, Box<dyn std::error::Error>> {
+        let host = rustc_host_target(rustc)?;
+        let toolchain = rustc_identity(rustc)?;
+        let (host_cfg, target_cfg) = rustc_host_and_target_cfg_snapshots(rustc, &host)?;
+        Ok(super::super::OvenLegacyCargoSelectedCompilerContext {
+            host: host.clone(),
+            target: host,
+            toolchain: toolchain.clone(),
+            rustc_identity: toolchain,
+            host_cfg,
+            target_cfg,
+        })
+    }
+
+    /// Resolve the repository's pinned release compiler for the release-foundation rebuild proof.
+    fn publisher_rebuild_release_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let output = std::process::Command::new("rustup")
+            .args(["which", "--toolchain", "1.98.0", "rustc"])
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "rustup could not locate the pinned Rust 1.98.0 compiler: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let path = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+        if !path.is_file() {
+            return Err(format!("pinned release compiler is not a file: {}", path.display()).into());
+        }
+        Ok(path)
+    }
+
+    /// Project both retained registry packages into the inspection-source catalog consumed by policy admission.
+    fn publisher_rebuild_inspection_sources(
+        source: &PublisherRebuildSourceFixture,
+    ) -> Vec<super::super::OvenLegacyCargoInspectionSource> {
+        vec![
+            super::super::OvenLegacyCargoInspectionSource {
+                package: "aurora-codec".to_string(),
+                version: "7.4.2".to_string(),
+                registry: "registry+https://example.invalid/aurora-index".to_string(),
+                checksum: "aurora-checksum".to_string(),
+                features: Vec::new(),
+                source_root: source.package_root.clone(),
+                source_digest: source.source_digest.clone(),
+                members: source.members.clone(),
+            },
+            super::super::OvenLegacyCargoInspectionSource {
+                package: "aurora-macro".to_string(),
+                version: "2.1.0".to_string(),
+                registry: "registry+https://example.invalid/aurora-index".to_string(),
+                checksum: "aurora-macro-checksum".to_string(),
+                features: Vec::new(),
+                source_root: source.proc_macro_root.clone(),
+                source_digest: source.proc_macro_digest.clone(),
+                members: source.proc_macro_members.clone(),
+            },
+        ]
+    }
+
+    /// Build the target library and its captured-but-inert build-script execution unit.
+    fn publisher_rebuild_library_units(
+        source: &PublisherRebuildSourceFixture,
+        host: &str,
+    ) -> Result<
+        (
+            super::super::OvenLegacyCargoSelectedUnit,
+            super::super::OvenLegacyCargoSelectedUnit,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let registry = super::super::OvenLegacyCargoSelectedRegistrySource {
+            registry: "registry+https://example.invalid/aurora-index".to_string(),
+            checksum: "aurora-checksum".to_string(),
+            digest: source.source_digest.clone(),
+            root_module: "src/lib.rs".to_string(),
+            members: source.members.clone(),
+        };
+        let mut library = capture()?.units.remove(0);
+        library.package_id = "registry+https://example.invalid/aurora-index#aurora-codec@7.4.2".to_string();
+        library.package = "aurora-codec".to_string();
+        library.package_version = "7.4.2".to_string();
+        library.package_source = Some("registry+https://example.invalid/aurora-index".to_string());
+        library.target_name = "aurora_codec".to_string();
+        library.source_path = source.package_root.join("src/lib.rs");
+        library.platform = Some(host.to_string());
+        library.target_is_explicit = Some(true);
+        library.effective_features.clear();
+        library.cfg.clear();
+        library.compiler_arguments = vec![
+            OvenSelectedRustFacetCompilerArgument::Codegen {
+                name: "extra-filename".to_string(),
+                value: "-fixture".to_string(),
+            },
+            OvenSelectedRustFacetCompilerArgument::CapLints {
+                value: "warn".to_string(),
+            },
+        ];
+        library.compile_environment = BTreeMap::from([
+            (
+                "CARGO_MANIFEST_DIR".to_string(),
+                source.package_root.display().to_string(),
+            ),
+            (
+                "CARGO_MANIFEST_PATH".to_string(),
+                source.package_root.join("Cargo.toml").display().to_string(),
+            ),
+            ("CARGO_PKG_NAME".to_string(), "aurora-codec".to_string()),
+            ("CARGO_PKG_VERSION".to_string(), "7.4.2".to_string()),
+            ("OUT_DIR".to_string(), source.out_dir.display().to_string()),
+        ]);
+        library.registry_source = Some(registry.clone());
+        let mut build_script = library.clone();
+        build_script.target_name = "build-script-build".to_string();
+        build_script.target_kinds = vec!["custom-build".to_string()];
+        build_script.crate_types = vec!["bin".to_string()];
+        build_script.compiler_crate_type = Some("bin".to_string());
+        build_script.source_path = source.package_root.join("build.rs");
+        build_script.root_module = "build.rs".to_string();
+        build_script.mode = "run-custom-build".to_string();
+        build_script.compile_environment.clear();
+        build_script.dependencies.clear();
+        build_script.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            root_module: "build.rs".to_string(),
+            ..registry
+        });
+        library.dependencies = vec![
+            super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 2,
+                extern_crate_name: None,
+                build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                    cfgs: vec!["aurora_generated".to_string()],
+                    environment: BTreeMap::from([("AURORA_BUILD_MARKER".to_string(), "saffron".to_string())]),
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: source.out_dir.clone(),
+                    output: None,
+                    publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
+                }),
+            },
+            super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 3,
+                extern_crate_name: Some("aurora_macro".to_string()),
+                build_script: None,
+            },
+        ];
+        library
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "aurora_macro".to_string(),
+                metadata: false,
+            });
+        Ok((library, build_script))
+    }
+
+    /// Assemble captured physical facts for a stripped proc macro, its library consumer and one build-script edge.
+    fn publisher_rebuild_capture_fixture(
+        scratch: &Path,
+        rustc: &Path,
+    ) -> Result<PublisherRebuildCaptureFixture, Box<dyn std::error::Error>> {
+        let source = write_publisher_rebuild_sources(scratch)?;
+        let compiler = publisher_rebuild_compiler_context(rustc)?;
+        let host = compiler.host.clone();
+        let (library, build_script) = publisher_rebuild_library_units(&source, &host)?;
+        let proc_macro = publisher_rebuild_proc_macro_unit(&source, &host)?;
+        let mut root = library.clone();
+        root.package_id = "path+file:///fixture#publisher-harness@1.0.0".to_string();
+        root.package = "publisher-harness".to_string();
+        root.package_version = "1.0.0".to_string();
+        root.package_source = None;
+        root.target_name = "publisher_harness".to_string();
+        root.source_path = scratch.join("publisher-harness.rs");
+        root.root_module = "publisher-harness.rs".to_string();
+        root.compile_environment.clear();
+        root.registry_source = None;
+        root.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: Some("aurora_codec".to_string()),
+            build_script: None,
+        }];
+        root.compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
+        root.compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "aurora_codec".to_string(),
+                metadata: false,
+            });
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![root, library, build_script, proc_macro],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: Some(compiler),
+        };
+        let sources = publisher_rebuild_inspection_sources(&source);
+        Ok(PublisherRebuildCaptureFixture {
+            capture,
+            sources,
+            loaf_root: scratch.join("loaf"),
+        })
+    }
+
+    /// Convert the encoded request catalogs into the selected response shape emitted by the policy engine.
+    fn selected_policy_response(request: &serde_json::Value) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let units = request["units"].as_array().ok_or("policy request has no units")?;
+        let catalogs = request["catalogs"].as_array().ok_or("policy request has no catalogs")?;
+        let inventories = catalogs
+            .iter()
+            .map(|catalog| {
+                let unit = units
+                    .iter()
+                    .find(|unit| unit["package"] == catalog["package"])
+                    .ok_or("policy catalog has no selected unit")?;
+                Ok(serde_json::json!({
+                    "package": catalog["package"],
+                    "domain": unit["domain"],
+                    "owner": catalog["owner"],
+                    "package_root": catalog["package_root"],
+                    "manifest": catalog["manifest"],
+                    "members": catalog["members"],
+                    "build_unit_present": catalog["build_unit_present"],
+                    "effective_features": unit["features"],
+                }))
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        Ok(serde_json::json!({
+            "schema": request["schema"],
+            "operation": request["operation"],
+            "status": "selected",
+            "graph_digest": request["graph_digest"],
+            "inventories": inventories,
+            "warnings": [],
+        }))
+    }
+
+    /// Build the minimal compatibility Loaf whose source plan feeds one publisher rebuild foundation.
+    fn publisher_rebuild_loaf(
+        finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+        sources: &[super::super::OvenLegacyCargoInspectionSource],
+    ) -> Result<OvenLoaf, Box<dyn std::error::Error>> {
+        let graph = finalized.graph.graph();
+        if graph.units.is_empty() {
+            return Err("publisher graph has no registry unit".into());
+        }
+        let intent = oven_store::OvenBuildIntent {
+            target: graph.selection.intent.target.clone(),
+            toolchain: graph.selection.intent.toolchain.clone(),
+            profile: graph.selection.intent.profile.clone(),
+            features: Vec::new(),
+        };
+        let plan = OvenRustcArtifactManifest {
+            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: intent.clone(),
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            entrypoint_dependency_search_paths: BTreeMap::new(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: Vec::new(),
+            registry_sources: graph
+                .units
+                .iter()
+                .map(|unit| {
+                    let source = sources
+                        .iter()
+                        .find(|source| source.package == unit.package && source.version == unit.package_version)
+                        .ok_or("publisher unit has no inspection source")?;
+                    Ok(OvenRustcRegistrySourcePackage {
+                        package: unit.package.clone(),
+                        version: unit.package_version.clone(),
+                        features: unit.features.clone(),
+                        source: OvenRustcRegistrySource {
+                            registry: source.registry.clone(),
+                            checksum: source.checksum.clone(),
+                            relative_root: unit.source.root.clone(),
+                            digest: unit.source.digest.clone(),
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?,
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: graph
+                .units
+                .iter()
+                .map(|unit| {
+                    Ok(oven_rustc::rustc::OvenRustcSupportingArtifact {
+                        relative_path: format!("{}/Cargo.toml", unit.source.root),
+                        digest: unit
+                            .source_members
+                            .iter()
+                            .find(|member| member.path == "Cargo.toml")
+                            .ok_or("publisher unit has no Cargo.toml")?
+                            .digest
+                            .clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?,
+        };
+        Ok(OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: finalized.final_receipt.build_unit_identity.clone(),
+            provenance: OvenLoafProvenance {
+                compiler_version: intent.toolchain.clone(),
+                rust_toolchain: intent.toolchain,
+                sdk_provider_codegen_revision: "publisher-pipeline-fixture".to_string(),
+                baker: "legacy_cargo".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes: 0,
+                payload_physical_bytes: 0,
+            },
+            compatibility: OvenLoafCompatibility {
+                runtime_inputs: BTreeMap::new(),
+                providers: Vec::new(),
+            },
+            registry_leaves: Vec::new(),
+            plan,
+        })
+    }
+
+    /// One synthetic registry unit survives capture, projection, policy exchange, foundation publication and a real
+    /// direct-rustc rebuild with every byte-affecting build-script and Cargo environment fact active together.
+    #[test]
+    fn publisher_rebuild_pipeline_compiles_nested_generated_output_end_to_end() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let scratch = tempdir()?;
+        let rustc = publisher_rebuild_release_rustc()?;
+        let PublisherRebuildCaptureFixture {
+            mut capture,
+            sources,
+            loaf_root,
+        } = publisher_rebuild_capture_fixture(scratch.path(), &rustc)?;
+        let retained = super::super::retain_legacy_cargo_selected_generated_outputs(&mut capture, &loaf_root)?;
+        assert_eq!(retained.len(), 1);
+        assert!(retained[0].relative_path.ends_with("/nested/generated.rs"));
+
+        let compiler = capture.compiler.as_ref().ok_or("capture has no compiler context")?;
+        let toolchain_root = scratch.path().join("toolchain");
+        let (toolchain_owner, toolchain_members) =
+            stage_release_runtime_foundation_toolchain(&rustc, &compiler.target, &toolchain_root)?;
+        assert!(toolchain_members.iter().any(|member| {
+            member.relative_path == Path::new("lib/rustlib").join(&compiler.host).join("bin/rust-objcopy")
+        }));
+        let receipt_root = scratch.path().join("receipt");
+        fs::create_dir_all(&receipt_root)?;
+        let receipt_source = receipt_root.join("publisher.rs");
+        fs::write(&receipt_source, b"pub fn publisher_fixture() {}\n")?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                &receipt_root,
+                "publisher-harness",
+                "1.0.0",
+                &compiler.target,
+                &compiler.toolchain,
+                "release",
+                Vec::new(),
+            )
+            .with_generated_source("publisher.rs", receipt_source),
+        )?;
+        let (_, generated) = legacy_cargo_generated_output_bindings(&capture)?;
+        let linked = legacy_cargo_generated_archive_bindings(&capture, &generated)?;
+        let provisional = legacy_cargo_foundation_projection(
+            &capture,
+            &receipt,
+            &sources,
+            &receipt.identity,
+            &toolchain_owner,
+            &linked,
+            &LoafRegistryAuthority::none(),
+        )?;
+        let closure = legacy_cargo_build_script_closure_digest(&capture, &provisional.build_scripts)?;
+        let capture_receipt =
+            receipt_with_build_unit_input(&receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure)?;
+        let projection = legacy_cargo_foundation_projection(
+            &capture,
+            &receipt,
+            &sources,
+            &capture_receipt.identity,
+            &toolchain_owner,
+            &linked,
+            &LoafRegistryAuthority::none(),
+        )?;
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"publisher-harness\"\nversion = \"1.0.0\"\n\n[rust-dependencies]\naurora_codec = { package = \"aurora-codec\", version = \"7.4.2\" }\n",
+            Path::new("loaf.toml"),
+        )?;
+        let finalized = finalize_compiler_support_selected_graph(
+            &capture,
+            &projection,
+            &manifest,
+            &BTreeSet::new(),
+            &toolchain_owner,
+            &receipt,
+        )?;
+
+        let request = encode_selected_graph_policy_request(&finalized.graph, &capture, &sources, &toolchain_owner)?;
+        let closure = &request["units"]
+            .as_array()
+            .and_then(|units| units.iter().find(|unit| unit["package"]["name"] == "aurora-codec"))
+            .ok_or("policy request has no aurora-codec unit")?["closure"];
+        assert_eq!(closure["environment"]["AURORA_BUILD_MARKER"]["value"], "saffron");
+        assert_eq!(closure["environment"]["CARGO_PKG_VERSION"]["value"], "7.4.2");
+        assert!(
+            closure["generated_inputs"][0]["members"]
+                .as_array()
+                .is_some_and(|members| members.len() == 1)
+        );
+        let response = selected_policy_response(&request)?;
+        let selection = runtime_foundation_inventories_from_policy_response(&finalized.graph, &response)?;
+        let loaf = publisher_rebuild_loaf(&finalized, &sources)?;
+        let foundation = runtime_foundation_for_publisher_rebuild(&finalized, &loaf, &toolchain_owner)?;
+        let asset = OvenRuntimeFoundationAsset::sealed(foundation, selection.inventories)?;
+        let install_root = scratch.path().join("install");
+        fs::create_dir_all(&install_root)?;
+        let admitted = publish_runtime_foundation_asset_with_generated_owners(
+            asset,
+            &loaf_root,
+            &toolchain_root,
+            &[],
+            &install_root.join("foundation"),
+        )?;
+        let materialized = admitted.materialize_asset_for_publication()?;
+        let build = execute_runtime_foundation_rebuild(
+            materialized.foundation(),
+            materialized.materialized(),
+            &OvenRuntimeCompilerClosure::new(toolchain_root.join("bin/rustc"), toolchain_owner),
+            &scratch.path().join("rebuild"),
+        )?;
+        assert_eq!(build.compiler_launches(), 2);
+        assert!(build.outputs().iter().all(|output| output.artifact.is_file()));
+        assert!(build.outputs().iter().any(|output| {
+            output.crate_name == "aurora_macro"
+                && output.artifact.extension().and_then(|extension| extension.to_str())
+                    == Some(std::env::consts::DLL_EXTENSION)
+        }));
+        Ok(())
+    }
+
+    /// The Release runtime-foundation publisher seals its capture with the production binder, never a hand-made
+    /// projection. This walks that exact sequence for a transport root, one registry library and its build script,
+    /// plus a package the script alone depends on, which Cargo compiled to run the script and Oven never links.
+    #[test]
+    fn foundation_projection_of_a_registry_closure_finalizes_through_the_production_binder()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut capture, mut sources) = release_shaped_capture("sha256:fixture", BTreeMap::new())?;
+        let mut script_only = capture.units[1].clone();
+        script_only.package_id = "registry+https://example.invalid/index#cc@1.0.0".to_string();
+        script_only.package = "cc".to_string();
+        script_only.target_name = "cc".to_string();
+        script_only.source_path = PathBuf::from("/transient/cc/src/lib.rs");
+        script_only.dependencies = Vec::new();
+        capture.units.push(script_only);
+        capture.units[2]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 3,
+                extern_crate_name: Some("cc".to_string()),
+                build_script: None,
+            });
+        let mut cc_source = sources[0].clone();
+        cc_source.package = "cc".to_string();
+        cc_source.source_root = PathBuf::from("/staged/registry-sources/cc-1.0.0");
+        sources.push(cc_source);
+        let mut script_only_build = capture.units[2].clone();
+        script_only_build.package_id = "registry+https://example.invalid/index#probe-only@1.0.0".to_string();
+        script_only_build.package = "probe-only".to_string();
+        script_only_build.package_version = "1.0.0".to_string();
+        script_only_build.source_path = PathBuf::from("/transient/probe-only/build.rs");
+        script_only_build.dependencies = Vec::new();
+        let probe_facts = super::super::OvenLegacyCargoBuildScriptFacts {
+            cfgs: Vec::new(),
+            environment: BTreeMap::new(),
+            linked_libraries: Vec::new(),
+            linked_paths: Vec::new(),
+            out_dir: PathBuf::from("/transient/probe-only/out"),
+            output: None,
+            publisher_work: Vec::new(),
+            publisher_native_probes: Vec::new(),
+            publisher_work_refusal: None,
+        };
+        capture.units[2]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 4,
+                extern_crate_name: None,
+                build_script: Some(probe_facts),
+            });
+        capture.units.push(script_only_build);
+        capture
+            .build_script_tool_probes
+            .push(super::super::OvenLegacyCargoBuildScriptToolProbe {
+                package_id: "registry+https://example.invalid/index#probe-only@1.0.0".to_string(),
+                out_dir: PathBuf::from("/transient/probe-only/out"),
+                target_context: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                digest: digest(b"pruned script probe"),
+                output: None,
+            });
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        let graph = finalized.graph.graph();
+        assert_eq!(
+            graph.units.len(),
+            1,
+            "the transport root leaves, the build script is not a graph unit, and the script's own dependency never enters the closure"
+        );
+        assert_eq!(graph.units[0].source.identity, "registry:serde@1.0.0");
+        assert_eq!(graph.exposed_roots["serde"].unit, graph.units[0].identity);
+        Ok(())
+    }
+
+    /// Cargo package text stays exact while transient manifest paths are checked and rebound to admitted source.
+    #[test]
+    fn projection_replays_captured_cargo_compile_environment() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut capture, sources) = release_shaped_capture("sha256:fixture", BTreeMap::new())?;
+        capture.units[1].compile_environment = BTreeMap::from([
+            ("CARGO_MANIFEST_DIR".to_string(), "/transient/serde".to_string()),
+            (
+                "CARGO_MANIFEST_PATH".to_string(),
+                "/transient/serde/Cargo.toml".to_string(),
+            ),
+            ("CARGO_PKG_VERSION".to_string(), "1.0.0".to_string()),
+        ]);
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        let unit = &finalized.graph.graph().units[0];
+        assert_eq!(
+            unit.environment["CARGO_PKG_VERSION"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: "1.0.0".to_string()
+            }
+        );
+        assert!(matches!(
+            unit.environment["CARGO_MANIFEST_DIR"],
+            OvenSelectedRustFacetEnvironmentValue::Path { .. }
+        ));
+
+        capture.units[1]
+            .compile_environment
+            .insert("CARGO_MANIFEST_DIR".to_string(), "/ambient/wrong".to_string());
+        let refused = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none());
+        assert!(
+            refused
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("does not match the captured unit source")),
+            "a manifest path unrelated to the captured source must be refused"
+        );
+        Ok(())
+    }
+
+    /// The policy projection collapses internal provenance variants onto the decoder's closed environment kinds,
+    /// carries generated and native-link closure facts, and leaves cfg/check-cfg behind the authenticated identity.
+    #[test]
+    fn policy_unit_encoding_uses_only_decoder_environment_kinds() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let mut graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        let unit = graph.units.get_mut(0).ok_or("fixture graph lost its selected unit")?;
+        let generated_source = OvenSelectedRustFacetPath {
+            owner: unit.source.owner.clone(),
+            path: "generated-outputs/fixture".to_string(),
+        };
+        unit.generated_inputs = vec![OvenSelectedRustFacetGeneratedInput {
+            name: "out_dir".to_string(),
+            source: generated_source.clone(),
+            digest: oven_rustc::rustc::selected_graph_generated_input_digest(&[])?,
+            members: Vec::new(),
+        }];
+        unit.linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: generated_source.owner.clone(),
+                path: format!("{}/libfixture.a", generated_source.path),
+            },
+            digest: digest(b"fixture archive"),
+        }];
+        unit.compiler_arguments = vec![OvenSelectedRustFacetCompilerArgument::CheckCfg {
+            value: "cfg(fixture)".to_string(),
+        }];
+        unit.cfg = vec!["fixture".to_string()];
+        unit.environment = BTreeMap::from([
+            (
+                "CAPTURED".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                    value: "captured".to_string(),
+                },
+            ),
+            (
+                "OUT_DIR".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: ".".to_string(),
+                },
+            ),
+            (
+                "OUT_DIR_CHILD".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::OutDir {
+                    relative: "install".to_string(),
+                },
+            ),
+            (
+                "OWNER_PATH".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Path {
+                    value: OvenSelectedRustFacetPath {
+                        owner: unit.source.owner.clone(),
+                        path: unit.source.root.clone(),
+                    },
+                },
+            ),
+            (
+                "PUBLIC".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::Text {
+                    value: "public".to_string(),
+                },
+            ),
+            (
+                "SECRET".to_string(),
+                OvenSelectedRustFacetEnvironmentValue::SensitiveDigest {
+                    hmac_sha256: format!("hmac-sha256:{}", "a".repeat(64)),
+                },
+            ),
+        ]);
+
+        let encoded = encode_policy_unit(unit)?;
+        assert!(encoded.get("cfg").is_none() && encoded.get("compiler_arguments").is_none());
+        assert!(encoded["closure"]["generated_inputs"].is_array());
+        assert!(encoded["closure"]["linked_libraries"].is_array());
+        assert_eq!(encoded["closure"]["environment"]["CAPTURED"]["kind"], "text");
+        assert_eq!(encoded["closure"]["environment"]["PUBLIC"]["kind"], "text");
+        assert_eq!(encoded["closure"]["environment"]["OWNER_PATH"]["kind"], "path");
+        assert_eq!(encoded["closure"]["environment"]["OUT_DIR"]["kind"], "path");
+        assert_eq!(
+            encoded["closure"]["environment"]["OUT_DIR"]["value"]["path"],
+            generated_source.path
+        );
+        assert_eq!(
+            encoded["closure"]["environment"]["OUT_DIR_CHILD"]["value"]["path"],
+            "generated-outputs/fixture/install"
+        );
+        assert_eq!(encoded["closure"]["environment"]["SECRET"]["kind"], "sensitive_digest");
+        Ok(())
+    }
+
+    /// The foundation must take its artifact owner from the graph's Constituent owner rather than from the capture
+    /// receipt, even when portable closure identity makes those digests equal for this projection.
+    #[test]
+    fn runtime_foundation_publisher_rebuild_preserves_compiled_plan_and_adds_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use oven_rustc::loaf::{
+            OVEN_LOAF_SCHEMA_VERSION, OvenLoafAccounting, OvenLoafCompatibility, OvenLoafProvenance,
+        };
+        use oven_rustc::rustc::{
+            OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactExtern, OvenRustcArtifactManifest,
+            OvenRustcRegistryLeaf,
+        };
+        let (capture, sources) = release_shaped_capture("serde-checksum", BTreeMap::new())?;
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        let graph = finalized.graph.graph();
+        let constituent = graph
+            .owners
+            .iter()
+            .find(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
+            .ok_or("the finalized graph names a Constituent owner")?;
+        let [unit] = graph.units.as_slice() else {
+            return Err("the release-shaped graph has one unit".into());
+        };
+        let intent = oven_store::OvenBuildIntent {
+            target: graph.selection.intent.target.clone(),
+            toolchain: graph.selection.intent.toolchain.clone(),
+            profile: graph.selection.intent.profile.clone(),
+            features: Vec::new(),
+        };
+        let compiled_artifact = OvenRustcArtifactExtern {
+            crate_name: unit.crate_name.clone(),
+            relative_path: "deps/libserde.rlib".to_string(),
+            digest: "sha256:serde-artifact".to_string(),
+        };
+        let plan = OvenRustcArtifactManifest {
+            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: intent.clone(),
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: vec![compiled_artifact.clone()],
+            entrypoint_dependency_search_paths: Default::default(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: Some(unit.identity.clone()),
+                package: unit.package.clone(),
+                version: unit.package_version.clone(),
+                crate_name: unit.crate_name.clone(),
+                features: unit.features.clone(),
+                source: OvenRustcRegistrySource {
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "serde-checksum".to_string(),
+                    relative_root: unit.source.root.clone(),
+                    digest: unit.source.digest.clone(),
+                },
+                artifact: compiled_artifact,
+            }],
+            registry_sources: vec![OvenRustcRegistrySourcePackage {
+                package: unit.package.clone(),
+                version: unit.package_version.clone(),
+                features: unit.features.clone(),
+                source: OvenRustcRegistrySource {
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "serde-checksum".to_string(),
+                    relative_root: unit.source.root.clone(),
+                    digest: unit.source.digest.clone(),
+                },
+            }],
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: vec![
+                oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: format!("{}/Cargo.toml", unit.source.root),
+                    digest: "sha256:serde-manifest".to_string(),
+                },
+                oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: "deps/unselected.rmeta".to_string(),
+                    digest: "sha256:unselected-artifact".to_string(),
+                },
+            ],
+        };
+        let loaf = OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: finalized.final_receipt.build_unit_identity.clone(),
+            provenance: OvenLoafProvenance {
+                compiler_version: "fixture".to_string(),
+                rust_toolchain: intent.toolchain.clone(),
+                sdk_provider_codegen_revision: "fixture".to_string(),
+                baker: "legacy_cargo".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes: 0,
+                payload_physical_bytes: 0,
+            },
+            compatibility: OvenLoafCompatibility {
+                runtime_inputs: BTreeMap::new(),
+                providers: Vec::new(),
+            },
+            registry_leaves: plan.registry_leaves.clone(),
+            plan,
+        };
+        let mut publisher_product_graph = graph.clone();
+        publisher_product_graph.units[0]
+            .generated_inputs
+            .push(OvenSelectedRustFacetGeneratedInput {
+                name: "generated-bindings".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: digest(b"publisher tool owner"),
+                    path: "generated/bindings".to_string(),
+                },
+                digest: digest(b"publisher tool tree"),
+                members: vec![OvenSelectedRustFacetSourceMember {
+                    path: "bindings.rs".to_string(),
+                    digest: digest(b"publisher bindings"),
+                }],
+            });
+        publisher_product_graph.units[0]
+            .linked_libraries
+            .push(OvenSelectedRustFacetLinkedLibrary::Archive {
+                name: "native".to_string(),
+                kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                artifact: OvenSelectedRustFacetPath {
+                    owner: digest(b"publisher link owner"),
+                    path: "native/libnative.a".to_string(),
+                },
+                digest: digest(b"publisher native archive"),
+            });
+        let declared = publisher_rebuild_supporting_artifacts(&publisher_product_graph, &loaf.plan)?;
+        assert_eq!(declared.len(), 4);
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "generated/bindings/bindings.rs")
+        );
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "native/libnative.a")
+        );
+        assert!(
+            declared
+                .iter()
+                .any(|artifact| artifact.relative_path == "deps/unselected.rmeta")
+        );
+        let foundation = runtime_foundation_from_compiled_loaf(&finalized, &loaf, "sha256:compiled-plan")?;
+        assert_eq!(foundation.artifact_owner, constituent.identity);
+        assert_eq!(foundation.units.len(), 1);
+        let publisher = runtime_foundation_for_publisher_rebuild(
+            &finalized,
+            &loaf,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )?;
+        assert!(
+            publisher
+                .units
+                .iter()
+                .all(|unit| { matches!(unit.execution, OvenRuntimeFoundationUnitExecution::Rebuild) })
+        );
+        assert_eq!(publisher.artifacts, loaf.plan);
+        publisher.artifacts.validate_shape(&intent)?;
+        Ok(())
+    }
+
+    fn adoption_registry(
+        checksum: &str,
+        cfg: &str,
+        environment: &str,
+    ) -> Result<(tempfile::TempDir, oven_model::loaf_registry::LoafRegistry), Box<dyn std::error::Error>> {
+        let root = tempdir()?;
+        let manifest_dir = root.path().join("crates-io/serde/1.0.0");
+        fs::create_dir_all(&manifest_dir)?;
+        fs::write(
+            manifest_dir.join("loaf.toml"),
+            format!(
+                "[project]\nname = \"serde\"\nversion = \"1.0.0\"\n\n[source]\nregistry = \"https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{checksum}\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\nprofile = \"release\"\nfeatures = [\"derive\"]\ncfg = [{cfg}]\n{environment}"
+            ),
+        )?;
+        let index_dir = root.path().join("index/se/rd");
+        fs::create_dir_all(&index_dir)?;
+        fs::write(
+            index_dir.join("serde"),
+            format!(
+                "{{\"cksum\":\"{checksum}\",\"manifest\":\"crates-io/serde/1.0.0/loaf.toml\",\"name\":\"serde\",\"source\":\"crates-io\",\"vers\":\"1.0.0\"}}\n"
+            ),
+        )?;
+        let registry = oven_model::loaf_registry::LoafRegistry::open(root.path())?;
+        Ok((root, registry))
+    }
+
+    /// A build script's captured environment enters graph identity, while an adopted registry record must declare
+    /// the same value before it can govern the unit.
+    #[test]
+    fn a_registry_declaration_governs_an_adopted_unit_and_must_agree_with_its_observation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let checksum = format!("sha256:{}", "a".repeat(64));
+        let script_environment = BTreeMap::from([("CFG_OPT_LEVEL".to_string(), "3".to_string())]);
+        let (capture, sources) = release_shaped_capture(&checksum, script_environment)?;
+
+        let unadopted = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        assert_eq!(
+            unadopted.graph.graph().units[0].environment["CFG_OPT_LEVEL"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: "3".to_string() },
+            "the exact observed environment must remain compiler-visible and identity-bearing"
+        );
+
+        let (registry_root, registry) = adoption_registry(
+            &checksum,
+            "",
+            "environment = [{ name = \"CFG_OPT_LEVEL\", literal = \"3\" }]\n",
+        )?;
+        let authority = LoafRegistryAuthority::resolve(&capture, &registry, "release")?;
+        assert!(
+            authority.adoption(1).is_some(),
+            "the registry library is adopted for the captured selection"
+        );
+        assert!(authority.adoption(0).is_none() && authority.adoption(2).is_none());
+        let records = authority.registry_records();
+        assert_eq!(records.len(), 1, "one lock record per governed registry unit");
+        assert_eq!(
+            (
+                records[0].package.as_str(),
+                records[0].version.as_str(),
+                records[0].checksum.as_str(),
+                records[0].status.as_str(),
+            ),
+            ("serde", "1.0.0", checksum.as_str(), "harvested"),
+            "a fixture index line lists no binding status, so the adoption is harvested"
+        );
+        assert!(oven_model::manifest::is_sha256_identity(&records[0].index_line_digest));
+        let adopted = finalize_release_shaped(&capture, &sources, &authority)?;
+        assert_eq!(
+            adopted.graph.graph().units[0].environment["CFG_OPT_LEVEL"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText { value: "3".to_string() }
+        );
+        assert!(authority.evidence_digest().is_some());
+
+        let (mut probed_capture, probed_sources) = release_shaped_capture(&checksum, BTreeMap::new())?;
+        probed_capture
+            .build_script_tool_probes
+            .push(super::super::OvenLegacyCargoBuildScriptToolProbe {
+                package_id: probed_capture.units[2].package_id.clone(),
+                out_dir: PathBuf::from("/transient/serde/out"),
+                target_context: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                digest: digest(b"adopted script probe"),
+                output: None,
+            });
+        let (_probe_root, probe_registry) = adoption_registry(&checksum, "", "")?;
+        let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &probe_registry, "release")?;
+        let refused_probe = finalize_release_shaped(&probed_capture, &probed_sources, &probed_authority);
+        assert!(
+            refused_probe
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("cannot carry observed tool probes")),
+            "an adopted record must refuse script probes it cannot carry: {:?}",
+            refused_probe.as_ref().err().map(ToString::to_string)
+        );
+
+        let (mut wrong_platform_capture, _) = release_shaped_capture(&checksum, BTreeMap::new())?;
+        wrong_platform_capture.units[1].platform = Some("aarch64-apple-darwin".to_string());
+        let wrong_platform = LoafRegistryAuthority::resolve(&wrong_platform_capture, &registry, "release")?;
+        assert!(
+            wrong_platform.adoption(1).is_none(),
+            "a target-bound record must not govern a unit compiled for another platform"
+        );
+
+        let plain_capture = release_shaped_capture(&checksum, BTreeMap::new())?.0;
+        let first_evidence = LoafRegistryAuthority::resolve(&plain_capture, &registry, "release")?
+            .evidence_digest()
+            .ok_or("registry adoption must produce evidence")?;
+        let manifest_path = registry_root.path().join("crates-io/serde/1.0.0/loaf.toml");
+        let original_manifest = fs::read_to_string(&manifest_path)?;
+        fs::write(
+            &manifest_path,
+            format!("# governing manifest revision\n{original_manifest}"),
+        )?;
+        let changed_registry = oven_model::loaf_registry::LoafRegistry::open(registry_root.path())?;
+        let changed_evidence = LoafRegistryAuthority::resolve(&plain_capture, &changed_registry, "release")?
+            .evidence_digest()
+            .ok_or("changed registry adoption must produce evidence")?;
+        assert_ne!(
+            first_evidence, changed_evidence,
+            "registry evidence must bind the governing manifest bytes"
+        );
+
+        let (_root, disagreeing) = adoption_registry(&checksum, "\"has_answer\"", "")?;
+        let authority = LoafRegistryAuthority::resolve(&capture, &disagreeing, "release")?;
+        let refused = finalize_release_shaped(&capture, &sources, &authority);
+        assert!(
+            refused
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("disagrees with the observed build script")),
+            "a declaration the observation contradicts is a refusal: {:?}",
+            refused.as_ref().err().map(ToString::to_string)
+        );
+
+        let (_root, other_profile) = adoption_registry(&checksum, "", "")?;
+        let authority = LoafRegistryAuthority::resolve(&capture, &other_profile, "debug")?;
+        assert!(authority.is_empty(), "a record bound to another profile adopts nothing");
+        Ok(())
+    }
+
+    /// `libm` reemits configuration through `rustc-env`; exact captured text remains both compiler-visible and
+    /// identity-bearing without being inferred from the publisher's ambient environment.
+    #[test]
+    fn an_unadopted_script_environment_is_carried_by_the_graph_and_bound_by_the_closure_digest_issue1704()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let checksum = format!("sha256:{}", "b".repeat(64));
+        let captured_value = "[\"arch\", \"default\"]";
+        let script_environment = BTreeMap::from([
+            ("CFG_CARGO_FEATURES".to_string(), captured_value.to_string()),
+            ("CFG_OPT_LEVEL".to_string(), "3".to_string()),
+            ("CFG_TARGET_FEATURES".to_string(), "[\"neon\", \"sha2\"]".to_string()),
+            ("PROFILE".to_string(), "release".to_string()),
+        ]);
+        let (capture, sources) = release_shaped_capture(&checksum, script_environment)?;
+
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        let unit = &finalized.graph.graph().units[0];
+        assert_eq!(
+            unit.environment["CFG_CARGO_FEATURES"],
+            OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: captured_value.to_string()
+            }
+        );
+        let encoded = String::from_utf8(finalized.graph.to_json_bytes()?)?;
+        assert!(
+            encoded.contains("CFG_CARGO_FEATURES") && encoded.contains("captured_text"),
+            "captured compile environment must reach the serialized graph"
+        );
+
+        // The binder states the captured value per key, and the closure digest changes with that value.
+        let directory = tempdir()?;
+        let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "release-stdlib")?)?;
+        let toolchain_owner = digest(b"release toolchain owner");
+        let (_, generated) = legacy_cargo_generated_output_bindings(&capture)?;
+        let linked = legacy_cargo_generated_archive_bindings(&capture, &generated)?;
+        let bindings = legacy_cargo_foundation_projection(
+            &capture,
+            &receipt,
+            &sources,
+            &receipt.identity,
+            &toolchain_owner,
+            &linked,
+            &LoafRegistryAuthority::none(),
+        )?
+        .build_scripts;
+        let edge = bindings
+            .get(&(1, 2))
+            .ok_or("the library's build-script edge must be bound")?;
+        assert_eq!(
+            edge.environment.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["CFG_CARGO_FEATURES", "CFG_OPT_LEVEL", "CFG_TARGET_FEATURES", "PROFILE"],
+            "every observed key gets one binding"
+        );
+        assert_eq!(
+            edge.environment["CFG_CARGO_FEATURES"].value,
+            Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: captured_value.to_string()
+            })
+        );
+        assert_eq!(edge.environment["CFG_CARGO_FEATURES"].observed_value, captured_value);
+        assert_eq!(
+            edge.environment["PROFILE"].value,
+            Some(OvenSelectedRustFacetEnvironmentValue::CapturedText {
+                value: "release".to_string()
+            })
+        );
+        let closure_digest = legacy_cargo_build_script_closure_digest(&capture, &bindings)?;
+        let (changed_capture, _) = release_shaped_capture(
+            &checksum,
+            BTreeMap::from([
+                ("CFG_CARGO_FEATURES".to_string(), "[\"default\"]".to_string()),
+                ("CFG_OPT_LEVEL".to_string(), "3".to_string()),
+                ("CFG_TARGET_FEATURES".to_string(), "[\"neon\", \"sha2\"]".to_string()),
+                ("PROFILE".to_string(), "release".to_string()),
+            ]),
+        )?;
+        let changed_bindings = legacy_cargo_foundation_projection(
+            &changed_capture,
+            &receipt,
+            &sources,
+            &receipt.identity,
+            &toolchain_owner,
+            &linked,
+            &LoafRegistryAuthority::none(),
+        )?
+        .build_scripts;
+        assert_ne!(
+            closure_digest,
+            legacy_cargo_build_script_closure_digest(&changed_capture, &changed_bindings)?,
+            "a captured value still binds the capture receipt through the closure digest"
+        );
+        Ok(())
+    }
+
+    fn sealed(
+        capture: &OvenLegacyCargoSelectedUnitCapture,
+    ) -> Result<OvenLegacyCargoSelectedGraphProjection, OvenLegacyCargoError> {
+        let source_owner = digest(b"registry source owner");
+        let toolchain_owner = selection().target_spec.toolchain_owner().to_string();
+        let source_members = members();
+        let source_digest = selected_graph_source_digest(&source_members)
+            .map_err(|error| projection_error("fixture source digest", &error.to_string()))?;
+        let registry = capture.units[0]
+            .registry_source
+            .as_ref()
+            .ok_or_else(|| projection_error("fixture registry source", "is absent"))?;
+        if source_digest != registry.digest {
+            return Err(projection_error("fixture registry source", "has inconsistent digest"));
+        }
+        Ok(OvenLegacyCargoSelectedGraphProjection {
+            selection: selection(),
+            owners: vec![
+                OvenSelectedRustFacetOwner {
+                    identity: source_owner.clone(),
+                    kind: OvenSelectedRustFacetOwnerKind::Constituent,
+                },
+                OvenSelectedRustFacetOwner {
+                    identity: toolchain_owner,
+                    kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+                },
+            ],
+            units: BTreeMap::from([(
+                0,
+                OvenLegacyCargoSelectedGraphUnitBinding {
+                    source: OvenSelectedRustFacetSource {
+                        kind: OvenSelectedRustFacetSourceKind::Registry,
+                        identity: "registry:serde@1.0.0".to_string(),
+                        owner: source_owner.clone(),
+                        root: ".".to_string(),
+                        digest: source_digest.clone(),
+                    },
+                    source_members,
+                    registry_source: Some(OvenRustcRegistrySourcePackage {
+                        package: "serde".to_string(),
+                        version: "1.0.0".to_string(),
+                        features: vec!["derive".to_string()],
+                        source: OvenRustcRegistrySource {
+                            registry: "registry+https://example.invalid/index".to_string(),
+                            checksum: "sha256:fixture".to_string(),
+                            relative_root: ".".to_string(),
+                            digest: source_digest.clone(),
+                        },
+                    }),
+                    include_dirs: vec![OvenSelectedRustFacetPath {
+                        owner: source_owner,
+                        path: ".".to_string(),
+                    }],
+                    exclude_dirs: Vec::new(),
+                },
+            )]),
+            generated: BTreeMap::new(),
+            build_scripts: BTreeMap::new(),
+        })
+    }
+
+    fn closure_final_receipt(
+        capture: &OvenLegacyCargoSelectedUnitCapture,
+        sealed: &OvenLegacyCargoSelectedGraphProjection,
+    ) -> Result<OvenReceipt, Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
+        Ok(receipt_generated_project(
+            &fixture_receipt_request(directory.path(), "selected-graph-fixture")?
+                .with_build_unit_input(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, digest),
+        )?)
+    }
+
+    #[test]
+    fn projection_retains_observed_compiler_support_features_without_creating_roots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        assert!(graph.exposed_roots.is_empty());
+        assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Library);
+        assert_eq!(graph.units[0].features, ["derive"]);
+        assert_eq!(graph.units[0].compiler_arguments, capture.units[0].compiler_arguments);
+        Ok(())
+    }
+
+    #[test]
+    fn generated_archive_binding_requires_exact_search_root_target_and_member() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut capture = capture()?;
+        capture.units.push(OvenLegacyCargoSelectedUnit {
+            package_id: capture.units[0].package_id.clone(),
+            package: capture.units[0].package.clone(),
+            package_version: capture.units[0].package_version.clone(),
+            package_source: capture.units[0].package_source.clone(),
+            target_name: "build-script-build".to_string(),
+            target_kinds: vec!["custom-build".to_string()],
+            crate_types: vec!["bin".to_string()],
+            source_path: PathBuf::from("/transient/serde/build.rs"),
+            artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
+            root_module: "build.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "run-custom-build".to_string(),
+            platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            target_is_explicit: Some(false),
+            cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            effective_features: Vec::new(),
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: None,
+            registry_source: None,
+        });
+        let facts = super::super::OvenLegacyCargoBuildScriptFacts {
+            cfgs: Vec::new(),
+            environment: BTreeMap::new(),
+            linked_libraries: vec!["static=fixture".to_string()],
+            linked_paths: vec!["native=/transient/out/native".to_string()],
+            out_dir: PathBuf::from("/transient/out"),
+            output: Some(super::super::OvenLegacyCargoSelectedGeneratedOutput {
+                relative_root: "generated-outputs/fixture".to_string(),
+                digest: digest(b"generated tree"),
+                members: vec![
+                    super::super::OvenLegacyCargoInspectionSourceMember {
+                        path: "native/libfixture.a".to_string(),
+                        digest: digest(b"right archive"),
+                    },
+                    super::super::OvenLegacyCargoInspectionSourceMember {
+                        path: "other/libfixture.a".to_string(),
+                        digest: digest(b"wrong archive"),
+                    },
+                ],
+            }),
+            publisher_work: Vec::new(),
+            publisher_native_probes: Vec::new(),
+            publisher_work_refusal: None,
+        };
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: Some(facts.clone()),
+            });
+        let generated = BTreeMap::from([(
+            (0, 1),
+            OvenLegacyCargoSelectedGeneratedBinding {
+                name: "out_dir".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: digest(b"generated owner"),
+                    path: "generated-outputs/fixture".to_string(),
+                },
+                digest: digest(b"generated tree"),
+            },
+        )]);
+
+        let bindings = legacy_cargo_generated_archive_bindings(&capture, &generated)?;
+        let binding = bindings.get(&(0, 1)).ok_or("archive binding missing")?;
+        let [
+            OvenSelectedRustFacetLinkedLibrary::Archive {
+                artifact,
+                digest: archive_digest,
+                ..
+            },
+        ] = binding.libraries.as_slice()
+        else {
+            return Err(std::io::Error::other("archive binding shape changed").into());
+        };
+        assert_eq!(artifact.path, "generated-outputs/fixture/native/libfixture.a");
+        assert_eq!(archive_digest, &digest(b"right archive"));
+
+        capture.units[0].dependencies[0]
+            .build_script
+            .as_mut()
+            .ok_or("build-script facts missing")?
+            .linked_paths = vec!["native=/transient/out/missing".to_string()];
+        assert!(legacy_cargo_generated_archive_bindings(&capture, &generated).is_err());
+        capture.units[0].dependencies[0]
+            .build_script
+            .as_mut()
+            .ok_or("build-script facts missing")?
+            .linked_paths = vec!["native=/transient/out/native".to_string()];
+        capture.units[0].platform = Some("x86_64-pc-windows-gnu".to_string());
+        let compiler = capture.compiler.as_mut().ok_or("fixture compiler context missing")?;
+        compiler.target = "x86_64-pc-windows-gnu".to_string();
+        compiler
+            .target_cfg
+            .values
+            .insert("target_os".to_string(), vec!["windows".to_string()]);
+        compiler
+            .target_cfg
+            .values
+            .insert("target_env".to_string(), vec!["gnu".to_string()]);
+        assert!(legacy_cargo_generated_archive_bindings(&capture, &generated).is_ok());
+        capture.units[0].platform = Some("x86_64-pc-windows-msvc".to_string());
+        let compiler = capture.compiler.as_mut().ok_or("fixture compiler context missing")?;
+        compiler.target = "x86_64-pc-windows-msvc".to_string();
+        compiler
+            .target_cfg
+            .values
+            .insert("target_env".to_string(), vec!["msvc".to_string()]);
+        assert!(legacy_cargo_generated_archive_bindings(&capture, &generated).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn built_in_target_spec_binds_the_verified_compiler_and_cfg_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let owner = digest(b"toolchain owner");
+        let descriptor = legacy_cargo_builtin_target_spec(&capture, owner.clone())?;
+        let OvenSelectedRustFacetTargetSpec::BuiltIn {
+            toolchain_owner,
+            target,
+            rustc_identity,
+            target_cfg_digest,
+        } = descriptor
+        else {
+            return Err(std::io::Error::other("built-in capture produced a custom target spec").into());
+        };
+        assert_eq!(toolchain_owner, owner);
+        assert_eq!(target, "x86_64-unknown-linux-gnu");
+        assert_eq!(rustc_identity, "rustc 1.98.0");
+        assert_eq!(
+            target_cfg_digest,
+            oven_rustc::rustc::selected_graph_sha256(&serde_json::to_vec(
+                &capture
+                    .compiler
+                    .as_ref()
+                    .ok_or("fixture lost compiler facts")?
+                    .target_cfg
+            )?)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn projection_derives_target_role_from_captured_kind_and_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0].target_name = "fixture-bin".to_string();
+        capture.units[0].target_kinds = vec!["bin".to_string()];
+        capture.units[0].crate_types = vec!["bin".to_string()];
+        capture
+            .compiler
+            .as_mut()
+            .ok_or("fixture compiler context missing")?
+            .host = "aarch64-apple-darwin".to_string();
+        let mut sealed = sealed(&capture)?;
+        sealed.selection.host = "aarch64-apple-darwin".to_string();
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, None)?;
+        assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Binary);
+        Ok(())
+    }
+
+    #[test]
+    fn projection_uses_explicit_target_for_native_test_units() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0].target_kinds = vec!["test".to_string()];
+        capture.units[0].crate_types = vec!["bin".to_string()];
+        capture.units[0].mode = "test".to_string();
+        capture.units[0].target_is_explicit = Some(true);
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::IntegrationTest);
+        Ok(())
+    }
+
+    #[test]
+    fn projection_uses_absent_target_for_host_proc_macro() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0].target_kinds = vec!["proc-macro".to_string()];
+        capture.units[0].crate_types = vec!["proc-macro".to_string()];
+        capture.units[0].target_is_explicit = Some(false);
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::ProcMacro);
+        assert_eq!(graph.units[0].domain, OvenSelectedRustFacetDomain::Host);
+        Ok(())
+    }
+
+    #[test]
+    fn projection_refuses_untraced_target_provenance() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0].target_is_explicit = None;
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn projection_refuses_registry_catalog_checksum_substitution() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let mut sealed = sealed(&capture)?;
+        sealed
+            .units
+            .get_mut(&0)
+            .ok_or("fixture unit missing")?
+            .registry_source
+            .as_mut()
+            .ok_or("fixture registry catalog missing")?
+            .source
+            .checksum = "sha256:substituted".to_string();
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn projection_refuses_a_changed_compiler_cfg_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let mut sealed = sealed(&capture)?;
+        sealed.selection.target_cfg.flags.push("unix".to_string());
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn projection_refuses_generic_capture_without_a_stable_trace() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.rustc_invocations_observed = false;
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_support_projection_binds_only_the_sealed_root_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let sealed = sealed(&capture)?;
+        let raw = project_legacy_cargo_selected_graph(&capture, &sealed, None)?;
+        let directory = tempdir()?;
+        let capture_receipt =
+            receipt_generated_project(&fixture_receipt_request(directory.path(), "compiler-release-fixture")?)?;
+        let root = OvenCompilerSupportRootIntent {
+            alias: "serde".to_string(),
+            unit: raw.units[0].identity.clone(),
+            requested_features: Vec::new(),
+            default_features: true,
+            intent_owner: sealed.selection.target_spec.toolchain_owner().to_string(),
+            source_owner: raw.units[0].source.owner.clone(),
+        };
+        let authority = OvenCompilerSupportRootIntentAuthority {
+            schema_version: oven_rustc::rustc::OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION,
+            capture_receipt_identity: capture_receipt.identity.clone(),
+            roots: vec![root],
+        };
+        let final_receipt = receipt_with_compiler_support_root_intent(
+            &capture_receipt,
+            compiler_support_root_intent_digest(&authority)?,
+        )?;
+
+        let (bound, _) = project_and_bind_compiler_support_selected_graph(
+            &capture,
+            &sealed,
+            &authority,
+            &capture_receipt,
+            &final_receipt,
+        )?;
+        assert_eq!(
+            bound.graph().exposed_roots["serde"].requested_features,
+            Vec::<String>::new()
+        );
+        assert_eq!(bound.graph().units[0].features, ["derive"]);
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_support_root_alias_does_not_select_a_transitive_variant() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        let mut sealed = sealed(&capture)?;
+        let mut direct = capture.units[0].clone();
+        direct.effective_features = vec!["alloc".to_string()];
+        direct
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 0,
+                extern_crate_name: Some("renamed_serde".to_string()),
+                build_script: None,
+            });
+        direct
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "renamed_serde".to_string(),
+                metadata: false,
+            });
+        capture.units.push(direct.clone());
+        let mut binding = sealed.units.get(&0).cloned().ok_or("missing fixture source binding")?;
+        binding
+            .registry_source
+            .as_mut()
+            .ok_or("missing fixture registry source")?
+            .features = vec!["alloc".to_string()];
+        sealed.units.insert(1, binding);
+        let mut transport = direct;
+        transport.package = "transport".to_string();
+        transport.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: Some("renamed_serde".to_string()),
+            build_script: None,
+        }];
+        transport
+            .compiler_arguments
+            .retain(|argument| !matches!(argument, OvenSelectedRustFacetCompilerArgument::Extern { .. }));
+        transport
+            .compiler_arguments
+            .push(OvenSelectedRustFacetCompilerArgument::Extern {
+                alias: "renamed_serde".to_string(),
+                metadata: false,
+            });
+        capture.units.push(transport);
+        capture.roots = vec![2];
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname='root-alias'\nversion='1.0.0'\n[rust-dependencies]\nrenamed_serde={package='serde',version='1',features=['alloc'],default-features=false}\n",
+            Path::new("loaf.toml"),
+        )?;
+        let directory = tempdir()?;
+        let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "root-alias")?)?;
+        let finalized = finalize_compiler_support_selected_graph(
+            &capture,
+            &sealed,
+            &manifest,
+            &BTreeSet::new(),
+            sealed.selection.target_spec.toolchain_owner(),
+            &receipt,
+        )?;
+        let graph = finalized.graph.graph();
+        let root = &graph.exposed_roots["renamed_serde"];
+        let selected = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == root.unit)
+            .ok_or("missing selected root")?;
+        assert_eq!(selected.features, ["alloc"]);
+        assert_eq!(
+            graph.units.len(),
+            2,
+            "the transitive variant remains in the physical closure"
+        );
+        assert_ne!(selected.dependencies[0].unit, root.unit);
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_support_authority_uses_authored_alias_and_feature_intent() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        let dependency = capture.units[0].clone();
+        let mut root = dependency.clone();
+        root.package_id = "path+file:///fixture#compiler-root@1.0.0".to_string();
+        root.package = "compiler-root".to_string();
+        root.package_version = "1.0.0".to_string();
+        root.package_source = None;
+        root.target_name = "compiler_root".to_string();
+        root.root_module = "src/lib.rs".to_string();
+        root.registry_source = None;
+        root.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 0,
+            extern_crate_name: Some("renamed_serde".to_string()),
+            build_script: None,
+        }];
+        capture.units.push(root);
+        capture.roots = vec![1];
+
+        let sealed = {
+            let mut sealed = sealed(&capture)?;
+            let source_owner = digest(b"generated compiler root owner");
+            sealed.owners.push(OvenSelectedRustFacetOwner {
+                identity: source_owner.clone(),
+                kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+            });
+            let members = members();
+            sealed.units.insert(
+                1,
+                OvenLegacyCargoSelectedGraphUnitBinding {
+                    source: OvenSelectedRustFacetSource {
+                        kind: OvenSelectedRustFacetSourceKind::Generated,
+                        identity: "generated:compiler-root@1.0.0".to_string(),
+                        owner: source_owner,
+                        root: "generated/compiler-root".to_string(),
+                        digest: selected_graph_source_digest(&members)?,
+                    },
+                    source_members: members,
+                    registry_source: None,
+                    include_dirs: Vec::new(),
+                    exclude_dirs: Vec::new(),
+                },
+            );
+            sealed
+        };
+        let projected = project_legacy_cargo_selected_graph(&capture, &sealed, None)?;
+        let receipt_directory = tempdir()?;
+        let receipt = receipt_generated_project(&fixture_receipt_request(
+            receipt_directory.path(),
+            "compiler-support-authority",
+        )?)?;
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"compiler-support-authority\"\nversion = \"1.0.0\"\n\n[rust-dependencies]\nrenamed_serde = { package = \"serde\", version = \"1\", features = [\"derive\", \"alloc\"], default-features = false }\n",
+            Path::new("loaf.toml"),
+        )?;
+        let authority = compiler_support_root_intent_authority(
+            &capture,
+            &sealed,
+            None,
+            &manifest,
+            &BTreeSet::new(),
+            projected.selection.target_spec.toolchain_owner(),
+            &receipt,
+        )?;
+
+        assert_eq!(authority.roots.len(), 1);
+        assert_eq!(authority.roots[0].alias, "renamed_serde");
+        assert_eq!(authority.roots[0].requested_features, ["alloc", "derive"]);
+        assert!(!authority.roots[0].default_features);
+        assert_eq!(authority.roots[0].unit, projected.units[0].identity);
+
+        let finalized = finalize_compiler_support_selected_graph(
+            &capture,
+            &sealed,
+            &manifest,
+            &BTreeSet::new(),
+            projected.selection.target_spec.toolchain_owner(),
+            &receipt,
+        )?;
+        assert_ne!(finalized.capture_receipt.identity, receipt.identity);
+        assert_ne!(finalized.final_receipt.identity, finalized.capture_receipt.identity);
+        assert_eq!(finalized.graph.graph().units.len(), 1);
+        assert_eq!(finalized.graph.graph().exposed_roots.len(), 1);
+        assert_eq!(
+            finalized.graph.graph().exposed_roots["renamed_serde"].unit,
+            finalized.graph.graph().units[0].identity
+        );
+        let selected_unit = &finalized.graph.graph().units[0];
+        let manifest_bytes = b"[package]\nname='serde'\nversion='1.0.0'\n";
+        let response = serde_json::json!({
+            "schema": "incan.oven.rust-policy-exchange/5",
+            "operation": "validate_selected_rust_graph",
+            "status": "selected",
+            "graph_digest": finalized.graph.digest(),
+            "inventories": [{
+                "package": {
+                    "name": selected_unit.package,
+                    "version": selected_unit.package_version,
+                    "source": selected_unit.source.identity,
+                },
+                "domain": "target",
+                "owner": selected_unit.source.owner,
+                "package_root": selected_unit.source.root,
+                "manifest": {
+                    "path": "Cargo.toml",
+                    "bytes_hex": hex::encode(manifest_bytes),
+                    "sha256_hex": digest(manifest_bytes).trim_start_matches("sha256:"),
+                },
+                "members": ["src/lib.rs"],
+                "build_unit_present": false,
+                "effective_features": selected_unit.features,
+            }],
+            "warnings": [
+                {"owner": selected_unit.source.owner, "package_root": selected_unit.source.root},
+                {"owner": selected_unit.source.owner, "package_root": selected_unit.source.root},
+            ],
+        });
+        let selection = runtime_foundation_inventories_from_policy_response(&finalized.graph, &response)?;
+        assert_eq!(
+            selection.warnings.len(),
+            1,
+            "each selected package is reported exactly once"
+        );
+        assert_eq!(selection.warnings[0].package, selected_unit.package);
+        let inventories = selection.inventories;
+        assert_eq!(inventories.len(), 1);
+        assert_eq!(inventories[0].selected_identity, selected_unit.identity);
+        assert_eq!(inventories[0].package.manifest.path, "Cargo.toml");
+        let mut tampered = response.clone();
+        tampered["inventories"][0]["manifest"]["bytes_hex"] = serde_json::json!("00");
+        assert!(runtime_foundation_inventories_from_policy_response(&finalized.graph, &tampered).is_err());
+        let mut unknown = response;
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(
+            runtime_foundation_inventories_from_policy_response(&finalized.graph, &unknown).is_err(),
+            "the selected policy response schema must refuse unknown fields"
+        );
+        let stale_base = receipt_with_build_unit_input(
+            &receipt,
+            OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
+            digest(b"stale closure"),
+        )?;
+        assert!(
+            finalize_compiler_support_selected_graph(
+                &capture,
+                &sealed,
+                &manifest,
+                &BTreeSet::new(),
+                projected.selection.target_spec.toolchain_owner(),
+                &stale_base,
+            )
+            .is_err()
+        );
+
+        let wrong_package = ProjectManifest::from_str(
+            "[project]\nname = \"compiler-support-authority\"\nversion = \"1.0.0\"\n\n[rust-dependencies]\nrenamed_serde = { package = \"serde_json\", version = \"1\" }\n",
+            Path::new("loaf.toml"),
+        )?;
+        assert!(
+            compiler_support_root_intent_authority(
+                &capture,
+                &sealed,
+                None,
+                &wrong_package,
+                &BTreeSet::new(),
+                projected.selection.target_spec.toolchain_owner(),
+                &receipt,
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    /// One consumer whose build script retained the given generated inventory, sealed with a matching binding.
+    fn generated_output_fixture(
+        members: Vec<OvenSelectedRustFacetSourceMember>,
+    ) -> Result<
+        (
+            OvenLegacyCargoSelectedUnitCapture,
+            OvenLegacyCargoSelectedGraphProjection,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let mut capture = capture()?;
+        let generated_digest = oven_rustc::rustc::selected_graph_generated_input_digest(&members)?;
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                    cfgs: vec!["has_bindings".to_string()],
+                    environment: BTreeMap::new(),
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: PathBuf::from("/transient/out"),
+                    output: Some(super::super::OvenLegacyCargoSelectedGeneratedOutput {
+                        relative_root: "generated-outputs/bindings".to_string(),
+                        digest: generated_digest.clone(),
+                        members: members
+                            .iter()
+                            .map(|member| super::super::OvenLegacyCargoInspectionSourceMember {
+                                path: member.path.clone(),
+                                digest: member.digest.clone(),
+                            })
+                            .collect(),
+                    }),
+                    publisher_work: Vec::new(),
+                    publisher_native_probes: Vec::new(),
+                    publisher_work_refusal: None,
+                }),
+            });
+        capture.units.push(OvenLegacyCargoSelectedUnit {
+            package_id: "registry+https://example.invalid/index#serde@1.0.0".to_string(),
+            package: "serde".to_string(),
+            package_version: "1.0.0".to_string(),
+            package_source: Some("registry+https://example.invalid/index".to_string()),
+            target_name: "build-script-build".to_string(),
+            target_kinds: vec!["custom-build".to_string()],
+            crate_types: vec!["bin".to_string()],
+            source_path: PathBuf::from("/transient/serde/build.rs"),
+            artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
+            root_module: "build.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "run-custom-build".to_string(),
+            platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            target_is_explicit: Some(false),
+            cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            effective_features: Vec::new(),
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: None,
+            registry_source: None,
+        });
+        let mut sealed = sealed(&capture)?;
+        let generated_owner = digest(b"generated owner");
+        sealed.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        sealed.generated.insert(
+            (0, 1),
+            OvenLegacyCargoSelectedGeneratedBinding {
+                name: "bindings".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: generated_owner,
+                    path: "generated-outputs/bindings".to_string(),
+                },
+                digest: generated_digest,
+            },
+        );
+        Ok((capture, sealed))
+    }
+
+    #[test]
+    fn projection_attaches_only_the_exact_retained_generated_output() -> Result<(), Box<dyn std::error::Error>> {
+        let (capture, sealed) = generated_output_fixture(vec![OvenSelectedRustFacetSourceMember {
+            path: "bindings.rs".to_string(),
+            digest: digest(b"pub const BINDING: u32 = 1;\n"),
+        }])?;
+        let final_receipt = closure_final_receipt(&capture, &sealed)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
+        assert_eq!(graph.units[0].cfg, ["has_bindings", "target_has_atomic=\"8\""]);
+        assert_eq!(graph.units[0].generated_inputs.len(), 1);
+        assert_eq!(graph.units[0].generated_inputs[0].name, "bindings");
+        Ok(())
+    }
+
+    /// A build script that emits only cfgs leaves a checked empty `OUT_DIR`, which the capture retains as an empty
+    /// inventory distinct from an absent output. The projection must admit it under the same digest rule.
+    #[test]
+    fn projection_attaches_a_checked_empty_generated_output() -> Result<(), Box<dyn std::error::Error>> {
+        let (capture, sealed) = generated_output_fixture(Vec::new())?;
+        let final_receipt = closure_final_receipt(&capture, &sealed)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
+        assert_eq!(graph.units[0].generated_inputs.len(), 1);
+        assert!(graph.units[0].generated_inputs[0].members.is_empty());
+        assert_eq!(
+            graph.units[0].generated_inputs[0].digest,
+            oven_rustc::rustc::selected_graph_generated_input_digest(&[])?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn projection_refuses_unconsumed_generated_binding() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let mut sealed = sealed(&capture)?;
+        sealed.generated.insert(
+            (0, 0),
+            OvenLegacyCargoSelectedGeneratedBinding {
+                name: "unused".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: sealed.units[&0].source.owner.clone(),
+                    path: "generated/unused".to_string(),
+                },
+                digest: digest(b"unused"),
+            },
+        );
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn projection_projects_exact_sealed_environment_and_link_closure() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: None,
+            });
+        capture.units.push(OvenLegacyCargoSelectedUnit {
+            package_id: "registry+https://example.invalid/index#serde@1.0.0".to_string(),
+            package: "serde".to_string(),
+            package_version: "1.0.0".to_string(),
+            package_source: Some("registry+https://example.invalid/index".to_string()),
+            target_name: "build-script-build".to_string(),
+            target_kinds: vec!["custom-build".to_string()],
+            crate_types: vec!["bin".to_string()],
+            source_path: PathBuf::from("/transient/serde/build.rs"),
+            artifact_paths: Vec::new(),
+            retained_artifacts: Vec::new(),
+            root_module: "build.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "run-custom-build".to_string(),
+            platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            target_is_explicit: Some(false),
+            cfg: Vec::new(),
+            compiler_crate_type: Some("lib".to_string()),
+            compiler_paths: Some(crate::fixture_captured_compiler_paths()),
+            compiler_arguments: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            effective_features: Vec::new(),
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                cfgs: Vec::new(),
+                environment: BTreeMap::from([("DEP_FIXTURE".to_string(), "/transient/out".to_string())]),
+                linked_libraries: vec!["static=fixture".to_string(), "static=fixture".to_string()],
+                linked_paths: vec!["native=/transient/out".to_string()],
+                out_dir: PathBuf::from("/transient/out"),
+                output: None,
+                publisher_work: Vec::new(),
+                publisher_native_probes: Vec::new(),
+                publisher_work_refusal: None,
+            }),
+            registry_source: None,
+        });
+        let facts = capture.units[1].build_script.take();
+        capture.units[0]
+            .dependencies
+            .last_mut()
+            .ok_or("selected consumer lost its build-script edge")?
+            .build_script = facts;
+        let mut sealed = sealed(&capture)?;
+        let source_owner = sealed.units[&0].source.owner.clone();
+        sealed.build_scripts.insert(
+            (0, 1),
+            OvenLegacyCargoSelectedBuildScriptBinding {
+                environment: BTreeMap::from([(
+                    "DEP_FIXTURE".to_string(),
+                    OvenLegacyCargoSelectedEnvironmentBinding {
+                        observed_value: "/transient/out".to_string(),
+                        value: Some(OvenSelectedRustFacetEnvironmentValue::Text {
+                            value: "/transient/out".to_string(),
+                        }),
+                    },
+                )]),
+                linked_libraries: Some(OvenLegacyCargoSelectedLinkedLibraryBinding {
+                    observed_libraries: vec!["static=fixture".to_string(), "static=fixture".to_string()],
+                    observed_paths: vec!["native=/transient/out".to_string()],
+                    libraries: vec![
+                        OvenSelectedRustFacetLinkedLibrary::Archive {
+                            name: "fixture".to_string(),
+                            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                            artifact: OvenSelectedRustFacetPath {
+                                owner: source_owner.clone(),
+                                path: "linked/libfixture.a".to_string(),
+                            },
+                            digest: digest(b"fixture archive"),
+                        },
+                        OvenSelectedRustFacetLinkedLibrary::Archive {
+                            name: "fixture".to_string(),
+                            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                            artifact: OvenSelectedRustFacetPath {
+                                owner: source_owner,
+                                path: "linked/libfixture.a".to_string(),
+                            },
+                            digest: digest(b"fixture archive"),
+                        },
+                    ],
+                }),
+                declaration: None,
+            },
+        );
+        capture
+            .build_script_tool_probes
+            .push(super::super::OvenLegacyCargoBuildScriptToolProbe {
+                package_id: capture.units[1].package_id.clone(),
+                out_dir: PathBuf::from("/transient/out"),
+                target_context: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                digest: digest(b"first bounded probe"),
+                output: None,
+            });
+        let first_probe_digest = legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?;
+        let mut relocated_capture = capture.clone();
+        let relocated_facts = relocated_capture.units[0].dependencies[0]
+            .build_script
+            .as_mut()
+            .ok_or("relocated fixture lost its build-script facts")?;
+        relocated_facts
+            .environment
+            .insert("DEP_FIXTURE".to_string(), "/another/staging/out".to_string());
+        relocated_facts.linked_paths = vec!["native=/another/staging/out".to_string()];
+        relocated_facts.out_dir = PathBuf::from("/another/staging/out");
+        relocated_capture.build_script_tool_probes[0].out_dir = PathBuf::from("/another/staging/out");
+        let mut relocated_bindings = sealed.build_scripts.clone();
+        let relocated_binding = relocated_bindings
+            .get_mut(&(0, 1))
+            .ok_or("relocated fixture lost its sealed binding")?;
+        let relocated_environment = relocated_binding
+            .environment
+            .get_mut("DEP_FIXTURE")
+            .ok_or("relocated fixture lost its environment binding")?;
+        relocated_environment.observed_value = "/another/staging/out".to_string();
+        relocated_environment.value = Some(OvenSelectedRustFacetEnvironmentValue::Text {
+            value: "/another/staging/out".to_string(),
+        });
+        if let Some(linked) = relocated_binding.linked_libraries.as_mut() {
+            linked.observed_paths = vec!["native=/another/staging/out".to_string()];
+        }
+        assert_eq!(
+            first_probe_digest,
+            legacy_cargo_build_script_closure_digest(&relocated_capture, &relocated_bindings)?,
+            "absolute staging paths must not change the closure receipt"
+        );
+
+        let mut reordered_capture = capture.clone();
+        reordered_capture.units.swap(0, 1);
+        reordered_capture.roots = vec![1];
+        reordered_capture.units[1].dependencies[0].unit_index = 0;
+        let mut reordered_bindings = sealed.build_scripts.clone();
+        let binding = reordered_bindings
+            .remove(&(0, 1))
+            .ok_or("reordered fixture lost its sealed binding")?;
+        reordered_bindings.insert((1, 0), binding);
+        assert_eq!(
+            first_probe_digest,
+            legacy_cargo_build_script_closure_digest(&reordered_capture, &reordered_bindings)?,
+            "capture message order must not change the closure receipt"
+        );
+        capture.build_script_tool_probes[0].digest = digest(b"changed bounded probe");
+        assert_ne!(
+            first_probe_digest,
+            legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?
+        );
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
+        let wrong_receipt_directory = tempdir()?;
+        let wrong_final_receipt = receipt_generated_project(&fixture_receipt_request(
+            wrong_receipt_directory.path(),
+            "selected-graph-fixture",
+        )?)?;
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, Some(&wrong_final_receipt)).is_err());
+        let final_receipt = closure_final_receipt(&capture, &sealed)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
+        assert_eq!(
+            graph.units[0].environment["DEP_FIXTURE"],
+            OvenSelectedRustFacetEnvironmentValue::Text {
+                value: "/transient/out".to_string()
+            }
+        );
+        assert_eq!(graph.units[0].linked_libraries.len(), 2);
+        assert_eq!(graph.units[0].linked_libraries[0], graph.units[0].linked_libraries[1]);
+        Ok(())
+    }
+}

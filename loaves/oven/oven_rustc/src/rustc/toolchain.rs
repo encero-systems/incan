@@ -2,7 +2,8 @@
 //!
 //! The installer provisions Incan's own Rustup home; a development checkout resolves through the ambient Rustup.
 //! `resolve_active_rustc`, the one-spawn `rustc -vV` probe, `rustdoc_for_rustc` and the dynamic-library environment a
-//! direct compile runs under live here.
+//! direct compile runs under live here, as does `rustc_probe_command`, the launcher every probe of a compiler's own
+//! identity, sysroot or cfg facts goes through.
 
 use std::collections::HashMap;
 use std::env;
@@ -14,7 +15,8 @@ use std::sync::{Mutex, OnceLock};
 
 use super::{
     BTreeMap, BTreeSet, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError,
-    clear_inherited_cargo_environment, normalized_relative_path, rustup_reported_tool, verified_regular_file,
+    OvenSelectedRustFacetCfgSnapshot, clear_inherited_cargo_environment, normalized_relative_path,
+    rustup_reported_tool, validate_selected_graph_cfg_snapshot, verified_regular_file,
 };
 
 /// Return the Rustup home Incan provisions for itself, when an installed toolchain has one.
@@ -191,6 +193,38 @@ pub fn resolve_active_rustc() -> Result<PathBuf, OvenRustcError> {
     verified_regular_file(Path::new(&reported), "rustc")
 }
 
+/// The dynamic-loader search-path variables a compiler probe or retained-closure rebuild must not inherit from the
+/// calling process.
+///
+/// Windows resolves libraries through `PATH`, which also locates the compiler itself, so it has no entry here.
+pub(crate) const INHERITED_LOADER_SEARCH_PATH_VARIABLES: [&str; 3] =
+    ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
+
+/// Build the command that asks one compiler about itself, answering for that compiler's own closure.
+///
+/// Every probe of a compiler's identity, sysroot or cfg facts starts from this command. It clears the ambient Cargo
+/// state a direct compile clears, and also the dynamic-loader search paths the calling process carries. Those matter
+/// because `rustc` derives its sysroot from wherever the loader found `librustc_driver`, not from its own location:
+/// on Linux `LD_LIBRARY_PATH` is consulted before the binary's own `$ORIGIN/../lib` runpath, so a copied or
+/// store-retained compiler that inherits a path naming another toolchain's `lib` loads that toolchain's driver and
+/// reports that toolchain's sysroot. The compiler-suite runner exports exactly such a path to every libtest child,
+/// which is how the retained-toolchain staging test failed under the Linux replay while passing on macOS, where
+/// `DYLD_FALLBACK_LIBRARY_PATH` is consulted only after the rpath (#1755). The same launcher starts the
+/// store-retained compiler of a runtime-foundation rebuild (`compile_rebuild_unit`), which compiles through that
+/// closure and must therefore load that closure's driver (#1785), and serves a test that compiles with a retained
+/// compiler to prove it stands on its own closure.
+///
+/// A real direct compile does not come through here: it runs under the frozen environment the JEC plan admits, with
+/// nothing inherited at all.
+pub fn rustc_probe_command(rustc: &Path) -> Command {
+    let mut command = Command::new(rustc);
+    clear_inherited_cargo_environment(&mut command);
+    for name in INHERITED_LOADER_SEARCH_PATH_VARIABLES {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// The two facts every command asks of the selected compiler, answered by one `rustc -vV`.
 #[derive(Debug, Clone)]
 pub struct RustcProbe {
@@ -224,9 +258,8 @@ pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
     {
         return Ok(probe.clone());
     }
-    let mut command = Command::new(&rustc);
+    let mut command = rustc_probe_command(&rustc);
     command.arg("-vV");
-    clear_inherited_cargo_environment(&mut command);
     let output = command.output().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
@@ -279,12 +312,115 @@ pub fn rustc_host_target(rustc: &Path) -> Result<String, OvenRustcError> {
         })
 }
 
+/// Capture the complete cfg facts the exact verified compiler reports for one explicit target.
+///
+/// This is a publisher-side physical probe. It never resolves a compiler through Cargo or the consumer environment,
+/// and it clears inherited Cargo variables before asking the supplied compiler for `--print cfg`. `None` asks for the
+/// compiler's host facts; `Some(target)` asks for exactly that target's facts.
+pub fn rustc_cfg_snapshot(
+    rustc: &Path,
+    target: Option<&str>,
+) -> Result<OvenSelectedRustFacetCfgSnapshot, OvenRustcError> {
+    let rustc = verified_regular_file(rustc, "rustc")?;
+    let mut command = rustc_cfg_snapshot_command(&rustc, target)?;
+    let output = command.output().map_err(|source| OvenRustcError::Io {
+        path: rustc.clone(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "rustc cfg snapshot",
+            message: "must report a successful `--print cfg` snapshot".to_string(),
+        });
+    }
+    let stdout = String::from_utf8(output.stdout).map_err(|error| OvenRustcError::InvalidInput {
+        field: "rustc cfg snapshot",
+        message: format!("reported non-UTF-8 `--print cfg` output: {error}"),
+    })?;
+    parse_rustc_cfg_snapshot(&stdout)
+}
+
+/// Capture host and selected-target cfg facts once each from the same verified compiler.
+///
+/// The pair is the only cfg acquisition a sealed selected-graph publisher needs. Consumers receive the retained
+/// snapshots through the graph and must not invoke this probe themselves.
+pub fn rustc_host_and_target_cfg_snapshots(
+    rustc: &Path,
+    target: &str,
+) -> Result<(OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCfgSnapshot), OvenRustcError> {
+    let host = rustc_cfg_snapshot(rustc, None)?;
+    let target = rustc_cfg_snapshot(rustc, Some(target))?;
+    Ok((host, target))
+}
+
+/// Build the probe command that yields one cfg snapshot from the compiler's own closure.
+fn rustc_cfg_snapshot_command(rustc: &Path, target: Option<&str>) -> Result<Command, OvenRustcError> {
+    let mut command = rustc_probe_command(rustc);
+    command.args(["--print", "cfg"]);
+    if let Some(target) = target {
+        if target.is_empty() || target.trim() != target {
+            return Err(OvenRustcError::InvalidInput {
+                field: "rustc cfg snapshot target",
+                message: "must be a nonempty trimmed target triple".to_string(),
+            });
+        }
+        command.args(["--target", target]);
+    }
+    Ok(command)
+}
+
+/// Parse one complete `rustc --print cfg` stdout stream into the graph's canonical wire representation.
+///
+/// Rustc emits one bare flag or one JSON-quoted key/value fact per line. The probe normalizes the compiler's order
+/// before graph admission, while duplicate output remains a refusal rather than being silently removed.
+fn parse_rustc_cfg_snapshot(stdout: &str) -> Result<OvenSelectedRustFacetCfgSnapshot, OvenRustcError> {
+    let mut flags = Vec::new();
+    let mut values = BTreeMap::<String, Vec<String>>::new();
+    for line in stdout.lines() {
+        if line.is_empty() || line.trim() != line {
+            return Err(OvenRustcError::InvalidInput {
+                field: "rustc cfg snapshot",
+                message: "contains an empty or noncanonical cfg output line".to_string(),
+            });
+        }
+        if let Some((key, encoded)) = line.split_once('=') {
+            let value = serde_json::from_str::<String>(encoded).map_err(|error| OvenRustcError::InvalidInput {
+                field: "rustc cfg snapshot",
+                message: format!("contains a non-JSON cfg value: {error}"),
+            })?;
+            values.entry(key.to_string()).or_default().push(value);
+        } else {
+            flags.push(line.to_string());
+        }
+    }
+    if flags.is_empty() && values.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "rustc cfg snapshot",
+            message: "reported no cfg facts".to_string(),
+        });
+    }
+    flags.sort();
+    for entries in values.values_mut() {
+        entries.sort();
+    }
+    let snapshot = OvenSelectedRustFacetCfgSnapshot { flags, values };
+    validate_selected_graph_cfg_snapshot(&snapshot, "rustc cfg snapshot").map_err(|error| {
+        OvenRustcError::InvalidInput {
+            field: "rustc cfg snapshot",
+            message: error.to_string(),
+        }
+    })?;
+    Ok(snapshot)
+}
+
 /// Resolve the selected compiler's sysroot without consulting Cargo.
+///
+/// The answer is the sysroot the compiler stands in, not the one an inherited loader path would steer it to; see
+/// [`rustc_probe_command`] for why the two can differ for a copied or store-retained compiler.
 pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     let rustc = verified_regular_file(rustc, "rustc")?;
-    let mut command = Command::new(&rustc);
+    let mut command = rustc_probe_command(&rustc);
     command.args(["--print", "sysroot"]);
-    clear_inherited_cargo_environment(&mut command);
     let output = command.output().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
@@ -436,7 +572,7 @@ pub fn expected_artifacts(manifest: &OvenRustcArtifactManifest) -> Result<BTreeM
 /// Return the exact commit hash reported by `rustc -vV`, used to remap installed `rust-src` checkouts onto the
 /// virtual `/rustc/<commit>` prefix a source-less toolchain embeds in standard-library debug spans.
 pub fn rustc_commit_hash(rustc: &Path) -> Option<String> {
-    let output = Command::new(rustc).arg("-vV").output().ok()?;
+    let output = rustc_probe_command(rustc).arg("-vV").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -445,4 +581,78 @@ pub fn rustc_commit_hash(rustc: &Path) -> Option<String> {
         .lines()
         .find_map(|line| line.strip_prefix("commit-hash: "))
         .map(|hash| hash.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn cfg_snapshot_parser_preserves_complete_canonical_rustc_facts() -> TestResult {
+        let snapshot = parse_rustc_cfg_snapshot(
+            "debug_assertions\ntarget_abi=\"\"\ntarget_arch=\"x86_64\"\ntarget_feature=\"fxsr,sse\"\nunix\n",
+        )?;
+        assert_eq!(snapshot.flags, ["debug_assertions", "unix"]);
+        assert_eq!(snapshot.values["target_abi"], [""]);
+        assert_eq!(snapshot.values["target_arch"], ["x86_64"]);
+        assert_eq!(snapshot.values["target_feature"], ["fxsr,sse"]);
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_snapshot_parser_refuses_incomplete_or_ambiguous_output() {
+        assert!(parse_rustc_cfg_snapshot("").is_err());
+        assert!(parse_rustc_cfg_snapshot("target_arch=x86_64\n").is_err());
+        assert!(parse_rustc_cfg_snapshot("unix\nunix\n").is_err());
+        assert!(parse_rustc_cfg_snapshot(" target_arch=\"x86_64\"\n").is_err());
+    }
+
+    #[test]
+    fn cfg_snapshot_probe_keeps_host_and_cross_target_facts_distinct() -> TestResult {
+        let rustc = resolve_active_rustc()?;
+        let (host, target) = rustc_host_and_target_cfg_snapshots(&rustc, "wasm32-unknown-unknown")?;
+        assert_eq!(host.values["target_arch"], [std::env::consts::ARCH]);
+        assert_eq!(target.values["target_arch"], ["wasm32"]);
+        assert_eq!(target.values["target_os"], ["unknown"]);
+        assert!(rustc_cfg_snapshot(&rustc, Some("not-an-oven-target")).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn probe_command_clears_the_inherited_loader_search_paths() {
+        let command = rustc_probe_command(Path::new("/sealed/rustc"));
+        assert_eq!(command.get_program(), Path::new("/sealed/rustc").as_os_str());
+        assert!(command.get_args().next().is_none());
+        let cleared = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect::<BTreeSet<_>>();
+        for name in INHERITED_LOADER_SEARCH_PATH_VARIABLES {
+            assert!(
+                cleared.contains(name),
+                "`{name}` would steer the probed compiler to another toolchain's driver and sysroot"
+            );
+        }
+        assert!(
+            !cleared.contains("PATH"),
+            "`PATH` locates the compiler on Windows and must survive the probe"
+        );
+    }
+
+    #[test]
+    fn cfg_snapshot_command_uses_only_the_verified_compiler_and_explicit_target() -> TestResult {
+        let command = rustc_cfg_snapshot_command(Path::new("/sealed/rustc"), Some("x86_64-unknown-linux-gnu"))?;
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(arguments, ["--print", "cfg", "--target", "x86_64-unknown-linux-gnu"]);
+        assert!(rustc_cfg_snapshot_command(Path::new("/sealed/rustc"), Some(" ")).is_err());
+        Ok(())
+    }
 }

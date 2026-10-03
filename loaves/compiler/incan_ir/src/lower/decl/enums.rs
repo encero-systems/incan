@@ -6,6 +6,7 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use incan_frontend::ast;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::magic_methods::{self, MagicMethodId};
 
 impl AstLowering {
     /// Lower an enum declaration.
@@ -54,18 +55,23 @@ impl AstLowering {
         // Enums always get Debug and Clone by default. Enums also get PartialEq when their payloads are structurally
         // comparable by default. Payloads that name ordinary models/classes need explicit equality adoption because
         // Rust's derived PartialEq requires every payload type to be comparable, and many payload enums are used only
-        // for pattern matching.
+        // for pattern matching. An enum that defines `__eq__` has that as its `PartialEq` implementation, so it gets no
+        // derived one beside it (#1872); the typechecker's `enum_has_automatic_partial_eq` applies the same rule.
         let debug = derives::as_str(DeriveId::Debug);
         let clone = derives::as_str(DeriveId::Clone);
         let partial_eq = derives::as_str(DeriveId::PartialEq);
-        let can_default_partial_eq = variants.iter().all(enum_variant_payloads_default_partial_eq);
-        if !derives.iter().any(|d| d == debug) {
+        let defines_eq = e
+            .methods
+            .iter()
+            .any(|method| method.node.name == magic_methods::as_str(MagicMethodId::Eq));
+        let can_default_partial_eq = !defines_eq && variants.iter().all(enum_variant_payloads_default_partial_eq);
+        if !derives.iter().any(|d| Self::same_derive(d, debug)) {
             derives.push(debug.to_string());
         }
-        if !derives.iter().any(|d| d == clone) {
+        if !derives.iter().any(|d| Self::same_derive(d, clone)) {
             derives.push(clone.to_string());
         }
-        if can_default_partial_eq && !derives.iter().any(|d| d == partial_eq) {
+        if can_default_partial_eq && !derives.iter().any(|d| Self::same_derive(d, partial_eq)) {
             derives.push(partial_eq.to_string());
         }
 
@@ -83,7 +89,7 @@ impl AstLowering {
                 .collect(),
             value_type,
             derives,
-            visibility: self.map_type_visibility(e.visibility),
+            visibility: self.default_reachable_visibility(&e.name, self.map_type_visibility(e.visibility)),
             type_params: self.lower_type_params(&e.type_params),
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&e.decorators),

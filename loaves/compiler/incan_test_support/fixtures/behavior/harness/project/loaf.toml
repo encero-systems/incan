@@ -1,0 +1,6 @@
+[project]
+name = "behavior_project_fixture"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

@@ -1,0 +1,46 @@
+# behavior: std.datetime exports its error, duration, instant, system time, delta, date, time, datetime and offset types, and a Duration built from seconds reports them
+# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_datetime_prelude_import_snapshot
+# expect-stdout:
+#   90
+
+from std.datetime import DateTimeError, Duration, Instant, SystemTime, TimeDelta, Date, Time, DateTime, FixedOffset
+
+
+def touch_error(error: DateTimeError) -> None:
+    pass
+
+
+def touch_duration(duration: Duration) -> None:
+    pass
+
+
+def touch_instant(instant: Instant) -> None:
+    pass
+
+
+def touch_system_time(time: SystemTime) -> None:
+    pass
+
+
+def touch_delta(delta: TimeDelta) -> None:
+    pass
+
+
+def touch_date(date: Date) -> None:
+    pass
+
+
+def touch_time(time: Time) -> None:
+    pass
+
+
+def touch_datetime(value: DateTime) -> None:
+    pass
+
+
+def touch_offset(offset: FixedOffset) -> None:
+    pass
+
+
+def main() -> None:
+    println(Duration.seconds(90).whole_seconds())

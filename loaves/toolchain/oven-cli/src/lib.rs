@@ -12,20 +12,27 @@ pub mod cli;
 pub mod commands;
 
 pub use cli::{
-    LockArgs, OvenCommand, OvenInteropAdapterArgument, OvenInteropCommand, OvenLegacyCargoCommand,
-    OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand,
-    PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
+    LockArgs, OvenCommand, OvenGateCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
+    OvenLegacyCargoCommand, OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags,
+    OvenStoreCommand, PackageFeatureCliFlags, SdkHandoffCommand, SdkProfileCliFlags, ToolsCommand,
+    ToolsMetadataCommand,
 };
 pub use incan_driver::error::{CliError, CliResult, ExitCode};
 
 /// Run one `oven` command family member.
 pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
     match command {
+        OvenCommand::SdkHandoff { command } => commands::oven_sdk_handoff(command),
+        OvenCommand::RetainSuiteOutput { clock, arguments } => commands::oven_retain_suite_output(clock, &arguments),
+        OvenCommand::ReconcilePartitions { reports, summary } => {
+            commands::oven_reconcile_partitions(&reports, summary.as_deref())
+        }
         OvenCommand::Bake {
             project,
+            target,
             package_features,
             format,
-        } => commands::oven_bake_project(project, package_features.into(), format),
+        } => commands::oven_bake_project(project, target, package_features.into(), format),
         OvenCommand::SdkProviderStoreIdentity { compiler_root } => {
             let identity = incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root(&compiler_root)?;
             println!("{identity}");
@@ -50,6 +57,59 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             output,
             format,
         }),
+        OvenCommand::Harvest {
+            project,
+            target,
+            profile,
+            cargo,
+            rustc,
+            cc,
+            cxx,
+            c_sysroot,
+            cargo_lock,
+            output,
+            format,
+        } => commands::oven_harvest(commands::OvenHarvestCommandOptions {
+            project,
+            target,
+            profile: profile.as_str().to_string(),
+            cargo,
+            rustc,
+            cc,
+            cxx,
+            c_sysroot,
+            cargo_lock,
+            output,
+            format,
+        }),
+        OvenCommand::Inventory {
+            incan_lock,
+            incan_harvest,
+            incql_lock,
+            incql_harvest,
+            output,
+            check,
+        } => commands::oven_inventory(commands::OvenInventoryCommandOptions {
+            incan_lock,
+            incan_harvest,
+            incql_lock,
+            incql_harvest,
+            output,
+            check,
+        }),
+        OvenCommand::Equivalence {
+            cargo_manifest,
+            oven_manifest,
+            output,
+        } => commands::oven_equivalence(&cargo_manifest, &oven_manifest, &output),
+        OvenCommand::Gate { command } => match command {
+            OvenGateCommand::RegistryPin { pin, checkout } => commands::oven_gate_registry_pin(&pin, &checkout),
+            OvenGateCommand::ConsumerGraph {
+                expect,
+                equivalence_report,
+                locks,
+            } => commands::oven_gate_consumer_graph(&expect, &locks, &equivalence_report),
+        },
         OvenCommand::Interop { command } => match command {
             OvenInteropCommand::Bake {
                 project,
@@ -102,6 +162,9 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 generated_project,
                 cargo,
                 rustc,
+                cc,
+                cxx,
+                c_sysroot,
                 domain,
                 store,
                 format,
@@ -110,6 +173,9 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 generated_project,
                 cargo,
                 rustc,
+                cc,
+                cxx,
+                c_sysroot,
                 domain,
                 store: store.into(),
                 format,
@@ -118,26 +184,46 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 compiler_root,
                 output,
                 suite_store,
+                policy_engine_store,
+                policy_engine_identity,
+                policy_engine_target,
                 envelope,
                 sdk_inventory,
                 cargo,
                 rustc,
+                cc,
+                cxx,
+                c_sysroot,
                 max_physical_bytes,
                 max_domain_physical_bytes,
                 max_domain_logical_bytes,
                 format,
+                loaf_registry,
+                loaf_registry_commit,
+                harvest_dir,
+                link_owners,
             } => commands::oven_legacy_cargo_bake_loafs(commands::OvenLoafBakeCommandOptions {
                 compiler_root,
                 output,
                 suite_store,
+                policy_engine_store,
+                policy_engine_identity,
+                policy_engine_target,
                 envelope,
                 sdk_inventory,
                 cargo,
                 rustc,
+                cc,
+                cxx,
+                c_sysroot,
                 max_physical_bytes,
                 max_domain_physical_bytes,
                 max_domain_logical_bytes,
                 format,
+                loaf_registry,
+                loaf_registry_commit,
+                harvest_dir,
+                link_owners,
             }),
         },
         OvenCommand::CompilerLibtests {

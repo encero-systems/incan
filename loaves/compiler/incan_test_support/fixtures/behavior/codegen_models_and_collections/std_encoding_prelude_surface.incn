@@ -1,0 +1,23 @@
+# behavior: std.encoding exports hex, base32 and base64 encoders and its error type, and the three encoders encode the same bytes
+# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_encoding_prelude_import_snapshot
+# expect-stdout:
+#   6869
+#   NBUQ====
+#   aGk=
+
+from std.encoding import base32, base64, hex, EncodingError
+
+
+def touch_error(error: EncodingError) -> None:
+    pass
+
+
+def encode_samples(value: bytes) -> tuple[str, str, str]:
+    return (hex.b16encode(value), base32.b32encode(value), base64.b64encode(value))
+
+
+def main() -> None:
+    samples = encode_samples(b"hi")
+    println(samples[0])
+    println(samples[1])
+    println(samples[2])

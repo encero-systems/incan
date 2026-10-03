@@ -1,0 +1,19 @@
+# behavior: assert ... raises and the imported assert_raises[E] helper both pass when the block raises the named error, so the statements after them run
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_rfc018_assert_raises_to_canonical_helper_call
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_imported_assert_raises_injects_error_type_name
+# expect-stdout:
+#   statement form passed
+#   helper form passed
+
+from std.testing import assert_raises
+
+
+def explode() -> None:
+    _ = int("not a number")
+
+
+def main() -> None:
+    assert explode() raises ValueError, "expected failure"
+    println("statement form passed")
+    assert_raises[ValueError](explode, "expected failure")
+    println("helper form passed")

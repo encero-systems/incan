@@ -1,0 +1,5 @@
+"""Public facade for the exact search profile."""
+
+pub from crate.search.exact import ExactResult, exact_query
+pub from crate.search.models import Nomination
+pub from crate.search.weights import weigh

@@ -86,8 +86,11 @@ fn identities_in_module(path: &Path, source: &str) -> Result<Vec<(StableDeclarat
             continue;
         }
         let signature = signature_of(body_by_identity.get(canonical).copied());
+        let identity = StableDeclarationId::from_canonical(canonical, signature, None).ok_or_else(|| {
+            format!("top-level declaration unexpectedly required nested identity context: {canonical:?}")
+        })?;
         identities.push((
-            StableDeclarationId::from_canonical(canonical, signature),
+            identity,
             declaration.name.clone().unwrap_or_else(|| "<anonymous>".to_string()),
         ));
     }
@@ -286,7 +289,9 @@ fn conformant_digest_covers_the_standard_library() -> TestResult {
                 }
                 let body = bodies.get(canonical).copied();
                 let signature = signature_of(body);
-                let identity = StableDeclarationId::from_canonical(canonical, signature);
+                let identity = StableDeclarationId::from_canonical(canonical, signature, None).ok_or_else(|| {
+                    format!("top-level declaration unexpectedly required nested identity context: {canonical:?}")
+                })?;
                 let body_digest = match body {
                     Some(body) => {
                         bodies_digested += 1;

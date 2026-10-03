@@ -1,0 +1,127 @@
+# behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, also when the same name is the key of an index assignment or part of the receiver's path, a str literal inserted into a static dict is stored as its key, get returns the stored value on a static dict, a local bound to one, a dict parameter and a generic dict, a value read from a dict stays the same when the dict is changed while the value is still read, and type patterns match a union value returned by get
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::dict_get_copies_only_a_kept_value
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::dict_get_is_copied_when_the_dict_changes_while_it_is_read
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::local_dict_get_answers_with_the_stored_value
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::static_collection_arguments_stay_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_dict_changed_while_the_binding_is_read_is_copied
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_dict_get_whose_result_is_only_read_stays_in_place
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_read_only_lookup_matched_with_union_type_patterns_names_the_variants
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_kept_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_again_by_the_generated_code_are_kept_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::dict_get_answers_with_the_stored_value
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_of_a_local_collection_method_are_left_as_written_issue1793
+# expect-stdout:
+#   a=1
+#   b missing
+#   c recorded 2
+#   d listed
+#   2
+#   a counted 3
+#   true
+#   2
+#   4
+#   2
+#   x
+#   3
+#   int:1
+#   str:x
+#   missing
+
+static counts: dict[str, int] = {}
+static names: list[str] = []
+static graph: dict[str, list[str]] = {}
+
+
+def lookup(name: str) -> str:
+    match counts.get(name):
+        Some(value) => return f"{name}={value}"
+        None => return f"{name} missing"
+
+
+def record(name: str) -> str:
+    counts.insert(name, 2)
+    if name in counts:
+        return f"{name} recorded {len(counts)}"
+    return f"{name} lost"
+
+
+def listed(name: str) -> str:
+    names.append(name)
+    if name in names:
+        return f"{name} listed"
+    return f"{name} lost"
+
+
+def count_of(name: str) -> Option[int]:
+    return counts.get(name)
+
+
+def bump(name: str) -> None:
+    counts[name] = counts.get(name).unwrap_or(0) + 1
+
+
+def linked(node: str) -> bool:
+    return graph[node].contains(node)
+
+
+def aliased(name: str) -> int:
+    live = counts
+    found: Option[int] = live.get(name)
+    return found.unwrap_or(0)
+
+
+def size[V](table: dict[str, list[V]], key: str) -> int:
+    match table.get(key):
+        Some(items) => return len(items)
+        None => return 0
+
+
+def pick[V](table: dict[str, V], key: str) -> Option[V]:
+    return table.get(key)
+
+
+def regroup(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            groups["last"] = []
+            return len(items)
+        None => return 0
+
+
+def describe(table: dict[str, int | str], key: str) -> str:
+    match table.get(key):
+        int(number) => return f"int:{number}"
+        str(text) => return f"str:{text}"
+        None => return "missing"
+
+
+def total(table: dict[str, int], keys: list[str]) -> int:
+    mut sum = 0
+    for key in keys:
+        sum += table.get(key).unwrap_or(0)
+    return sum
+
+
+def main() -> None:
+    counts.insert("a", 1)
+    println(lookup("a"))
+    println(lookup("b"))
+    println(record("c"))
+    println(listed("d"))
+    println(count_of("c").unwrap_or(0))
+    bump("a")
+    bump("a")
+    counted = count_of("a").unwrap_or(0)
+    println(f"a counted {counted}")
+    graph.insert("a", ["a", "b"])
+    println(linked("a"))
+    println(aliased("c"))
+    println(total({"x": 1, "y": 3}, ["x", "y", "z"]))
+    println(size({"a": [1, 2]}, "a"))
+    println(pick({"a": "x"}, "a").unwrap_or("none"))
+    mut groups: dict[str, list[int]] = {"a": [1, 2, 3]}
+    println(regroup(groups, "a"))
+    mixed: dict[str, int | str] = {"n": 1, "s": "x"}
+    println(describe(mixed, "n"))
+    println(describe(mixed, "s"))
+    println(describe(mixed, "z"))

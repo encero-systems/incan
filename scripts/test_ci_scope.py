@@ -67,6 +67,12 @@ else:
                 self.assertEqual(self.scope(event="pull_request", files=(path,)),
                                  {"docs_only": "false", "heavy": "false", "reference": "true"})
 
+    def test_generated_test_inventory_page_is_not_docs_only(self):
+        # A hand edit of the generated page must still run the rustdoc-gate job, whose test-inventory check refuses it.
+        self.assertEqual(self.scope(event="pull_request",
+                                    files=("workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md",)),
+                         {"docs_only": "false", "heavy": "false", "reference": "false"})
+
     def test_ordinary_docs_only_pr_stays_docs_only(self):
         self.assertEqual(self.scope(event="pull_request", files=("workspaces/docs-site/docs/index.md",)),
                          {"docs_only": "true", "heavy": "false", "reference": "false"})

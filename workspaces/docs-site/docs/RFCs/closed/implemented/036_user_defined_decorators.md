@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 035 (First-class named function references — **prerequisite**)
     - RFC 005 (Rust interop — foundation for `@rust.extern`)
-    - RFC 023 (Compilable stdlib — where `@route` and `@rust.extern` were first systematised)
+    - RFC 023 (Compilable stdlib — where `@route` and `@rust.extern` were first systematized)
     - RFC 024 (Extensible derive protocol — compiler built-in decorator counterpart)
     - RFC 026 (Superseded — see RFC 043 for Rust trait surface on wrappers)
     - RFC 027 (incan-vocab — library vocabulary registration, enables DSL decorators)
@@ -44,7 +44,7 @@ async def get_user(id: int) -> Json[User]:
 With user-defined decorators, `@app.get` owns the transformation:
 
 ```incan
-# Goal: decorator owns serialisation
+# Goal: decorator owns serialization
 @app.get("/users/{id}")
 async def get_user(id: int) -> User:
     return find_user(id)         # just return the value
@@ -201,7 +201,7 @@ def prefix_log(label: str):
 
 ### Desugaring
 
-Decorator desugaring is a compile-time rewrite that happens after parsing and before type checking. The compiler recognises compiler built-in decorators (`@derive`, `@staticmethod`, `@rust.extern`, etc.) by name first; anything not matching a built-in is treated as a user-defined decorator and desugared.
+Decorator desugaring is a compile-time rewrite that happens after parsing and before type checking. The compiler recognizes compiler built-in decorators (`@derive`, `@staticmethod`, `@rust.extern`, etc.) by name first; anything not matching a built-in is treated as a user-defined decorator and desugared.
 
 **Plain decorator** — `D` is an expression that must resolve to a callable:
 
@@ -337,7 +337,7 @@ If `module_a` decorates with `module_b`'s `app` object, `module_b`'s exported bi
 
 ### Interaction with existing features
 
-**`@derive`, `@staticmethod`, `@classmethod`, `@requires`, `@rust.extern`, `@route`**: Compiler built-ins, unchanged. Recognised by name before desugaring runs.
+**`@derive`, `@staticmethod`, `@classmethod`, `@requires`, `@rust.extern`, `@route`**: Compiler built-ins, unchanged. Recognized by name before desugaring runs.
 
 **Closures**: Unaffected. Ordinary closures and named function references from RFC 035 are both valid decorator arguments as long as they type-check as callables.
 
@@ -357,7 +357,7 @@ Fully additive and non-breaking. Previously-invalid unknown decorators on functi
 
 **Macro system**: More powerful but requires a separate compilation step and a different mental model. Incan targets Python familiarity; decorator semantics are the right level.
 
-**Type-erased decorators**: Simpler to implement, but loses static type safety at decorator boundaries. Rejected in favour of typed decorators with inference.
+**Type-erased decorators**: Simpler to implement, but loses static type safety at decorator boundaries. Rejected in favor of typed decorators with inference.
 
 ## Drawbacks
 

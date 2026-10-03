@@ -1,0 +1,99 @@
+# behavior: the methods std.io and std.fs implement are reached from a program and from a module it imports: BytesIO byte writes and typed writes on a local, a parameter, a field, a list element and a module-qualified construction, typed reads, the same calls through a type parameter's bound, the chunks reader on a BytesIO and on a File, and a File's and a Path's text and byte reads and writes
+# retires: loaves/compiler/incan_driver/src/session.rs::a_consumer_without_an_sdk_inventory_builds_std_io_and_std_fs_trait_calls_from_source_issue1561
+# expect-stdout:
+#   7 2 9 258 2
+#   2 4 513 6
+#   hello|6|3|3|3
+
+import std.io as io
+from std.fs import Path
+from std.io import BinaryRead, BinaryWrite, BytesIO, Endian, IoError, _BytesIO
+from codec import encode_pair
+
+
+class Encoder:
+    pub writer: _BytesIO
+
+    def put(self, item: u16) -> Result[None, IoError]:
+        return self.writer.write(item, Endian.Big)
+
+
+def put_bounded[W with BinaryWrite[u32]](writer: W, item: u32) -> Result[None, IoError]:
+    return writer.write(item, Endian.Big)
+
+
+def get_bounded[R with BinaryRead[u16]](reader: R) -> Result[u16, IoError]:
+    return reader.read(Endian.Little)
+
+
+def encode(writer: _BytesIO, item: u32) -> Result[bytes, IoError]:
+    writer.write(b"ab")?
+    small: u8 = 9
+    writer.write(small, Endian.Little)?
+    writer.write(item, Endian.Big)?
+    return Ok(writer.getvalue())
+
+
+def decode(data: bytes) -> Result[str, IoError]:
+    reader = BytesIO(data)
+    head = reader.read_exact(2)?
+    small: u8 = reader.read(Endian.Little)?
+    item: u32 = reader.read(Endian.Big)?
+    return Ok(f"{len(head)} {small} {item}")
+
+
+def chunk_count(data: bytes) -> Result[int, IoError]:
+    mut count = 0
+    for chunk in BytesIO(data).chunks(4)?:
+        count = count + 1
+    return Ok(count)
+
+
+def round_trip() -> Result[str, IoError]:
+    data = encode(BytesIO(), 258)?
+    decoded = decode(data)?
+    chunks = chunk_count(data)?
+    return Ok(f"{len(data)} {decoded} {chunks}")
+
+
+def other_receivers() -> Result[str, IoError]:
+    encoder = Encoder(writer=BytesIO())
+    encoder.put(772)?
+    stream = io.BytesIO()
+    put_bounded(stream, 5)?
+    writers = [BytesIO()]
+    narrow: u16 = 513
+    writers[0].write(narrow, Endian.Little)?
+    widened = get_bounded(BytesIO(writers[0].getvalue()))?
+    pair = encode_pair(7, 9)?
+    return Ok(f"{len(encoder.writer.getvalue())} {len(stream.getvalue())} {widened} {len(pair)}")
+
+
+def files() -> Result[str, IoError]:
+    path = Path("data.txt")
+    out = path.open("w")?
+    out.write("hello")?
+    out.write_bytes(b" world")?
+    out.flush()?
+    text = path.open("r")?
+    head = text.read(5)?
+    rest = text.read_bytes(-1)?
+    exact = path.open("rb")?.read_exact(3)?
+    mut chunks = 0
+    for chunk in path.open("rb")?.chunks(4)?:
+        chunks = chunks + 1
+    raw = Path("data.bin")
+    raw.write_bytes(b"xyz")?
+    return Ok(f"{head}|{len(rest)}|{len(exact)}|{chunks}|{len(raw.read_bytes()?)}")
+
+
+def report(outcome: Result[str, IoError]) -> None:
+    match outcome:
+        Ok(text) => println(text)
+        Err(err) => println(err.message())
+
+
+def main() -> None:
+    report(round_trip())
+    report(other_receivers())
+    report(files())

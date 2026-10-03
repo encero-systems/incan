@@ -1,0 +1,9 @@
+# behavior: printing the error an or_else closure's Ok leaves open, which is None where the function returns no Result, is refused
+# expect-diagnostic: INCAN-T0103
+
+def main() -> None:
+    e: Result[int, str] = Err("abc")
+    r = e.or_else((m) => Ok(1))
+    match r:
+        Ok(v) => println(v)
+        Err(m) => println(m)

@@ -163,6 +163,12 @@ def main() -> None:
     data = fetch_data()?  # error: can't use ? in a non-Result function
 ```
 
+### Fallible iteration
+
+A fallible source, a `FallibleIterator[T, E]`, can fail while a loop asks it for its next item. The loop-header `?` is required because of that: `for row in rows?:` propagates the first polling error through the enclosing function's existing `Result` return type. It does not retry, discard, or turn errors into ordinary exhaustion.
+
+Stream creation and stream polling are separate failure boundaries. Unwrap the `Result` that creates a stream into a binding before starting a fallible loop over it; the combined spelling `for row in open_rows(path)?:` is refused when `open_rows` returns a `Result` containing a fallible iterator. The rules are in [Collection protocols](../reference/stdlib_traits/collection_protocols.md#fallibleiterator-fallible-iteration).
+
 ## Structured error types
 
 Prefer structured errors over strings so callers can pattern match on failure modes and carry context.
@@ -176,6 +182,25 @@ enum ProcessError:
 def process() -> Result[Data, ProcessError]:
     return Err(ProcessError.NotFound("user"))
 ```
+
+### How an error displays
+
+An error type's `message()` is what a reader sees. Displaying an error value, in an f-string, through `str(...)` or with `print`, shows its `message()` unless the type defines a `Display` of its own with `__str__`. The same rule holds where the concrete type is not known yet: a value of a type parameter bounded by `Error`, and `self` inside a default method of a trait that extends `Error`, both display their `message()`, and an adopter's own `__str__` still wins.
+
+```incan
+from std.traits.error import Error
+
+def describe[E with Error](error: E) -> str:
+    return f"failed: {error}"        # shows the error's message()
+
+trait Reported with Error:
+    def report(self) -> str:
+        return f"reported: {self}"   # the adopter's __str__ if it has one, otherwise its message()
+```
+
+See [Error trait](../reference/stdlib_traits/error.md) for the trait's methods.
+
+A `__str__` is not the only `Display` an error type can have of its own. An enum that declares values, such as `enum Code(str)`, displays each variant's value even when it adopts `Error`, and so does a type that adopts `Display` or takes a Rust `Display` derive; `@derive(Display)` provides none. The full rule is in [Displaying an error](../reference/stdlib_traits/error.md#displaying-an-error).
 
 ## Common helpers
 

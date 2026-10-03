@@ -1,0 +1,6 @@
+# behavior: a type annotation declares one binding, so an annotated chained assignment is refused rather than dropping the annotation
+# expect-diagnostic: INCAN-P0001
+
+def main() -> None:
+    x: Option[int] = y = 5
+    println(y)

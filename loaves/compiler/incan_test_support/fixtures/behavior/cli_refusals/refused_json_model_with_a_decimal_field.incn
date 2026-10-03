@@ -1,0 +1,13 @@
+# behavior: a model that derives json with a decimal field is refused at check time, since decimal has no JSON form
+# expect-diagnostic: INCAN-T0001
+
+from std.serde import json
+
+
+@derive(json)
+model Invoice:
+    amount: decimal[10, 2]
+
+
+def main() -> None:
+    println(Invoice(amount=1.50d).to_json())

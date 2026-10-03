@@ -1,0 +1,7 @@
+pub model Extent:
+    pub n: int
+
+
+pub trait Measured:
+    def extent(self) -> Extent:
+        return Extent(n=3)

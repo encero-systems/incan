@@ -1,0 +1,7 @@
+# behavior: an empty list literal assigned to a binding whose union has two list members is refused, since nothing says which member it is
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    mut values: list[int] | list[str] = [1]
+    values = []
+    println("unreachable")

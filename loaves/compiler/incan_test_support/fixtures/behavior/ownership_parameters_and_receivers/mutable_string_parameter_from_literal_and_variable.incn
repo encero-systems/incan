@@ -1,0 +1,17 @@
+# behavior: a mut str parameter accepts a literal and a variable, the callee reads the text it was given, and the caller's variable is unchanged afterwards
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_keeps_string_conversion_for_mutable_string_param_issue244
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_mutable_string_literal_materializes_then_reborrows
+# expect-stdout:
+#   hello!
+#   name!
+#   name
+
+def bump(mut text: str) -> None:
+    println(text + "!")
+
+
+def main() -> None:
+    bump("hello")
+    mut name = "name"
+    bump(name)
+    println(name)

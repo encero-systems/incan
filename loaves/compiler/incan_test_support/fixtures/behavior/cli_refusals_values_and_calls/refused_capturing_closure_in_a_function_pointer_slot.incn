@@ -1,0 +1,28 @@
+# behavior: a closure that captures local values is refused at check time where a function type holds only a function or a closure that captures nothing: a list element, a field, a parameter its function keeps, a parameter of a callable value, and the return of a function with two returns
+# expect-diagnostic: INCAN-T0001
+
+model Op:
+    step: (int) -> int
+
+
+def keep(f: (int) -> int) -> list[(int) -> int]:
+    return [f]
+
+
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+
+def pick(n: int, flag: bool) -> (int) -> int:
+    if flag:
+        return (x) => x + n
+    return (x) => x - n
+
+
+def main() -> None:
+    n = 10
+    fs: list[(int) -> int] = [(x) => x + n]
+    op = Op(step=(x) => x + n)
+    kept = keep((x) => x + n)
+    alias = apply
+    println(alias((x) => x + n, 1))

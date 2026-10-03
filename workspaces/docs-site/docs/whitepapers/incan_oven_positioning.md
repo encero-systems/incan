@@ -34,7 +34,7 @@ review_after: "After Incan 0.5"
 
 ## Abstract
 
-Incan should not treat Cargo as the permanent centre of its developer experience. Cargo remains an important part of Rust's history and ecosystem, but Incan needs a project system that understands more than Rust crates: Incan source, Rust source, typed scripts and actions, semantic facts, target constraints, published artifacts, policy, provenance, live editable models, and long-lived interactive sessions. This paper proposes a direction for that system: a Cargo-free Incan 1.0 SDK, built around one inspectable project graph and a native build planner that can drive Rust compilation without shelling out to Cargo. We suggest **Oven** as a working name for that toolchain. The name is optional; the architectural promise is the point.
+Incan should not treat Cargo as the permanent center of its developer experience. Cargo remains an important part of Rust's history and ecosystem, but Incan needs a project system that understands more than Rust crates: Incan source, Rust source, typed scripts and actions, semantic facts, target constraints, published artifacts, policy, provenance, live editable models, and long-lived interactive sessions. This paper proposes a direction for that system: a Cargo-free Incan 1.0 SDK, built around one inspectable project graph and a native build planner that can drive Rust compilation without shelling out to Cargo. We suggest **Oven** as a working name for that toolchain. The name is optional; the architectural promise is the point.
 
 The central user-facing idea is simple: ordinary Rust projects should be able to enter an Incan-managed workflow without being rewritten, while Incan projects gain a toolchain designed for persistent, interactive work. Instead of downloading raw package source and discovering the build cost only when a command is run, `incan.pub` can publish ready-to-use, target-compatible artifacts. We suggest calling those artifacts **Loaves**: verified, provenance-carrying build products that arrive ready to use. Local compilation remains possible, but it should be the fallback—not the surprise first action in a notebook or data-rendering session.
 
@@ -62,7 +62,7 @@ We suggest **Oven** as the working name for Incan's toolchain equivalent to Carg
 
 > Incan Oven is a drop-in replacement for Rust's Cargo with a fundamentally different philosophy. Instead of raw Cargo crates, Oven deals in Loaves that arrive ready to use.
 
-"Drop-in" needs a precise reading. It means a normal Rust project should be able to be adopted by an Incan-managed workflow without a source rewrite or a bespoke parallel ecosystem. It does not mean emulating every Cargo command-line flag, implementation quirk, or undocumented cache behaviour forever. Compatibility is a project and dependency boundary; the purpose is not Cargo impersonation.
+"Drop-in" needs a precise reading. It means a normal Rust project should be able to be adopted by an Incan-managed workflow without a source rewrite or a bespoke parallel ecosystem. It does not mean emulating every Cargo command-line flag, implementation quirk, or undocumented cache behavior forever. Compatibility is a project and dependency boundary; the purpose is not Cargo impersonation.
 
 The terms separate responsibilities cleanly:
 
@@ -104,7 +104,7 @@ Oven should adopt the parts of Rust that make the ecosystem interoperable, and r
 
 The adoption path should begin conservatively. An existing Rust repository keeps its Rust source and can keep its `Cargo.toml` and `Cargo.lock` intact. Oven reads them as declared compatibility inputs, resolves the equivalent project graph, and records an Incan-owned lock and receipt. No source rewrite, wrapper crate, or parallel package publishing system should be needed merely to adopt Incan. Over time, a project can express additional Incan packages, typed actions, capabilities, policy, and notebook sessions in that same graph.
 
-This also gives `loaf.toml` and `oven.lock` a clearer destination. They should evolve from a manifest plus embedded Cargo lock payload into Incan's native declaration of project intent and resolved identity. Importing existing Cargo metadata is part of compatibility; materialising a generated Cargo project is not the end state.
+This also gives `loaf.toml` and `oven.lock` a clearer destination. They should evolve from a manifest plus embedded Cargo lock payload into Incan's native declaration of project intent and resolved identity. Importing existing Cargo metadata is part of compatibility; materializing a generated Cargo project is not the end state.
 
 ### The hard Rust boundary
 
@@ -133,7 +133,7 @@ The most visible consequence of this model is what happens to expensive dependen
 
 For a library with a costly native or Rust dependency closure, the best experience is not a clever local cache that eventually becomes warm. The best experience is that `incan.pub` has already prepared and verified the compatible Loaf. A consumer should avoid an unplanned local compilation when a compatible Loaf exists, rather than discovering a multi-minute build only when they try to use the library.
 
-That changes the division of labour:
+That changes the division of labor:
 
 - publishers bake, verify, and attest compatible Loaves;
 - `incan.pub` distributes them against explicit target and toolchain identities;
@@ -144,7 +144,7 @@ This does not eliminate source distributions, local compilation, cross-compilati
 
 The trust decision belongs to the receiving project. A Loaf must bind to declared source and build inputs, carry verifiable publisher or rebuild evidence, and remain subject to the project's trust policy. If an artifact is withdrawn or found invalid, Oven must be able to explain which projects selected it and refuse, replace, or rebuild it according to policy. Prebuilt distribution removes surprise compilation; it cannot remove provenance or revocation responsibility.
 
-The registry side of this division of labour, with measured cold-build costs on two hosts, is argued in [Ship the loaf, not the recipe](incan_pub_ship_the_loaf.md); the contract is RFC 125.
+The registry side of this division of labor, with measured cold-build costs on two hosts, is argued in [Ship the loaf, not the recipe](incan_pub_ship_the_loaf.md); the contract is RFC 125.
 
 The cache-identity, lifecycle, and CI-safety principles explored in current work remain valuable. Under this direction, they become the substrate for managed build units and Loaves rather than a permanent way to manage Cargo target directories.
 
@@ -165,13 +165,13 @@ That requires more than caching. A valid interactive session should:
 - make cell diagnostics, artifacts, and provenance inspectable;
 - surface preparation work intentionally, instead of hiding it behind an apparently small command.
 
-The session should be exposed through a UI-neutral service contract rather than tied to one notebook product. Notebook, IDE, rendering, and application clients need the same persistent execution surface: typed values and artifacts, incremental updates, diagnostics, cancellation, resource limits, and a clear boundary between a transient interaction and a durable project mutation. Persistence is an optimisation a client can use, not a tax every command must pay: a small script or ephemeral notebook should start cleanly and retain only the state its workflow justifies.
+The session should be exposed through a UI-neutral service contract rather than tied to one notebook product. Notebook, IDE, rendering, and application clients need the same persistent execution surface: typed values and artifacts, incremental updates, diagnostics, cancellation, resource limits, and a clear boundary between a transient interaction and a durable project mutation. Persistence is an optimization a client can use, not a tax every command must pay: a small script or ephemeral notebook should start cleanly and retain only the state its workflow justifies.
 
 The desired experience is straightforward: opening a notebook or rerunning an unchanged cell should not trigger dependency resolution or compilation just because the execution boundary is a new command. A small query edit should not discard a valid DataFusion graph. A dependency, feature, target, or toolchain change should invalidate the appropriate state—and say so.
 
 ### Notebooks are a general live environment, not just a faster terminal
 
-An Incan notebook should be a general live environment for creating plots, exploring data, running models, training or evaluating machine-learning workflows, building operational interfaces, and editing domain models. It should retain the immediate, exploratory character people expect from notebooks while keeping the typed project model, provenance, and deployment path of an Incan system. A published Loaf can make a substantial backend—such as a compute engine, visualisation stack, or model runtime—available without turning first use into an unexpected compilation event.
+An Incan notebook should be a general live environment for creating plots, exploring data, running models, training or evaluating machine-learning workflows, building operational interfaces, and editing domain models. It should retain the immediate, exploratory character people expect from notebooks while keeping the typed project model, provenance, and deployment path of an Incan system. A published Loaf can make a substantial backend—such as a compute engine, visualization stack, or model runtime—available without turning first use into an unexpected compilation event.
 
 The notebook session becomes an incremental, typed programming environment: it holds live values and model graphs, typechecks and evaluates changes as they are made, renders plots and interfaces from the current state, and preserves the link between an interaction and the source-level change that produced it. A governance UI is one important example. It should not need a second YAML-shaped configuration language that is later translated into the actual project model: a user can inspect and edit a typed Incan governance model, see dependent views update, and use that same model in validation, policy, automation, and deployment.
 
@@ -239,7 +239,7 @@ Several boundaries keep the proposal credible.
 
 - It does not claim a finished Oven implementation today.
 - It does not claim measured IncQL or DataFusion speedups before the relevant dependency graph and session matrix have been benchmarked.
-- It does not require every Cargo behaviour to be reproduced exactly.
+- It does not require every Cargo behavior to be reproduced exactly.
 - It does not imply that all builds can be precompiled for every target or that local compilation disappears.
 - It does not turn `incan.pub` into an opaque binary-only distribution channel; source, provenance, policy, and reproducibility remain first-class.
 - It does not make a registry the authority over a local project. Local projects retain control over dependency selection, mutation, and trust policy.

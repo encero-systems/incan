@@ -1,0 +1,22 @@
+# behavior: explicit with-bounds on type parameters accept arguments of types that satisfy them (RFC 023)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_bound_explicit_codegen
+# expect-stdout:
+#   1
+#   pair
+#   ok
+
+# RFC 023: Explicit `with` bounds on type parameters
+
+
+def identity[T with Clone](value: T) -> T:
+    return value
+
+
+def format_pair[T with (Eq, Debug)](a: T, b: T) -> None:
+    println("pair")
+
+
+def main() -> None:
+    println(identity(1))
+    format_pair(1, 2)
+    println(identity("ok"))

@@ -1,0 +1,14 @@
+# behavior: a user module's imported model named Json keeps and exposes its own value field
+# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::an_imported_json_keeps_its_value_field_issue1768
+# expect-stdout:
+#   5
+
+from models import Json
+
+
+def read(wrapper: Json[int]) -> int:
+    return wrapper.value
+
+
+def main() -> None:
+    println(read(Json[int](value=5)))

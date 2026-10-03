@@ -186,13 +186,19 @@ fn main() {
     let left = vec![1.0, 2.0];
     let right = vec![3.0, 4.0];
     let values = vec!["beta".to_string(), "alpha".to_string(), "beta".to_string()];
-    let _ = println!("{}", score_pairs(left.clone(), right.clone()));
-    let _ = println!("{}", score_pairs_builtin(left.clone(), right.clone()));
     let _ = println!(
-        "{}", score_iterator_pairs(crate ::__incan_std::derives::collection::ListIterator
-        { items : (left), index : 0i64 }, crate
-        ::__incan_std::derives::collection::ListIterator { items : (right), index : 0i64
-        })
+        "{}", incan_std_core::strings::float_to_string(score_pairs(left.clone(), right
+        .clone()))
+    );
+    let _ = println!(
+        "{}", incan_std_core::strings::float_to_string(score_pairs_builtin(left.clone(),
+        right.clone()))
+    );
+    let _ = println!(
+        "{}", incan_std_core::strings::float_to_string(score_iterator_pairs(crate
+        ::__incan_std::derives::collection::ListIterator { items : (left), index : 0i64
+        }, crate ::__incan_std::derives::collection::ListIterator { items : (right),
+        index : 0i64 }))
     );
     let _ = print_prefix(values.clone());
     let _ = println!(

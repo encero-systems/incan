@@ -1,0 +1,43 @@
+# behavior: a mut parameter the callee only reads, through a match binding, a plain-self trait method or a method on Self in a trait default, accepts an immutable binding and leaves it unchanged
+# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::parameter_read_through_a_pattern_or_a_trait_method_takes_a_copy_issue1561
+# expect-stdout:
+#   2
+#   6
+#   true
+#   6
+
+trait Peek:
+    def peek(self) -> int
+
+    def same(self, mut other: Self) -> bool:
+        return self.peek() == other.peek()
+
+    def doubled(self) -> int:
+        return self.peek() * 2
+
+
+class Counter with Peek:
+    n: int
+
+    def peek(self) -> int:
+        return self.n
+
+
+def total(mut box: Option[list[int]]) -> int:
+    match box:
+        Some(xs) => return len(xs)
+        None => return 0
+
+
+def twice(mut c: Counter) -> int:
+    return c.doubled()
+
+
+def main() -> None:
+    box = Some([0, 1])
+    println(total(box))
+    a = Counter(n=3)
+    b = Counter(n=3)
+    println(twice(a))
+    println(a.same(b))
+    println(a.peek() + b.peek())

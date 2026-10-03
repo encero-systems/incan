@@ -1,0 +1,26 @@
+# behavior: a stored partial over a model constructor applies its preset and leaves every other field to the declaration's own defaults or the call's arguments (#701)
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::source_partial_without_callable_snapshot_defers_to_canonical_defaults_issue701
+# expect-stdout:
+#   registry/alpha:3
+#   registry/beta:1
+#   custom/gamma:1
+
+const DEFAULT_NAMESPACE: str = "registry"
+
+
+model Spec:
+    name: str
+    namespace: str = "unset"
+    replicas: int = 1
+
+    def describe(self) -> str:
+        return f"{self.namespace}/{self.name}:{self.replicas}"
+
+
+spec = partial Spec(namespace=DEFAULT_NAMESPACE)
+
+
+def main() -> None:
+    println(spec(name="alpha", replicas=3).describe())
+    println(spec(name="beta").describe())
+    println(Spec(name="gamma", namespace="custom").describe())

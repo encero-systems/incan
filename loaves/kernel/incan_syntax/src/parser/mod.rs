@@ -34,7 +34,9 @@ include!("decl/mod.rs");
 include!("types.rs");
 include!("stmts.rs");
 include!("expr.rs");
+include!("prefix_and_power.rs");
 include!("embedded/mod.rs");
 include!("util.rs");
 include!("api.rs");
-include!("tests.rs");
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,30 @@
+# behavior: appending through a mut list parameter, directly and through a helper that forwards the parameter twice, changes the caller's list, which is then searched, indexed and measured in place
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_skips_clone_for_mutable_list_param_issue244
+# retires: loaves/compiler/incan_emit/src/ownership.rs::mutable_list_param_requires_rust_mut_borrow
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_mutable_list_param_reborrows_without_value_clone
+# retires: loaves/compiler/incan_emit/src/ownership.rs::list_shared_receiver_borrows_plain_list
+# expect-stdout:
+#   [1, 2, 3]
+#   [1, 2, 3, 3, 3]
+#   true
+#   2
+#   5
+
+def push_three(mut items: list[int]) -> None:
+    items.append(3)
+
+
+def push_twice(mut items: list[int]) -> None:
+    push_three(items)
+    push_three(items)
+
+
+def main() -> None:
+    mut items = [1, 2]
+    push_three(items)
+    println(f"{items:?}")
+    push_twice(items)
+    println(f"{items:?}")
+    println(3 in items)
+    println(items.index(3))
+    println(len(items))

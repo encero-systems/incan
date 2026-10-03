@@ -270,7 +270,7 @@ Minimal. The change is small and well-scoped. The main implementation risk was c
 
 ## Design Decisions
 
-1. **Generic function references** (`map(my_generic_func, items)` when `my_generic_func` is generic): **Deferred** to a follow-up RFC on inference/monomorphisation. **Shipped behaviour (v0.2):** using a generic function name in value position is a type error with hint to wrap in a closure (e.g. `(x) => id(x)`).
+1. **Generic function references** (`map(my_generic_func, items)` when `my_generic_func` is generic): **Deferred** to a follow-up RFC on inference/monomorphization. **Shipped behavior (v0.2):** using a generic function name in value position is a type error with hint to wrap in a closure (e.g. `(x) => id(x)`).
 
 2. **Async function references** — surface type for `async def foo()` used as a value: **Decision for Phase 1 / v0.2:** keep the Incan signature shape aligned with sync functions (`() -> T` at the Incan type level); treat async as calling-convention detail. **Follow-up:** revisit when async traits or async fn pointers need explicit `Future` in the surface type system.
 
@@ -283,6 +283,6 @@ Minimal. The change is small and well-scoped. The main implementation risk was c
          return items.map(f)
      ```
 
-   - **Inline bound inside `Callable` (`Callable[T with Loggable, str]`):** **Deferred** to a separate RFC on higher-rank polymorphism / generic callable types (quantification, inference, monomorphisation).
+   - **Inline bound inside `Callable` (`Callable[T with Loggable, str]`):** **Deferred** to a separate RFC on higher-rank polymorphism / generic callable types (quantification, inference, monomorphization).
 
 --8<-- "_snippets/rfcs_refs.md"

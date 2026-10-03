@@ -1,0 +1,16 @@
+# behavior: a closure that captures local values, or a local holding one, is refused at check time as the callback of an iterator terminal and of a generator's own map and filter, which are standard-library methods
+# expect-diagnostic: INCAN-T0001
+
+
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+
+
+def main() -> None:
+    n = 2
+    items = [1, 2, 3]
+    println(items.iter().any((x) => x > n))
+    at_least = (x) => x >= n
+    println(items.iter().all(at_least))
+    println(numbers().map((x) => x * n).collect())

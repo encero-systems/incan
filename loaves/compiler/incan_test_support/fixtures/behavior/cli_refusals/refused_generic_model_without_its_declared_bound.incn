@@ -1,0 +1,13 @@
+# behavior: a generic function taking a model whose type parameter declares a bound, without declaring that bound on its own type parameter, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Stream[R with Clone]:
+    item: R
+
+
+def consume[T](stream: Stream[T]) -> int:
+    return 1
+
+
+def main() -> None:
+    println(consume(Stream(item=7)))

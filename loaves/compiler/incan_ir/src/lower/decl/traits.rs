@@ -6,10 +6,11 @@ use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::methods::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::traits as core_traits;
 use incan_lang::lang::traits::TraitId;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::{callables, stdlib, trait_bounds};
 
 use super::super::super::Mutability;
-use super::super::super::decl::{FunctionParam, FunctionParamDefault, IrFunction, IrTrait, Visibility};
+use super::super::super::decl::{FunctionParam, FunctionParamDefault, IrFunction, IrTrait, IrTraitBound, Visibility};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
@@ -18,6 +19,29 @@ use incan_frontend::ast;
 use incan_frontend::symbols::ResolvedType;
 
 impl AstLowering {
+    /// Return whether a transitive supertrait owns the same source method slot.
+    fn supertrait_declares_method(&self, trait_decl: &ast::TraitDecl, method: &str) -> bool {
+        /// Whether `trait_name` or one of its supertraits, at any depth, declares `method`, visiting each trait once.
+        fn visit(lowering: &AstLowering, trait_name: &str, method: &str, seen: &mut HashSet<String>) -> bool {
+            if !seen.insert(trait_name.to_string()) {
+                return false;
+            }
+            let Some(parent) = lowering.trait_decls.get(trait_name) else {
+                return false;
+            };
+            parent.methods.iter().any(|candidate| candidate.node.name == method)
+                || parent
+                    .traits
+                    .iter()
+                    .any(|bound| visit(lowering, &bound.node.name, method, seen))
+        }
+
+        trait_decl
+            .traits
+            .iter()
+            .any(|bound| visit(self, &bound.node.name, method, &mut HashSet::new()))
+    }
+
     /// Resolve a trait declaration to the canonical source callable role owned by `std.traits.callable`.
     ///
     /// SDK component projects compile the contents of the public `std` namespace as crate-local module paths. Restore
@@ -47,16 +71,41 @@ impl AstLowering {
     }
 
     /// Map a supertrait name and resolved type arguments to IR for Rust trait bounds (RFC 042).
-    fn lower_supertrait_from_resolved(&self, trait_name: &str, type_args: &[ResolvedType]) -> (String, Vec<IrType>) {
-        let path = self.supertrait_rust_path(trait_name);
+    fn lower_supertrait_from_resolved(
+        &self,
+        trait_name: &str,
+        type_args: &[ResolvedType],
+    ) -> Vec<(String, Vec<IrType>)> {
         let ir_args = type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect();
-        (path, ir_args)
+        self.lower_supertrait(trait_name, ir_args)
     }
 
-    /// Preserve an imported Rust supertrait's absolute path across aliases and dependency-module lowering.
+    /// Lower one supertrait to the Rust supertraits it stands for: the trait itself, then the serde capability a
+    /// `std.serde.json` protocol trait carries beside it wherever it is required (#1845).
+    ///
+    /// `trait Loggable with Serialize` promises its adopters' values to `json_stringify` as well as `to_json()`, as a
+    /// `T with Serialize` bound does, so the Rust trait requires both.
+    fn lower_supertrait(&self, trait_name: &str, type_args: Vec<IrType>) -> Vec<(String, Vec<IrType>)> {
+        let mut lowered = vec![(self.supertrait_rust_path(trait_name), type_args)];
+        if let Some(capability) = self.json_protocol_capability_bound(trait_name) {
+            lowered.push((capability.trait_path, Vec::new()));
+        }
+        lowered
+    }
+
+    /// Return the Rust path of one supertrait: an imported Rust trait's absolute path, the Rust trait a builtin maps
+    /// to, or the trait as written.
+    ///
+    /// A `std.serde.json` protocol trait, recognized by its resolved identity under any spelling, lowers as written,
+    /// as its `with` bound does ([`Self::rust_mapped_builtin_trait_path`]): the bare `Serialize` used to lower to
+    /// `serde::Serialize` by its spelling alone, which does not provide the `to_json()` a call through the subtrait
+    /// dispatches to (#1845). Its serde capability is added beside it by [`Self::lower_supertrait`].
     fn supertrait_rust_path(&self, trait_name: &str) -> String {
         if let Some(path) = self.rust_import_aliases.get(trait_name) {
             return format!("::{}", path.join("::"));
+        }
+        if self.stdlib_json_protocol_for_adopted_trait(trait_name).is_some() {
+            return trait_name.to_string();
         }
         trait_bounds::incan_to_rust(trait_name)
             .map(str::to_string)
@@ -71,17 +120,52 @@ impl AstLowering {
     ) -> Vec<(String, Vec<IrType>)> {
         t.traits
             .iter()
-            .map(|bound| {
-                let path = self.supertrait_rust_path(&bound.node.name);
+            .flat_map(|bound| {
                 let ir_args = bound
                     .node
                     .type_args
                     .iter()
                     .map(|ty| self.lower_type_with_type_params(&ty.node, Some(type_param_names)))
                     .collect();
-                (path, ir_args)
+                self.lower_supertrait(&bound.node.name, ir_args)
             })
             .collect()
+    }
+
+    /// Return the method type parameters whose values a trait default body copies out of a list or dict (#1756).
+    ///
+    /// The Rust trait slot carries no body (defaults are expanded into each adopting implementation), so its generics
+    /// come from the declaration alone. A default that reads `items[0]` or slices `items[1:]` on a `list[K]`, or reads
+    /// `table[key]` on a `dict[str, V]`, copies a value of that type parameter, and each expansion states `Clone` for
+    /// it; the slot states it too, so an expanded method is never stricter than the slot it fills, wherever the
+    /// adopter lives.
+    fn default_body_copied_type_params(
+        &self,
+        body: &[ast::Spanned<ast::Statement>],
+        method_type_params: &HashSet<&str>,
+    ) -> HashSet<String> {
+        let mut copied = HashSet::new();
+        if method_type_params.is_empty() {
+            return copied;
+        }
+        let Some(info) = self.type_info.as_ref() else {
+            return copied;
+        };
+        incan_frontend::ast_walk::any_expr_in_body(body, |expr| {
+            let (base, slice) = match expr {
+                ast::Expr::Index(base, _) => (base, false),
+                ast::Expr::Slice(base, _) => (base, true),
+                _ => return false,
+            };
+            if let Some(element) = info
+                .expr_type(base.span)
+                .and_then(|base_ty| copied_collection_element(base_ty, slice))
+            {
+                collect_type_param_mentions(element, method_type_params, &mut copied);
+            }
+            false
+        });
+        copied
     }
 
     /// Lower a trait declaration.
@@ -95,6 +179,10 @@ impl AstLowering {
             ast::Span::default(),
             true,
         )?;
+        let trait_methods = trait_methods
+            .into_iter()
+            .filter(|method| !self.supertrait_declares_method(t, &method.node.name))
+            .collect::<Vec<_>>();
         let mut methods: Vec<IrFunction> = trait_methods
             .iter()
             .map(|m| {
@@ -151,7 +239,7 @@ impl AstLowering {
                         Ok(FunctionParam {
                             name: p.node.name.clone(),
                             ty,
-                            mutability: self.lower_parameter_mutability(p.node.is_mut, &p.node.ty.node),
+                            mutability: self.trait_slot_parameter_mutability(p),
                             is_self: false,
                             kind: p.node.kind,
                             default: self
@@ -172,7 +260,22 @@ impl AstLowering {
 
                 self.pop_scope();
 
-                let mut all_type_params = self.lower_type_params(&m.node.type_params);
+                let mut all_type_params = self.lower_callable_type_params(&m.node.type_params);
+                if let Some(default_body) = &m.node.body {
+                    let copied = self.default_body_copied_type_params(default_body, &method_type_param_names);
+                    for type_param in all_type_params
+                        .iter_mut()
+                        .filter(|type_param| copied.contains(type_param.name.as_str()))
+                    {
+                        if !type_param
+                            .bounds
+                            .iter()
+                            .any(|bound| bound.trait_path == trait_bounds::rust::CLONE)
+                        {
+                            type_param.bounds.push(IrTraitBound::simple(trait_bounds::rust::CLONE));
+                        }
+                    }
+                }
                 all_type_params.extend(hidden_type_params);
 
                 Ok(IrFunction {
@@ -198,6 +301,13 @@ impl AstLowering {
                     || method.name == iterator_methods::as_str(IteratorMethodId::Sum)
             });
         }
+        // An adopter's `__eq__` is its `PartialEq::eq` (the backend implements `PartialEq` from it and keeps it out of
+        // every other impl), so a trait's `__eq__` is no slot of its own: the trait requires `PartialEq` instead, and
+        // a call of `__eq__` lowers to `==` (#1561).
+        let declares_eq = methods
+            .iter()
+            .any(|method| magic_methods::from_str(&method.name) == Some(MagicMethodId::Eq));
+        methods.retain(|method| magic_methods::from_str(&method.name) != Some(MagicMethodId::Eq));
 
         for property in &t.properties {
             methods.push(self.lower_property_with_type_params(
@@ -207,17 +317,24 @@ impl AstLowering {
             )?);
         }
 
-        let supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
+        let mut supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
             .type_info
             .as_ref()
             .and_then(|info| info.traits.direct_supertraits.get(&t.name))
         {
             ti.iter()
-                .map(|(name, args)| self.lower_supertrait_from_resolved(name, args))
+                .flat_map(|(name, args)| self.lower_supertrait_from_resolved(name, args))
                 .collect()
         } else {
             self.lower_supertraits_from_ast(t, &type_param_names)
         };
+        if declares_eq
+            && !supertraits
+                .iter()
+                .any(|(path, _)| path == trait_bounds::rust::PARTIAL_EQ)
+        {
+            supertraits.push((trait_bounds::rust::PARTIAL_EQ.to_string(), Vec::new()));
+        }
 
         Ok(IrTrait {
             name: t.name.clone(),
@@ -228,6 +345,46 @@ impl AstLowering {
             methods,
             visibility: Self::map_visibility(t.visibility),
         })
+    }
+}
+
+/// Return the element an index read (or, with `slice`, a slice) of a list or dict of this type copies out.
+///
+/// A list index or slice copies list elements and a dict index copies a value; a dict has no slice.
+fn copied_collection_element(ty: &ResolvedType, slice: bool) -> Option<&ResolvedType> {
+    match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => copied_collection_element(inner, slice),
+        ResolvedType::Generic(name, args) => match (collections::from_str(name), args.as_slice()) {
+            (Some(CollectionTypeId::List), [element]) => Some(element),
+            (Some(CollectionTypeId::Dict), [_, value]) if !slice => Some(value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Collect the names of `type_params` that `ty` mentions, at any depth.
+fn collect_type_param_mentions(ty: &ResolvedType, type_params: &HashSet<&str>, mentioned: &mut HashSet<String>) {
+    match ty {
+        ResolvedType::TypeVar(name) | ResolvedType::Named(name) => {
+            if type_params.contains(name.as_str()) {
+                mentioned.insert(name.clone());
+            }
+        }
+        ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+            for arg in args {
+                collect_type_param_mentions(arg, type_params, mentioned);
+            }
+        }
+        ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner) => collect_type_param_mentions(inner, type_params, mentioned),
+        ResolvedType::FrozenDict(key, value) => {
+            collect_type_param_mentions(key, type_params, mentioned);
+            collect_type_param_mentions(value, type_params, mentioned);
+        }
+        _ => {}
     }
 }
 

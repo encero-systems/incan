@@ -286,11 +286,9 @@ impl JsonValue {
     /// Construct a JSON object.
     #[must_use]
     pub fn object(entries: HashMap<String, JsonValue>) -> Self {
-        let mut out = serde_json::Map::new();
-        for (key, value) in entries {
-            out.insert(key, value.0);
-        }
-        Self(serde_json::Value::Object(out))
+        Self(serde_json::Value::Object(sorted_json_object(
+            entries.into_iter().map(|(key, value)| (key, value.0)).collect(),
+        )))
     }
 
     /// Parse JSON text.
@@ -419,6 +417,7 @@ impl JsonValue {
         match self.0.as_object_mut() {
             Some(values) => {
                 values.insert(key.to_owned(), value.0);
+                *values = sorted_json_object(std::mem::take(values).into_iter().collect());
                 Ok(())
             }
             None => Err(JsonError::type_error("expected JSON object")),
@@ -504,13 +503,21 @@ fn normalize_serde_value(value: serde_json::Value) -> Result<serde_json::Value, 
             .map(normalize_serde_value)
             .collect::<Result<Vec<_>, _>>()
             .map(serde_json::Value::Array),
-        serde_json::Value::Object(values) => values
-            .into_iter()
-            .map(|(key, value)| normalize_serde_value(value).map(|value| (key, value)))
-            .collect::<Result<serde_json::Map<_, _>, _>>()
-            .map(serde_json::Value::Object),
+        serde_json::Value::Object(values) => {
+            let entries = values
+                .into_iter()
+                .map(|(key, value)| normalize_serde_value(value).map(|value| (key, value)))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(serde_json::Value::Object(sorted_json_object(entries)))
+        }
         serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => Ok(value),
     }
+}
+
+/// Build one JSON object with lexicographically sorted keys regardless of the backing map implementation.
+fn sorted_json_object(mut entries: Vec<(String, serde_json::Value)>) -> serde_json::Map<String, serde_json::Value> {
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.into_iter().collect()
 }
 
 /// Normalize one serde JSON number into the runtime number family selected by the parser.
@@ -668,7 +675,11 @@ mod tests {
         entries.insert("name".to_string(), JsonValue::string("incan".to_string()));
         let mut value = JsonValue::object(entries);
         value.set("ok", JsonValue::bool(true))?;
-        assert_eq!(value.keys(), vec!["name".to_string(), "ok".to_string()]);
+        value.set("alpha", JsonValue::null())?;
+        assert_eq!(
+            value.keys(),
+            vec!["alpha".to_string(), "name".to_string(), "ok".to_string()]
+        );
         assert_eq!(value.get("ok").and_then(|value| value.as_bool()), Some(true));
 
         let mut items = JsonValue::array(vec![JsonValue::int(1)]);

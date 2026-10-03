@@ -1,0 +1,5 @@
+pub const DEFAULT_LABEL: str = "orders"
+
+
+pub def label_width() -> int:
+    return len(DEFAULT_LABEL)

@@ -60,7 +60,7 @@ impl<'a> Parser<'a> {
             return Ok(Vec::new());
         }
 
-        // ---- Single bound (bare word) vs multiple bounds (parenthesised) ----
+        // ---- Single bound (bare word) vs multiple bounds (parenthesized) ----
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
             // Multiple bounds: `with (Eq, Debug, From[U])`
             let mut bounds = Vec::new();
@@ -159,10 +159,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        let end = members
-            .last()
-            .map(|member| member.span.end)
-            .unwrap_or(start);
+        let end = members.last().map(|member| member.span.end).unwrap_or(start);
         let mut flattened = Vec::new();
         for member in members {
             match member.node {
@@ -209,13 +206,13 @@ impl<'a> Parser<'a> {
                 return Ok(Spanned::new(Type::Unit, Span::new(start, end)));
             }
             // Could be tuple type or function type
-            let first = self.type_expr()?;
+            let first = self.parenthesized_type_entry()?;
             if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 // Tuple type
                 let mut types = vec![first];
                 if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
                     loop {
-                        types.push(self.type_expr()?);
+                        types.push(self.parenthesized_type_entry()?);
                         if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                             break;
                         }
@@ -236,6 +233,7 @@ impl<'a> Parser<'a> {
                     ));
                 }
 
+                Self::refuse_mut_marker_outside_callable_params(&types)?;
                 let end = self.tokens[self.pos - 1].span.end;
                 return Ok(Spanned::new(Type::Tuple(types), Span::new(start, end)));
             }
@@ -252,6 +250,7 @@ impl<'a> Parser<'a> {
             }
 
             // Just a parenthesized type
+            Self::refuse_mut_marker_outside_callable_params(std::slice::from_ref(&first))?;
             return Ok(first);
         }
 
@@ -285,7 +284,8 @@ impl<'a> Parser<'a> {
             if self.match_punct(PunctuationId::ColonColon) {
                 if dotted {
                     return Err(CompileError::syntax(
-                        "Type paths cannot mix `.` namespace qualification with `::` Rust-path qualification".to_string(),
+                        "Type paths cannot mix `.` namespace qualification with `::` Rust-path qualification"
+                            .to_string(),
                         Span::new(start, self.current_span().start),
                     ));
                 }
@@ -338,23 +338,46 @@ impl<'a> Parser<'a> {
             if dotted {
                 Ok(Spanned::new(Type::DottedGeneric(path, args), Span::new(start, end)))
             } else {
-                Ok(Spanned::new(
-                    Type::Generic(type_name, args),
-                    Span::new(start, end),
-                ))
+                Ok(Spanned::new(Type::Generic(type_name, args), Span::new(start, end)))
             }
         } else if path.len() == 1 {
             let end = self.tokens[self.pos - 1].span.end;
-            Ok(Spanned::new(
-                Type::Simple(path[0].clone()),
-                Span::new(start, end),
-            ))
+            Ok(Spanned::new(Type::Simple(path[0].clone()), Span::new(start, end)))
         } else if dotted {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Type::Dotted(path), Span::new(start, end)))
         } else {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Type::Qualified(path), Span::new(start, end)))
+        }
+    }
+
+    /// Parse one entry of a parenthesized type list, admitting the `mut` marker a callable type's parameter may carry.
+    ///
+    /// Whether the list holds a callable type's parameters is known only at the `->` after its `)`, so the marker is
+    /// read here for every entry and [`Self::refuse_mut_marker_outside_callable_params`] refuses it when the list turns
+    /// out to be a tuple or a grouped type. `Callable[...]` parses its parameter list as a tuple type argument, so it
+    /// does not take the marker; `(mut T, ...) -> R` is its one spelling.
+    fn parenthesized_type_entry(&mut self) -> Result<Spanned<Type>, CompileError> {
+        let start = self.current_span().start;
+        if !self.match_keyword(KeywordId::Mut) {
+            return self.type_expr();
+        }
+        let inner = self.type_expr()?;
+        let end = inner.span.end;
+        Ok(Spanned::new(Type::MutParam(Box::new(inner)), Span::new(start, end)))
+    }
+
+    /// Refuse a `mut` marker in a parenthesized type list that is not followed by `->`.
+    fn refuse_mut_marker_outside_callable_params(entries: &[Spanned<Type>]) -> Result<(), CompileError> {
+        match entries.iter().find(|entry| matches!(entry.node, Type::MutParam(_))) {
+            Some(marked) => Err(CompileError::syntax(
+                "`mut` marks a parameter of a callable type, as in `(mut Counter, int) -> int`; a tuple or a \
+                 parenthesized type cannot carry it"
+                    .to_string(),
+                marked.span,
+            )),
+            None => Ok(()),
         }
     }
 
@@ -384,10 +407,7 @@ impl<'a> Parser<'a> {
             other => vec![Spanned::new(other, params_arg.span)],
         };
 
-        Ok(Spanned::new(
-            Type::Function(params, ret),
-            Span::new(start, end),
-        ))
+        Ok(Spanned::new(Type::Function(params, ret), Span::new(start, end)))
     }
 
     /// Parse the comma-separated contents of an RFC 017 constrained primitive bracket block.
@@ -433,16 +453,10 @@ impl<'a> Parser<'a> {
                 Span::new(start, self.tokens[self.pos - 1].span.end),
             ));
         };
-        self.expect_op(
-            OperatorId::Eq,
-            "Expected '=' after constrained primitive key",
-        )?;
+        self.expect_op(OperatorId::Eq, "Expected '=' after constrained primitive key")?;
         let value = self.constrained_primitive_integer_literal()?;
         let end = self.tokens[self.pos - 1].span.end;
-        Ok(Spanned::new(
-            TypeConstraint { key, value },
-            Span::new(start, end),
-        ))
+        Ok(Spanned::new(TypeConstraint { key, value }, Span::new(start, end)))
     }
 
     /// Parse a signed integer literal for this slice's constrained primitive syntax.
@@ -483,7 +497,6 @@ impl<'a> Parser<'a> {
         }
         Ok(types)
     }
-
 }
 
 /// Return whether a primitive type name owns RFC 017 constraint bracket syntax in this parser slice.

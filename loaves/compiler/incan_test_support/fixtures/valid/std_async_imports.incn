@@ -7,7 +7,7 @@ async def work() -> int:
     return 1
 
 def launch() -> JoinHandle[int]:
-    return spawn(work)
+    return spawn(work())
 
 def touch_lock(lock: Mutex[int]) -> None:
     pass

@@ -363,9 +363,9 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Retired Cargo passthrough surface; normal Oven commands reject it
-        #[arg(last = true, hide = true)]
-        cargo_passthrough: Vec<String>,
+        /// Arguments passed to the executed program after `--`
+        #[arg(last = true, value_name = "PROGRAM_ARG")]
+        program_args: Vec<String>,
     },
 
     /// Format Incan source files
@@ -918,7 +918,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_no_default_features,
             cargo_all_features,
             generated_cargo_target_dir,
-            release: _,
+            release,
             backend,
             shadow,
             backend_fallback,
@@ -966,6 +966,9 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     format: report,
                     output_path: report_output,
                 },
+                release,
+                backend_controls_explicit: backend.is_some() || shadow || backend_fallback.is_some(),
+                lock_controls_explicit: offline || no_offline || locked || no_locked || frozen || no_frozen,
             },
             workspace,
             members,
@@ -1066,7 +1069,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             release,
             workspace,
             members,
-            cargo_passthrough,
+            program_args,
         }) => execute_workspace_run(
             RunInput { file, code: command },
             RunOptions {
@@ -1080,7 +1083,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                         no_frozen,
                     },
                     cargo_args,
-                    cargo_passthrough,
+                    Vec::new(),
                 ),
                 package_features: package_features.into(),
                 sdk_profile: sdk_profile.sdk_profile,
@@ -1088,6 +1091,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 cargo_no_default_features,
                 cargo_all_features,
                 release,
+                program_args,
             },
             workspace,
             members,
@@ -1342,6 +1346,9 @@ struct BuildCommandRequest {
     output_dir: Option<String>,
     options: incan_driver::build::BuildCommandOptions,
     report_options: BuildReportOptions,
+    release: bool,
+    backend_controls_explicit: bool,
+    lock_controls_explicit: bool,
 }
 
 impl BuildCommandRequest {
@@ -1356,6 +1363,15 @@ impl BuildCommandRequest {
                 self.report_options,
             );
         }
+        if self.file.is_none() {
+            let cwd = env::current_dir()
+                .map_err(|e| CliError::failure(format!("Error: failed to read current directory: {e}")))?;
+            if let Some(manifest) = incan_driver::project::discover_effective_project_manifest(&cwd)?
+                && let Some(exit) = build_toolchain_binaries_if_declared(&manifest, manifest.project_root(), &self)?
+            {
+                return Ok(exit);
+            }
+        }
         let file = resolve_build_entry_file(self.file)?;
         commands::build_file(
             &file.to_string_lossy(),
@@ -1364,6 +1380,119 @@ impl BuildCommandRequest {
             self.report_options,
         )
     }
+}
+
+/// Whether a plain `incan build` of this Loaf means its `[[rust.bin]]` roles rather than an Incan entrypoint.
+///
+/// A Loaf that declares Rust binary roles and no `[project.scripts].main` is a toolchain Loaf: its product is the
+/// declared executables. One that names a `main` script is an Incan project, with or without a Rust facet, and a
+/// plain build keeps building that script; its Rust roles are selected another way.
+fn builds_toolchain_binaries(manifest: &ProjectManifest) -> bool {
+    let has_main_script = manifest
+        .project
+        .as_ref()
+        .is_some_and(|project| project.scripts.contains_key("main"));
+    !manifest.rust_binary_roles().is_empty() && !has_main_script
+}
+
+/// Bake the `[[rust.bin]]` roles a toolchain Loaf declares when `incan build` names no entrypoint (#1698).
+///
+/// `None` keeps the ordinary entrypoint resolution: the Loaf declares no Rust binary role, or it names an Incan
+/// `main` script, in which case it is an Incan project with a Rust facet and its Incan entrypoint is what a plain
+/// `incan build` means. `workspace_root` is the compiler root the stored direct-rustc plans are relative to — the
+/// active workspace's root for a member, the Loaf itself otherwise. The compiler-suite store is named by
+/// `INCAN_OVEN_COMPILER_SUITE_STORE`, as the suite runner is told it; an explicit output directory is honored and
+/// the report surface is refused rather than silently narrowed, since a toolchain binary has no generated project to
+/// report on.
+fn build_toolchain_binaries_if_declared(
+    manifest: &ProjectManifest,
+    workspace_root: &Path,
+    request: &BuildCommandRequest,
+) -> CliResult<Option<ExitCode>> {
+    if !builds_toolchain_binaries(manifest) {
+        return Ok(None);
+    }
+    reject_unsupported_toolchain_build_options(request)?;
+    let roles = manifest.rust_binary_roles();
+    if request.report_options.enabled() {
+        return Err(CliError::failure(
+            "incan build --report is not available for a toolchain binary build; the build produces executables from stored direct-rustc plans, not a generated project (#1698)",
+        ));
+    }
+    let store_root = env::var_os(oven_cli::commands::OVEN_COMPILER_SUITE_STORE_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let reports =
+        oven_cli::commands::oven_build_toolchain_binaries(oven_cli::commands::OvenToolchainBuildCommandOptions {
+            compiler_root: workspace_root.to_path_buf(),
+            project_root: manifest.project_root().to_path_buf(),
+            binaries: roles.to_vec(),
+            rustc: None,
+            store: oven_cli::commands::OvenStoreCommandOptions {
+                root: store_root,
+                max_physical_bytes: None,
+                max_domain_physical_bytes: None,
+                max_domain_logical_bytes: None,
+            },
+            output: request.output_dir.as_ref().map(PathBuf::from),
+        })?;
+    for report in reports {
+        println!(
+            "Built {} -> {} ({}, Cargo not started)",
+            report.name,
+            report.output.display(),
+            if report.reused {
+                "reused by receipt"
+            } else {
+                "compiled by direct rustc"
+            }
+        );
+    }
+    Ok(Some(ExitCode::SUCCESS))
+}
+
+/// Refuse build controls that the stored direct-rustc toolchain-binary path cannot honor.
+fn reject_unsupported_toolchain_build_options(request: &BuildCommandRequest) -> CliResult<()> {
+    incan_driver::build::replacement::reject_normal_cargo_controls(
+        &request.options.cargo_policy,
+        request.options.generated_cargo_target_dir.as_ref(),
+    )?;
+    if !request.options.cargo_features.is_empty()
+        || request.options.cargo_no_default_features
+        || request.options.cargo_all_features
+    {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept retired Cargo feature controls",
+        ));
+    }
+    if request.release {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept --release; stored [[rust.bin]] plans select their recorded profile",
+        ));
+    }
+    if request.backend_controls_explicit {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept --backend, --backend-fallback, or --shadow",
+        ));
+    }
+    if request.options.package_features != FeatureSelection::default() {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept package-feature controls",
+        ));
+    }
+    if request.options.sdk_profile.is_some() {
+        return Err(CliError::failure("toolchain-Loaf builds do not accept --sdk-profile"));
+    }
+    if request.lock_controls_explicit
+        || request.options.cargo_policy.offline
+        || request.options.cargo_policy.locked
+        || request.options.cargo_policy.frozen
+    {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept lock-policy controls (--offline, --locked, or --frozen)",
+        ));
+    }
+    Ok(())
 }
 
 /// Return whether this build should resolve and fan out an RFC 077 workspace scope.
@@ -1430,6 +1559,46 @@ fn execute_build(
             println!("workspace member {}: {}", member.name(), member.root().display());
         }
 
+        if !request.lib_mode && request.file.is_none() {
+            // A toolchain Loaf declares Rust binaries rather than an Incan main script; its build is the stored
+            // direct-rustc plan for those binaries (#1698). The workspace root is the compiler root every stored
+            // plan is relative to. A refusal is this member's failure, reported the way the fan-out reports every
+            // other member failure.
+            let member_manifest = incan_driver::project::discover_effective_project_manifest(member.root())?;
+            let toolchain_build = member_manifest
+                .as_ref()
+                .map(|manifest| build_toolchain_binaries_if_declared(manifest, scope.workspace_root(), &request))
+                .transpose()
+                .map(Option::flatten);
+            match toolchain_build {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    results.push(serde_json::json!({
+                        "member": {
+                            "name": member.name(),
+                            "root": member.root().display().to_string(),
+                        },
+                        "ok": true,
+                    }));
+                    continue;
+                }
+                Err(error) => {
+                    if !error.message.is_empty() {
+                        eprintln!("{}", error.message);
+                    }
+                    failures.push(member.name().to_string());
+                    results.push(serde_json::json!({
+                        "member": {
+                            "name": member.name(),
+                            "root": member.root().display().to_string(),
+                        },
+                        "ok": false,
+                        "error": error.message,
+                    }));
+                    continue;
+                }
+            }
+        }
         let target = if request.lib_mode {
             match request.file.as_ref() {
                 Some(path) => workspace_member_relative_path(path, member.root()),
@@ -1994,6 +2163,7 @@ struct RunOptions {
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     release: bool,
+    program_args: Vec<String>,
 }
 
 /// Resolve an explicit file or the project `main` script for project-aware commands.
@@ -2099,6 +2269,7 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
             opts.cargo_no_default_features,
             opts.cargo_all_features,
             opts.release,
+            opts.program_args,
         )
     // ---- Context: file execution (`incan run path/to/file.incn`) ----
     } else {
@@ -2112,6 +2283,7 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
             opts.cargo_no_default_features,
             opts.cargo_all_features,
             opts.release,
+            opts.program_args,
         )
     }
 }
@@ -2214,6 +2386,25 @@ mod tests {
 
     fn expected_command(name: &str) -> clap::Error {
         clap::Error::raw(ErrorKind::InvalidSubcommand, format!("expected {name} command"))
+    }
+
+    #[test]
+    fn a_plain_build_means_the_rust_binaries_only_for_a_loaf_without_an_incan_entrypoint()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = Path::new("loaf.toml");
+        let toolchain_loaf = ProjectManifest::from_str(
+            "[project]\nname = \"incan-cli\"\n\n[[rust.bin]]\nname = \"incan\"\npath = \"src/main.rs\"\n",
+            path,
+        )?;
+        assert!(builds_toolchain_binaries(&toolchain_loaf));
+        let incan_project_with_rust_facet = ProjectManifest::from_str(
+            "[project]\nname = \"mixed\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[[rust.bin]]\nname = \"tool\"\npath = \"rust/src/main.rs\"\n",
+            path,
+        )?;
+        assert!(!builds_toolchain_binaries(&incan_project_with_rust_facet));
+        let plain = ProjectManifest::from_str("[project]\nname = \"plain\"\n", path)?;
+        assert!(!builds_toolchain_binaries(&plain));
+        Ok(())
     }
 
     #[test]
@@ -2406,6 +2597,195 @@ mod tests {
                 && toolchain == "rustc 1.96.0"
                 && source_inputs == ["generated=target/oven/test.rs"]
         ));
+
+        let harvest = parse_cli([
+            "incan",
+            "oven",
+            "harvest",
+            "--project",
+            "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml",
+            "--target",
+            "aarch64-apple-darwin",
+            "--profile",
+            "debug",
+            "--cargo",
+            "/toolchain/bin/cargo",
+            "--rustc",
+            "/toolchain/bin/rustc",
+            "--cc",
+            "/toolchain/bin/clang",
+            "--cxx",
+            "/toolchain/bin/clang++",
+            "--c-sysroot",
+            "/toolchain/SDKs/MacOSX.sdk",
+            "--cargo-lock",
+            "Cargo.lock",
+            "--output",
+            "target/harvest",
+            "--format",
+            "json",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::Harvest {
+                    project,
+                    target,
+                    profile,
+                    cargo,
+                    rustc,
+                    cc,
+                    cxx,
+                    c_sysroot,
+                    cargo_lock,
+                    output,
+                    format,
+                },
+        }) = harvest.command
+        else {
+            return Err(expected_command("oven harvest"));
+        };
+        assert_eq!(
+            project,
+            PathBuf::from("loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml")
+        );
+        assert_eq!(target, "aarch64-apple-darwin");
+        assert_eq!(profile.as_str(), "debug");
+        assert_eq!(cargo, PathBuf::from("/toolchain/bin/cargo"));
+        assert_eq!(rustc, PathBuf::from("/toolchain/bin/rustc"));
+        assert_eq!(cc, PathBuf::from("/toolchain/bin/clang"));
+        assert_eq!(cxx, PathBuf::from("/toolchain/bin/clang++"));
+        assert_eq!(c_sysroot, PathBuf::from("/toolchain/SDKs/MacOSX.sdk"));
+        assert_eq!(cargo_lock, Some(PathBuf::from("Cargo.lock")));
+        assert_eq!(output, PathBuf::from("target/harvest"));
+        assert_eq!(format, OvenOutputFormat::Json);
+        let default_profile = parse_cli([
+            "incan",
+            "oven",
+            "harvest",
+            "--target",
+            "aarch64-apple-darwin",
+            "--cargo",
+            "cargo",
+            "--rustc",
+            "rustc",
+            "--cc",
+            "clang",
+            "--cxx",
+            "clang++",
+            "--c-sysroot",
+            "sdk",
+            "--output",
+            "harvest",
+        ])?;
+        assert!(matches!(
+            default_profile.command,
+            Some(Command::Oven {
+                command: OvenCommand::Harvest { profile, project, .. }
+            }) if profile.as_str() == "release" && project == Path::new(".")
+        ));
+        assert!(
+            parse_cli([
+                "incan",
+                "oven",
+                "harvest",
+                "--target",
+                "t",
+                "--profile",
+                "bench",
+                "--cargo",
+                "c",
+                "--rustc",
+                "r",
+                "--cc",
+                "clang",
+                "--cxx",
+                "clang++",
+                "--c-sysroot",
+                "sdk",
+                "--output",
+                "o",
+            ])
+            .is_err(),
+            "a fact record binds release or debug only"
+        );
+
+        let bake_loafs = parse_cli([
+            "incan",
+            "oven",
+            "legacy-cargo",
+            "bake-loafs",
+            "--output",
+            "loafs",
+            "--envelope",
+            "release",
+            "--sdk-inventory",
+            "sdk-inventory.json",
+            "--cargo",
+            "cargo",
+            "--rustc",
+            "rustc",
+            "--cc",
+            "clang",
+            "--cxx",
+            "clang++",
+            "--c-sysroot",
+            "sdk",
+            "--loaf-registry",
+            "incan.pub-index",
+            "--loaf-registry-commit",
+            "8d40e1d0000000000000000000000000000000000",
+            "--harvest-dir",
+            "harvest",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::LegacyCargo {
+                    command:
+                        OvenLegacyCargoCommand::BakeLoafs {
+                            loaf_registry,
+                            loaf_registry_commit,
+                            harvest_dir,
+                            ..
+                        },
+                },
+        }) = bake_loafs.command
+        else {
+            return Err(expected_command("oven legacy-cargo bake-loafs"));
+        };
+        assert_eq!(loaf_registry, Some(PathBuf::from("incan.pub-index")));
+        assert_eq!(
+            loaf_registry_commit.as_deref(),
+            Some("8d40e1d0000000000000000000000000000000000")
+        );
+        assert_eq!(harvest_dir, Some(PathBuf::from("harvest")));
+        assert!(
+            parse_cli([
+                "incan",
+                "oven",
+                "legacy-cargo",
+                "bake-loafs",
+                "--output",
+                "loafs",
+                "--envelope",
+                "release",
+                "--sdk-inventory",
+                "sdk-inventory.json",
+                "--cargo",
+                "cargo",
+                "--rustc",
+                "rustc",
+                "--cc",
+                "clang",
+                "--cxx",
+                "clang++",
+                "--c-sysroot",
+                "sdk",
+                "--loaf-registry-commit",
+                "abc",
+            ])
+            .is_err(),
+            "a pin without a registry checkout pins nothing"
+        );
 
         let test = parse_cli([
             "incan",
@@ -2726,12 +3106,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_run_cargo_passthrough_args() -> Result<(), clap::Error> {
+    fn test_cli_parse_run_program_args_issue1883() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "run", "test.incn", "--", "--timings", "--color=always"])?;
-        let Some(Command::Run { cargo_passthrough, .. }) = cli.command else {
+        let Some(Command::Run { program_args, .. }) = cli.command else {
             return Err(expected_command("run"));
         };
-        assert_eq!(cargo_passthrough, vec!["--timings", "--color=always"]);
+        assert_eq!(program_args, vec!["--timings", "--color=always"]);
         Ok(())
     }
 

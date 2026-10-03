@@ -1,0 +1,28 @@
+# behavior: with the conversion traits imported under a module binding, get_as over a newtype of a newtype of int reads an absent variable as None and a supplied default as the typed value
+# retires: loaves/compiler/incan_emit/src/codegen.rs::try_generate_module_uses_checked_composed_newtype_conversion_plan
+# retires: loaves/compiler/incan_emit/src/codegen/capability_bridge.rs::module_qualified_import_activates_string_conversion_capability
+# expect-stdout:
+#   absent
+#   8080
+
+from std.environ import get_as
+import std.traits.convert as convert
+
+type Port = newtype int
+type WrappedPort = newtype Port
+
+
+def main() -> None:
+    match get_as[WrappedPort]("INCAN_BEHAVIOR_FIXTURE_UNSET_PORT"):
+        Ok(value) =>
+            match value:
+                Some(port) =>
+                    inner = port.0
+                    println(inner.0)
+                None => println("absent")
+        Err(error) => println(error.message())
+    match get_as[WrappedPort]("INCAN_BEHAVIOR_FIXTURE_UNSET_PORT", WrappedPort(Port(8080))):
+        Ok(port) =>
+            inner = port.0
+            println(inner.0)
+        Err(error) => println(error.message())

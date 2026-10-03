@@ -169,6 +169,11 @@ pub enum IrImportQualifier {
     /// Prefix with `crate::` (absolute import in the current crate).
     Crate,
     /// Prefix with `super::` repeated N times (relative import).
+    ///
+    /// Lowering resolves a relative source import to the crate-absolute path of the module the checker bound and
+    /// hands it on as [`Self::Crate`], because an Incan `..` climbs from the importing file's directory while Rust's
+    /// `super` climbs from the importing module (#1766). `Super` remains the fallback for a relative path lowering
+    /// cannot place, such as one in a module with no logical path.
     Super(usize),
 }
 
@@ -181,6 +186,9 @@ pub struct IrRustTraitImport {
     pub definition_path: Option<String>,
     /// Method names this trait can place in Rust method-lookup scope.
     pub methods: Vec<String>,
+    /// Whether `methods` is the declared surface. An import with no metadata at all has an unknown surface: it is
+    /// retained only through the call-site candidates the typechecker recorded, never by matching a method name here.
+    pub methods_known: bool,
 }
 
 /// An item in a from ... import statement
@@ -235,6 +243,30 @@ impl IrImportItem {
     }
 }
 
+/// Return whether `item`, imported from `module_path`, binds a nominal type (a model, class, newtype, enum, trait or
+/// type alias) declared in one of the project's own source modules.
+///
+/// Such a binding is the program's own type under its local name ([`IrImportItem::source_binding_name`]), whatever
+/// that name is: a stdlib surface type of the same spelling (`FieldInfo`, `ValidationError`) is reached only through a
+/// `std` import (#1795). A `std` module, a `pub::` library and a Rust crate are not project source modules.
+pub fn imports_project_module_type(module_path: &[String], item: &IrImportItem) -> bool {
+    let from_project_module = module_path
+        .first()
+        .is_some_and(|root| root != incan_lang::lang::stdlib::STDLIB_ROOT);
+    from_project_module
+        && item.canonical.as_ref().is_some_and(|identity| {
+            matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Newtype
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Trait
+                    | SemanticSourceTargetKind::TypeAlias
+            ) && matches!(identity.origin, SymbolOrigin::Module(_))
+        })
+}
+
 /// Return whether an import targets a linker-visible source symbol with an Incan-owned projection.
 ///
 /// Top-level partial declarations emit ordinary Rust wrapper functions and therefore follow the same exact canonical
@@ -252,7 +284,7 @@ pub fn is_projected_source_symbol(identity: &CanonicalSymbolId) -> bool {
 #[derive(Debug, Clone)]
 pub struct IrTrait {
     pub name: String,
-    /// Compiler-recognised callable role established from the canonical source declaration identity during lowering.
+    /// Compiler-recognized callable role established from the canonical source declaration identity during lowering.
     ///
     /// Keeping this semantic fact in IR prevents emission from rediscovering `std.traits.callable` through a generated
     /// provider's crate-local module path, where the public `std` mount is intentionally absent.
@@ -410,12 +442,42 @@ pub struct IrStruct {
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
     pub type_params: Vec<IrTypeParam>,
+    /// Names from [`Self::type_params`] that no declared field type mentions, in declaration order.
+    ///
+    /// A type parameter that appears only in method signatures is a phantom parameter: it types the operations on
+    /// the value without storing anything. The source declaration is complete as written, but a Rust struct must
+    /// mention every parameter it declares, so lowering records which parameters are phantom and emission owns the
+    /// marker representation. Emission must not rediscover this by scanning a source declaration's fields; a compiled
+    /// dependency's manifest records no phantom list, so for that route the emitter applies the same
+    /// [`phantom_type_params`] rule to the manifest's recorded type parameters and field types. Only a model or
+    /// class can carry a phantom parameter: the typechecker refuses a newtype whose underlying type does not
+    /// mention one (`type_param_not_stored`), so a newtype's list is always empty. See #1370.
+    pub phantom_type_params: Vec<String>,
     /// Derive names that should be qualified with a Rust module path.
     ///
     /// Key is the derive name, value is the module path from `rust.module(...)`.
     pub derive_rust_modules: std::collections::HashMap<String, String>,
     /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
     pub lint_allows: Vec<IrRustLintAllow>,
+}
+
+/// Return the declared type parameters, in declaration order, that none of `field_types` mentions.
+///
+/// This is the one rule behind [`IrStruct::phantom_type_params`]: lowering applies it to a source declaration's
+/// lowered fields, and the emitter applies it to a compiled dependency's recorded field types, so both routes agree
+/// on which parameters need a marker in the Rust representation (#1370).
+pub fn phantom_type_params<'a, P, F>(type_params: P, field_types: F) -> Vec<String>
+where
+    P: IntoIterator<Item = &'a str>,
+    F: IntoIterator<Item = &'a IrType>,
+    F::IntoIter: Clone,
+{
+    let field_types = field_types.into_iter();
+    type_params
+        .into_iter()
+        .filter(|param| !field_types.clone().any(|ty| ty.mentions_type_param(param)))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Source declaration category for a struct-shaped IR nominal.
@@ -563,6 +625,11 @@ pub enum IrTraitBoundOrigin {
     /// closures. Keeping the nominal source trait in generic signatures also permits ordinary Incan models that adopt
     /// `CallableN` to cross the same boundary without call-site rewriting.
     SourceCallable,
+    /// The `Fn` bound of a function type that holds any callable of that type, closures that capture included
+    /// (#1561): `type_args` are the parameter types and the `Output` associated type is the return type, spelled
+    /// `Fn(A, B) -> R`. It is the bound of an `impl Fn(...) -> R` parameter or return type
+    /// ([`IrTraitBound::function_type`]), never of a type parameter or an implementation header.
+    FunctionType,
 }
 
 impl IrTraitBound {
@@ -609,6 +676,16 @@ impl IrTraitBound {
             type_args,
             assoc_types: Vec::new(),
             origin,
+        }
+    }
+
+    /// Create the `Fn(params...) -> ret` bound of a function type that holds any callable of that type (#1561).
+    pub fn function_type(params: Vec<IrType>, ret: IrType) -> Self {
+        Self {
+            trait_path: "Fn".to_string(),
+            type_args: params,
+            assoc_types: vec![("Output".to_string(), ret)],
+            origin: IrTraitBoundOrigin::FunctionType,
         }
     }
 

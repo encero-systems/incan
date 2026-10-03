@@ -1,0 +1,37 @@
+# behavior: len() of a list and of a model's list field compares with < in a return and in an if (#380)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue380_len_comparison_codegen
+# expect-stdout:
+#   true false
+#   0 -1 1
+
+pub def small(xs: list[int]) -> bool:
+    return len(xs) < 2
+
+
+@derive(Clone)
+pub enum ExprKind:
+    Column
+    Add
+
+
+@derive(Clone)
+pub model Expr:
+    pub kind: ExprKind
+    pub column_name: str
+    pub arguments: list[Expr]
+
+
+pub def lower(expr: Expr) -> int:
+    if expr.kind == ExprKind.Column:
+        return 0
+    if len(expr.arguments) < 2:
+        return -1
+    return 1
+
+
+def main() -> None:
+    println(f"{small([1])} {small([1, 2])}")
+    column = Expr(kind=ExprKind.Column, column_name="a", arguments=[])
+    unary = Expr(kind=ExprKind.Add, column_name="", arguments=[column])
+    binary = Expr(kind=ExprKind.Add, column_name="", arguments=[column, column])
+    println(f"{lower(column)} {lower(unary)} {lower(binary)}")

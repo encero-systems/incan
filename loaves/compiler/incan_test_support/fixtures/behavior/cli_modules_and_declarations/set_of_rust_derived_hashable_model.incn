@@ -1,0 +1,12 @@
+# behavior: a model whose Eq and Hash come from @rust.derive is accepted as a set element, and equal values collapse into one
+# expect-stdout:
+#   1
+
+@rust.derive(PartialEq, Eq, Hash)
+model Key:
+    id: int
+
+
+def main() -> None:
+    seen: set[Key] = {Key(id=1), Key(id=1)}
+    println(len(seen))

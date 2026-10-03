@@ -1,0 +1,18 @@
+# behavior: Set.add deduplicates repeated values, and a user function named set is called instead of the constructor (#963, #951)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue963_set_add_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue951_set_shadowing_codegen
+# expect-stdout:
+#   1
+#   3
+
+def set(values: List[str]) -> int:
+    """Return the input cardinality without invoking the collection constructor."""
+    return len(values)
+
+
+def main() -> None:
+    mut seen: Set[str] = Set()
+    seen.add("value")
+    seen.add("value")
+    println(len(seen))
+    println(set(["alpha", "beta", "beta"]))

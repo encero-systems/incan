@@ -1,0 +1,33 @@
+# behavior: a local trait may share the short name of a trait in an imported module, and each adopter expands the default body of the trait it names (#1592)
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::local_trait_shadow_and_nonstdlib_alias_keep_default_fact_provenance
+# expect-stdout:
+#   local Some(1)
+#   imported None
+
+import protocol
+
+
+trait Same:
+    def value(self) -> Option[int]:
+        return Some(1)
+
+
+model Consumer with Same:
+    amount: int
+
+
+model Remote with protocol.Same:
+    amount: int
+
+
+def show(label: str, value: Option[int]) -> None:
+    match value:
+        case Some(inner):
+            println(f"{label} Some({inner})")
+        case None:
+            println(f"{label} None")
+
+
+def main() -> None:
+    show("local", Consumer(amount=3).value())
+    show("imported", Remote(amount=3).value())

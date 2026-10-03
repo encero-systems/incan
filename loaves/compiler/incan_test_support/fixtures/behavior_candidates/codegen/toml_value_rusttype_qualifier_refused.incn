@@ -1,0 +1,25 @@
+# behavior: a match arm qualified by a different rusttype over the same Rust enum than the borrowed scrutinee's is refused at check time
+# retires: loaves/compiler/incan_emit/src/checked_program/borrowed_rust_enum.rs::borrowed_rust_enum_keeps_mismatched_rusttype_qualifier_rejected
+# expect-diagnostic: INCAN-T0001
+
+from rust::toml import Value as RawValue
+
+
+type Value = rusttype RawValue:
+    def noop(self) -> None:
+        ...
+
+
+type Other = rusttype RawValue:
+    def noop(self) -> None:
+        ...
+
+
+pub def inspect(value: &Value) -> None:
+    match value:
+        Other.String(_) => pass
+        _ => pass
+
+
+def main() -> None:
+    pass

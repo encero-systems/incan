@@ -1,0 +1,21 @@
+# behavior: a std module imported from the std root, plain and under an alias, is called through its binding
+# retires: loaves/compiler/incan_emit/src/codegen.rs::std_root_module_import_uses_sdk_facade
+# expect-stdout:
+#   4
+#   3
+
+from std import math
+from std import math as arithmetic
+
+
+pub def root(value: float) -> float:
+    return math.sqrt(value)
+
+
+pub def aliased_root(value: float) -> float:
+    return arithmetic.sqrt(value)
+
+
+def main() -> None:
+    println(int(root(16.0)))
+    println(int(aliased_root(9.0)))

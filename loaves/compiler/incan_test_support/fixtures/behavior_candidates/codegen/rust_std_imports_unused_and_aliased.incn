@@ -1,0 +1,14 @@
+# behavior: an unused rust::std import does not stop a program, and an aliased rust::std module import is read through its alias
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_prunes_unused_rust_imports
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_keeps_used_rust_import_aliases
+# expect-stdout:
+#   3
+#   done
+
+import rust::std::collections::HashMap
+import rust::std::f64::consts as consts
+
+
+def main() -> None:
+    println(int(consts.PI))
+    println("done")

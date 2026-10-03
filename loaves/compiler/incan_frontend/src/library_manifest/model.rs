@@ -363,6 +363,8 @@ pub enum PresetValueExport {
     Bytes(Vec<u8>),
     None,
     List(Vec<PresetValueExport>),
+    Set(Vec<PresetValueExport>),
+    Tuple(Vec<PresetValueExport>),
     Dict(Vec<PresetDictEntryExport>),
     ConstRef(Vec<String>),
     ModelLiteral {
@@ -871,6 +873,42 @@ impl LibraryIdentityGraph {
         let first = candidates.next()?;
         candidates.all(|candidate| candidate == first).then_some(first)
     }
+
+    /// Return every canonical identity published at one exact package-visible path, in graph order.
+    pub fn canonicals_at_public_path(&self, public_path: &[String]) -> Vec<CanonicalSymbolId> {
+        let mut canonicals = Vec::new();
+        for canonical in self
+            .exports
+            .iter()
+            .filter(|entry| entry.public_path == public_path)
+            .filter_map(|entry| entry.canonical.as_ref()?.hydrate())
+        {
+            if !canonicals.contains(&canonical) {
+                canonicals.push(canonical);
+            }
+        }
+        canonicals
+    }
+
+    /// Return the source path of the declaration `canonical` identifies, as the declaration's direct entry publishes
+    /// it.
+    ///
+    /// A declaration published at several paths -- its declaring module's namespace, a facade that re-exports it, the
+    /// package root -- carries the same canonical identity at each of them, while each re-export entry's
+    /// `source_path` names the hop it forwards through. Only a direct entry's `source_path` is the declaration's own.
+    pub fn declaration_source_path(&self, canonical: &CanonicalSymbolId) -> Option<&[String]> {
+        self.exports
+            .iter()
+            .find(|entry| {
+                entry.projection == ExportIdentityProjection::Direct
+                    && entry
+                        .canonical
+                        .as_ref()
+                        .and_then(CanonicalIdentityExport::hydrate)
+                        .is_some_and(|candidate| candidate == *canonical)
+            })
+            .map(|entry| entry.source_path.as_slice())
+    }
 }
 
 /// Return the legacy identity graph schema version when deserializing manifests that predate the field.
@@ -1214,6 +1252,11 @@ pub struct TypeBoundExport {
     /// bounds alongside backend-inferred requirements. Older manifests omit the field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub implementation_type_params: Vec<ImplementationTypeParamExport>,
+    /// An `Eq` or `Hash` bound the compiler inferred because the callable's body hashes the type parameter (#1758),
+    /// rather than one the source declared. A consumer refuses a call for it only when the type argument is known to
+    /// lack the derive. Older manifests omit the field.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inferred: bool,
 }
 
 /// One implementation-header type parameter published with a checked trait adoption.
@@ -1377,6 +1420,11 @@ pub enum TypeRef {
     /// producer supplied actual native representation evidence. Appending the variant preserves earlier positional
     /// discriminants; readers still need the containing payload's version to accept new representation evidence.
     NativeUnion(NativeUnionExport),
+    /// A `mut`-marked parameter of a function type, `mut T` in `(mut T, int) -> R` (#1790).
+    ///
+    /// It appears only as an element of [`TypeRef::Function`]'s `params` and carries the parameter's type in `inner`.
+    /// Appended after every earlier variant so their discriminants are unchanged.
+    MutParam { inner: Box<TypeRef> },
 }
 
 /// Exported field metadata for models and classes.
@@ -1479,6 +1527,10 @@ pub struct ParamExport {
     pub kind: ParamKindExport,
     #[serde(default)]
     pub has_default: bool,
+    /// Whether the function's type marks the parameter `mut`: a `mut` parameter whose changes the caller sees
+    /// (#1790). A `mut` parameter of type `int`, `float` or `bool`, or of a Rust type, is not marked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_mut: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<ParamDefaultExport>,
 }
@@ -2117,7 +2169,7 @@ fn rewrite_type_ref_names(
             }
             rewrite_type_ref_names(return_type, owner_module_path, public_names, source_paths_by_leaf);
         }
-        TypeRef::TypeToken { inner } | TypeRef::Ref { inner } => {
+        TypeRef::TypeToken { inner } | TypeRef::Ref { inner } | TypeRef::MutParam { inner } => {
             rewrite_type_ref_names(inner, owner_module_path, public_names, source_paths_by_leaf);
         }
         TypeRef::Tuple { elements } => {
@@ -2243,6 +2295,12 @@ fn preset_value_from_checked(value: &CheckedPresetValue) -> PresetValueExport {
         CheckedPresetValue::List(values) => {
             PresetValueExport::List(values.iter().map(preset_value_from_checked).collect())
         }
+        CheckedPresetValue::Set(values) => {
+            PresetValueExport::Set(values.iter().map(preset_value_from_checked).collect())
+        }
+        CheckedPresetValue::Tuple(values) => {
+            PresetValueExport::Tuple(values.iter().map(preset_value_from_checked).collect())
+        }
         CheckedPresetValue::Dict(entries) => PresetValueExport::Dict(
             entries
                 .iter()
@@ -2343,6 +2401,7 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
             .iter()
             .map(implementation_type_param_from_info)
             .collect(),
+        inferred: bound.inferred,
     }
 }
 
@@ -2400,6 +2459,7 @@ pub fn params_from_checked(params: &[CallableParam], defaults: &[Option<CheckedP
                 ty: type_ref_from_resolved(&param.ty),
                 kind: param_kind_from_ast(param.kind),
                 has_default,
+                is_mut: param.is_mut,
                 default,
             })
         })

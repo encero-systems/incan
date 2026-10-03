@@ -1,0 +1,46 @@
+# behavior: a FrozenStr const is printed, passed to a str parameter, kept frozen through a FrozenStr parameter, assigned into a str local that is then extended, stored in a model field and collected into a list
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_frozen_str_var_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_frozen_str_literal_without_target_stays_frozen
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_frozen_str_static_read_without_target_stays_frozen
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_frozen_str_var_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_call_context_frozen_str_target_preserves_frozen_literal
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_unknown_struct_field_borrowed_string_const_materializes_owned_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_unknown_collection_element_preserves_frozen_string_without_target
+# expect-stdout:
+#   strict
+#   [strict]
+#   policy
+#   strict!
+#   strict
+#   2 strict
+
+const POLICY: FrozenStr = "strict"
+
+
+model Config:
+    name: str
+
+
+def label(text: str) -> str:
+    return f"[{text}]"
+
+
+def keep(value: FrozenStr) -> FrozenStr:
+    return value
+
+
+def pick() -> FrozenStr:
+    return keep("policy")
+
+
+def main() -> None:
+    println(POLICY)
+    println(label(POLICY))
+    println(pick())
+    mut name: str = POLICY
+    name += "!"
+    println(name)
+    config = Config(name=POLICY)
+    println(config.name)
+    names = [POLICY, POLICY]
+    println(f"{len(names)} {names[0]}")

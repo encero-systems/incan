@@ -1,0 +1,12 @@
+"""A public model with public fields and one private field that only its own factory sets."""
+
+pub model Account:
+    """An account whose kind and tier are public and whose secret stays private to the model."""
+    pub kind: str
+    pub tier: int
+    _secret: int
+
+    @staticmethod
+    def create(kind: str, tier: int, secret: int) -> Account:
+        """Build an account; only the model's own methods may set its private field."""
+        return Account(kind=kind, tier=tier, _secret=secret)

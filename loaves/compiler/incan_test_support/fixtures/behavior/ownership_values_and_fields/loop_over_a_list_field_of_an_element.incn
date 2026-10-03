@@ -1,0 +1,19 @@
+# behavior: a for loop that changes the items of a list field of a list element or of a dict value changes them in the collection
+# retires: loaves/compiler/incan_emit/src/tests/dict_value_places.rs::loop_over_a_list_field_of_an_element_changes_it_in_place_issue1561
+# expect-stdout:
+#   [[1, 3], [2, 3]]
+#   [[4, 5]]
+
+class Holder:
+    pub rows: list[list[int]]
+
+
+def main() -> None:
+    mut holders = [Holder(rows=[[1], [2]])]
+    for row in holders[0].rows:
+        row.append(3)
+    mut by_name: dict[str, Holder] = {"a": Holder(rows=[[4]])}
+    for row in by_name["a"].rows:
+        row.append(5)
+    println(holders[0].rows)
+    println(by_name["a"].rows)

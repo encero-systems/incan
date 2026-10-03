@@ -17,6 +17,7 @@ members = [
     "loaves/toolchain/incan-cli",
     "loaves/toolchain/incan-lsp",
     "loaves/toolchain/oven-cli",
+    "loaves/toolchain/incan-ci-tools",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
     "loaves/kernel/incan_lang",
@@ -43,7 +44,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "loaves/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.98"
@@ -58,6 +59,7 @@ categories = ["compilers", "development-tools"]
 # One version per shared dependency, declared once; members write `workspace = true` and add only the features they
 # need on top. Every manifest the layout rewrite (#1478) writes starts from this table.
 [workspace.dependencies]
+ar_archive_writer = "=0.5.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = "1"
@@ -71,19 +73,20 @@ tracing = "0.1"
 # its own line, and `default-features = false` where any member consumes it without defaults — and members
 # inherit the entry. The release archive and the staged SDK runtime write their own tables against `crates/<name>`.
 incan_lang = { path = "loaves/kernel/incan_lang" }
-incan_derive = { path = "loaves/stdlib/derive/incan_derive", version = "0.6.0-dev.5" }
-incan_std_core = { path = "loaves/stdlib/core/rust", version = "0.6.0-dev.5" }
-incan_std_data = { path = "loaves/stdlib/data/rust", version = "0.6.0-dev.5" }
-incan_std_async = { path = "loaves/stdlib/async/rust", version = "0.6.0-dev.5" }
-incan_std_web = { path = "loaves/stdlib/web/rust", version = "0.6.0-dev.5" }
-incan_std_testing = { path = "loaves/stdlib/testing/rust", version = "0.6.0-dev.5" }
+incan_derive = { path = "loaves/stdlib/derive/incan_derive", version = "0.6.0-dev.6" }
+incan_std_core = { path = "loaves/stdlib/core/rust", version = "0.6.0-dev.6" }
+incan_std_data = { path = "loaves/stdlib/data/rust", version = "0.6.0-dev.6" }
+incan_std_async = { path = "loaves/stdlib/async/rust", version = "0.6.0-dev.6" }
+incan_std_web = { path = "loaves/stdlib/web/rust", version = "0.6.0-dev.6" }
+incan_std_testing = { path = "loaves/stdlib/testing/rust", version = "0.6.0-dev.6" }
 incan_vocab = { path = "loaves/kernel/incan_vocab", version = "0.3.0" }
-incan_web_macros = { path = "loaves/stdlib/derive/incan_web_macros", version = "0.6.0-dev.5" }
+incan_web_macros = { path = "loaves/stdlib/derive/incan_web_macros", version = "0.6.0-dev.6" }
 incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
 incan_format = { path = "loaves/compiler/incan_format" }
 incan_test_support = { path = "loaves/compiler/incan_test_support" }
 incan-cli = { path = "loaves/toolchain/incan-cli" }
+incan-ci-tools = { path = "loaves/toolchain/incan-ci-tools" }
 incan-lsp = { path = "loaves/toolchain/incan-lsp" }
 oven-cli = { path = "loaves/toolchain/oven-cli" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }

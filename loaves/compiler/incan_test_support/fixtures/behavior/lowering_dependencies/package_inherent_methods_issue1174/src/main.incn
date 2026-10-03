@@ -1,0 +1,13 @@
+# behavior: a package's module calls an inherent method of a model from a sibling module of the same package, and a consumer calls that method on the dependency's type directly (#1174)
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_package_projects_its_own_inherent_method_while_building_itself
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::another_packages_inherent_method_is_still_not_projected
+# expect-stdout:
+#   base=10 tax=2
+#   total=12
+
+from pub::pricing import Entry, summary
+
+
+def main() -> None:
+    println(summary())
+    println(Entry(key="total", amount=12).describe())

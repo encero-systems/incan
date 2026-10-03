@@ -8,8 +8,24 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+/// Structured facts emitted after one compatibility build script finishes at the explicit publisher boundary.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct CargoBuildScriptExecuted {
+    pub(crate) reason: String,
+    pub(crate) package_id: String,
+    #[serde(default)]
+    pub(crate) linked_libs: Vec<String>,
+    #[serde(default)]
+    pub(crate) linked_paths: Vec<String>,
+    #[serde(default)]
+    pub(crate) cfgs: Vec<String>,
+    #[serde(default)]
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) out_dir: PathBuf,
+}
+
 /// Minimal Cargo JSON message shape used to map publisher-built dependency artifacts back to unit-graph edges.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct CargoCompilerArtifact {
     pub(crate) reason: String,
     pub(crate) package_id: String,
@@ -22,18 +38,20 @@ pub(crate) struct CargoCompilerArtifact {
     pub(crate) profile: CargoCompilerArtifactProfile,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Deserialize)]
 pub(crate) struct CargoCompilerArtifactProfile {
     #[serde(default)]
     pub(crate) test: bool,
 }
 
 /// Target identity emitted by Cargo's stable JSON message stream.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct CargoCompilerArtifactTarget {
     pub(crate) name: String,
     #[serde(default)]
     pub(crate) kind: Vec<String>,
+    #[serde(default)]
+    pub(crate) crate_types: Vec<String>,
     #[serde(default)]
     pub(crate) src_path: PathBuf,
 }

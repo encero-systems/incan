@@ -29,7 +29,7 @@ def triage(raw: str) -> str:
     try:
         level = Level(raw)
     except ValueError:
-        return f"{raw}: unrecognised"
+        return f"{raw}: unrecognized"
     return f"{raw}: severity {severity(level)}"
 ```
 """
@@ -64,7 +64,7 @@ def triage(raw: str) -> str:
     """
     if let Some(level) = Level.from_value(raw):
         return f"{raw}: severity {severity(level)}"
-    return f"{raw}: unrecognised"
+    return f"{raw}: unrecognized"
 
 
 def first_error_index(lines: list[str]) -> int:

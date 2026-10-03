@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::backend::ProjectGenerator;
+use crate::build::output_selection::baked_project_owner_identity;
 use crate::build::oven_project::{
     bake_generated_project_compatibility_plan, project_extension_base_loaf, remove_completed_generated_cargo_lock,
     select_oven_direct_rustc_plan, select_oven_direct_rustc_plan_with_materialization,
@@ -33,11 +34,15 @@ use oven_rustc::loaf::{
 };
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::plan::selection::{
-    select_receipt_direct_rustc_execution_plan, select_receipt_project_extension_execution_plan,
+    select_exact_receipt_direct_rustc_execution_plan, select_receipt_direct_rustc_execution_plan,
+    select_receipt_project_extension_execution_plan,
 };
 use oven_rustc::rustc::{OvenRegistryLeafAuthority, OvenRustcArtifactPlan, resolve_active_rustc};
 use oven_store::store::OvenStore;
 use oven_store::{OvenGeneratedProjectRequest, digest_dependency_specs, receipt_generated_project};
+
+/// Package, pinning artifact, and unit divergence reported for one incompatible provider registry closure.
+type ProviderRegistryConflict = (String, Option<PathBuf>, Option<String>);
 
 /// Remove public package-provider roots from the Cargo-published test delta without narrowing project authority.
 ///
@@ -136,6 +141,9 @@ fn bake_generated_project_test_dependency_plan(
         cargo: resolved_cargo_executable()
             .map_err(|error| CliError::failure(format!("cannot resolve Cargo for explicit Oven bake: {error}")))?,
         rustc: rustc.to_path_buf(),
+        cc: None,
+        cxx: None,
+        c_sysroot: None,
         sdk_inventory: None,
         compiler_loaf_root: None,
         domain: format!("incan-release-{INCAN_VERSION}"),
@@ -146,6 +154,7 @@ fn bake_generated_project_test_dependency_plan(
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
         provider_compilations: &[],
         compact_debug_info: true,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: false,
         base_loaf: base_loaf.map(|base| OvenLegacyCargoBaseLoaf {
             loaf_identity: base.loaf_identity.clone(),
@@ -191,6 +200,18 @@ pub fn prepare_oven_test_dependency_envelope(
         .iter()
         .map(|checked| checked.dependency_key.replace('-', "_"))
         .collect::<BTreeSet<_>>();
+    let provider_entries = checked_package_profiles
+        .iter()
+        .filter(|checked| !checked.source_available)
+        .flat_map(|checked| {
+            checked
+                .package
+                .entries
+                .iter()
+                .cloned()
+                .map(|entry| (checked.dependency_key.clone(), entry))
+        })
+        .collect::<Vec<_>>();
     let publisher_dependencies = test_dependency_publisher_dependencies(&dependencies, &packaged_provider_aliases);
     let publisher_dependency_surface_digest =
         digest_dependency_specs(&publisher_dependencies, incan_oven_facet::provider_hooks().as_ref())
@@ -226,6 +247,7 @@ pub fn prepare_oven_test_dependency_envelope(
                 dependency_surface_digest,
                 dependencies,
                 dependency_root_digests,
+                provider_entries,
                 plan_selection,
             });
         }
@@ -257,6 +279,8 @@ pub fn prepare_oven_test_dependency_envelope(
     for (name, value) in &base_receipt.sources.build_unit_inputs {
         receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
     }
+    receipt_request =
+        receipt_request.with_build_unit_input("project-owner-identity", baked_project_owner_identity(project_root)?);
     receipt_request = receipt_request.with_build_unit_input("rust-dependencies", publisher_dependency_surface_digest);
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
     let plan_selection = if publisher_dependencies
@@ -290,6 +314,7 @@ pub fn prepare_oven_test_dependency_envelope(
         dependency_surface_digest,
         dependencies,
         dependency_root_digests,
+        provider_entries,
         plan_selection,
     })
 }
@@ -442,6 +467,70 @@ pub fn select_published_project_plan(
         }))
 }
 
+/// Select only a plan published by the exact caller-owned provider receipt.
+///
+/// This deliberately excludes build-unit-compatible plans from other projects. Cross-project reuse remains valid
+/// for ordinary generated roots, but provider coherence checks must compare the provider's own sealed closure.
+pub fn select_exact_published_provider_plan(
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    materialization: OvenToolchainMaterialization,
+) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    if let Some(selected) = select_published_project_extension_plan(store, receipt, materialization)? {
+        return Ok(Some(selected));
+    }
+    Ok(select_exact_receipt_direct_rustc_execution_plan(store, receipt)
+        .map_err(oven_plan_error)?
+        .map(|selected| OvenDirectRustcPlanPreparation {
+            plan_selection: OvenDirectRustcPlanSelection::Stored(Box::new(selected)),
+            materialization,
+            cargo_process_started: false,
+        }))
+}
+
+/// Keep a composed package closure only when it links every standard-library crate the consumer needs.
+///
+/// Generated Rust names each used compiled SDK provider directly, so the closure must expose that provider as an
+/// extern. A consumer with no active provider for a `std` namespace instead compiles that namespace from source into
+/// its own crate, so its generated root links the namespace's runtime crates directly (see
+/// [`incan_provider::inventory::stdlib_namespace_cargo_dependencies`]). A package Loaf extending a compiler base
+/// supplies them through that base; a self-contained package plan supplies only what its own provider linked. A
+/// closure that lacks one of them cannot compile the consumer, so the caller publishes or selects the consumer's own
+/// closure instead, as it does for a consumer that declares its own Rust roots.
+pub fn packaged_provider_selection_links_required_stdlib(
+    selection: Option<OvenDirectRustcPlanSelection>,
+    provider_plan: &incan_provider::ProviderPlan,
+) -> CliResult<Option<OvenDirectRustcPlanSelection>> {
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let mut required = provider_plan
+        .sdk_link_roots()
+        .into_iter()
+        .filter_map(|provider| provider.artifact.as_ref())
+        .map(|artifact| artifact.dependency_key.replace('-', "_"))
+        .collect::<BTreeSet<_>>();
+    required.extend(
+        provider_plan
+            .source_std_namespace_roots()
+            .iter()
+            .filter_map(|root| incan_lang::lang::stdlib::find_namespace(root))
+            .flat_map(incan_provider::inventory::stdlib_namespace_cargo_dependencies)
+            .map(|dependency| dependency.crate_name.replace('-', "_")),
+    );
+    if required.is_empty() {
+        return Ok(Some(selection));
+    }
+    let linked = selection
+        .source_artifact_plan("generated-root")
+        .map_err(oven_rustc_error)?
+        .externs
+        .into_iter()
+        .map(|(crate_name, _)| crate_name)
+        .collect::<BTreeSet<_>>();
+    Ok(required.is_subset(&linked).then_some(selection))
+}
+
 /// Render the registry requirements that made sealed Loaf selection impossible.
 ///
 /// Oven does not invoke Cargo to diagnose an unavailable registry version, so this preserves the manifest-level
@@ -480,45 +569,52 @@ pub fn registry_leaf_authority_for_plan_selection(
 /// compiled instance of a package `plan` already links explicitly, returning the first such package.
 ///
 /// Linking a provider's own registry-resolved package (for example an async runtime a query-engine provider pulls
-/// in through its own dependency graph) alongside the SDK/consumer's own separately compiled copy of that same
-/// package is a real, reproduced defect, not a theoretical one: it produced a runtime panic ("no reactor running")
-/// from two distinct compiled `tokio` instances silently linked into one binary, discovered only by inspecting the
-/// linked executable's own symbol table after the build otherwise succeeded. Properly unifying a provider's
-/// independently Cargo-resolved registry closure with the consumer's own is out of scope for Oven Alpha's
-/// direct-rustc execution (#1241). A bake that hits this shape refuses ([`oven_native_closure_refusal`]); there is
-/// no Cargo fallback.
+/// in through its own dependency graph) alongside a semantically different consumer copy is a real, reproduced
+/// defect: it produced a runtime panic ("no reactor running") from two distinct compiled `tokio` instances silently
+/// linked into one binary. Equal portable RFC 124 unit identities reconcile to one representative; this check keeps
+/// the refusal for missing identities and real source, feature, target, profile, toolchain or dependency divergence.
 pub fn caller_owned_provider_registry_conflict(
     consumer_authority: Option<&OvenRegistryLeafAuthority>,
     closure: &CallerOwnedProviderRegistryClosure,
     plan: &OvenRustcArtifactPlan,
-) -> CliResult<Option<(String, Option<PathBuf>)>> {
+) -> CliResult<Option<ProviderRegistryConflict>> {
     for provider_authority in &closure.provider_authorities {
         // A shared package can enter both closures transitively without ever being a named extern of either
         // compile (the reproduced `tokio` duplication was exactly this shape), so the catalogs themselves are
         // compared first; the extern comparison then covers packages the selected plan links directly.
         if let Some(consumer_authority) = consumer_authority
-            && let Some((package, pinned_by)) =
-                consumer_authority.first_diverging_shared_package_pin(provider_authority)
+            && let Some((package, pinned_by, divergence)) =
+                consumer_authority.first_diverging_shared_package_pin_detail(provider_authority)
         {
-            return Ok(Some((package, Some(pinned_by))));
+            return Ok(Some((package, Some(pinned_by), Some(divergence))));
         }
         if let Some(package) = provider_authority
-            .first_conflicting_package_with(plan)
+            .first_conflicting_package_with_reconciled_authority(plan, consumer_authority)
             .map_err(oven_rustc_error)?
         {
-            return Ok(Some((package, None)));
+            return Ok(Some((package, None, None)));
         }
     }
     Ok(None)
 }
 
-/// Describe one provider registry conflict for a refusal, naming the contributor that pins the package.
+/// Describe one provider registry conflict for a refusal, naming the contributor that pins the package and, when
+/// known, how the two units differ.
 ///
 /// "Two copies of `itoa` exist" leaves a reader with nowhere to go; "this prebuilt provider was compiled against
-/// that copy" says what would have to change. The distinction is also the boundary of the unimplemented capability:
-/// a leaf can be reconciled wherever every dependent linking it is recompiled against the choice, and a provider
-/// consumed from the store as an already-compiled artifact is exactly the case that cannot be (#1241).
-pub fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>) -> String {
+/// that copy" says what would have to change. This path is reached only after portable selected-unit reconciliation
+/// rejected the pair, so the named artifact identifies the genuinely incompatible pin, and the divergence names both
+/// selected-unit identities and the facts that disagree.
+pub fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>, divergence: Option<&str>) -> String {
+    let reason = provider_registry_conflict_pin(package, pinned_by);
+    match divergence {
+        Some(divergence) => format!("{reason} ({divergence})"),
+        None => reason,
+    }
+}
+
+/// Name the contributor that pins `package` in a provider registry conflict.
+fn provider_registry_conflict_pin(package: &str, pinned_by: Option<&Path>) -> String {
     match pinned_by {
         Some(root) => format!(
             "a caller-owned provider's own registry closure resolves `{package}` to a different compiled artifact \
@@ -534,19 +630,19 @@ pub fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>
     }
 }
 
-/// Refuse the one build shape direct-rustc composition cannot finish yet, naming it exactly.
+/// Refuse a genuinely incompatible direct-rustc closure, naming it exactly.
 ///
-/// Oven never launches Cargo during a normal command, and there is no fallback to declare: a project that hits this
-/// shape waits for the Oven-native reconciliation (#1241, one compiled instance of every shared registry package,
-/// every dependent relinked against it) or restructures so the shape does not arise.
+/// Oven never launches Cargo during a normal command. Equal RFC 124 selected units have already been reconciled
+/// before this boundary, so reaching it means the closures disagree on a semantic compilation fact or lack the
+/// portable identity needed to prove equivalence.
 pub fn oven_native_closure_refusal(crate_name: &str, reason: &str) -> CliError {
     CliError::failure(format!(
         "Oven refuses to build `{crate_name}`: {reason}. Linking both would silently admit two incompatible compiled \
          instances of the same crate into one binary -- for a crate that carries process-wide runtime state (most \
          dangerously an async runtime), this can produce a runtime panic instead of a build failure. Oven does not \
-         reconcile this shape through direct rustc yet (#1241) and never falls back to Cargo; prepare an explicit \
-         Oven-native closure that reconciles the shared package to one compiled artifact, or consume the provider \
-         from source rather than as a sealed packaged closure."
+         reconcile semantically different compiled units and never falls back to Cargo; align the shared package's \
+         source, version, features, target, profile and toolchain, or consume the provider from source rather than as \
+         a sealed packaged closure."
     ))
 }
 
@@ -555,12 +651,16 @@ mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use std::{env, fs};
 
     use crate::backend::ProjectGenerator;
     use crate::build::output_paths::project_inspection_test_dependency_roots;
     use crate::build::{OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization};
     use crate::build_unit::promoted_oven_test_dependencies;
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+    use incan_frontend::provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
     use incan_provider::dependency_resolver::ResolvedDependencies;
     use oven_interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
     use oven_model::manifest::{DependencySource, DependencySpec};
@@ -577,10 +677,10 @@ mod tests {
     /// points the reader at Cargo or a compatibility mode.
     #[test]
     fn a_closure_refusal_names_the_package_the_pinning_artifact_and_never_offers_cargo() {
-        let pinned = provider_registry_conflict_reason("tokio", Some(Path::new("/store/entries/x/artifacts")));
+        let pinned = provider_registry_conflict_reason("tokio", Some(Path::new("/store/entries/x/artifacts")), None);
         assert!(pinned.contains("`tokio`"));
         assert!(pinned.contains("/store/entries/x/artifacts"));
-        let linked = provider_registry_conflict_reason("tokio", None);
+        let linked = provider_registry_conflict_reason("tokio", None, None);
         assert!(linked.contains("already linked by this project's own selected plan"));
         let refusal = oven_native_closure_refusal("app", &pinned).to_string();
         assert!(refusal.contains("Oven refuses to build `app`"));
@@ -866,6 +966,7 @@ mod tests {
                 supporting_artifacts: Vec::new(),
             })?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let selected = select_or_bake_generated_project_plan(
@@ -886,6 +987,186 @@ mod tests {
             OvenDirectRustcPlanSelection::Stored(_)
         ));
         assert!(!selected.cargo_process_started);
+        Ok(())
+    }
+
+    /// #1561: a package closure serves a consumer only while it links every runtime crate of the standard-library
+    /// namespaces the consumer compiles from source. One that lacks the `std.testing` runtime is set aside, so the
+    /// consumer compiles against its own closure instead of failing E0433 against the package's.
+    #[test]
+    fn a_package_closure_without_the_runtime_of_a_source_mounted_namespace_is_set_aside_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let generated = project.path().join("generated/src/main.rs");
+        fs::create_dir_all(generated.parent().ok_or("generated source parent missing")?)?;
+        fs::write(&generated, "fn main() {}\n")?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project.path(),
+                "package-closure-consumer",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &generated),
+        )?;
+        let store = OvenStore::new(
+            project.path().join("oven-store"),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let core_runtime = project.path().join("libincan_std_core.rlib");
+        fs::write(&core_runtime, b"core runtime")?;
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "package-closure-consumer".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&OvenRustcArtifactManifest {
+                schema_version: oven_rustc::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                intent: receipt.intent.clone(),
+                dependency_search_paths: vec!["deps".to_string()],
+                native_search_paths: Vec::new(),
+                externs: vec![oven_rustc::rustc::OvenRustcArtifactExtern {
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core.rlib".to_string(),
+                    digest: digest_bytes(b"core runtime"),
+                }],
+                entrypoint_dependency_search_paths: Default::default(),
+                entrypoint_externs: BTreeMap::new(),
+                registry_leaves: Vec::new(),
+                registry_sources: Vec::new(),
+                compile_environment: BTreeMap::new(),
+                vocab_auxiliary_targets: Vec::new(),
+                supporting_artifacts: Vec::new(),
+            })?,
+            materialized_files: vec![oven_store::store::OvenArtifactMaterializedFile {
+                source_path: core_runtime,
+                relative_path: "deps/libincan_std_core.rlib".to_string(),
+            }],
+            materialized_directories: Vec::new(),
+        })?;
+        let closure = || -> Result<Option<OvenDirectRustcPlanSelection>, Box<dyn std::error::Error>> {
+            Ok(
+                select_published_project_plan(&store, &receipt, OvenToolchainMaterialization::Reused)?
+                    .map(|selected| selected.plan_selection),
+            )
+        };
+        // The fixture intentionally exercises the production provider-plan error type without boxing it.
+        #[allow(clippy::result_large_err)]
+        let using = |module: &str| {
+            incan_provider::ProviderPlan::new(
+                Default::default(),
+                Vec::new(),
+                [vec!["std".to_string(), module.to_string()]],
+            )
+        };
+
+        assert!(closure()?.is_some(), "the fixture closure is selectable on its own");
+        assert!(
+            packaged_provider_selection_links_required_stdlib(closure()?, &using("testing")?)?.is_none(),
+            "a closure without `incan_std_testing` cannot compile a consumer that mounts std.testing"
+        );
+        assert!(
+            packaged_provider_selection_links_required_stdlib(closure()?, &using("derives")?)?.is_some(),
+            "a namespace with no runtime crate of its own needs nothing beyond the closure"
+        );
+        assert!(packaged_provider_selection_links_required_stdlib(None, &using("testing")?)?.is_none());
+        Ok(())
+    }
+
+    /// #2011: a compiled SDK namespace is emitted through its provider crate, so a package closure that omits that
+    /// direct provider extern cannot serve a source program importing the namespace.
+    #[test]
+    fn a_package_closure_without_a_used_compiled_sdk_provider_is_set_aside_issue2011()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let generated = project.path().join("generated/src/main.rs");
+        fs::create_dir_all(generated.parent().ok_or("generated source parent missing")?)?;
+        fs::write(&generated, "fn main() {}\n")?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                project.path(),
+                "compiled-sdk-consumer",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &generated),
+        )?;
+        let store = OvenStore::new(
+            project.path().join("oven-store"),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let core_runtime = project.path().join("libincan_std_core.rlib");
+        fs::write(&core_runtime, b"core runtime")?;
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "compiled-sdk-consumer".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&OvenRustcArtifactManifest {
+                schema_version: oven_rustc::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                intent: receipt.intent.clone(),
+                dependency_search_paths: vec!["deps".to_string()],
+                native_search_paths: Vec::new(),
+                externs: vec![oven_rustc::rustc::OvenRustcArtifactExtern {
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core.rlib".to_string(),
+                    digest: digest_bytes(b"core runtime"),
+                }],
+                entrypoint_dependency_search_paths: Default::default(),
+                entrypoint_externs: BTreeMap::new(),
+                registry_leaves: Vec::new(),
+                registry_sources: Vec::new(),
+                compile_environment: BTreeMap::new(),
+                vocab_auxiliary_targets: Vec::new(),
+                supporting_artifacts: Vec::new(),
+            })?,
+            materialized_files: vec![oven_store::store::OvenArtifactMaterializedFile {
+                source_path: core_runtime,
+                relative_path: "deps/libincan_std_core.rlib".to_string(),
+            }],
+            materialized_directories: Vec::new(),
+        })?;
+        let selected = select_published_project_plan(&store, &receipt, OvenToolchainMaterialization::Reused)?
+            .map(|selected| selected.plan_selection);
+        let provider_name = "incan_stdlib_testing";
+        let provider = ProviderRecord {
+            identity: ProviderIdentity {
+                name: provider_name.to_string(),
+                version: "0.6.0".to_string(),
+                digest: "sha256:testing-provider".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.6.0".to_string(),
+                component_id: "stdlib-testing".to_string(),
+                inventory_path: None,
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "testing".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new(provider_name, "0.6.0"))),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root(
+                provider_name,
+                provider_name,
+                project.path().join("stdlib-testing"),
+            )),
+            implementation_facets: Vec::new(),
+        };
+        let provider_plan = incan_provider::ProviderPlan::new(
+            Default::default(),
+            vec![provider],
+            [vec!["std".to_string(), "testing".to_string()]],
+        )?;
+
+        assert!(
+            packaged_provider_selection_links_required_stdlib(selected, &provider_plan)?.is_none(),
+            "a closure without the used compiled provider cannot emit std.testing"
+        );
         Ok(())
     }
 

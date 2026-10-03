@@ -1,0 +1,36 @@
+# behavior: a decorated method, a decorated function and its adapter all accept an aliased Rust generic over `tuple[&mut int, &mut int]`
+# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi
+# expect-stdout:
+#   7
+#   decorated explicit mutable Rust generic CLI path
+
+from rust::std::vec import Vec as ProviderHandle
+
+
+def preserve[F]() -> ((F) -> F):
+    return (function) => function
+
+
+def adapted(value: int) -> int:
+    return value
+
+
+def to_int(function: (ProviderHandle[tuple[&mut int, &mut int]]) -> int) -> ((int) -> int):
+    return adapted
+
+
+class Container:
+    @preserve()
+    def replace(self, mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+        pass
+
+
+@to_int
+def transformed(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> int:
+    return 0
+
+
+def main() -> None:
+    Container().replace(ProviderHandle.new())
+    println(transformed(7))
+    println("decorated explicit mutable Rust generic CLI path")

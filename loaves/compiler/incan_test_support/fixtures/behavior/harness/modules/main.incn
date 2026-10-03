@@ -1,0 +1,9 @@
+# behavior: a module fixture imports a sibling module from the same directory
+# expect-stdout:
+#   helper says 42
+
+from helper import answer
+
+
+def main() -> None:
+    println(f"helper says {answer()}")

@@ -94,6 +94,32 @@ pub enum Expr {
     Embedded(Box<EmbeddedFragmentExpr>),
 }
 
+impl Spanned<Expr> {
+    /// Return whether this expression is built only from literals, parentheses, prefix operators and empty builtin
+    /// collection constructors, such as `None`, `-1`, `[]`, `[None]`, `{}`, `(None)` or `list()`.
+    ///
+    /// A call counts only when `is_builtin_constructor_call` confirms, for the call's span, that it resolved to a
+    /// builtin collection constructor; a user function, closure or parameter spelled `list`, `set`, `dict` or `Vec` is
+    /// an ordinary call and does not count. Such an expression evaluates to an equal value every time and does
+    /// nothing else, so a chained assignment may evaluate it once per target (#1806).
+    pub fn is_literal_construction(&self, is_builtin_constructor_call: &dyn Fn(Span) -> bool) -> bool {
+        let part = |item: &Spanned<Expr>| item.is_literal_construction(is_builtin_constructor_call);
+        match &self.node {
+            Expr::Literal(_) => true,
+            Expr::Paren(inner) | Expr::Unary(_, inner) => part(inner),
+            Expr::Tuple(items) | Expr::Set(items) => items.iter().all(part),
+            Expr::List(entries) => entries
+                .iter()
+                .all(|entry| matches!(entry, ListEntry::Element(item) if part(item))),
+            Expr::Dict(entries) => entries
+                .iter()
+                .all(|entry| matches!(entry, DictEntry::Pair(key, value) if part(key) && part(value))),
+            Expr::Call(_, _, args) => args.is_empty() && is_builtin_constructor_call(self.span),
+            _ => false,
+        }
+    }
+}
+
 /// One entry in a list literal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListEntry {
@@ -481,6 +507,7 @@ pub enum EmbeddedTypeShape {
 pub enum FStringFormat {
     Display,
     Debug,
+    Unsupported(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -499,12 +526,14 @@ pub struct IntLiteral {
     pub value: i64,
     pub magnitude: u128,
     pub repr: String,
+    /// Explicit exact-width suffix, when the source names one (for example `u16` in `42u16`).
+    pub suffix: Option<incan_lang::lang::types::numerics::NumericTypeId>,
 }
 
 impl PartialEq for IntLiteral {
     /// Compare numeric meaning while ignoring spelling differences such as separators.
     fn eq(&self, other: &Self) -> bool {
-        self.magnitude == other.magnitude
+        self.magnitude == other.magnitude && self.suffix == other.suffix
     }
 }
 
@@ -515,6 +544,7 @@ impl IntLiteral {
             value,
             magnitude: value.unsigned_abs().into(),
             repr: value.to_string(),
+            suffix: None,
         }
     }
 
@@ -535,11 +565,25 @@ impl IntLiteral {
 pub struct FloatLiteral {
     pub value: f64,
     pub repr: String,
+    /// Explicit binary-float suffix, when the source names one (for example `f32` in `3.14f32`).
+    pub suffix: Option<incan_lang::lang::types::numerics::NumericTypeId>,
 }
 
 impl PartialEq for FloatLiteral {
     fn eq(&self, other: &Self) -> bool {
-        self.value.to_bits() == other.value.to_bits()
+        self.value.to_bits() == other.value.to_bits() && self.suffix == other.suffix
+    }
+}
+
+impl FloatLiteral {
+    /// Return the parseable numeric spelling without an explicit type suffix.
+    pub fn numeric_repr(&self) -> &str {
+        self.suffix
+            .and_then(|suffix| {
+                self.repr
+                    .strip_suffix(incan_lang::lang::types::numerics::as_str(suffix))
+            })
+            .unwrap_or(&self.repr)
     }
 }
 

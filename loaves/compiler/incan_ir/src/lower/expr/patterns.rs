@@ -60,7 +60,7 @@ impl AstLowering {
                     .map(|param| self.lower_pattern_type_with_aliases(&param.node, visiting))
                     .collect::<Vec<_>>();
                 if base == super::super::super::types::IR_UNION_TYPE_NAME {
-                    union_ir_type(lowered_params)
+                    self.lower_union_members(lowered_params)
                 } else {
                     IrType::NamedGeneric(base.clone(), lowered_params)
                 }
@@ -85,12 +85,22 @@ impl AstLowering {
         self.union_subset_target(expected_ty, target_ty)
     }
 
+    /// Return the union an `Option` scrutinee carries: the union itself, or the stored union a dict lookup whose result
+    /// is only read finds in place (`Option[&union]` in Rust).
+    fn option_payload_union(ty: &IrType) -> Option<&IrType> {
+        let IrType::Option(inner) = ty else {
+            return None;
+        };
+        let payload = match inner.as_ref() {
+            IrType::Ref(found) => found.as_ref(),
+            payload => payload,
+        };
+        payload.is_union().then_some(payload)
+    }
+
     /// Resolve how a target type maps onto a union scrutinee.
     fn union_subset_target(&self, expected_ty: &IrType, target_ty: IrType) -> Option<UnionPatternTarget> {
-        let union_ty = match expected_ty {
-            IrType::Option(inner) if inner.is_union() => inner.as_ref(),
-            _ => expected_ty,
-        };
+        let union_ty = Self::option_payload_union(expected_ty).unwrap_or(expected_ty);
         let source_members = union_ty.union_members()?;
 
         if let Some(target_members) = target_ty.union_members() {
@@ -302,10 +312,7 @@ impl AstLowering {
         let Some(primary_binding) = bindings.first() else {
             return Ok(Vec::new());
         };
-        let source_union_ty = match scrutinee_ty {
-            IrType::Option(inner) if inner.is_union() => inner.as_ref(),
-            _ => scrutinee_ty,
-        };
+        let source_union_ty = Self::option_payload_union(scrutinee_ty).unwrap_or(scrutinee_ty);
         let Some(source_union_name) = source_union_ty.union_type_name() else {
             return Ok(Vec::new());
         };
@@ -321,7 +328,7 @@ impl AstLowering {
                 variant: variant_path,
                 fields: vec![Pattern::Var(temp_name.clone())],
             };
-            let pattern = if matches!(scrutinee_ty, IrType::Option(inner) if inner.is_union()) {
+            let pattern = if Self::option_payload_union(scrutinee_ty).is_some() {
                 Pattern::Enum {
                     name: "Option".to_string(),
                     variant: constructors::as_str(ConstructorId::Some).to_string(),
@@ -421,9 +428,16 @@ impl AstLowering {
 
     /// Lower match arms to IR.
     ///
+    /// One source arm usually lowers to one IR arm. An arm whose pattern alternation the backend cannot take as
+    /// written lowers to one IR arm per alternative, in order and with the same body and guard, and each IR arm's
+    /// guard first runs the tests its pattern needs (#1739; see [`Self::plan_arm_alternatives`]).
+    ///
     /// # Parameters
     ///
     /// * `arms` - The AST match arms
+    /// * `scrutinee` - The lowered scrutinee
+    /// * `in_place` - Whether the match reaches its scrutinee in place (see `in_place_matches`): each arm's pattern
+    ///   binds compiler names, and the arm binds its source names from them before the body runs
     ///
     /// # Returns
     ///
@@ -432,6 +446,7 @@ impl AstLowering {
         &mut self,
         arms: &[Spanned<ast::MatchArm>],
         scrutinee: &TypedExpr,
+        in_place: bool,
     ) -> Result<Vec<MatchArm>, LoweringError> {
         let scrutinee_ty = &scrutinee.ty;
         let subject_binding_name = Self::direct_match_subject_binding_name(scrutinee);
@@ -550,10 +565,19 @@ impl AstLowering {
             }
 
             let pattern = self.lower_pattern_for_expected_type(&a.node.pattern.node, expected_ty);
+            let alternatives = Self::plan_arm_alternatives(pattern, a.node.guard.is_some(), scrutinee);
+            let guard_may_repeat = alternatives.len() > 1
+                || alternatives
+                    .iter()
+                    .any(|(pattern, _)| Self::pattern_holds_alternation(pattern));
+            let in_place_bindings = in_place.then(|| self.in_place_arm_bindings(&a.node.pattern));
             self.push_scope();
-            self.define_match_pattern_bindings_for_expected_type(&a.node.pattern.node, expected_ty);
+            match &in_place_bindings {
+                Some(bindings) => self.define_in_place_arm_bindings(bindings),
+                None => self.define_match_pattern_bindings_for_expected_type(&a.node.pattern.node, expected_ty),
+            }
             let arm_result = (|| {
-                let guard = a.node.guard.as_ref().map(|g| self.lower_expr_spanned(g)).transpose()?;
+                let guard = self.lower_match_arm_guard(a.node.guard.as_ref(), guard_may_repeat)?;
                 let body = match &a.node.body {
                     ast::MatchBody::Expr(e) => self.lower_expr_spanned(e)?,
                     ast::MatchBody::Block(stmts) => {
@@ -567,16 +591,15 @@ impl AstLowering {
                         )
                     }
                 };
-                Ok(MatchArm {
-                    pattern,
-                    bindings: Vec::new(),
-                    guard,
-                    body,
-                })
+                let mut arms = Self::match_arms_for_alternatives(alternatives, guard, body);
+                if let Some(bindings) = &in_place_bindings {
+                    bindings.apply(&mut arms);
+                }
+                Ok(arms)
             })();
             self.pop_scope();
             match arm_result {
-                Ok(arm) => lowered_arms.push(arm),
+                Ok(arms) => lowered_arms.extend(arms),
                 Err(error) => {
                     self.remaining_ident_reads = original_remaining_reads;
                     return Err(error);
@@ -607,10 +630,7 @@ impl AstLowering {
             && !name.node.contains("::")
         {
             let target_ty = self.lower_type_pattern_name(&name.node);
-            let option_wrapped_union = match expected_ty {
-                IrType::Option(inner) if inner.is_union() => Some(inner.as_ref()),
-                _ => None,
-            };
+            let option_wrapped_union = Self::option_payload_union(expected_ty);
             let union_ty = option_wrapped_union.unwrap_or(expected_ty);
             if let Some(variant_index) = union_ty.union_variant_index_for_member(&target_ty)
                 && let Some(union_name) = union_ty.union_type_name()
@@ -701,25 +721,368 @@ impl AstLowering {
                 }
 
                 if has_named {
+                    // The pattern names a subset of the fields; the checker recorded the rest (#1708). A rest that
+                    // holds a private field the pattern may not name becomes a rest marker (#1740): that field cannot
+                    // be spelled even as a wildcard where the matched model's module keeps it private. Any other
+                    // rest is spelled out as one wildcard per omitted field.
+                    let rest = self.pattern_rest_has_private_fields_for(name.span);
+                    if !rest && let Some(omitted) = self.pattern_rest_fields_for(name.span) {
+                        for field in omitted {
+                            if !named_fields.iter().any(|(named, _)| *named == field) {
+                                named_fields.push((field, Pattern::Wildcard));
+                            }
+                        }
+                    }
                     Pattern::Struct {
-                        name: name.node.clone(),
+                        name: self
+                            .active_trait_default_qualified_pattern_name(&name.node)
+                            .unwrap_or_else(|| name.node.clone()),
                         fields: named_fields,
+                        rest,
                     }
                 } else {
-                    let mut fields = positional_fields;
-                    if has_named {
-                        fields.extend(named_fields.into_iter().map(|(_, pat)| pat));
-                    }
+                    // A variant of an Incan enum is spelled as the enum's canonical variant the checker resolved, so a
+                    // bare or aliased variant names the same variant a qualified pattern does. An expanded
+                    // source-module trait default names its module's enum by that module's path (#1759).
+                    let variant = self
+                        .pattern_variant_path_for(name.span)
+                        .unwrap_or_else(|| name.node.clone());
                     Pattern::Enum {
                         name: String::new(),
-                        variant: name.node.clone(),
-                        fields,
+                        variant: self
+                            .active_trait_default_qualified_pattern_name(&variant)
+                            .unwrap_or(variant),
+                        fields: positional_fields,
                     }
                 }
             }
             ast::Pattern::Tuple(items) => Pattern::Tuple(items.iter().map(|i| self.lower_pattern(&i.node)).collect()),
             ast::Pattern::Group(pattern) => self.lower_pattern(&pattern.node),
             ast::Pattern::Or(items) => Pattern::Or(items.iter().map(|item| self.lower_pattern(&item.node)).collect()),
+        }
+    }
+
+    /// Return the fields the checker recorded as unnamed by the constructor pattern whose name sits at `span`.
+    ///
+    /// Expression facts are keyed by span alone, so while an imported trait default is being expanded into an
+    /// adopter the adopter's same-offset facts are not authority for that body (see `lower_expr_spanned`); the rest
+    /// record is skipped there like every other span-keyed fact.
+    fn pattern_rest_fields_for(&self, span: ast::Span) -> Option<Vec<String>> {
+        if self.active_imported_trait_defaults.last().copied().unwrap_or(false) {
+            return None;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.pattern_rest_fields(span))
+            .map(<[String]>::to_vec)
+    }
+
+    /// Return the enum-qualified canonical variant (`Shape::Filled`) the checker resolved for the variant pattern whose
+    /// constructor name sits at `span`.
+    ///
+    /// Like [`Self::pattern_rest_fields_for`], the span-keyed fact is not read while an imported trait default is being
+    /// expanded into an adopter.
+    fn pattern_variant_path_for(&self, span: ast::Span) -> Option<String> {
+        if self.active_imported_trait_defaults.last().copied().unwrap_or(false) {
+            return None;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.pattern_variant_path(span))
+            .map(str::to_string)
+    }
+
+    /// Return whether the checker recorded that the constructor pattern whose name sits at `span` leaves unnamed a
+    /// private field it may not name, so its rest must be a rest marker rather than spelled wildcards (#1740).
+    ///
+    /// Like [`Self::pattern_rest_fields_for`], the span-keyed fact is not read while an imported trait default is being
+    /// expanded into an adopter.
+    fn pattern_rest_has_private_fields_for(&self, span: ast::Span) -> bool {
+        if self.active_imported_trait_defaults.last().copied().unwrap_or(false) {
+            return false;
+        }
+        self.type_info
+            .as_ref()
+            .is_some_and(|info| info.pattern_rest_has_private_fields(span))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::decl::IrDeclKind;
+    use crate::expr::{BinOp, FormatPart, IrExprKind, MatchArm, Pattern};
+    use crate::lower::AstLowering;
+    use crate::stmt::IrStmtKind;
+    use crate::types::IrType;
+    use crate::{IrProgram, TypedExpr};
+    use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+
+    type TestResult = Result<(), String>;
+
+    /// Lex, check and lower one source module through the same pipeline the compiler runs.
+    fn lower_source(source: &str) -> Result<IrProgram, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typechecker failed: {errors:?}"))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        lowering
+            .lower_program(&program)
+            .map_err(|errors| format!("lowering failed: {errors:?}"))
+    }
+
+    /// The arms of the first `match` in the body of the named function, at statement or expression position.
+    fn match_arms(program: &IrProgram, function: &str) -> Result<Vec<MatchArm>, String> {
+        let body = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.kind {
+                IrDeclKind::Function(func) if func.name == function => Some(&func.body),
+                _ => None,
+            })
+            .ok_or_else(|| format!("missing function `{function}`"))?;
+        body.iter()
+            .find_map(|stmt| match &stmt.kind {
+                IrStmtKind::Match { arms, .. } => Some(arms.clone()),
+                IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) => match &expr.kind {
+                    IrExprKind::Match { arms, .. } => Some(arms.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or_else(|| format!("`{function}` lowers no match"))
+    }
+
+    /// Render an arm's guard as `<lhs> == "<rhs>"` when it is one hoisted string-literal test.
+    fn string_literal_test(guard: &TypedExpr) -> Option<(String, String)> {
+        let IrExprKind::BinOp {
+            op: BinOp::Eq,
+            left,
+            right,
+        } = &guard.kind
+        else {
+            return None;
+        };
+        let (IrExprKind::Var { name, .. }, IrExprKind::String(value)) = (&left.kind, &right.kind) else {
+            return None;
+        };
+        (left.ty == IrType::String && right.ty == IrType::String && guard.ty == IrType::Bool)
+            .then(|| (name.clone(), value.clone()))
+    }
+
+    /// A string literal nested in a tuple pattern over a temporary scrutinee lowers to a binding tested by the arm's
+    /// guard (#1707): the pattern shape the backend prints as a compilable `match` over an owned `String` item. An arm
+    /// without a nested literal gets no guard. Over a place the literal is tested on the place instead, so no part of
+    /// it moves (see `lower/expr/pattern_alternatives.rs`).
+    #[test]
+    fn nested_string_literal_pattern_lowers_to_a_guarded_binding_issue1707() -> TestResult {
+        let source = r#"
+def main() -> None:
+    count = 42
+    word = "answer"
+    match (count, word):
+        (0, _) => println("first is zero")
+        (_, "answer") => println("second is answer")
+        _ => println("something else")
+"#;
+        let arms = match_arms(&lower_source(source)?, "main")?;
+        let [zero, answer, rest] = arms.as_slice() else {
+            return Err(format!("expected three arms, got {}", arms.len()));
+        };
+        assert!(zero.guard.is_none(), "an arm without a nested literal records no guard");
+        assert!(rest.guard.is_none(), "the wildcard arm records no guard");
+
+        let Pattern::Tuple(items) = &answer.pattern else {
+            return Err(format!("expected a tuple pattern, got {:?}", answer.pattern));
+        };
+        let [Pattern::Wildcard, Pattern::Var(binding)] = items.as_slice() else {
+            return Err(format!("the nested literal must become a binding, got {items:?}"));
+        };
+        let guard = answer
+            .guard
+            .as_ref()
+            .ok_or("the literal test must be recorded as the arm's guard")?;
+        assert_eq!(
+            string_literal_test(guard),
+            Some((binding.clone(), "answer".to_string())),
+            "the guard compares the hoisted binding with the literal as two `str` operands"
+        );
+        Ok(())
+    }
+
+    /// Over a temporary scrutinee, a hoisted literal test runs ahead of the arm's own guard, and an alternation of
+    /// string literals in one nested position shares a single binding tested with `or`.
+    #[test]
+    fn hoisted_literal_tests_conjoin_with_the_arm_guard_issue1707() -> TestResult {
+        let source = r#"
+def classify(count: int, word: str) -> str:
+    match (count, word):
+        (n, "yes" | "no") if n > 0 => return "answered"
+        _ => return "open"
+"#;
+        let arms = match_arms(&lower_source(source)?, "classify")?;
+        let answered = arms.first().ok_or("expected an answered arm")?;
+        let Pattern::Tuple(items) = &answered.pattern else {
+            return Err(format!("expected a tuple pattern, got {:?}", answered.pattern));
+        };
+        let [Pattern::Var(n), Pattern::Var(binding)] = items.as_slice() else {
+            return Err(format!("the alternation must become one binding, got {items:?}"));
+        };
+        assert_eq!(n, "n");
+        let guard = answered.guard.as_ref().ok_or("expected a guard")?;
+        let IrExprKind::BinOp {
+            op: BinOp::And,
+            left: literal_tests,
+            right: user_guard,
+        } = &guard.kind
+        else {
+            return Err(format!(
+                "the literal tests must be conjoined ahead of the user's guard, got {guard:?}"
+            ));
+        };
+        let IrExprKind::BinOp {
+            op: BinOp::Or,
+            left: yes,
+            right: no,
+        } = &literal_tests.kind
+        else {
+            return Err(format!(
+                "the alternatives must be tested with `or`, got {literal_tests:?}"
+            ));
+        };
+        assert_eq!(string_literal_test(yes), Some((binding.clone(), "yes".to_string())));
+        assert_eq!(string_literal_test(no), Some((binding.clone(), "no".to_string())));
+        assert!(
+            matches!(&user_guard.kind, IrExprKind::BinOp { op: BinOp::Gt, .. }),
+            "the user's guard is kept as the second conjunct, got {user_guard:?}"
+        );
+        Ok(())
+    }
+
+    /// A constructor pattern naming a subset of a model's fields records the omitted fields as wildcards (#1708);
+    /// alias keys resolve to canonical names. Over the parameter `a`, a place, the named field's literal is tested on
+    /// the place in the guard, so its own position is a wildcard too.
+    #[test]
+    fn partial_constructor_pattern_records_its_rest_fields_as_wildcards_issue1708() -> TestResult {
+        let source = r#"
+model Account:
+    tier: int
+    name: str
+    kind_ [alias="kind"]: str
+
+def describe(a: Account) -> str:
+    match a:
+        Account(kind="premium") => return "Premium"
+        _ => return "Other"
+"#;
+        let arms = match_arms(&lower_source(source)?, "describe")?;
+        let premium = arms.first().ok_or("expected a premium arm")?;
+        let Pattern::Struct { name, fields, rest } = &premium.pattern else {
+            return Err(format!("expected a struct pattern, got {:?}", premium.pattern));
+        };
+        assert_eq!(name, "Account");
+        assert!(
+            !rest,
+            "a rest of nameable fields is spelled out, not left to a rest marker"
+        );
+        let shape = fields
+            .iter()
+            .map(|(field, pattern)| {
+                let pattern = match pattern {
+                    Pattern::Wildcard => "_".to_string(),
+                    Pattern::Var(binding) => binding.clone(),
+                    other => format!("{other:?}"),
+                };
+                format!("{field}: {pattern}")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shape,
+            vec!["kind_: _".to_string(), "tier: _".to_string(), "name: _".to_string()],
+            "the named field's literal is tested in the guard and every omitted field is a wildcard"
+        );
+        let guard = premium
+            .guard
+            .as_ref()
+            .ok_or("the literal field test must be recorded as the guard")?;
+        assert!(
+            matches!(guard.kind, IrExprKind::Match { .. }),
+            "the literal field test reads the place, got {guard:?}"
+        );
+        Ok(())
+    }
+
+    /// A tuple pattern over a `tuple[int, str]`-typed scrutinee binds its names with the element types, and the
+    /// arm body reads them as ordinary locals (#1714). The checker defines the bindings; lowering projects the
+    /// scrutinee's tuple type onto them.
+    #[test]
+    fn tuple_pattern_over_a_written_tuple_annotation_binds_its_names_issue1714() -> TestResult {
+        let source = r#"
+def main() -> None:
+    pair: tuple[int, str] = (42, "hello")
+    match pair:
+        (0, _) => println("zero")
+        (number, word) => println(f"{number} {word}")
+"#;
+        let arms = match_arms(&lower_source(source)?, "main")?;
+        let bound = arms.get(1).ok_or("expected a binding arm")?;
+        let Pattern::Tuple(items) = &bound.pattern else {
+            return Err(format!("expected a tuple pattern, got {:?}", bound.pattern));
+        };
+        let [Pattern::Var(number), Pattern::Var(word)] = items.as_slice() else {
+            return Err(format!("both items must be bindings, got {items:?}"));
+        };
+        assert_eq!((number.as_str(), word.as_str()), ("number", "word"));
+
+        let mut reads = Vec::new();
+        collect_format_reads(&bound.body, &mut reads);
+        assert_eq!(
+            reads,
+            vec![
+                ("number".to_string(), IrType::Int),
+                ("word".to_string(), IrType::String)
+            ],
+            "the body reads the bindings with the tuple's element types"
+        );
+        Ok(())
+    }
+
+    /// Collect the `(name, type)` of every variable interpolated by an f-string inside `expr`.
+    fn collect_format_reads(expr: &TypedExpr, reads: &mut Vec<(String, IrType)>) {
+        match &expr.kind {
+            IrExprKind::Format { parts } => {
+                for part in parts {
+                    if let FormatPart::Expr { expr, .. } = part {
+                        if let IrExprKind::Var { name, .. } = &expr.kind {
+                            reads.push((name.clone(), expr.ty.clone()));
+                        }
+                        collect_format_reads(expr, reads);
+                    }
+                }
+            }
+            IrExprKind::BuiltinCall { args, .. } => {
+                for arg in args {
+                    collect_format_reads(arg, reads);
+                }
+            }
+            IrExprKind::Call { args, .. } => {
+                for arg in args {
+                    collect_format_reads(&arg.expr, reads);
+                }
+            }
+            IrExprKind::Block { stmts, value } => {
+                for stmt in stmts {
+                    if let IrStmtKind::Expr(expr) = &stmt.kind {
+                        collect_format_reads(expr, reads);
+                    }
+                }
+                if let Some(value) = value {
+                    collect_format_reads(value, reads);
+                }
+            }
+            _ => {}
         }
     }
 }

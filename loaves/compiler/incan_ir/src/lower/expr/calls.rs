@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::super::super::decl::{FunctionParam, FunctionParamDefault};
 use super::super::super::expr::{
     BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry,
-    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, VarAccess, VarRefKind,
+    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::super::stmt::IrStmtKind;
 use super::super::super::types::IrType;
@@ -20,13 +20,14 @@ use incan_frontend::api_metadata::{
 use incan_frontend::ast::{self, TypeConstraintKey};
 use incan_frontend::library_exports::CheckedPresetValue;
 use incan_frontend::library_manifest::{
-    FunctionExport, LibraryManifest, MethodExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport,
-    ParamDefaultExport, ParamExport, ParamKindExport,
+    FieldExport, FunctionExport, LibraryManifest, MethodExport, ParamDefaultCallArgExport,
+    ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport,
 };
 use incan_frontend::library_manifest_index::LibraryManifestIndexEntry;
 use incan_frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
 use incan_frontend::provider::{ProviderModuleResolution, ProviderRecord};
 use incan_frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
+use incan_frontend::typechecker::stdlib_loader::StdlibSourceDeclaration;
 use incan_frontend::typechecker::{
     FixedUnpackPlan, IdentKind, ResolvedOperatorKind, RustArgCoercionKind, ValidatedNewtypeCoercionMode,
     ValidatedNewtypeCoercionStep,
@@ -40,10 +41,22 @@ use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::testing::{self, TestingAssertHelperId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
+
+/// Return how a parameter rebuilt from library-manifest metadata is passed (#1790).
+///
+/// A parameter the manifest marks `mut` is one whose changes the caller sees, so the call passes it the way a local
+/// `mut` parameter is passed; every other parameter is passed as a value.
+fn manifest_param_mutability(param: &ParamExport) -> Mutability {
+    if param.is_mut {
+        Mutability::Mutable
+    } else {
+        Mutability::Immutable
+    }
+}
 
 /// Name the concrete overload a call selected in its canonical callee path.
 ///
@@ -52,14 +65,76 @@ const API_CRATE_ROOT_SEGMENT: &str = "crate";
 /// typechecker resolved one overload, which is also the only case where substituting is safe: a non-overloaded
 /// function is exported under its own name, and replacing its path segment would defeat the emitter's
 /// compiled-provider metadata lookup, which is keyed on the source-shaped path.
-fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Option<&str>) -> Vec<String> {
+pub(super) fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Option<&str>) -> Vec<String> {
     if let (Some(selected), Some(declaration)) = (selected, path.last_mut()) {
         *declaration = selected.to_string();
     }
     path
 }
 
+/// Group an operator-shaped operand of `str(...)` so the conversion applies to the whole expression.
+///
+/// `str(a + b)` renders the value of its whole argument. The Rust-emission backend spells the conversion as a postfix
+/// method on the argument's own tokens, and a method call binds tighter than every infix, prefix and cast operator: an
+/// operator expression handed over bare re-associates as `a + b.to_string()` (E0277), and a cast is refused outright
+/// (`x as f64.to_string()` is not Rust). The IR's grouping form is a block with no statements and a value -- one
+/// operand wherever the emitter places it, in the argument's own type, so the float rendering rule and the exact-float
+/// validation the conversion applies still read the argument's type. Every other shape (a name, a literal, a call, a
+/// field, an index, a method chain) is already one operand and is left as written. (#1726)
+fn grouped_conversion_operand(expr: TypedExpr) -> TypedExpr {
+    if !matches!(
+        expr.kind,
+        IrExprKind::BinOp { .. }
+            | IrExprKind::UnaryOp { .. }
+            | IrExprKind::Cast { .. }
+            | IrExprKind::NumericResize { .. }
+            | IrExprKind::InteropCoerce { .. }
+    ) {
+        return expr;
+    }
+    let ty = expr.ty.clone();
+    TypedExpr::new(
+        IrExprKind::Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(expr)),
+        },
+        ty,
+    )
+}
+
 impl AstLowering {
+    /// Lower the arguments of a builtin call as bare expressions, in call order.
+    ///
+    /// The display builtins (`str` and `print`) show an operand whose type adopts `Error` and defines no `__str__`
+    /// through its `message()`, where the typechecker recorded it; see
+    /// [`AstLowering::display_operand_through_error_message`]. The value-to-text conversion (`str`) then groups an
+    /// operator-shaped argument; see [`grouped_conversion_operand`]. Every other builtin takes its arguments as
+    /// lowered.
+    pub(in crate::lower::expr) fn lower_builtin_call_args(
+        &mut self,
+        builtin: BuiltinFn,
+        args: &[ast::CallArg],
+    ) -> Result<Vec<TypedExpr>, LoweringError> {
+        let lowered = self.lower_call_args(args)?;
+        let displays_operands = matches!(builtin, BuiltinFn::Str | BuiltinFn::Print);
+        Ok(lowered
+            .into_iter()
+            .zip(args)
+            .map(|(arg, source)| {
+                let operand = if displays_operands {
+                    self.display_operand_through_error_message(arg.expr, Self::call_arg_expr(source).span)
+                } else {
+                    arg.expr
+                };
+                if builtin == BuiltinFn::Str {
+                    grouped_conversion_operand(operand)
+                } else {
+                    operand
+                }
+            })
+            .collect())
+    }
+
     /// Preserve the frontend type of builtins whose result participates in later type-directed lowering.
     pub(in crate::lower::expr) fn lowered_builtin_call_type(&self, builtin: BuiltinFn, call_span: ast::Span) -> IrType {
         if !matches!(builtin, BuiltinFn::Zip) {
@@ -273,6 +348,9 @@ impl AstLowering {
     }
 
     /// Rebuild a callable signature from frontend metadata for rest-aware IR emission.
+    ///
+    /// A parameter the metadata marks `mut` is [`Mutability::Mutable`](super::super::super::types::Mutability), so a
+    /// call through a callable known only by its type passes it as a marked `def` parameter is passed.
     fn callable_signature_from_params(&self, params: &[CallableParam], ret: &ResolvedType) -> FunctionSignature {
         FunctionSignature {
             params: params
@@ -284,7 +362,13 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
                         ty,
-                        mutability: super::super::super::types::Mutability::Immutable,
+                        // A parameter the callable type marks `mut` shows the callee's changes to the caller, so the
+                        // call passes it the way a marked `def` parameter is passed (#1773).
+                        mutability: if param.is_mut {
+                            super::super::super::types::Mutability::Mutable
+                        } else {
+                            super::super::super::types::Mutability::Immutable
+                        },
                         is_self: false,
                         kind: param.kind,
                         default: None,
@@ -297,10 +381,14 @@ impl AstLowering {
 
     /// Rebuild a callable signature directly from a stdlib method declaration so default expressions survive import
     /// metadata boundaries.
+    ///
+    /// A default naming a const of the declaring module is spelled through that const's canonical path, because it is
+    /// expanded at the caller rather than in the declaring module (#1771).
     fn callable_signature_from_stdlib_method_decl(
         &mut self,
-        method: &ast::MethodDecl,
+        source: &StdlibSourceDeclaration<ast::MethodDecl>,
     ) -> Result<FunctionSignature, LoweringError> {
+        let method = &source.declaration;
         Ok(FunctionSignature {
             params: method
                 .params
@@ -311,15 +399,11 @@ impl AstLowering {
                     Ok(FunctionParam {
                         name: param.node.name.clone(),
                         ty,
-                        mutability: if param.node.is_mut {
-                            super::super::super::types::Mutability::Mutable
-                        } else {
-                            super::super::super::types::Mutability::Immutable
-                        },
+                        mutability: self.unrecorded_parameter_mutability(param),
                         is_self: false,
                         kind: param.node.kind,
                         default: self
-                            .lower_param_default_expr(param.node.default.as_ref())?
+                            .lower_stdlib_param_default(param.node.default.as_ref(), &source.default_const_paths)?
                             .map(FunctionParamDefault::source),
                     })
                 })
@@ -330,10 +414,14 @@ impl AstLowering {
 
     /// Rebuild a callable signature directly from a stdlib function declaration so default expressions survive import
     /// metadata boundaries.
+    ///
+    /// A default naming a const of the declaring module is spelled through that const's canonical path, because it is
+    /// expanded at the caller rather than in the declaring module (#1771).
     fn callable_signature_from_stdlib_function_decl(
         &mut self,
-        func: &ast::FunctionDecl,
+        source: &StdlibSourceDeclaration<ast::FunctionDecl>,
     ) -> Result<FunctionSignature, LoweringError> {
+        let func = &source.declaration;
         Ok(FunctionSignature {
             params: func
                 .params
@@ -344,15 +432,11 @@ impl AstLowering {
                     Ok(FunctionParam {
                         name: param.node.name.clone(),
                         ty,
-                        mutability: if param.node.is_mut {
-                            super::super::super::types::Mutability::Mutable
-                        } else {
-                            super::super::super::types::Mutability::Immutable
-                        },
+                        mutability: self.unrecorded_parameter_mutability(param),
                         is_self: false,
                         kind: param.node.kind,
                         default: self
-                            .lower_param_default_expr(param.node.default.as_ref())?
+                            .lower_stdlib_param_default(param.node.default.as_ref(), &source.default_const_paths)?
                             .map(FunctionParamDefault::source),
                     })
                 })
@@ -366,7 +450,7 @@ impl AstLowering {
     /// The physical Rust projection is deliberately excluded: it names the emitted call target, not the public
     /// binding that owns typed signatures and defaults. An admitted overload set cannot fall back to its first
     /// member or a structurally reconstructed call-site signature.
-    fn callable_signature_for_imported_pub_path(
+    pub(in crate::lower) fn callable_signature_for_imported_pub_path(
         &mut self,
         path: &[String],
         selected: Option<&incan_semantics_core::CanonicalSymbolId>,
@@ -484,7 +568,17 @@ impl AstLowering {
     }
 
     /// Resolve the canonical imported callee path for identifier and module-qualified calls.
-    fn imported_callee_path_for_expr(&self, expr: &ast::Spanned<ast::Expr>) -> Option<Vec<String>> {
+    pub(in crate::lower) fn imported_callee_path_for_expr(
+        &self,
+        expr: &ast::Spanned<ast::Expr>,
+    ) -> Option<Vec<String>> {
+        // Inside an expanded source-module trait default, a helper of the trait's module is that module's function,
+        // whatever the adopter binds under the same name (#1759).
+        if let ast::Expr::Ident(name) = &expr.node
+            && let Some(path) = self.active_source_trait_default_function_path(name)
+        {
+            return Some(path);
+        }
         let is_import_reference = match &expr.node {
             ast::Expr::Ident(name) => self.import_aliases.contains_key(name),
             ast::Expr::Field(object, _) => self.imported_field_base_path(&object.node).is_some(),
@@ -556,6 +650,63 @@ impl AstLowering {
         }
     }
 
+    /// Return the `std.*` declaration path the checked identity of a facade-bound SDK provider callable names.
+    ///
+    /// A source facade such as `pub from std.regex import compile` binds the provider's function under the facade's
+    /// own path (`codec.compile`). That path names where the consumer imported the callable from, never a
+    /// declaration, so signature lookup keyed on it finds nothing and the compiled defaults are lost. The checked
+    /// identity proves which provider module and declaration the binding selected, and the provider's checked API is
+    /// keyed on exactly that spelling. Only semantic lookup crosses here; physical linking keeps the facade path.
+    /// Bindings already spelled through `std.*` or `pub::` own their signature route and are left alone.
+    fn facade_bound_sdk_provider_declaration_path(
+        &self,
+        callee_span: ast::Span,
+        checked_import_path: &[String],
+    ) -> Option<Vec<String>> {
+        if checked_import_path
+            .first()
+            .is_some_and(|root| root == "pub" || root == stdlib::STDLIB_ROOT)
+        {
+            return None;
+        }
+        let identity = self.type_info.as_ref()?.resolved_identity(callee_span)?;
+        if !matches!(
+            identity.kind,
+            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+        ) {
+            return None;
+        }
+        self.sdk_provider_declaration_path(identity)
+    }
+
+    /// Return the `std.*` declaration path a checked identity names when an active SDK provider declares it.
+    ///
+    /// A compiled provider publishes its declarations under `SymbolOrigin::Package` with the provider's library name
+    /// and the module path below the `std` root, while the provider's checked API and the compiler's stdlib registries
+    /// are keyed on the public `std.*` spelling that origin projects to. A consumer that imports through a facade
+    /// holds only the facade's written path, so this projection is what lets lowering reach the declaration the
+    /// frontend proved, for a callable's signature and for a trait's protocol alike. An identity owned by a project
+    /// module, a `pub::` library that is not an active SDK provider, or a Rust crate yields nothing.
+    pub(in crate::lower) fn sdk_provider_declaration_path(&self, identity: &CanonicalSymbolId) -> Option<Vec<String>> {
+        let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+            return None;
+        };
+        let declared_by_sdk_provider = self.provider_plan.as_deref()?.active_sdk_records().any(|provider| {
+            provider.identity.name == *library
+                || provider
+                    .manifest
+                    .as_deref()
+                    .is_some_and(|manifest| manifest.name == *library)
+        });
+        if !declared_by_sdk_provider {
+            return None;
+        }
+        let mut path = vec![stdlib::STDLIB_ROOT.to_string()];
+        path.extend(module_path.iter().cloned());
+        path.push(identity.declaration_name.clone());
+        Some(path)
+    }
+
     /// Restore the public `std.*` spelling for semantic lookup inside an SDK provider source build.
     ///
     /// Provider modules are emitted at physical paths such as `fs.path`, but their checked language imports and
@@ -610,6 +761,18 @@ impl AstLowering {
             }
             _ => None,
         }
+    }
+
+    /// Return the Rust path of the `pub::` dependency module a module binding names, or `None` for any other
+    /// expression.
+    ///
+    /// `cl` bound by `import pub::calc as cl` is the dependency crate `calc`, and a binding of a dependency's submodule
+    /// is that module's path inside the crate. The path is the consumer's own dependency binding, which may differ from
+    /// the package that declares what it reaches.
+    pub(in crate::lower) fn pub_dependency_binding_rust_path(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        let path = self.imported_field_base_path(expr)?;
+        let (root, dependency_path) = path.split_first()?;
+        (root == keywords::as_str(KeywordId::Pub) && !dependency_path.is_empty()).then(|| dependency_path.to_vec())
     }
 
     /// Resolve `module.function(...)` syntax when the receiver is an imported module and the checker proved that the
@@ -701,7 +864,11 @@ impl AstLowering {
     }
 
     /// Resolve a public dependency callable by exact checked source path when a module namespace selected it.
-    fn pub_function_export_for_path(&self, library: &str, public_path: &[String]) -> Option<FunctionExport> {
+    pub(in crate::lower) fn pub_function_export_for_path(
+        &self,
+        library: &str,
+        public_path: &[String],
+    ) -> Option<FunctionExport> {
         let function_name = public_path.last()?;
         if public_path.len() == 1 {
             return self.pub_function_export(library, function_name);
@@ -725,17 +892,25 @@ impl AstLowering {
     }
 
     /// Resolve public callable aliases through the manifest identity graph before falling back to public-name scans.
+    ///
+    /// A public partial resolves to its own checked declaration, whose parameters are the partial's surface with the
+    /// residual defaults of its target filled in (#1760); its target is the fallback for a partial the checked API does
+    /// not declare where the identity graph says it lives.
     fn api_function_export_for_public_name(
         manifest: &incan_frontend::library_manifest::LibraryManifest,
         function_name: &str,
     ) -> Option<FunctionExport> {
-        let target_path = manifest
+        let entry = manifest
             .contract_metadata
             .identity_graph
-            .entry_for_public_name(function_name)
-            .and_then(|entry| entry.target_path())?;
+            .entry_for_public_name(function_name)?;
         let api = manifest.contract_metadata.api.as_ref()?;
-        Self::api_function_export_for_target_path(api, target_path)
+        if entry.kind == incan_frontend::library_manifest::ExportIdentityKind::Partial
+            && let Some(partial) = Self::api_function_export_for_target_path(api, &entry.source_path)
+        {
+            return Some(partial);
+        }
+        Self::api_function_export_for_target_path(api, entry.target_path()?)
     }
 
     /// Resolve one checked API function from a module-qualified public callable target path.
@@ -765,11 +940,14 @@ impl AstLowering {
         {
             return Self::api_function_export_for_target_path(api, &alias.target_path);
         }
-        Self::api_function_export_for_declaration(declaration, function_name)
+        Self::api_function_export_for_declaration(api, declaration, function_name)
     }
 
     /// Convert one checked API declaration into the function export requested by backend call planning.
+    ///
+    /// A partial is completed from its target in `api`, so the parameters it leaves open carry their defaults (#1760).
     fn api_function_export_for_declaration(
+        api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
         declaration: &ApiDeclaration,
         function_name: &str,
     ) -> Option<FunctionExport> {
@@ -782,7 +960,7 @@ impl AstLowering {
                 .as_ref()
                 .map(function_export_from_api_projected),
             ApiDeclaration::Partial(partial) if partial.name == function_name => {
-                let partial = incan_frontend::api_metadata::partial_export_from_api(partial);
+                let partial = incan_frontend::api_metadata::partial_export_with_target_defaults(api, partial);
                 Some(FunctionExport {
                     name: partial.name,
                     emitted_name: None,
@@ -813,7 +991,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -914,6 +1092,8 @@ impl AstLowering {
     }
 
     /// Lower an exported default call while preserving the public dependency canonical path for nested call planning.
+    ///
+    /// A call that constructs one of the dependency's models or classes lowers as the consumer's own construction.
     fn lower_pub_default_call(
         &mut self,
         library: &str,
@@ -921,6 +1101,9 @@ impl AstLowering {
         args: &[ParamDefaultCallArgExport],
         signature: Option<&ParamDefaultCallSignatureExport>,
     ) -> Option<TypedExpr> {
+        if self.pub_default_path_names_constructed_type(library, path) {
+            return self.lower_pub_default_construction(library, path, args);
+        }
         let function_name = path.last()?.clone();
         let canonical_path = self.pub_default_canonical_path(library, path);
         let function = self.pub_function_export(library, &function_name);
@@ -988,7 +1171,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1048,7 +1231,7 @@ impl AstLowering {
         }
         if let Some(method) = self
             .stdlib_cache
-            .lookup_type_method_decl(module_path, type_name, method_name)
+            .lookup_type_method_source(module_path, type_name, method_name)
         {
             return self.callable_signature_from_stdlib_method_decl(&method).map(Some);
         }
@@ -1065,7 +1248,7 @@ impl AstLowering {
     }
 
     /// Return the generated Rust crate that owns one compiled SDK module's nominal artifact types.
-    fn sdk_provider_crate_for_module(&self, module_path: &[String]) -> Option<String> {
+    pub(in crate::lower) fn sdk_provider_crate_for_module(&self, module_path: &[String]) -> Option<String> {
         let provider = self
             .provider_plan
             .as_deref()?
@@ -1262,6 +1445,17 @@ impl AstLowering {
         method_name: &str,
     ) -> Option<String> {
         let source_identity = self.type_info.as_ref()?.resolved_identity(call_span)?;
+        self.compiled_provider_method_reference_name_for_identity(source_identity, receiver_ty, method_name)
+    }
+
+    /// Resolve one checked source-stub method identity to the symbol its compiled SDK provider exports; see
+    /// [`Self::compiled_provider_method_reference_name`].
+    pub(in crate::lower) fn compiled_provider_method_reference_name_for_identity(
+        &self,
+        source_identity: &CanonicalSymbolId,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<String> {
         let SymbolOrigin::Module(module_path) = &source_identity.origin else {
             return None;
         };
@@ -1358,6 +1552,112 @@ impl AstLowering {
                 .or_else(|| Self::api_method_export_for_pub_type(manifest, type_name, method_name))
         })?;
         Some(self.callable_signature_from_pub_method_export(library, &method))
+    }
+
+    /// Lower the declared type of one field on a public dependency's model or class in the owning library's context.
+    ///
+    /// The checker types a field read through its expanded `ResolvedType`, which no longer names the alias the
+    /// provider declared, so a `pub type X = Union[...]` field arrives at lowering as a structural union that would be
+    /// re-owned by the consumer. Provider field metadata is the same source the helper-call and method-call paths lower
+    /// their signatures from, so lowering the declared field type through it keeps the union owned by the provider
+    /// crate (`IrType::ExternalUnion`). Lookup follows the method-signature precedent: the exact checked API
+    /// declaration when the receiver carries its provider-local source path, then the compact export lists, then
+    /// checked API declarations by public name. A receiver that lowering cannot attribute to one public dependency
+    /// yields `None`.
+    pub(in crate::lower) fn declared_field_type_for_imported_pub_type(
+        &self,
+        library: &str,
+        receiver_ty: &IrType,
+        field_name: &str,
+    ) -> Option<IrType> {
+        let type_name = Self::nominal_receiver_type_name(receiver_ty)?;
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let exact_field = Self::public_dependency_type_path(receiver_ty, library).and_then(|target_path| {
+            let api = manifest.contract_metadata.api.as_ref()?;
+            Self::api_field_export_for_target_path(api, &target_path, field_name)
+        });
+        let field = exact_field.or_else(|| {
+            manifest
+                .exports
+                .models
+                .iter()
+                .find(|model| model.name == type_name)
+                .and_then(|model| model.fields.iter().find(|field| field.name == field_name))
+                .cloned()
+                .or_else(|| {
+                    manifest
+                        .exports
+                        .classes
+                        .iter()
+                        .find(|class| class.name == type_name)
+                        .and_then(|class| class.fields.iter().find(|field| field.name == field_name))
+                        .cloned()
+                })
+                .or_else(|| Self::api_field_export_for_pub_type(manifest, type_name, field_name))
+        })?;
+        Some(self.lower_pub_manifest_type_ref(library, &field.ty))
+    }
+
+    /// Resolve one checked API field from a module-qualified public type target path.
+    fn api_field_export_for_target_path(
+        api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
+        target_path: &[String],
+        field_name: &str,
+    ) -> Option<FieldExport> {
+        let type_name = target_path.last()?;
+        let path = if target_path
+            .first()
+            .is_some_and(|segment| segment == API_CRATE_ROOT_SEGMENT)
+        {
+            &target_path[1..]
+        } else {
+            target_path
+        };
+        let module_path = path.get(..path.len().saturating_sub(1))?;
+        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+        module
+            .declarations
+            .iter()
+            .find_map(|declaration| Self::api_field_export_for_declaration(declaration, type_name, field_name))
+    }
+
+    /// Resolve a field of a public type that is exposed only through facade aliases or checked API declarations.
+    ///
+    /// The compact export list may carry the type as an alias entry while checked API metadata still records the
+    /// original declaration and its fields; backend field lookup must read that same metadata or a field read plans
+    /// differently between direct provider modules and public facades.
+    fn api_field_export_for_pub_type(
+        manifest: &LibraryManifest,
+        type_name: &str,
+        field_name: &str,
+    ) -> Option<FieldExport> {
+        let api = manifest.contract_metadata.api.as_ref()?;
+        for alias in manifest.exports.aliases.iter().filter(|alias| alias.name == type_name) {
+            if let Some(field) = Self::api_field_export_for_target_path(api, &alias.target_path, field_name) {
+                return Some(field);
+            }
+        }
+        api.modules
+            .iter()
+            .flat_map(|module| module.declarations.iter())
+            .find_map(|declaration| Self::api_field_export_for_declaration(declaration, type_name, field_name))
+    }
+
+    /// Return the requested field of one checked API model or class declaration.
+    fn api_field_export_for_declaration(
+        declaration: &ApiDeclaration,
+        type_name: &str,
+        field_name: &str,
+    ) -> Option<FieldExport> {
+        let fields = match declaration {
+            ApiDeclaration::Model(model) if model.name == type_name => model.fields.as_slice(),
+            ApiDeclaration::Class(class) if class.name == type_name => class.fields.as_slice(),
+            _ => return None,
+        };
+        fields.iter().find(|field| field.name == field_name).cloned()
     }
 
     /// Decode the exact provider-local source path carried by a canonical public dependency type.
@@ -1457,7 +1757,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1490,7 +1790,7 @@ impl AstLowering {
                                 &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                             ),
                         ),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1525,7 +1825,7 @@ impl AstLowering {
                                 &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                             ),
                         ),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1609,7 +1909,11 @@ impl AstLowering {
     }
 
     /// Build an artifact-qualified value path such as `provider::__incan_std::logging::Level::WARN`.
-    fn compiled_provider_path_expr(&self, provider_crate: &str, path: &[String]) -> Option<TypedExpr> {
+    pub(in crate::lower) fn compiled_provider_path_expr(
+        &self,
+        provider_crate: &str,
+        path: &[String],
+    ) -> Option<TypedExpr> {
         if path.is_empty() {
             return None;
         }
@@ -1661,7 +1965,7 @@ impl AstLowering {
                                     &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                                 ),
                             ),
-                            mutability: Mutability::Immutable,
+                            mutability: manifest_param_mutability(param),
                             is_self: false,
                             kind,
                             default: self
@@ -1746,7 +2050,7 @@ impl AstLowering {
                 && let Some(function) = module
                     .declarations
                     .iter()
-                    .find_map(|declaration| Self::api_function_export_for_declaration(declaration, function_name))
+                    .find_map(|declaration| Self::api_function_export_for_declaration(api, declaration, function_name))
             {
                 let signature =
                     self.callable_signature_from_compiled_provider_function_export(&provider_crate, &function);
@@ -1755,7 +2059,7 @@ impl AstLowering {
                 ));
             }
         }
-        let Some(func) = self.stdlib_cache.lookup_function_decl(module_path, function_name) else {
+        let Some(func) = self.stdlib_cache.lookup_function_source(module_path, function_name) else {
             return Ok(None);
         };
         self.callable_signature_from_stdlib_function_decl(&func).map(Some)
@@ -1806,6 +2110,7 @@ impl AstLowering {
                 TypedExpr::new(
                     IrExprKind::Struct {
                         name: step.newtype_name,
+                        type_args: Vec::new(),
                         fields: vec![(String::new(), expr)],
                         fill_defaults: false,
                     },
@@ -1986,6 +2291,7 @@ impl AstLowering {
         let success = TypedExpr::new(
             IrExprKind::Struct {
                 name: name.to_string(),
+                type_args: Vec::new(),
                 fields: vec![(String::new(), value_ref())],
                 fill_defaults: false,
             },
@@ -2248,6 +2554,7 @@ impl AstLowering {
             TypedExpr::new(
                 IrExprKind::Struct {
                     name: name.to_string(),
+                    type_args: Vec::new(),
                     fields: vec![(String::new(), lowered_value)],
                     fill_defaults: false,
                 },
@@ -2282,6 +2589,7 @@ impl AstLowering {
             TypedExpr::new(
                 IrExprKind::Struct {
                     name: name.to_string(),
+                    type_args: Vec::new(),
                     fields: vec![(String::new(), lowered_value)],
                     fill_defaults: false,
                 },
@@ -2776,6 +3084,7 @@ impl AstLowering {
                 value: Some(Box::new(TypedExpr::new(
                     IrExprKind::Struct {
                         name: name.to_string(),
+                        type_args: Vec::new(),
                         fields,
                         fill_defaults: false,
                     },
@@ -2786,14 +3095,25 @@ impl AstLowering {
         ))
     }
 
-    /// Return the typechecker-proven callable signature for a full call expression span.
+    /// Return the typechecker-proven callable signature for a full call expression span, with the callee's
+    /// caller-visible `mut` parameters marked [`Mutability::Mutable`].
     pub(in crate::lower) fn callable_signature_for_call_span(&self, span: ast::Span) -> Option<FunctionSignature> {
         let info = self.type_info.as_ref()?;
         let params = info.call_site_callable_params(span)?;
+        let mut params = self
+            .callable_signature_from_params(params, &ResolvedType::Unknown)
+            .params;
+        // The callee's caller-visible `mut` parameters are passed the way its declaration takes them, whatever the
+        // receiver: a concrete type, a generic bound, or a type another module declares (#1773).
+        if let Some(caller_visible) = info.caller_visible_mut_arguments(span) {
+            for param in &mut params {
+                if caller_visible.contains(&param.name) {
+                    param.mutability = Mutability::Mutable;
+                }
+            }
+        }
         Some(FunctionSignature {
-            params: self
-                .callable_signature_from_params(params, &ResolvedType::Unknown)
-                .params,
+            params,
             return_type: IrType::Unknown,
         })
     }
@@ -2816,7 +3136,7 @@ impl AstLowering {
     }
 
     /// Return the expression carried by a call argument.
-    fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
+    pub(in crate::lower) fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
         match arg {
             ast::CallArg::Positional(e)
             | ast::CallArg::Named(_, e)
@@ -3157,15 +3477,9 @@ impl AstLowering {
         if let Some(name) = Self::explicit_builtin_member_name(f)
             && let Some(builtin) = BuiltinFn::from_name(name)
         {
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+            let args_ir = self.lower_builtin_call_args(builtin, args)?;
             let result_ty = self.lowered_builtin_call_type(builtin, call_span);
-            return Ok((
-                IrExprKind::BuiltinCall {
-                    func: builtin,
-                    args: args_ir,
-                },
-                result_ty,
-            ));
+            return Ok(self.builtin_call_with_display_operands(builtin, args_ir, result_ty));
         }
 
         if let Some(constructor) = self
@@ -3180,11 +3494,36 @@ impl AstLowering {
                 .map(|ty| self.lower_resolved_type(ty))
                 .unwrap_or(IrType::Unknown);
 
-            // ---- Checked empty dictionary: use the existing aggregate emitter rather than a constructor builtin ----
+            // ---- Checked empty dict or list: reuse the aggregate emitters rather than a constructor builtin ----
             if constructor == CollectionTypeId::Dict && args.is_empty() {
                 return Ok((IrExprKind::Dict(Vec::new()), result_ty));
             }
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr).collect();
+            if constructor == CollectionTypeId::List && args.is_empty() {
+                return Ok((IrExprKind::List(Vec::new()), result_ty));
+            }
+            let args_ir = self
+                .lower_call_args(args)?
+                .into_iter()
+                .map(|arg| {
+                    // `set(c)` over a frozen collection of `'static` text or bytes, or over a `FrozenDict`, collects
+                    // the owned items (the keys of a dict) the checker typed, as a comprehension over it does.
+                    if constructor == CollectionTypeId::Set
+                        && super::frozen_reads::set_source_needs_owned_frozen_items(&arg.expr.ty)
+                    {
+                        super::frozen_reads::owned_frozen_iteration_source(arg.expr)
+                    } else {
+                        arg.expr
+                    }
+                })
+                .collect::<Vec<_>>();
+            // ---- `dict(source)`: a copy of the source dict, the `{**source}` literal ----
+            if constructor == CollectionTypeId::Dict {
+                let entries = args_ir
+                    .into_iter()
+                    .map(|source| IrDictEntry::Spread(Self::owned_spread_operand(source)))
+                    .collect();
+                return Ok((IrExprKind::Dict(entries), result_ty));
+            }
             return Ok((
                 IrExprKind::BuiltinCall {
                     func: BuiltinFn::CollectionConstructor(constructor),
@@ -3197,13 +3536,16 @@ impl AstLowering {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+            if let Some(canonical_name) = self.default_owner_constructor_name(name, f.span) {
+                return self.lower_constructor_call(&canonical_name, type_args, args, call_span);
+            }
             if let Some(type_path) = self.active_trait_default_value_type_path(name) {
                 let canonical_name = type_path.join("::");
                 return self.lower_constructor_call(&canonical_name, type_args, args, call_span);
             }
             if stdlib::is_graph_constructor_type(&constructor_name) && args.is_empty() {
                 let hook_name = self
-                    .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK, true)
+                    .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK)
                     .unwrap_or_else(|| TYPE_CONSTRUCTOR_HOOK.to_string());
                 let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
                 let receiver_ty = if lowered_type_args.is_empty() {
@@ -3267,6 +3609,7 @@ impl AstLowering {
                 return Ok((
                     IrExprKind::Struct {
                         name: name.clone(),
+                        type_args: Vec::new(),
                         fields,
                         fill_defaults,
                     },
@@ -3307,24 +3650,30 @@ impl AstLowering {
         // is exported under its own name, so its path is left exactly as resolved: substituting there would defeat
         // the emitter's compiled-provider metadata lookup, which is keyed on the source-shaped path.
         let checked_import_path = self.imported_callee_path_for_expr(f);
+        let facade_bound_provider_path = checked_import_path
+            .as_deref()
+            .and_then(|path| self.facade_bound_sdk_provider_declaration_path(f.span, path));
         let imported_source_callee_path = checked_import_path
             .as_deref()
             .map(|path| self.semantic_imported_callee_path(path));
-        let imported_callee_path = checked_import_path.map(|path| {
-            canonical_path_naming_selected_overload(
-                path,
-                selected_reference_name
-                    .as_deref()
-                    .filter(|_| selected_emitted_name.is_some()),
-            )
-        });
+        let selected_overload_name = selected_reference_name
+            .as_deref()
+            .filter(|_| selected_emitted_name.is_some());
+        let imported_callee_path =
+            checked_import_path.map(|path| canonical_path_naming_selected_overload(path, selected_overload_name));
         // Public artifact lookup selects overloads from retained canonical identities. Preserve the existing
-        // source/SDK path contract for other providers, whose signature reader has separate selection rules.
+        // source/SDK path contract for other providers, whose signature reader has separate selection rules. A
+        // facade-bound SDK provider callable takes the declaration path its checked identity proves, under the same
+        // overload naming the direct `std.*` route applies.
         let imported_source_callee_path = match imported_source_callee_path {
             Some(path) if path.first().is_some_and(|root| root == "pub") => Some(path),
-            _ => imported_callee_path
-                .as_deref()
-                .map(|path| self.semantic_imported_callee_path(path)),
+            _ => facade_bound_provider_path
+                .map(|path| canonical_path_naming_selected_overload(path, selected_overload_name))
+                .or_else(|| {
+                    imported_callee_path
+                        .as_deref()
+                        .map(|path| self.semantic_imported_callee_path(path))
+                }),
         };
         // Keep this path source-shaped. The emitter resolves its exact physical symbol from compiler-owned package
         // metadata; replacing the declaration segment here with a source-stub projection would make that lookup miss
@@ -3385,15 +3734,9 @@ impl AstLowering {
             && self.callable_signature_for_call_span(call_span).is_none()
             && !matches!(func.ty, IrType::Function { .. })
         {
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+            let args_ir = self.lower_builtin_call_args(builtin, args)?;
             let result_ty = self.lowered_builtin_call_type(builtin, call_span);
-            return Ok((
-                IrExprKind::BuiltinCall {
-                    func: builtin,
-                    args: args_ir,
-                },
-                result_ty,
-            ));
+            return Ok(self.builtin_call_with_display_operands(builtin, args_ir, result_ty));
         }
 
         // Regular function call (user-defined or unknown)
@@ -3583,13 +3926,23 @@ impl AstLowering {
         } else {
             IrType::Unknown
         };
+        // A source-module trait default's helper is reached through its module's path from the adopter, which the
+        // backend spells out for a callee rooted in an external name (#1759).
+        if let ast::Expr::Ident(name) = &f.node
+            && self.active_source_trait_default_function_path(name).is_some()
+            && let IrExprKind::Var { ref_kind, .. } = &mut func.kind
+        {
+            *ref_kind = VarRefKind::ExternalName;
+        }
+        Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
+        let canonical_path = imported_callee_path.or_else(|| self.default_owner_callee_path(f, selected_overload_name));
         Ok((
             IrExprKind::Call {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
                 callable_signature,
-                canonical_path: imported_callee_path,
+                canonical_path,
             },
             ret_ty,
         ))
@@ -3609,20 +3962,56 @@ impl AstLowering {
         let callee_name = Self::partial_projection_binding_name(&callee.node)?;
         let info = self.type_info.as_ref()?;
         let projection = info.partial_projection(&callee_name)?;
-        let merged = merge_named_partial_args(
-            projection.presets.iter().map(|preset| PartialPresetRef {
-                name: preset.name.as_str(),
-                value: &preset.value,
-            }),
-            args,
-        )?;
-
         let params = info
             .call_site_callable_params(call_span)
             .or_else(|| match info.expr_type(callee.span)? {
                 ResolvedType::Function(params, _) => Some(params.as_slice()),
                 _ => None,
+            })
+            .or_else(|| {
+                // A provider projection's checked binding carries the residual parameters its positional arguments
+                // bind. A source projection without call metadata keeps deferring to its canonical signature, whose
+                // emission spells the presets through their declaring module.
+                projection.external_library.as_ref()?;
+                info.declarations
+                    .function_bindings
+                    .get(&callee_name)
+                    .map(|binding| binding.params.as_slice())
             });
+        let normalized_args = if args.iter().any(|arg| matches!(arg, ast::CallArg::Positional(_))) {
+            let params = params?;
+            let mut residual = params
+                .iter()
+                .filter(|param| param.kind == ast::ParamKind::Normal && !param.is_partial_preset)
+                .filter_map(|param| param.name.as_deref());
+            let mut normalized = Vec::with_capacity(args.len());
+            for arg in args {
+                match arg {
+                    ast::CallArg::Positional(value) => {
+                        let name = residual.next()?;
+                        normalized.push(ast::CallArg::Named(
+                            ast::Spanned::new(name.to_string(), value.span),
+                            value.clone(),
+                        ));
+                    }
+                    ast::CallArg::Named(name, value) => {
+                        normalized.push(ast::CallArg::Named(name.clone(), value.clone()));
+                    }
+                    ast::CallArg::PositionalUnpack(_) | ast::CallArg::KeywordUnpack(_) => return None,
+                }
+            }
+            normalized
+        } else {
+            args.to_vec()
+        };
+        let merged = merge_named_partial_args(
+            projection.presets.iter().map(|preset| PartialPresetRef {
+                name: preset.name.as_str(),
+                value: &preset.value,
+            }),
+            &normalized_args,
+        )?;
+
         let Some(params) = params else {
             // Provider projections must materialize checked preset values because the consumer has no source-owned
             // function default to emit. Source projections deliberately defer when callable metadata is unavailable:
@@ -3697,7 +4086,14 @@ impl AstLowering {
     }
 
     /// Lower one checked provider preset without reinterpreting its canonical references as consumer-local fields.
-    fn lower_external_partial_preset(&mut self, library: &str, value: &CheckedPresetValue) -> Option<TypedExpr> {
+    ///
+    /// A model literal of one of the dependency's models or classes lowers as a construction through the dependency's
+    /// public path (#1771).
+    pub(in crate::lower) fn lower_external_partial_preset(
+        &mut self,
+        library: &str,
+        value: &CheckedPresetValue,
+    ) -> Option<TypedExpr> {
         match value {
             CheckedPresetValue::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
             CheckedPresetValue::Float(value) => Some(TypedExpr::new(IrExprKind::Float(*value), IrType::Float)),
@@ -3721,6 +4117,24 @@ impl AstLowering {
                     IrType::List(Box::new(IrType::Unknown)),
                 ))
             }
+            CheckedPresetValue::Set(values) => {
+                let items = values
+                    .iter()
+                    .map(|value| self.lower_external_partial_preset(library, value))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypedExpr::new(
+                    IrExprKind::Set(items),
+                    IrType::Set(Box::new(IrType::Unknown)),
+                ))
+            }
+            CheckedPresetValue::Tuple(values) => {
+                let items = values
+                    .iter()
+                    .map(|value| self.lower_external_partial_preset(library, value))
+                    .collect::<Option<Vec<_>>>()?;
+                let item_types = items.iter().map(|item| item.ty.clone()).collect();
+                Some(TypedExpr::new(IrExprKind::Tuple(items), IrType::Tuple(item_types)))
+            }
             CheckedPresetValue::Dict(entries) => {
                 let entries = entries
                     .iter()
@@ -3738,6 +4152,9 @@ impl AstLowering {
             }
             CheckedPresetValue::ConstRef(path) => self.lower_pub_default_const_ref(library, path),
             CheckedPresetValue::ModelLiteral { name, fields } => {
+                if let Some(construction) = self.lower_pub_preset_construction(library, name, fields) {
+                    return Some(construction);
+                }
                 let fields = fields
                     .iter()
                     .map(|(field, value)| Some((field.clone(), self.lower_external_partial_preset(library, value)?)))
@@ -3745,6 +4162,7 @@ impl AstLowering {
                 Some(TypedExpr::new(
                     IrExprKind::Struct {
                         name: name.clone(),
+                        type_args: Vec::new(),
                         fields,
                         fill_defaults: false,
                     },
@@ -3767,6 +4185,21 @@ impl AstLowering {
         }
     }
 
+    /// Whether a constructor callee names the stdlib `ValidationError`, which is built through its runtime
+    /// constructors.
+    ///
+    /// A type the program declares under that name, or imports under it from one of its own modules, is constructed as
+    /// the declaration it is (#1795); the checked import path is the authority for an imported name.
+    fn names_stdlib_validation_error(&self, name: &str) -> bool {
+        name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError)
+            && !self.declared_nominal_type_names.contains(name)
+            && self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.import_binding_path(name))
+                .is_none_or(|path| path.first().map(String::as_str) == Some(STDLIB_ROOT))
+    }
+
     /// Lower a struct/model/class/newtype constructor call.
     pub fn lower_constructor_call(
         &mut self,
@@ -3779,7 +4212,7 @@ impl AstLowering {
             return Ok(hook_call);
         }
 
-        if name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError) {
+        if self.names_stdlib_validation_error(name) {
             let mut message = None;
             let mut code = None;
             for arg in args {
@@ -3841,6 +4274,20 @@ impl AstLowering {
                 IrType::Struct(surface_types::as_str(surface_types::SurfaceTypeId::ValidationError).to_string()),
             ));
         }
+
+        // A newtype's constructor parameter, which a partial presets by name, is the newtype's one positional value,
+        // so its construction is the one a positional call makes.
+        let positional_newtype_value;
+        let args = match args {
+            [ast::CallArg::Named(parameter, value)]
+                if parameter.node == super::super::NEWTYPE_CONSTRUCTOR_PARAM
+                    && self.newtype_construction.contains_key(name) =>
+            {
+                positional_newtype_value = [ast::CallArg::Positional(value.clone())];
+                positional_newtype_value.as_slice()
+            }
+            _ => args,
+        };
 
         // Get type if known, otherwise Unknown (will be inferred at emit time)
         let struct_ty = self.struct_names.get(name).cloned().unwrap_or(IrType::Unknown);
@@ -3911,14 +4358,111 @@ impl AstLowering {
                 }
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+        let mut fields = fields;
+        let owner_ty = match &struct_ty {
+            IrType::Unknown => IrType::Struct(struct_name.clone()),
+            known => known.clone(),
+        };
+        self.retain_constructor_field_union_owners(&owner_ty, &mut fields);
+        let (argument_stmts, fields) = self.sequence_reordered_constructor_arguments(call_span, fields);
+        let construction = IrExprKind::Struct {
+            name: name.to_string(),
+            type_args: self.lower_call_site_type_args(call_span, type_args),
+            fields,
+            fill_defaults: false,
+        };
+        if argument_stmts.is_empty() {
+            return Ok((construction, struct_ty));
+        }
         Ok((
-            IrExprKind::Struct {
-                name: name.to_string(),
-                fields,
-                fill_defaults: false,
+            IrExprKind::Block {
+                stmts: argument_stmts,
+                value: Some(Box::new(TypedExpr::new(construction, struct_ty.clone()))),
             },
             struct_ty,
         ))
+    }
+
+    /// Bind the arguments of a construction written out of declaration order to temporaries, in written order.
+    ///
+    /// The emitter assembles a nominal construction in declared field order, and Rust evaluates a struct literal's
+    /// fields in the order they are spelled, so a caller that names fields out of declaration order would otherwise
+    /// have its arguments evaluated in declaration order: `Document(intent=inspect(source),
+    /// evidence=Evidence(source=source))` moved `source` into `evidence` before `intent` read it (#1462). The
+    /// typechecker records which declared slot each written argument fills (#1158); when those slots are not already
+    /// ascending, every argument whose evaluation is observable is bound to a temporary here, in written order, and the
+    /// construction reads the temporaries instead. Ownership planning then sees the reads in the order the source
+    /// wrote them, so the last read of a local is its move wherever that field sits in the declaration. A bare literal
+    /// stays inline: evaluating one has no effect and no owner, so its position cannot be observed.
+    ///
+    /// Returns the temporaries' `let` statements (empty when nothing needed sequencing) and the fields to construct
+    /// with. Positional and spread arguments never take this path: the typechecker records no binding for them, and
+    /// the fact is deliberately absent rather than partial.
+    fn sequence_reordered_constructor_arguments(
+        &self,
+        call_span: ast::Span,
+        fields: Vec<(String, TypedExpr)>,
+    ) -> (Vec<IrStmt>, Vec<(String, TypedExpr)>) {
+        let written_order_differs = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.constructor_field_binding(call_span))
+            .is_some_and(|binding| {
+                binding.argument_slots.len() == fields.len()
+                    && binding.argument_slots.windows(2).any(|pair| pair[0] > pair[1])
+            });
+        if !written_order_differs || fields.iter().any(|(field, _)| field.is_empty()) {
+            return (Vec::new(), fields);
+        }
+
+        let mut argument_stmts = Vec::new();
+        let sequenced = fields
+            .into_iter()
+            .enumerate()
+            .map(|(index, (field, value))| {
+                if Self::constructor_argument_is_bare_literal(&value) {
+                    return (field, value);
+                }
+                let ty = value.ty.clone();
+                let temporary = format!("__incan_ctor_arg_{index}");
+                argument_stmts.push(IrStmt::new(IrStmtKind::Let {
+                    name: temporary.clone(),
+                    ty: ty.clone(),
+                    type_annotation: None,
+                    mutability: Mutability::Immutable,
+                    value,
+                }));
+                let read = TypedExpr::new(
+                    IrExprKind::Var {
+                        name: temporary,
+                        access: if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move },
+                        ref_kind: VarRefKind::Value,
+                    },
+                    ty,
+                );
+                (field, read)
+            })
+            .collect();
+        (argument_stmts, sequenced)
+    }
+
+    /// Whether a lowered constructor argument is a literal whose evaluation order cannot be observed.
+    ///
+    /// Such an argument reads no binding and has no effect, so it can stay inline when its siblings are sequenced.
+    fn constructor_argument_is_bare_literal(value: &TypedExpr) -> bool {
+        matches!(
+            value.kind,
+            IrExprKind::Unit
+                | IrExprKind::None
+                | IrExprKind::Bool(_)
+                | IrExprKind::Int(_)
+                | IrExprKind::IntLiteral(_)
+                | IrExprKind::Float(_)
+                | IrExprKind::Decimal(_)
+                | IrExprKind::String(_)
+                | IrExprKind::Bytes(_)
+                | IrExprKind::Literal(_)
+        )
     }
 
     /// Lower imported stdlib type construction through a source-defined static `__incan_new` method when present.
@@ -3967,7 +4511,7 @@ impl AstLowering {
         };
         let ret_ty = self.lower_type(&hook.return_type.node);
         let hook_name = self
-            .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK, true)
+            .emitted_method_reference_name(call_span, TYPE_CONSTRUCTOR_HOOK)
             .unwrap_or_else(|| TYPE_CONSTRUCTOR_HOOK.to_string());
         Ok(Some((
             IrExprKind::MethodCall {
@@ -4012,16 +4556,22 @@ impl AstLowering {
         let mut lowered = Vec::new();
         for arg in args {
             match arg {
-                ast::CallArg::Positional(e) => lowered.push(IrCallArg {
-                    name: None,
-                    kind: IrCallArgKind::Positional,
-                    expr: self.lower_expr_spanned(e)?,
-                }),
-                ast::CallArg::Named(name, e) => lowered.push(IrCallArg {
-                    name: Some(name.node.clone()),
-                    kind: IrCallArgKind::Named,
-                    expr: self.lower_expr_spanned(e)?,
-                }),
+                ast::CallArg::Positional(e) => {
+                    let expr = self.lower_call_arg_value(e)?;
+                    lowered.push(IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr,
+                    });
+                }
+                ast::CallArg::Named(name, e) => {
+                    let expr = self.lower_call_arg_value(e)?;
+                    lowered.push(IrCallArg {
+                        name: Some(name.node.clone()),
+                        kind: IrCallArgKind::Named,
+                        expr,
+                    });
+                }
                 ast::CallArg::PositionalUnpack(e) => {
                     let expr = self.lower_expr_spanned(e)?;
                     if let Some(FixedUnpackPlan::Positional(item_types)) =
@@ -4055,6 +4605,28 @@ impl AstLowering {
         Ok(lowered)
     }
 
+    /// Lower one positional or named argument's value. A local bound to a capturing callable that the checker passes
+    /// to a closure-holding parameter is borrowed, since the parameter takes any callable by value and the local stays
+    /// usable after the call (#1561).
+    fn lower_call_arg_value(&mut self, value: &ast::Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
+        let lowered = self.lower_expr_spanned(value)?;
+        if !self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.is_borrowed_callable_argument(value.span))
+        {
+            return Ok(lowered);
+        }
+        let ty = lowered.ty.clone();
+        Ok(TypedExpr::new(
+            IrExprKind::UnaryOp {
+                op: UnaryOp::Ref,
+                operand: Box::new(lowered),
+            },
+            IrType::Ref(Box::new(ty)),
+        ))
+    }
+
     /// Expand a typechecker-proven `*expr` shape into ordinary positional IR arguments.
     fn lower_fixed_positional_unpack_args(&self, expr: &TypedExpr, item_types: &[ResolvedType]) -> Vec<IrCallArg> {
         let items = match &expr.kind {
@@ -4070,14 +4642,7 @@ impl AstLowering {
                 .iter()
                 .enumerate()
                 .map(|(idx, ty)| {
-                    TypedExpr::new(
-                        IrExprKind::Field {
-                            object: Box::new(expr.clone()),
-                            field: idx.to_string(),
-                        },
-                        self.lower_resolved_type(ty),
-                    )
-                    .with_span(expr.span)
+                    TypedExpr::tuple_element(expr.clone(), idx, self.lower_resolved_type(ty)).with_span(expr.span)
                 })
                 .collect(),
         };
@@ -4167,8 +4732,9 @@ mod tests {
     use incan_frontend::library_exports::CheckedPresetValue;
     use incan_frontend::library_manifest::{
         AliasExport, CompiledProviderMetadata, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
-        FunctionExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryExports, LibraryIdentityGraph,
-        LibraryManifest, ParamDefaultExport, ParamExport, ParamKindExport, ProviderModuleClaim, TypeRef,
+        FieldExport, FieldVisibilityExport, FunctionExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+        LibraryExports, LibraryIdentityGraph, LibraryManifest, ModelExport, ParamDefaultExport, ParamExport,
+        ParamKindExport, ProviderModuleClaim, TypeRef,
     };
     use incan_frontend::library_manifest_index::{
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
@@ -4202,6 +4768,7 @@ mod tests {
             emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
+                is_mut: false,
                 name: "value".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -4609,6 +5176,7 @@ mod tests {
                     decorators: Vec::new(),
                     type_params: Vec::new(),
                     params: vec![ParamExport {
+                        is_mut: false,
                         name: "value".to_string(),
                         ty: TypeRef::Applied {
                             origin: None,
@@ -4681,6 +5249,166 @@ mod tests {
                 "consume".to_string()
             ]),
             "module-qualified calls must use provider claims rather than the compiler's legacy stdlib registry"
+        );
+        Ok(())
+    }
+
+    /// One public field declaration as a source-backed provider manifest records it.
+    fn pub_field_export(name: &str, ty: TypeRef) -> FieldExport {
+        FieldExport {
+            name: name.to_string(),
+            canonical: None,
+            ty,
+            surface_type_name: None,
+            visibility: FieldVisibilityExport::Public,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        }
+    }
+
+    /// One public model declaration with the given fields and nothing else.
+    fn pub_model_export(name: &str, fields: Vec<FieldExport>) -> ModelExport {
+        ModelExport {
+            name: name.to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            derives: Vec::new(),
+            fields,
+            properties: Vec::new(),
+            methods: Vec::new(),
+        }
+    }
+
+    /// Regression for #1697: a field read on a dependency-owned model keeps the field's union owned by the provider.
+    ///
+    /// The checker records the field with the provider's `pub type ColumnExpr = Union[...]` alias expanded, so the
+    /// checked type reaches lowering as a structural union over provider-qualified members. The declared field type
+    /// read from the provider manifest is the `ExternalUnion` carrier; retaining it onto the checked type is the
+    /// fact the match lowering consumes, and that carrier resolves the consumer's bare constructor patterns to the
+    /// provider-qualified variants. A field the provider does not declare keeps the checked type, and the
+    /// native-only retention used for decorator surfaces still ignores a carrier without a native representation.
+    #[test]
+    fn pub_model_field_read_keeps_dependency_owned_union_carrier_issue1697() -> Result<(), String> {
+        let named = |name: &str| TypeRef::Named {
+            origin: None,
+            name: name.to_string(),
+        };
+        let column_expr = TypeRef::Applied {
+            origin: None,
+            name: crate::types::IR_UNION_TYPE_NAME.to_string(),
+            args: vec![named("IntLiteralExpr"), named("StringLiteralExpr")],
+        };
+        let mut manifest = LibraryManifest::new("querykit", "0.1.0");
+        manifest.exports.models.push(pub_model_export(
+            "IntLiteralExpr",
+            vec![pub_field_export("value", named("int"))],
+        ));
+        manifest.exports.models.push(pub_model_export(
+            "StringLiteralExpr",
+            vec![pub_field_export("value", named("str"))],
+        ));
+        manifest.exports.models.push(pub_model_export(
+            "AggregateMeasure",
+            vec![pub_field_export("expr", column_expr.clone())],
+        ));
+        manifest.exports.models.push(pub_model_export(
+            "Projection",
+            vec![pub_field_export(
+                "columns",
+                TypeRef::Applied {
+                    origin: None,
+                    name: incan_lang::lang::types::collections::as_str(
+                        incan_lang::lang::types::collections::CollectionTypeId::List,
+                    )
+                    .to_string(),
+                    args: vec![column_expr],
+                },
+            )],
+        ));
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "querykit".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "querykit",
+                    "querykit",
+                    std::env::temp_dir().join("incan_issue1697_querykit"),
+                ),
+            },
+        )]));
+        let mut lowering = AstLowering::new();
+        lowering.set_provider_plan(Some(Arc::new(ProviderPlan::for_library_index(index))));
+        for model in ["AggregateMeasure", "Projection"] {
+            lowering.import_aliases.insert(
+                model.to_string(),
+                vec!["pub".to_string(), "querykit".to_string(), model.to_string()],
+            );
+        }
+
+        // ---- The checked field type: the alias expanded, members spelled through the provider ----
+        let checked_union = crate::lower::types::union_ir_type(vec![
+            IrType::Struct("querykit::IntLiteralExpr".to_string()),
+            IrType::Struct("querykit::StringLiteralExpr".to_string()),
+        ]);
+        let measure = IrType::Struct("querykit::AggregateMeasure".to_string());
+
+        // ---- The declared field type names the owner; retention puts it in the union position ----
+        let declared = lowering
+            .declared_field_type_for_imported_pub_type("querykit", &measure, "expr")
+            .ok_or("expected the provider's `expr` field declaration")?;
+        assert!(
+            matches!(&declared, IrType::ExternalUnion { library, .. } if library == "querykit"),
+            "the declared field type must be the provider-owned union carrier, got {declared:?}"
+        );
+        let retained = AstLowering::retain_provider_owned_union_representation(checked_union.clone(), &declared);
+        assert_eq!(
+            retained, declared,
+            "the checked union position takes the provider-owned carrier"
+        );
+
+        // ---- The carrier resolves the consumer's constructor patterns to provider-qualified variants ----
+        let wrapper = retained
+            .union_type_name()
+            .ok_or("the retained carrier must still be a union")?;
+        assert_eq!(
+            retained.union_variant_index_for_member(&IrType::Struct("IntLiteralExpr".to_string())),
+            Some(0),
+            "a bare constructor pattern names a member of the provider's union"
+        );
+        assert_eq!(
+            retained.union_variant_path(1),
+            Some(format!("querykit::{wrapper}::V1")),
+            "every narrowing arm is spelled through the provider-qualified wrapper"
+        );
+
+        // ---- A `List` field carries the owner into its element position ----
+        let projection = IrType::Struct("querykit::Projection".to_string());
+        let declared_columns = lowering
+            .declared_field_type_for_imported_pub_type("querykit", &projection, "columns")
+            .ok_or("expected the provider's `columns` field declaration")?;
+        let retained_columns = AstLowering::retain_provider_owned_union_representation(
+            IrType::List(Box::new(checked_union.clone())),
+            &declared_columns,
+        );
+        assert_eq!(
+            retained_columns,
+            IrType::List(Box::new(declared.clone())),
+            "the loop element of a `List[ColumnExpr]` field is the provider-owned carrier"
+        );
+
+        // ---- No declaration, no change; the native-only retention keeps ignoring an unprojected carrier ----
+        assert_eq!(
+            lowering.declared_field_type_for_imported_pub_type("querykit", &measure, "label"),
+            None,
+            "a field the provider does not declare has no declared type to retain"
+        );
+        assert_eq!(
+            AstLowering::retain_native_union_representation(checked_union.clone(), &declared),
+            checked_union,
+            "decorator-surface retention admits only carriers with a native representation"
         );
         Ok(())
     }

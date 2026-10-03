@@ -1,0 +1,12 @@
+# behavior: a program with an undefined name and unreachable code is refused at check time with both codes in one report
+# expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0101
+
+def helper() -> int:
+    return 1
+    println("never runs")
+
+
+def main() -> None:
+    _ = undefined_symbol
+    println(helper())

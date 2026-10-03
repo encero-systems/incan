@@ -1,0 +1,48 @@
+# behavior: Some(member) whose destination is a dependency's Option[union] is wrapped into the union the dependency declares, as a call argument, a list element, a model field at construction and by assignment, an annotated binding, a match arm and a returned value, and Ok(member) and Err(message) fill a dependency's Result[union, str]
+# retires: loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs::dependency_optional_union_results_convert_into_consumer_options_issue1835
+# retires: loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs::some_member_takes_the_dependency_owned_union_at_every_destination_issue1743
+# expect-stdout:
+#   PLAIN
+#   kind k
+#   missing
+#   2
+#   HELD
+#   kind c
+#   PICKED
+#   FINE
+#   error bad
+#   ARM
+#   missing
+#   ASSIGNED
+
+from pub::unionlib import Choice, Holder, Kind, count_present, describe, result_kind
+
+
+def pick() -> Option[Choice]:
+    return Some("picked")
+
+
+def choose(flag: bool) -> Option[Choice]:
+    choice: Option[Choice] = match flag:
+        true => Some("arm")
+        false => None
+    return choice
+
+
+def main() -> None:
+    println(describe(Some("plain")))
+    println(describe(Some(Kind("k"))))
+    println(describe(None))
+    println(count_present([Some("a"), None, Some(Kind("b"))]))
+    holder = Holder(value=Some("held"))
+    println(describe(holder.value))
+    chosen: Option[Choice] = Some(Kind("c"))
+    println(describe(chosen))
+    println(describe(pick()))
+    println(result_kind(Ok("fine")))
+    println(result_kind(Err("bad")))
+    println(describe(choose(true)))
+    println(describe(choose(false)))
+    mut reassigned = Holder(value=None)
+    reassigned.value = Some("assigned")
+    println(describe(reassigned.value))

@@ -1,0 +1,60 @@
+# behavior: a variant pattern written without its enum or through a variant alias matches the subject enum's own variant, over a plain and a generic enum, nested in another pattern, in if let, and over an enum another module declares whether or not the matching module imports it
+# retires: loaves/compiler/incan_emit/src/tests/variant_pattern_emission.rs::unqualified_and_aliased_variant_patterns_compile
+# retires: loaves/compiler/incan_emit/src/tests/variant_pattern_emission.rs::variant_patterns_over_another_modules_enum_name_a_path_the_module_can_reach
+# expect-stdout:
+#   1.5
+#   0.0
+#   -1
+#   3
+#   4
+#   9
+#   6
+#   7
+#   8
+
+from shapes import Shape
+from unnamed import first
+
+
+enum Plain:
+    Circle(float)
+    Dot
+
+
+def radius(c: Plain) -> float:
+    match c:
+        Circle(r) => return r
+        Plain.Dot => return 0.0
+
+
+def total(s: Shape[int]) -> int:
+    match s:
+        Filled(0) => return -1
+        Filled(n) => return n
+        Pair(a, _) | Pair(_, a) => return a
+        Shape.Empty => return 0
+
+
+def nested(o: Option[Shape[int]]) -> int:
+    match o:
+        Some(Filled(n)) => return n
+        Some(Pair(a, b)) => return a + b
+        _ => return 0
+
+
+def aliased(s: Shape[int]) -> int:
+    match s:
+        Full(n) => return n
+        _ => return 0
+
+
+def main() -> None:
+    println(radius(Plain.Circle(1.5)))
+    println(radius(Plain.Dot))
+    println(total(Shape.Filled(0)))
+    println(total(Shape.Filled(3)))
+    println(total(Shape.Pair(4, 5)))
+    println(nested(Some(Shape.Pair(4, 5))))
+    println(aliased(Shape.Filled(6)))
+    println(first(7))
+    println(total(Shape.Filled(8)))

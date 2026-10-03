@@ -142,6 +142,20 @@ return query {
 
 The formatter should not rewrite that shape to declaration-style `query:` / `FROM:` / `SELECT:` output.
 
+## Import Paths
+
+`incan fmt` writes the segments of an Incan module path with dots, and the nested package path after `pub::package` with dots as well. A `rust::` path keeps `::`.
+
+```incan
+# before
+from pub::hees_ai::hyperquant::search import search
+import db::models::User
+
+# after
+from pub::hees_ai.hyperquant.search import search
+import db.models.User
+```
+
 ## Limitations
 
 ### Parse-required

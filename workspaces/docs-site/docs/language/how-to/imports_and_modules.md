@@ -24,6 +24,8 @@ from models import User
 import utils::format_currency
 ```
 
+When an import list gets long, put it in parentheses, one name per line, with a trailing comma; this works for `rust::` imports too.
+
 ## Nested projects
 
 Recommended structure:
@@ -168,3 +170,24 @@ If a module needs to export live runtime state, use `pub static`:
 --8<-- "snippets/module_state.md"
 
 For the full walkthrough, see: [Module state (how-to)](module_state.md).
+
+## Import two names that would collide
+
+Two imports that bind the same local name are refused, whether they name the same declaration or different ones. When both targets are intentional, give each an explicit alias:
+
+```incan
+import codecs.prelude as codecs_prelude
+import compression.prelude as compression_prelude
+```
+
+## Import a standard-library declaration
+
+`from std import name` binds a standard-library module, not a declaration. When `from std import Debug` is refused, the diagnostic names the module that declares `Debug` when it is known; import the declaration from that module:
+
+```incan
+from std.derives.string import Debug
+```
+
+## Activate `async` and `await`
+
+Import `std.async`, or one of its modules such as `std.async.time`, before the first `async def` or `await` in the file. Without that import, `async` and `await` are refused (`INCAN-P0001`), and the diagnostic names the import to add.

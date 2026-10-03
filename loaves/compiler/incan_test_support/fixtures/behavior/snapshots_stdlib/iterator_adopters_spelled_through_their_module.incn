@@ -1,0 +1,53 @@
+# behavior: a model, a class and a generic model adopting Iterator[T] through its module, or a module alias, run the iterator adapters and terminals and their own __next__
+# retires: loaves/compiler/incan_emit/src/tests/iterator_adopters.rs::iterator_adopters_spelled_through_their_module_build_issue1561
+# expect-stdout:
+#   [1, 2, 3]
+#   true
+#   [10, 20, 30]
+#   Some(1)
+#   ["w", "w"]
+#   14
+
+from std.derives import collection
+import std.derives.collection as coll
+
+
+model Count with collection.Iterator[int]:
+    n: int
+
+    def __next__(mut self) -> Option[int]:
+        if self.n >= 3:
+            return None
+        self.n += 1
+        return Some(self.n)
+
+
+class Words with coll.Iterator[str]:
+    left: int
+
+    def __next__(mut self) -> Option[str]:
+        if self.left <= 0:
+            return None
+        self.left -= 1
+        return Some("w")
+
+
+model Repeat[T with Clone] with collection.Iterator[T]:
+    value: T
+    left: int
+
+    def __next__(mut self) -> Option[T]:
+        if self.left <= 0:
+            return None
+        self.left -= 1
+        return Some(self.value.clone())
+
+
+def main() -> None:
+    println(Count(n=0).collect())
+    println(Count(n=0).any((x) => x > 2))
+    println(Count(n=0).map((x) => x * 10).collect())
+    mut c = Count(n=0)
+    println(c.__next__())
+    println(Words(left=2).collect())
+    println(Repeat(value=7, left=2).fold(0, (acc, x) => acc + x))

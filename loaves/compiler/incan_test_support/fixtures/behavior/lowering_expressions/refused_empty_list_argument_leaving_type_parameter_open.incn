@@ -1,0 +1,9 @@
+# behavior: an empty list passed to a generic list parameter whose type parameter no other argument binds is refused, since nothing says its element type
+# expect-diagnostic: INCAN-T0001
+
+def count[T](items: list[T]) -> int:
+    return len(items)
+
+
+def main() -> None:
+    println(count([]))

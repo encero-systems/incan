@@ -11,8 +11,9 @@ use super::{
     CargoMetadata, Command, InspectionPackageScope, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenLegacyCargoBaseLoaf,
     OvenLegacyCargoError, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInspectionSource,
     OvenProjectRegistrySourceDependency, OvenRustcRegistrySourcePackage, ResolvedDirectDependency, canonical_tool_file,
-    cargo_registry_checksums, clear_inherited_cargo_environment, digest_bytes, inspection_package_closure_ids,
-    regular_file_bytes, stage_registry_source_directory, stage_release_cohort_project_lock, verified_regular_file,
+    cargo_registry_checksums, clear_inherited_cargo_environment_for_cargo, digest_bytes,
+    inspection_package_closure_ids, regular_file_bytes, stage_registry_source_directory,
+    stage_release_cohort_project_lock, verified_regular_file,
 };
 
 /// Read Cargo's package identity metadata at the named publisher boundary without creating a target directory.
@@ -87,7 +88,7 @@ pub fn read_legacy_cargo_metadata_for_platform(
     if !features.is_empty() {
         command.arg("--features").arg(features.join(","));
     }
-    clear_inherited_cargo_environment(&mut command);
+    clear_inherited_cargo_environment_for_cargo(&mut command);
     let output = command.output().map_err(|source| OvenLegacyCargoError::Io {
         path: cargo.clone(),
         source,
@@ -465,7 +466,7 @@ pub fn legacy_cargo_inspection_sources_from_metadata(
         let mut package_features = resolved_features.get(package.id.as_str()).cloned().unwrap_or_default();
         package_features.sort();
         package_features.dedup();
-        let (source_root, source_digest) = stage_registry_source_directory(
+        let (source_root, source_digest, members) = stage_registry_source_directory(
             staging,
             &package.name,
             &package.version,
@@ -481,6 +482,7 @@ pub fn legacy_cargo_inspection_sources_from_metadata(
             features: package_features,
             source_root,
             source_digest,
+            members,
         });
     }
     sources.sort_by(|left, right| {

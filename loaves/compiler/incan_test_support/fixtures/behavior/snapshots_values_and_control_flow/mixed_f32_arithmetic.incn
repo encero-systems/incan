@@ -1,0 +1,31 @@
+# behavior: f32 operands widen when combined with f64, float and int in +, /, //, % and ** and the results are float
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::mixed_f32_arithmetic_widens_operands_for_f64_codegen
+# expect-stdout:
+#   4.5 1.25 1.0 0.5 6.25
+#   3.5
+#   5.5
+
+pub def with_f64(left: f32, right: f64) -> float:
+    added = left + right
+    divided = left / right
+    floored = left // right
+    remainder = left % right
+    powered = left ** right
+    println(f"{added} {divided} {floored} {remainder} {powered}")
+    return left ** right
+
+
+pub def with_float(left: f32, right: float) -> float:
+    return left + right
+
+
+pub def with_int(left: f32, right: int) -> float:
+    return left + right
+
+
+def main() -> None:
+    narrow: f32 = 2.5
+    wide: f64 = 2.0
+    with_f64(narrow, wide)
+    println(with_float(narrow, 1.0))
+    println(with_int(narrow, 3))

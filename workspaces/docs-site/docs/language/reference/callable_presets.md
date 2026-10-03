@@ -2,147 +2,198 @@
 
 This page is the reference for callable presets created with `partial`.
 
-Callable presets create a callable surface from an existing callable by supplying named preset values. The projected callable keeps the target return type and exposes preset parameters as ordinary defaulted parameters.
+A callable preset is a callable derived from a target callable by presetting named arguments. Each preset parameter becomes a defaulted parameter whose default is the preset value, and the preset has the target's return type.
 
 For the mental model and examples, see [Callable presets explained](../explanation/callable_presets.md).
 
-!!! tip "Coming from Python?"
-    Callable presets are closest to `functools.partial`, but the contract is stricter.
+## Forms
 
-    - Presets are keyword-only.
-    - Preset parameters remain overrideable at the call site.
-    - Top-level presets are declarations, not runtime module import work.
-    - Public presets are exported as preset metadata, not as opaque function objects.
-
-## Syntax
-
-Top-level declaration:
+| Form                    | Written as                                           | Where                                       |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------- |
+| Top-level declaration   | `[pub] name = partial target(keyword=value, ...)`    | At module level                             |
+| Method partial          | `name = partial method(keyword=value, ...)`          | In the body of a model, class, trait or newtype |
+| Local partial expression | `partial callable_expression(keyword=value, ...)`   | Anywhere an expression is allowed           |
 
 ```incan
-pub get = partial route(method="GET")
-```
+pub def route(method: str, path: str) -> str:
+    return f"{method} {path}"
 
-Same-type method declaration:
+pub get = partial route(method="GET")                # accepted
 
-```incan
 model Cell:
     alive: bool
 
     def set_state(mut self, state: bool) -> None:
         self.alive = state
 
-    set_alive = partial set_state(state=true)
+    set_alive = partial set_state(state=true)         # accepted
+
+def status_line(method: str) -> str:
+    fetch = partial route(method=method)              # accepted
+    return fetch("/health")
 ```
 
-Local expression:
+Every preset is a named argument; a positional preset is a syntax error, `INCAN-P0001`. A partial presets at least one argument.
+
+## Targets
+
+| Form                     | Target                                                                                                                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Top-level declaration    | A function, declared or imported (`partial math.sqrt(x=4.0)`), a model, class or newtype constructor, or a symbol alias or top-level partial that resolves to one of these. A newtype constructor's parameter is named `value`. |
+| Method partial           | A method of the same type, named by its unqualified name or through a same-type method alias (`display = label`).                                                                                                                    |
+| Local partial expression | A callable named by its name or path: a function, a generic function, a model, class or newtype constructor, a symbol alias, a top-level partial, or a method of a value (`partial user.label(prefix="x")`).                              |
+
+A top-level target that is a const, a static, a module, an enum variant, a call expression, a local variable, a closure, a field or an unbound method is error `INCAN-T0001`. A local partial expression whose target is not callable, or is a variable or parameter holding a callable, is error `INCAN-T0001`.
+
+A method of a value as a local partial's target is a method that takes `self`, of a local, of `self`, or of a field of one. The partial holds the receiver as it is when the partial is built, and calls the method on it. A method that takes `mut self`, an overloaded method and a generic method are error `INCAN-T0001`.
 
 ```incan
-def make_reader(layer: str) -> Callable[[str], Reader]:
-    return partial Reader(layer=layer)
+model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+class Counter:
+    pub count: int
+
+    def add(mut self, by: int) -> None:
+        self.count += by
+
+def main() -> None:
+    user = User(name="ann")
+    tag = partial user.label(prefix="x")          # accepted
+    mut counter = Counter(count=0)
+    step = partial counter.add(by=1)              # refused: add takes mut self (INCAN-T0001)
 ```
 
-The explicit grammar shape is:
+## Signature
 
-```text
-partial Target(keyword=value, ...)
-```
-
-Only named preset arguments are valid. Positional presets are rejected.
-
-## Supported targets
-
-Top-level partial declarations support statically known callable targets:
-
-- functions;
-- aliases and partials that resolve to supported callable targets;
-- model constructors;
-- class constructors;
-- newtype constructors.
-
-Method partial declarations are same-type only. They may target another method declared on the same model, class, trait, or newtype.
-
-Local partial expressions support callable targets whose surface can be resolved at the expression site.
-
-## Signature projection
-
-A partial projects the target callable signature:
+A partial has the target's signature with these changes:
 
 - unfilled required parameters remain required;
-- unfilled defaulted parameters remain defaulted;
-- preset parameters become defaulted parameters on the projected callable;
-- the return type is the target return type;
-- async status follows the target callable;
-- receiver kind follows the target method for method partials.
+- unfilled defaulted parameters remain defaulted and take the default the target declares; a call through the partial may leave one unbound exactly when a direct call to the target may (see [Ordinary call binding](functions.md#ordinary-call-binding));
+- preset parameters become defaulted parameters whose defaults are the preset values, and a call may override a preset by naming it;
+- the return type is the target's return type;
+- the partial is async exactly when the target is;
+- a method partial has the target method's receiver;
+- a top-level partial of a generic callable stays generic over the type parameters its presets leave free.
 
-Preset parameters are defaults, not frozen arguments. A call may override a preset by supplying the same keyword:
+A local partial expression's value is a callable with the target's parameters and return type, each preset parameter defaulted to its preset value. It holds its presets, so a function-typed slot holds it where it holds a closure that captures local values (see [Closures that capture local values](functions.md#closures-that-capture-local-values)).
+
+A local partial expression of a generic callable instantiates it: each type parameter takes the type argument the partial writes (`partial pair[int](a=1)`) or, when it writes none, the one its preset values fix. A type parameter neither fixes is error `INCAN-T0001`, and a type argument that does not meet its parameter's bounds is refused as it is in a call.
 
 ```incan
-pub get = partial route(method="GET")
+model TableReader:
+    layer: str
+    format: str
+    path: str
 
-def submit() -> str:
-    return get(method="POST", path="/submit")
+model Box[T]:
+    value: T
+    label: str
+
+def pair[T](a: T, b: T) -> list[T]:
+    return [a, b]
+
+def read_orders(layer: str) -> TableReader:
+    reader = partial TableReader(layer=layer, format="delta")   # accepted
+    return reader("orders")
+
+def instantiate() -> None:
+    first = partial pair(a=1)                  # accepted: T is int
+    labeled = partial Box[str](label="x")     # accepted: T is str
+    unfixed = partial Box(label="x")           # refused: INCAN-T0001, T is not fixed
 ```
 
-Default display uses the same visual model as ordinary callable defaults. Tooling may retain separate preset provenance in metadata, but the callable signature does not introduce a separate "partial-only" parameter category.
+Positional arguments bind as follows:
 
-## Top-level preset values
+| Form                                     | Positional arguments bind                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Top-level declaration and method partial | The target's parameters in declaration order, preset parameters included.                         |
+| Local partial expression                 | The parameters that are not preset, in declaration order. A preset is overridden only by name. |
 
-Top-level partial declarations do not execute the target call during module initialization. Preset values must be declaration-safe so the compiler can represent them without running user code.
+```incan
+def submit() -> str:
+    a = get(path="/submit")                    # accepted
+    b = get(method="POST", path="/submit")     # accepted
+    c = get("POST", "/submit")                 # accepted
+    return get("/submit")                      # refused: INCAN-T0001, path is unbound
 
-Accepted preset value shapes include:
+def local_call() -> str:
+    fetch = partial route(method="GET")
+    a = fetch("/health")                       # accepted
+    return fetch("POST", "/health")            # refused: INCAN-T0001, one positional parameter
+```
 
-- scalar literals;
-- string and bytes literals;
-- `None`;
-- symbol paths that can be represented as static preset metadata;
-- list literals whose elements are declaration-safe;
-- dictionary literals whose keys and values are declaration-safe;
-- model literals whose field values are declaration-safe.
+## Preset values
 
-Rejected top-level preset value shapes include:
+| Form                     | Preset values                                                                                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Top-level declaration    | The values listed below. The declaration does not call its target when its module initializes.                                                                 |
+| Method partial           | Any expression of the parameter's type, evaluated like a parameter default in the module that declares the type: each time a call leaves the preset unbound. |
+| Local partial expression | Any expression of the parameter's type, evaluated once, left to right, when the partial expression is evaluated.                                                |
 
-- function calls;
-- closures;
-- comprehensions;
-- mutation;
-- I/O;
-- async operations;
-- spread entries in collection literals;
-- positional or unpacked model literal arguments.
+Each preset value of a top-level declaration is one of:
 
-Local partial expressions are different: their preset expressions evaluate under ordinary runtime expression rules when the partial expression is evaluated.
+- a scalar literal, including a negative number literal such as `-2`, a string or bytes literal, or `None`;
+- a const, named by its identifier or by a qualified path, whose value is itself such a value;
+- an enum variant path whose variant takes no payload, such as `Mode.Fast`;
+- a list, set, tuple or dict literal whose elements, keys and values are such values;
+- a model literal of a known model whose field values are such values.
 
-## Method and trait presets
+Any other preset value of a top-level declaration, such as a function or constructor call, a closure, a comprehension or a spread entry, is error `INCAN-T0001`:
 
-A method partial creates another method on the same type surface. The generated method keeps the target receiver and return type.
+```incan
+from std.hash import DEFAULT_CHUNK_SIZE
 
-Trait method partials behave like generated trait default methods. They forward to another same-trait method with the preset keyword values applied, and concrete adopters receive the default through the ordinary trait-default expansion path.
+def scale(k: int, n: int) -> int:
+    return k * n
 
-## Public API metadata
+twice = partial scale(k=2)                     # accepted
+negative = partial scale(k=-2)                 # accepted
+chunked = partial scale(k=DEFAULT_CHUNK_SIZE)  # accepted
+computed = partial scale(k=len("ab"))          # refused: INCAN-T0001, a call
+```
 
-Public top-level partial declarations are exported as partial metadata. The export records:
+A `pub` top-level partial targets a public callable, and its preset values name only public items.
 
-- partial name;
-- target path;
-- target kind;
-- preset names, types, and serializable preset values;
-- projected callable parameters;
-- return type;
-- async status.
+## Method and trait partials
 
-Public partials import as callable symbols for consumers, while manifests and checked API metadata still preserve their identity as partials.
+A method partial is a method of the type that declares it. It calls the target method with the preset values applied:
 
-## Diagnostics
+```incan
+model User:
+    name: str
 
-The compiler rejects:
+    def label(self, prefix: str) -> str:
+        return prefix
 
-- empty partial templates;
-- positional presets;
-- duplicate preset names;
-- unknown preset names;
-- preset values with incompatible types;
-- unsupported target kinds;
-- rest-parameter targets in the implemented surface;
-- top-level preset values that require runtime evaluation.
+    display = label
+    short = partial display(prefix="name")
 
-Use a [symbol alias](symbol_aliases.md) when the new name should be exactly the same callable. Use a wrapper function or method when the new callable should add behavior.
+def main() -> None:
+    println(User(name="Ada").short())                # accepted
+    println(User(name="Ada").short(prefix="other"))  # accepted
+```
+
+A method partial declared in a trait is a default method of the trait: every type that adopts the trait has it.
+
+## Imports
+
+A `pub` top-level partial is exported from its module and imported like a function. A call of an imported partial binds its arguments against the partial's signature, preset parameters included. In a package other than the partial's, a leftover defaulted parameter follows the target's cross-package default rule, and every preset of a method partial is a required argument (see [Ordinary call binding](functions.md#ordinary-call-binding), rule 8).
+
+## Refusals
+
+A positional preset is syntax error `INCAN-P0001`. Each of the following is error `INCAN-T0001`:
+
+- a partial that presets no argument;
+- a preset name used twice, or one the target does not declare;
+- a preset value whose type does not match the parameter;
+- a target that is unknown or not one the form allows (see [Targets](#targets));
+- a partial whose name is already declared in its module or on its type;
+- a target with a rest parameter;
+- a local partial expression of a generic callable that leaves one of its type parameters unfixed;
+- a partial whose target resolves back to itself, directly or through symbol aliases;
+- a `pub` partial whose target is private, or whose preset value names a private item;
+- a top-level preset value that is not one of the values listed under [Preset values](#preset-values).

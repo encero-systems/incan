@@ -1,0 +1,5 @@
+# behavior: a program that reads an undefined name is refused at check time and never runs
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    _ = undefined_symbol

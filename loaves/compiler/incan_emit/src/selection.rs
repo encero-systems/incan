@@ -1,6 +1,6 @@
 //! Backend-selection identity and execution receipt for the #652 replacement-backend cutover.
 //!
-//! The v0.6 programme tracked by #652 introduces a second compiler backend (the Body IR "replacement" backend, tracked
+//! The v0.6 program tracked by #652 introduces a second compiler backend (the Body IR "replacement" backend, tracked
 //! by #653) alongside the current Rust-source-emission backend (`IrCodegen`, the `incan_ir` and `incan_emit` crates,
 //! referred to here as "legacy"). #988 supplies a deliberately partial direct Body-IR profile; the selection boundary
 //! still declares and records which backend was intended and actually ran, so a legacy result is never mistaken for

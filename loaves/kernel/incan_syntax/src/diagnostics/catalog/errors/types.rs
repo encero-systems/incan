@@ -5,7 +5,9 @@
 
 use crate::ast::Span;
 use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::conventions;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use crate::diagnostics::CompileError;
 
@@ -14,6 +16,57 @@ use crate::diagnostics::CompileError;
 pub fn unknown_symbol(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Unknown symbol '{}'", name), span)
         .with_hint("Did you forget to import it or define it?")
+}
+
+/// Report a source name that starts with the compiler's reserved `__incan_` prefix (#1769).
+///
+/// The compiler spells the items and locals it generates with that prefix, the original a decorator wraps among them,
+/// so a source declaration, binding or import alias with the same prefix could collide with a generated name and stop
+/// the build on a duplicate definition. `name` is the spelling the source used and `kind` the kind of name it declares
+/// (`function`, `parameter`, `import alias`, ...), which the message and hint repeat. The hint suggests the name
+/// without the prefix when what remains starts like an identifier. `INCAN-T0111` is its stable code.
+pub fn reserved_compiler_name(name: &str, kind: &str, span: Span) -> CompileError {
+    let prefix = conventions::RESERVED_COMPILER_NAME_PREFIX;
+    let suggestion = name
+        .strip_prefix(prefix)
+        .filter(|rest| rest.starts_with(|first: char| first.is_ascii_alphabetic() || first == '_'));
+    let hint = match suggestion {
+        Some(rest) => format!("Rename the {kind} so it does not start with '{prefix}', for example '{rest}'"),
+        None => format!("Rename the {kind} so it does not start with '{prefix}'"),
+    };
+    CompileError::type_error(
+        format!("The {kind} '{name}' starts with '{prefix}', a prefix reserved for names the compiler generates"),
+        span,
+    )
+    .with_stable_code("INCAN-T0111")
+    .with_hint(hint)
+    .with_note("The compiler names the items and locals it generates with this prefix, so a source name spelled the same way could collide with one of them")
+}
+
+/// Report an unknown type name written in a callable's signature or body annotation.
+///
+/// The likeliest cause there is a type parameter that was never declared, not a missing import, so the hint shows
+/// where the declaration goes on `owner` (already-declared parameters are kept, the unknown name is appended). The
+/// import remedy stays as the second hint because the name can still be a type declared elsewhere. See #1373.
+pub fn unknown_type_parameter_candidate(
+    name: &str,
+    owner: &str,
+    declared_type_params: &[String],
+    span: Span,
+) -> CompileError {
+    let params = declared_type_params
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    CompileError::type_error(format!("Unknown symbol '{}'", name), span)
+        .with_hint(format!(
+            "'{name}' is not declared as a type parameter of '{owner}'; did you mean `def {owner}[{params}](...)`?"
+        ))
+        .with_hint(format!(
+            "If '{name}' is a type declared elsewhere, import it or define it"
+        ))
 }
 
 pub fn duplicate_definition(name: &str, span: Span) -> CompileError {
@@ -53,6 +106,40 @@ pub fn ambiguous_import_binding(name: &str, first_span: Span, second_span: Span)
 pub fn immutable_builtin_redefinition(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Cannot redefine immutable built-in function '{name}'"), span)
         .with_hint("Use a different name; `print` and `println` are reserved language functions")
+}
+
+/// The declaration kind whose representation must store every declared type parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredTypeParamOwner {
+    /// A `newtype` or `rusttype`: the parameter must appear in the underlying type.
+    Newtype,
+    /// An `enum`: the parameter must appear in at least one variant payload.
+    Enum,
+}
+
+/// Report a declared type parameter that the declaration's representation does not store.
+///
+/// A model or class can carry such a parameter (it becomes a phantom marker, #1370), but a newtype has exactly its
+/// underlying type and an enum has exactly its variant payloads, so a parameter neither mentions has nowhere to
+/// live; the generated Rust would be rejected as an unused type parameter. Reported at the parameter's own span.
+pub fn type_param_not_stored(owner: StoredTypeParamOwner, owner_name: &str, param: &str, span: Span) -> CompileError {
+    let (kind, storage, hint) = match owner {
+        StoredTypeParamOwner::Newtype => (
+            "newtype",
+            "its underlying type",
+            format!("Use '{param}' in the underlying type, for example `newtype list[{param}]`, or remove it"),
+        ),
+        StoredTypeParamOwner::Enum => (
+            "enum",
+            "any variant payload",
+            format!("Give a variant a payload that mentions '{param}', for example `Some({param})`, or remove it"),
+        ),
+    };
+    CompileError::type_error(
+        format!("Type parameter '{param}' of {kind} '{owner_name}' is not used by {storage}"),
+        span,
+    )
+    .with_hint(hint)
 }
 
 /// Report a value enum declaration that attempts to use type parameters.
@@ -171,6 +258,26 @@ pub fn call_unpack_without_rest(callee: &str, unpack: &str, span: Span) -> Compi
     )
 }
 
+/// Report a text encoding label outside the builtin `str.encode` / `bytes.decode` contract (#1668).
+///
+/// The builtin text return trip supports UTF-8 only; a literal label is rejected here, while a label that is only
+/// known at run time raises `ValueError` from the generated program instead.
+pub fn unsupported_text_encoding(callee: &str, encoding: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{callee}() supports only UTF-8 in this release, got encoding '{encoding}'"),
+        span,
+    )
+    .with_hint("Omit the argument or pass \"utf-8\"; std.fs and std.encoding cover other codecs")
+}
+
+/// Report a `bytes.decode` `errors` policy that is neither `strict` nor `replace` (#1668).
+pub fn unsupported_decode_errors_policy(policy: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("bytes.decode() errors must be \"strict\" or \"replace\", got '{policy}'"),
+        span,
+    )
+}
+
 /// Build the diagnostic for omitting a required call argument.
 pub fn missing_required_argument(callee: &str, name: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -238,6 +345,94 @@ pub fn decorator_result_not_callable(path: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("decorator '{path}' must return a callable"), span)
 }
 
+/// Report a method decorator, or a function it returns in the method's place, that spells the decorated method's
+/// receiver as `&Owner` or `&mut Owner` (#1790).
+///
+/// Incan source spells a method decorator's receiver the way the method spells it: `(Box, int) -> str` for a `self`
+/// method and `(mut Box, int) -> int` for a `mut self` method, and the compiler decides how the receiver is passed.
+/// `subject` names what spells it (`Method decorator '@as_int'`), `method` is the decorated method, `written` the
+/// refused receiver spelling (`&Box`) and `replacement` the spelling to write instead, a callable shape or a parameter.
+/// `INCAN-T0110` is its stable code.
+pub fn method_decorator_receiver_spelling(
+    subject: &str,
+    method: &str,
+    written: &str,
+    replacement: &str,
+    mutable_receiver: bool,
+    span: Span,
+) -> CompileError {
+    let receiver = if mutable_receiver { "mut self" } else { "self" };
+    CompileError::type_error(
+        format!("{subject} spells the receiver of '{method}' as `{written}`"),
+        span,
+    )
+    .with_stable_code("INCAN-T0110")
+    .with_hint(format!(
+        "Write `{replacement}` for a `{receiver}` method; the compiler decides how the receiver is passed"
+    ))
+    .with_note(
+        "A method decorator spells the receiver the way the method does: the owner type for `self`, and the owner \
+         type marked `mut` for `mut self`",
+    )
+}
+
+/// Report a method-decorator shape or replacement whose receiver `mut` marker disagrees with the method (#1790).
+///
+/// A `mut self` method's changes to its receiver are visible to its caller, so every shape in its decorator chain and
+/// every function a decorator returns in its place must take the receiver marked `mut`; a `self` method's must not.
+/// `subject` names what carries the wrong marker (the decorator's accepted shape, its returned shape, or a replacement
+/// function) and `fix` is the spelling to write instead.
+pub fn method_decorator_receiver_mut_mismatch(
+    subject: &str,
+    method: &str,
+    mutable_receiver: bool,
+    fix: &str,
+    span: Span,
+) -> CompileError {
+    let message = if mutable_receiver {
+        format!("{subject} takes the receiver of '{method}' without `mut`, but '{method}' is a `mut self` method")
+    } else {
+        format!("{subject} marks the receiver of '{method}' `mut`, but '{method}' is a `self` method")
+    };
+    CompileError::type_error(message, span).with_hint(fix.to_string())
+}
+
+/// Report a `self`-method decorator chain the compiler cannot pass the receiver through (#1790).
+///
+/// A decorator whose shapes name a `self` method's receiver takes that receiver the way the method's generated wrapper
+/// passes it, and so does every function it returns in the method's place. The compiler arranges that for private
+/// functions of the method's module that are only used in the chain, and a decorator that only returns the callable it
+/// accepts. `refused` says what is refused (`'parse' cannot be used here`), `reason` which rule that breaks, and `hint`
+/// what to write instead. `INCAN-T0116` is its stable code.
+pub fn method_decorator_receiver_not_planned(refused: &str, reason: &str, hint: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("{refused}: {reason}"), span)
+        .with_stable_code("INCAN-T0116")
+        .with_hint(hint.to_string())
+        .with_note(
+            "A decorator whose shapes name the receiver of a `self` method is a private function of the module that \
+             declares the method's type, writes those shapes as callable types, returns the callable it accepts or a \
+             private function of that module by name, and uses the callable it accepts only to return it; those \
+             functions are used only in the decorator chain, and a returned function can also be called directly in \
+             its module",
+        )
+}
+
+/// Report a `mut` marker on an `int`, `float` or `bool` parameter of a function type (#1790).
+///
+/// Such a parameter is the function's own copy of the argument, so its changes never reach the caller and no `def` has
+/// a type that marks it. `ty` is the parameter type as written.
+pub fn mut_marker_on_copied_scalar(ty: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`mut` cannot mark the `{ty}` parameter of a function type"),
+        span,
+    )
+    .with_hint(format!("Write `{ty}` without `mut`"))
+    .with_note(
+        "An `int`, `float` or `bool` parameter is the function's own copy: `mut` lets the function change it, and the \
+         change stays in the function, so its type does not mark the parameter",
+    )
+}
+
 /// Report a type-valued decorator argument on a user-defined decorator factory.
 pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -245,6 +440,107 @@ pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileE
         span,
     )
     .with_hint("Use expression arguments such as name=value for decorator factories")
+}
+
+// -- Web route handlers ------------------------------------------------------
+
+/// Report a `@route` handler whose declared return type has no response form (#1721).
+///
+/// A route handler's return value becomes the HTTP response, and only response types have that form: `str`, `None`,
+/// `Json[...]`, `Html`, `Response`, a `Result` of those, or a wrapper that derives `IntoResponse`. A handler declared
+/// `-> int` checked, but the route it registers had nothing to send and the build stopped on it. `handler` is the
+/// function's name and `return_type` its declared return type as the source spells it. The hint lists the response
+/// types and, for the common numeric case, the text form to return instead. `INCAN-T0107` is its stable code.
+pub fn route_handler_return_not_response(handler: &str, return_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Route handler '{handler}' returns '{return_type}', which is not a response type"),
+        span,
+    )
+    .with_stable_code("INCAN-T0107")
+    .with_hint(
+        "Return 'str', 'Json[...]', 'Html' or 'Response' from a route handler; to send a number or another value as \
+         text, return 'str(value)'",
+    )
+    .with_note("A route handler's return value is the HTTP response, so only a response type can be returned")
+}
+
+/// Report a `@route` handler parameter that nothing in the request supplies (#1722).
+///
+/// The route binds a handler parameter in one of two ways: a `{name}` segment of the path binds the parameter of that
+/// name, and a typed extractor (`Json[T]`, `Query[T]`, `Path[T]`, or a wrapper deriving `FromRequestParts`) reads the
+/// request itself. A parameter that is neither has no value to receive, and the route cannot be built. `handler` is
+/// the function's name, `parameter` the unbound parameter, `path` the route path as written, and `captures` the
+/// segment names the path does bind, so the hint can name a spelling that would bind the parameter and, when the path
+/// already captures other names, list them. `INCAN-T0108` is its stable code.
+pub fn route_handler_parameter_unbound(
+    handler: &str,
+    parameter: &str,
+    path: &str,
+    captures: &[String],
+    span: Span,
+) -> CompileError {
+    let bound_path = if path.ends_with('/') {
+        format!("{path}{{{parameter}}}")
+    } else {
+        format!("{path}/{{{parameter}}}")
+    };
+    let error = CompileError::type_error(
+        format!("Route handler '{handler}' has a parameter '{parameter}' that no segment of the path '{path}' binds"),
+        span,
+    )
+    .with_stable_code("INCAN-T0108")
+    .with_hint(format!(
+        "Add a '{{{parameter}}}' segment to the path, '{bound_path}', or read the value from the request with a \
+         'Query[...]' or 'Json[...]' parameter"
+    ))
+    .with_note(
+        "A route handler's parameters come from the request: a '{name}' path segment binds the parameter named \
+         'name', and a 'Json[T]', 'Query[T]' or 'Path[T]' parameter reads the body, the query string or the path",
+    );
+    if captures.is_empty() {
+        error
+    } else {
+        let bound = captures
+            .iter()
+            .map(|capture| format!("'{capture}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        error.with_note(format!("The path binds {bound}"))
+    }
+}
+
+/// Report a `@route` handler whose JSON-carrying wrapper has a payload type with no JSON form (#1768).
+///
+/// A `Json[T]`, `Query[T]` or `Path[T]` parameter deserializes the request into `T` through serde, and a `Json[T]`
+/// return serializes `T` as the response body, so `T`, and every model or class it is built from, must derive `json`.
+/// A model or class declared without it checked and then could not be registered as a handler. `handler` is the
+/// function's name, `wrapper` the declared wrapper type as written, and `payload` the model or class that lacks the
+/// derive, or, when `builtin` is set, the `decimal` or frozen type that has no JSON form at all (#1561).
+/// `INCAN-T0112` is its stable code.
+pub fn route_payload_without_json_form(
+    handler: &str,
+    wrapper: &str,
+    payload: &str,
+    builtin: bool,
+    span: Span,
+) -> CompileError {
+    let hint = if builtin {
+        format!("Use a type with a JSON form in place of '{payload}', such as 'str', 'float', 'list' or 'dict'")
+    } else {
+        format!(
+            "Derive JSON support on '{payload}': add '@derive(json)' above its declaration, with 'from std.serde import json'"
+        )
+    };
+    CompileError::type_error(
+        format!("Route handler '{handler}' uses '{wrapper}', but '{payload}' has no JSON form"),
+        span,
+    )
+    .with_stable_code("INCAN-T0112")
+    .with_hint(hint)
+    .with_note(
+        "A route's 'Json[T]', 'Query[T]' and 'Path[T]' parameters deserialize the request into 'T', and a 'Json[T]' \
+         return serializes 'T' as the response body, so every model or class in 'T' must derive 'json'",
+    )
 }
 
 /// Report a malformed `ValidationError(...)` constructor call.
@@ -343,6 +639,35 @@ pub fn type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     .with_expected_actual(expected, found);
     error = add_type_mismatch_hints(error, expected, found);
     error
+}
+
+/// Build the diagnostic for arithmetic over two different integer types (RFC 009).
+///
+/// Same-type integer arithmetic keeps its type, so an operation whose operands have two integer types (`i8 + i16`, or
+/// `i8 + n` for an `int` value `n`) has no result type until one operand is converted to the other's type.
+pub fn mixed_width_integer_arithmetic(left: &str, op: &str, right: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Mixed-width integer arithmetic: '{left} {op} {right}' has operands of two integer types"),
+        span,
+    )
+    .with_note("Integer arithmetic takes two operands of one integer type and yields that type")
+    .with_hint(
+        "Convert one operand to the other operand's type first, with 'resize()' where the conversion is lossless or \
+         'try_resize()' where the value may not fit",
+    )
+}
+
+/// Build the diagnostic for comparing two integer types that no one integer type holds both values of (RFC 009).
+///
+/// Values of two integer types compare in the narrowest integer type both widen to without loss; `u128` beside a
+/// signed type, and `isize` or `usize` beside another integer type, have none.
+pub fn incomparable_integer_types(left: &str, op: &str, right: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot compare '{left} {op} {right}': no integer type holds every value of both"),
+        span,
+    )
+    .with_note("Two integer types compare in the narrowest integer type both widen to without loss")
+    .with_hint("Convert one operand to the other operand's type first, with 'try_resize()'")
 }
 
 /// Build a type mismatch diagnostic for a return expression.
@@ -456,6 +781,20 @@ fn add_type_mismatch_hints(mut error: CompileError, expected: &str, found: &str)
         error = error.with_hint("Use f-string or str() to convert to string");
     }
 
+    // Decimal shape hints: a decimal is assignable only where no digit is lost (#1809)
+    if let (Some((_, expected_precision, expected_scale)), Some((found_constructor, found_precision, found_scale))) =
+        (rendered_decimal_shape(expected), rendered_decimal_shape(found))
+    {
+        let found_integer_digits = found_precision.saturating_sub(found_scale);
+        let expected_integer_digits = expected_precision.saturating_sub(expected_scale);
+        error = error.with_note(format!(
+            "'{found}' holds up to {found_integer_digits} digit(s) before the point and {found_scale} after it; '{expected}' keeps {expected_integer_digits} before the point and {expected_scale} after it"
+        ));
+        error = error.with_hint(format!(
+            "A decimal is assignable only to a decimal type that keeps at least its digits before and after the point, and the language defines no decimal rounding or resize: declare the target as '{found}', or as any {found_constructor}[p, s] with p - s >= {found_integer_digits} and s >= {found_scale}"
+        ));
+    }
+
     // Bool condition hints
     if expected == "bool" {
         if found.starts_with("Option[") {
@@ -480,6 +819,14 @@ fn add_type_mismatch_hints(mut error: CompileError, expected: &str, found: &str)
     }
 
     error
+}
+
+/// Parse a rendered decimal type (`decimal[10, 2]`, `decimal128[10, 2]`) into its constructor, precision and scale.
+fn rendered_decimal_shape(rendered: &str) -> Option<(&str, u8, u8)> {
+    let (constructor, arguments) = rendered.split_once('[')?;
+    let (precision, scale) = arguments.strip_suffix(']')?.split_once(',')?;
+    incan_lang::lang::types::numerics::decimal_constructor_from_str(constructor)?;
+    Some((constructor, precision.trim().parse().ok()?, scale.trim().parse().ok()?))
 }
 
 pub fn field_type_mismatch(field: &str, expected: &str, found: &str, span: Span) -> CompileError {
@@ -529,7 +876,7 @@ pub fn derive_module_missing_derives(name: &str, span: Span) -> CompileError {
 /// Type error for using a **generic** function name in **value** position.
 ///
 /// RFC 035 only supports monomorphically usable function references; passing `def id[T](...)` by name requires
-/// inference/monomorphisation that is intentionally deferred. Users can wrap the call in a closure (e.g. `(x) =>
+/// inference/monomorphization that is intentionally deferred. Users can wrap the call in a closure (e.g. `(x) =>
 /// id(x)`) at the use site.
 pub fn generic_function_reference(name: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -542,6 +889,22 @@ pub fn generic_function_reference(name: &str, span: Span) -> CompileError {
     )
     .with_hint("Wrap in a closure that supplies explicit type arguments: (x) => my_func(x)")
     .with_note("Only monomorphic (non-generic) functions can be passed by name (RFC 035)")
+}
+
+/// Type error for a local partial of a generic callable that leaves one of the callable's type parameters unfixed.
+///
+/// A local partial expression is a value, and a value is not generic: the partial instantiates its target with the type
+/// arguments its presets fix or that it writes (RFC 084, RFC 054). `target` is the target as the partial spells it.
+pub fn local_partial_type_param_unfixed(target: &str, type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Local partial of '{target}' leaves type parameter '{type_param}' unfixed; a local partial is not generic"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Preset a parameter whose type fixes '{type_param}', or write the type arguments: partial {target}[...](...)"
+    ))
 }
 
 /// Type error for using a type-like name in value position.
@@ -739,6 +1102,345 @@ pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {
         .with_note("This prevents accidental modifications and makes code easier to reason about")
 }
 
+/// The place a pattern or a `for` loop bound a name from, when that place does not permit a change through the name
+/// (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadOnlyScrutinee<'a> {
+    /// A local binding declared without `mut`.
+    Binding(&'a str),
+    /// A parameter declared without `mut`.
+    Parameter(&'a str),
+    /// A module static, which a bound name cannot change in place.
+    Static(&'a str),
+    /// A local bound directly to a module static, which names the static's own storage.
+    StaticAlias { alias: &'a str, static_name: &'a str },
+    /// The items of a place a generator expression reads, which it holds as copies; the place's root name.
+    GeneratorItems(&'a str),
+    /// A local a closure captures, which the closure holds as its own copy.
+    Captured(&'a str),
+    /// `self` in a method that takes a plain `self` receiver.
+    SelfReceiver,
+    /// A dict value, which a pattern binds as a copy.
+    DictValue,
+}
+
+/// Refuse a closure that captures local values where a function type holds only a named function or a closure that
+/// captures nothing (#1561).
+///
+/// `what` names the value and ends where the sentence continues ("A closure that captures local values", "'g', which
+/// holds a closure that captures local values,"); `slot` says where it is held ("stored in a list").
+pub fn capturing_callable_in_function_slot(what: &str, slot: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("{what} cannot be {slot}"), span)
+        .with_hint("Bind the closure to a new local and call it there, or pass it to a parameter its function only calls")
+        .with_note(
+            "A function type holds a named function or a closure that captures nothing. A closure that captures local values is held by a new local, by a function-typed parameter of a function of this module that only calls the parameter and is only called by name, and by the one 'return' of such a function",
+        )
+}
+
+/// Refuse a method of a value as a local partial's target (RFC 084): an overloaded method, a generic method, or one
+/// that takes `mut self`. `reason` says which, as the end of the sentence the message starts.
+pub fn local_partial_method_target_refused(method: &str, reason: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("A local partial of the method '{method}' is not supported: {reason}"),
+        span,
+    )
+}
+
+/// Refuse a change, inside a closure, through a local the closure captures from its enclosing callable (#1561).
+///
+/// A closure reads each outer local it names as the value the local holds when the closure is constructed, so a change
+/// through `name` would change the closure's own copy and never reach the local. A method that changes its receiver,
+/// and a field or element write, are refused alike.
+pub fn change_through_closure_capture(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot change '{name}' inside a closure - the closure captures its own copy of it"),
+        span,
+    )
+    .with_hint(format!("Change '{name}' outside the closure"))
+    .with_note("A closure reads each outer local it names as the value the local holds when the closure is constructed")
+}
+
+/// Refuse a change through a name a `match`, `if let` or `while let` pattern, or a `for` loop, binds from a place that
+/// does not permit it (#1561).
+///
+/// A name a pattern or a loop binds from a place is part of that place, so a change through the name is a change to the
+/// place: a `mut` binding or parameter, a field or list element of one, or `self` in a `mut self` method takes the
+/// change. The place named by `place` does not, so the change is refused rather than applied to a copy or left to fail
+/// in the build. `binding` is the name the change goes through.
+pub fn change_through_binding_of_read_only_place(
+    binding: &str,
+    place: ReadOnlyScrutinee<'_>,
+    span: Span,
+) -> CompileError {
+    let (source, hint) = match place {
+        ReadOnlyScrutinee::Binding(name) => (
+            format!("'{name}', which is immutable"),
+            format!("Declare '{name}' with 'mut' to change it through '{binding}': mut {name} = ..."),
+        ),
+        ReadOnlyScrutinee::Parameter(name) => (
+            format!("the parameter '{name}', which is not declared 'mut'"),
+            format!("Declare the parameter 'mut' to change the caller's value through '{binding}': mut {name}: ..."),
+        ),
+        ReadOnlyScrutinee::Static(name) => (
+            format!("the static '{name}', which is changed only through its own name"),
+            format!("Change a copy of its value in a 'mut' variable, then assign the copy back to '{name}'"),
+        ),
+        ReadOnlyScrutinee::Captured(name) => (
+            format!("'{name}', which the closure captures as its own copy"),
+            format!("Change '{name}' outside the closure"),
+        ),
+        ReadOnlyScrutinee::GeneratorItems(place) => (
+            format!("'{place}' by a generator expression, which holds copies of the items it reads"),
+            format!("Change the items of '{place}' in a list comprehension or a 'for' loop"),
+        ),
+        ReadOnlyScrutinee::StaticAlias { alias, static_name } => (
+            format!("'{alias}', which names the static '{static_name}', which is changed only through its own name"),
+            format!("Change a copy of its value in a 'mut' variable, then assign the copy back to '{static_name}'"),
+        ),
+        ReadOnlyScrutinee::SelfReceiver => (
+            "'self', which this method takes as plain 'self'".to_string(),
+            format!("Declare the method with 'mut self' to change 'self' through '{binding}'"),
+        ),
+        ReadOnlyScrutinee::DictValue => (
+            "a dict value, which a pattern binds as a copy".to_string(),
+            "Bind the value to a 'mut' variable, change it, and store it back into the dict".to_string(),
+        ),
+    };
+    CompileError::type_error(format!("Cannot change '{binding}' - it is bound from {source}"), span)
+        .with_hint(hint)
+        .with_note(
+            "A name a pattern or a `for` loop binds from a place is part of that place, so a change through the name changes the place",
+        )
+}
+
+/// How a method body changes the object its plain `self` receiver names (#1723).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfMutation<'a> {
+    /// The body assigns to a place rooted at the receiver, `self.width *= factor` or `self.items[0] = value`.
+    Assignment,
+    /// The body calls a method that changes a place rooted at the receiver, `self.items.pop()`.
+    MutatingCall {
+        /// The method the body calls on the place.
+        callee: &'a str,
+    },
+}
+
+/// Report a method that changes the object it is called on while its receiver is a plain `self` (#1723).
+///
+/// The receiver spelling is a promise the generated code keeps literally: a plain `self` method reads the object
+/// only, so an assignment to `self.width` or a `self.items.pop()` inside it has no way to write. `method` is the
+/// method being checked, `target` the place it changes as the source spells it (`self.width`, `self.items[0]`), and
+/// `mutation` says whether the body assigns to that place or calls a method that changes it. The hint spells the
+/// receiver to declare; `INCAN-T0102` is its stable code.
+pub fn self_mutation_requires_mut_self(
+    method: &str,
+    target: &str,
+    mutation: SelfMutation<'_>,
+    span: Span,
+) -> CompileError {
+    let message = match mutation {
+        SelfMutation::Assignment => format!("Method '{method}' assigns to '{target}' but takes 'self'"),
+        SelfMutation::MutatingCall { callee } => {
+            format!("Method '{method}' calls '{target}.{callee}()', which changes '{target}', but takes 'self'")
+        }
+    };
+    CompileError::type_error(message, span)
+        .with_stable_code("INCAN-T0102")
+        .with_hint(format!("Declare the receiver as 'mut self': def {method}(mut self, ...)"))
+        .with_note("A method that changes the object it is called on says so in its receiver; a plain 'self' method only reads it")
+}
+
+/// The argument an `INCAN-T0117` refusal names, which decides the remedy its hint spells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MutArgumentPlace {
+    /// A binding declared without `mut`, by name.
+    Binding(String),
+    /// A field reached from a binding declared without `mut`.
+    Field,
+    /// An element of a list or a dict, which a call receives as a copy of the stored value.
+    Element,
+    /// A module static, which a call receives as a copy of its current value.
+    Static,
+    /// A `for` loop variable, which cannot be declared `mut`: its name, and whether the loop's pattern destructures
+    /// each element (`for xs, n in pairs:`).
+    LoopVariable { name: String, destructured: bool },
+    /// A local a closure captures from its enclosing callable, which the closure holds as its own copy.
+    Captured(String),
+}
+
+/// How an `INCAN-T0117` refusal names the `mut` parameter: by its declared name, or by its position when the callee is
+/// known only by a callable type whose parameters have no names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutParameterLabel<'a> {
+    /// A declared parameter name.
+    Named(&'a str),
+    /// A 1-based position in the callable type's parameter list.
+    Position(usize),
+}
+
+impl MutParameterLabel<'_> {
+    /// Spell the parameter inside a sentence: `'items'` or `at position 1`.
+    fn in_sentence(self) -> String {
+        match self {
+            Self::Named(name) => format!("'{name}'"),
+            Self::Position(position) => format!("at position {position}"),
+        }
+    }
+
+    /// Name a `mut` variable a remedy binds the value to.
+    fn binding_name(self) -> String {
+        match self {
+            Self::Named(name) => name.to_string(),
+            Self::Position(_) => "value".to_string(),
+        }
+    }
+}
+
+/// Whether an `INCAN-T0117` refusal's callee is known to change the `mut` parameter or may change it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutParameterChange {
+    /// The body that runs changes the parameter.
+    Changes,
+    /// The body that runs is not known at the call (a method reached by trait dispatch, a callable known only by its
+    /// type, a declaration whose body the check does not read), and it may change the parameter.
+    MayChange,
+}
+
+/// Refuse an argument for a `mut` parameter whose changes reach the caller when the callee changes it and the change
+/// would fail to reach the argument (#1773).
+///
+/// A `mut` parameter of any type but `int`, `float`, `bool` or a Rust type, and not a rest parameter, shows the
+/// callee's changes to the caller. When the callee does change it, the argument must be a place the caller may change:
+/// an immutable binding or a field of one cannot be changed, and an element or a static reaches the callee as a copy,
+/// so the change would be lost. `parameter` and `callee` name the declaration and `place` the argument, which picks the
+/// remedy; a callee known only by its callable type names the parameter by position. `change` says whether the callee
+/// is known to change the parameter or may change it. `INCAN-T0117` is its stable code.
+pub fn immutable_argument_to_mut_parameter(
+    parameter: MutParameterLabel<'_>,
+    callee: &str,
+    change: MutParameterChange,
+    place: MutArgumentPlace,
+    span: Span,
+) -> CompileError {
+    let hint = mut_argument_hint(&place, parameter);
+    let parameter = parameter.in_sentence();
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' {} the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'",
+        match change {
+            MutParameterChange::Changes => "changes",
+            MutParameterChange::MayChange => "may change",
+        }
+    ))
+}
+
+/// Refuse an immutable argument for a `mut` parameter whose changes reach the caller when the callee does not change
+/// the parameter but the argument cannot be copied (#1561).
+///
+/// An argument the caller may not change reaches a parameter the call never changes as a copy of its value. A value of
+/// `value_type`, such as a `Generator`, has no copy, so the argument has to be a place the caller may change, as for a
+/// parameter the call changes. `parameter`, `callee` and `place` are as for [`immutable_argument_to_mut_parameter`].
+/// `INCAN-T0117` is its stable code.
+pub fn uncopyable_argument_to_mut_parameter(
+    parameter: MutParameterLabel<'_>,
+    callee: &str,
+    value_type: &str,
+    place: MutArgumentPlace,
+    span: Span,
+) -> CompileError {
+    let hint = mut_argument_hint(&place, parameter);
+    let parameter = parameter.in_sentence();
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' does not change the parameter {parameter}, so an argument the caller may not change is passed as a copy, and a '{value_type}' cannot be copied"
+    ))
+}
+
+/// Spell the remedy for an `INCAN-T0117` argument: declare the binding `mut`, or pass a `mut` variable in its place.
+fn mut_argument_hint(place: &MutArgumentPlace, parameter: MutParameterLabel<'_>) -> String {
+    let binding = parameter.binding_name();
+    match place {
+        MutArgumentPlace::Binding(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
+        MutArgumentPlace::Field => "Declare the binding the field belongs to with 'mut'".to_string(),
+        MutArgumentPlace::Element | MutArgumentPlace::Static => format!(
+            "Bind the value to a 'mut' variable, pass the variable, and store it back: mut {binding} = ..., then assign it to the element or static"
+        ),
+        MutArgumentPlace::LoopVariable {
+            name,
+            destructured: false,
+        } => format!(
+            "A 'for' loop variable cannot be declared 'mut': loop over the indexes instead, bind each element to a 'mut' variable, pass that variable, and store it back: mut {name} = ...[i], then ...[i] = {name}"
+        ),
+        MutArgumentPlace::LoopVariable {
+            name,
+            destructured: true,
+        } => format!("A 'for' loop variable cannot be declared 'mut', so '{name}' cannot be passed to this parameter"),
+        MutArgumentPlace::Captured(name) => format!(
+            "A closure holds its own copy of '{name}', which it captures, so the call could not change '{name}': make the call outside the closure"
+        ),
+    }
+}
+
+/// Refuse rebinding a `mut` parameter whose changes reach the caller inside its own body (#1773).
+///
+/// The caller sees what the callee does to such a parameter's value, not a new value bound to its name, so an
+/// assignment or compound assignment to the parameter itself could only be lost. Changes in place (appending, element
+/// or field assignment) stay allowed; a parameter of type `int`, `float` or `bool` is the callee's own copy and may be
+/// rebound freely.
+pub fn caller_visible_mut_parameter_rebinding(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot rebind the 'mut' parameter '{name}': its changes are visible to the caller"),
+        span,
+    )
+    .with_hint(format!(
+        "Change '{name}' in place (append to it, assign its elements or fields), or bind the new value to a new name"
+    ))
+    .with_note("The caller sees changes made to the value it passed, not a new value bound to the parameter's name")
+}
+
+/// How the hint of a refused hold on a caller-visible `mut` parameter spells an independent copy of its value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MutParameterCopy {
+    /// A copy written as one expression, such as `list(items)`.
+    Expression(String),
+    /// No single expression copies a value of the parameter's type; the copy is a new value built from it.
+    NewValue,
+}
+
+/// Refuse holding a `mut` parameter whose changes reach the caller in a new binding or another value (#1773).
+///
+/// `other = items`, a literal, comprehension, field store, construction or `partial` preset holding `items`, a
+/// `match`, `if`, `break` or `yield` value that is `items`, a `match items:` arm that binds it and a closure that
+/// returns it, changes it or passes it on to a parameter that may change it would each hold the parameter's value under
+/// another name. Whether such a holder shares the caller's value or copies it is not defined, so the parameter is used
+/// only directly. `copy` spells the independent copy the hint offers.
+pub fn caller_visible_mut_parameter_held(name: &str, copy: &MutParameterCopy, span: Span) -> CompileError {
+    let copy = match copy {
+        MutParameterCopy::Expression(expression) => format!("write {expression}"),
+        MutParameterCopy::NewValue => format!("build a new value from '{name}'"),
+    };
+    CompileError::type_error(
+        format!("The 'mut' parameter '{name}' cannot be bound to another name or held in another value"),
+        span,
+    )
+    .with_hint(format!(
+        "Change '{name}' directly, or pass it to a function that takes a 'mut' parameter; for an independent copy, {copy}"
+    ))
+    .with_note(format!(
+        "'{name}' shows its changes to the caller; whether another name or value holding it shares the caller's value or copies it is not defined, so it is used only directly"
+    ))
+}
+
 /// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.
 pub fn mutable_rust_borrow_requires_mut(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Rust parameter requires a mutable borrow of '{name}'"), span).with_hint(format!(
@@ -899,6 +1601,44 @@ pub fn trait_typed_local_annotation_unsupported(annotation: &str, span: Span) ->
     )
     .with_hint("Use the concrete implementing type for the local binding")
     .with_note("Trait annotations are currently supported on callable boundaries and `with` adoption clauses")
+}
+
+/// Emitted when a trait is written inside another type in a callable signature or a local annotation, such as
+/// `Option[Serialize]` or `list[Serialize]` (#1866).
+///
+/// A trait stands for the types that adopt it only as a whole parameter or return type, where the value is one hidden
+/// adopting type. Inside another type it has no value representation, so the annotation is refused rather than
+/// generated as a bare trait.
+pub fn trait_type_nested_in_annotation_unsupported(trait_type: &str, annotation: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Trait '{trait_type}' cannot be used inside the type '{annotation}'"),
+        span,
+    )
+    .with_hint(format!(
+        "Use a type that adopts '{trait_type}', or a type parameter bounded by it (`T with {trait_type}`) in its place"
+    ))
+    .with_note("A trait names the types that adopt it only as a whole parameter or return type")
+}
+
+/// Emitted when a model or class field stores a trait directly or inside a container.
+pub fn trait_typed_field_annotation_unsupported(
+    owner_kind: &str,
+    owner_name: &str,
+    field_name: &str,
+    annotation: &str,
+    trait_name: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait-typed field '{owner_name}.{field_name}' has unsupported {owner_kind} storage type '{annotation}'"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Use a concrete type that adopts '{trait_name}' for the stored field"
+    ))
+    .with_note("Trait annotations are supported on callable boundaries and `with` adoption clauses, not stored fields")
 }
 
 /// Emitted when two supertraits require the same field with incompatible types (RFC 042).
@@ -1082,17 +1822,20 @@ pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> Compi
     .with_note("All required trait methods must be implemented")
 }
 
-/// Report an `Awaitable[T]` adoption with no compiler-known await realization path.
-pub fn invalid_awaitable_adoption(type_name: &str, expected_output: &str, span: Span) -> CompileError {
+/// Report a model, class, enum or newtype adopting `Awaitable[T]`: the wrapper form of RFC 039 has no realization.
+///
+/// `Awaitable[T]` is realized only as a generic bound (`F with Awaitable[T]`), where every future-like value
+/// satisfies it. Nothing can build a declared type as an awaitable wrapper, and a model, class or enum always derives
+/// `Clone` and `Debug`, which an awaitable handle such as `JoinHandle[T]` cannot be.
+pub fn awaitable_adoption_not_realized(type_name: &str, expected_output: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!(
-            "Type '{}' adopts Awaitable[{}] but has no valid await realization",
-            type_name, expected_output
-        ),
+        format!("Type '{type_name}' cannot adopt Awaitable[{expected_output}]: a declared type is never an awaitable wrapper"),
         span,
     )
-    .with_hint("Wrap a known awaitable field such as JoinHandle[T] or Awaitable[T], or use a Rust-backed future type")
-    .with_note("Awaitable adoption must map to a compiler-known await output type")
+    .with_hint("Await the JoinHandle[T] itself, or take the awaitable through a generic bound (`F with Awaitable[T]`)")
+    .with_note(
+        "Awaitable[T] is realized only as a bound over future-like values; a model, class or enum also always derives Clone and Debug, which an awaitable handle such as JoinHandle[T] cannot be",
+    )
 }
 
 /// Report a required Rust associated type that has no adopting-type declaration.
@@ -1304,23 +2047,146 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
     error
 }
 
+/// Why an `Fn`-family capability marker cannot stand where it was written (#1716).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallableMarkerRefusal<'a> {
+    /// The marker names more parameters than a marker can spell today.
+    ParameterCount {
+        /// How many parameters the marker names.
+        count: usize,
+        /// The most a marker can name.
+        limit: usize,
+    },
+    /// The marker bounds a type parameter of a nominal declaration rather than of a function or method.
+    NominalOwner {
+        /// The declaration kind as the source spells it (`model`, `class`, `enum`, `trait`, `newtype`, `type`).
+        owner_kind: &'a str,
+        /// The declaration's name.
+        owner_name: &'a str,
+    },
+}
+
+/// Report an `Fn`-family capability marker written where no generated code can spell it (#1716).
+///
+/// A marker names a callable's parameter list and leaves the return type to the call that passes the value.
+/// `marker` is the bound as the source spells it (`Fn[int, int, int]`), `type_param` the parameter it bounds, and
+/// `parameter_types` the marker's type arguments rendered one by one, which the hint reuses to spell the
+/// alternatives. A marker with more parameters than the limit has no bound to become; a marker on a nominal
+/// declaration's type parameter has no call to learn its return type from, so the hint names the bound that
+/// spells one. `INCAN-T0106` is its stable code.
+pub fn callable_marker_not_supported(
+    marker: &str,
+    type_param: &str,
+    parameter_types: &[String],
+    refusal: CallableMarkerRefusal<'_>,
+    span: Span,
+) -> CompileError {
+    let marker_name = marker.split('[').next().unwrap_or(marker);
+    let parameters = parameter_types.join(", ");
+    match refusal {
+        CallableMarkerRefusal::ParameterCount { count, limit } => CompileError::type_error(
+            format!("Callable marker '{marker}' on '{type_param}' names {count} parameters; a marker takes at most {limit}"),
+            span,
+        )
+        .with_stable_code("INCAN-T0106")
+        .with_hint(format!(
+            "Write at most {limit} parameters in the marker, or gather the parameters into one model and write \
+             '{marker_name}[ThatModel]'"
+        ))
+        .with_note("The marker's type arguments are the callable's parameter list; its return type comes from the value passed"),
+        CallableMarkerRefusal::NominalOwner { owner_kind, owner_name } => CompileError::type_error(
+            format!("Callable marker '{marker}' cannot bound type parameter '{type_param}' of {owner_kind} '{owner_name}'"),
+            span,
+        )
+        .with_stable_code("INCAN-T0106")
+        .with_hint(format!(
+            "Name the return type: bound '{type_param}' with 'Callable{}[{parameters}{}R]' from std.traits.callable, with \
+             'R' the return type, or give the field a function type '({parameters}) -> R'",
+            parameter_types.len(),
+            if parameter_types.is_empty() { "" } else { ", " }
+        ))
+        .with_note(format!(
+            "A callable marker leaves its return type to the call that passes the value; a {owner_kind} has no such call"
+        )),
+    }
+}
+
+/// What the name in a `with` bound resolved to, which decides the remedy a bound violation can offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericBoundTarget {
+    /// The bound names a trait (source, builtin, or imported Rust), so a type argument can satisfy it.
+    Trait,
+    /// The bound names a type such as `float` or a model. A `with` bound names a trait, so no type argument
+    /// satisfies this bound; the declaration needs a different shape, not a different call.
+    Type,
+}
+
+/// Where the type bound to a generic parameter at a call site came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeArgumentOrigin {
+    /// Written in the call's bracket list (`cast[int](...)`).
+    Explicit,
+    /// Inferred from the value arguments or the expected result type.
+    Inferred,
+}
+
+/// Report a call whose bound type argument does not satisfy a `with` bound on the callee's type parameter.
+///
+/// The hint names the type that failed rather than "the argument type", because with an explicit bracket list the
+/// value arguments are not what is wrong, and it branches on what the bound names: a trait can be implemented or the
+/// bound widened, while a type in bound position cannot be satisfied by any argument. See #1373.
 pub fn generic_bound_not_satisfied(
     function_name: &str,
     type_param: &str,
     bound: &str,
+    bound_target: GenericBoundTarget,
     actual: &str,
+    actual_origin: TypeArgumentOrigin,
     span: Span,
 ) -> CompileError {
-    CompileError::type_error(
+    let error = CompileError::type_error(
         format!(
             "Call to '{}' violates generic bound: type parameter '{}' requires '{}' but got '{}'",
             function_name, type_param, bound, actual
         ),
         span,
-    )
-    .with_hint(format!(
-        "Ensure the argument type implements '{}' or widen '{}' bounds in '{}'",
-        bound, type_param, function_name
+    );
+    match (bound_target, actual_origin) {
+        (GenericBoundTarget::Type, _) => error.with_hint(format!(
+            "'{bound}' is a type, not a trait, so no type argument satisfies this bound; a `with` bound names a \
+             trait the type argument must implement. To accept only '{bound}', declare the parameter as '{bound}' \
+             instead of '{type_param}'"
+        )),
+        (GenericBoundTarget::Trait, TypeArgumentOrigin::Explicit) => error.with_hint(format!(
+            "Type argument '{actual}' for '{type_param}' must implement '{bound}'; pass a type that implements it \
+             or widen the '{type_param}' bounds in '{function_name}'"
+        )),
+        (GenericBoundTarget::Trait, TypeArgumentOrigin::Inferred) => error.with_hint(format!(
+            "Ensure the argument type '{actual}' implements '{bound}' or widen the '{type_param}' bounds in \
+             '{function_name}'"
+        )),
+    }
+}
+
+/// Report a call that matched none of an overload set's candidates.
+///
+/// One diagnostic carries what every candidate wanted, so the reader is not told only what the first-declared
+/// overload required. `candidates` pairs each candidate's rendered signature with the first reason it was rejected,
+/// in declaration order. See #1373.
+pub fn no_overload_accepts_call(function_name: &str, candidates: &[(String, String)], span: Span) -> CompileError {
+    let mut error = CompileError::type_error(
+        format!(
+            "Call to '{}' matches none of its {} overloads",
+            function_name,
+            candidates.len()
+        ),
+        span,
+    );
+    for (signature, reason) in candidates {
+        error = error.with_note(format!("candidate `{signature}` rejected: {reason}"));
+    }
+    error.with_hint(format!(
+        "Change the call to satisfy one candidate, or add an overload of '{function_name}' for this call"
     ))
 }
 
@@ -1358,6 +2224,56 @@ pub fn not_hashable(type_name: &str, span: Span) -> CompileError {
     )
     .with_hint("Add @derive(Hash, Eq) to make this type hashable")
     .with_note("Both Hash and Eq are required for Set membership and Dict keys")
+}
+
+/// Report `/`, `//`, `%` or `**` applied to values of a type parameter (#1715).
+///
+/// These four operators follow the language's numeric rules (true division yields `float`, floor division and modulo
+/// round toward negative infinity, power picks its result type from the exponent), which the concrete numeric types
+/// carry and no trait abstracts. `+`, `-` and `*` become inferred bounds on the type parameter; for these four there
+/// is no bound a type argument could satisfy, so the function could never be compiled for any argument. `operator`
+/// is the operator as written, `type_param` the parameter's name and `dunder` the RFC 028 hook (`__mod__`) that a
+/// bound trait could define to make the operator resolve through a trait instead. `INCAN-T0109` is its stable code.
+pub fn operator_has_no_type_parameter_bound(
+    operator: &str,
+    type_param: &str,
+    dunder: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Operator '{operator}' cannot be applied to values of type parameter '{type_param}'"),
+        span,
+    )
+    .with_stable_code("INCAN-T0109")
+    .with_hint(format!(
+        "Declare the operands as 'int' or 'float' instead of '{type_param}', or bound '{type_param}' by a trait that \
+         defines '{dunder}' so the operator resolves through that trait"
+    ))
+    .with_note(
+        "'/', '//', '%' and '**' follow the language's numeric rules, which only the concrete numeric types carry; \
+         unlike '+', '-' and '*', no bound on a type parameter stands for them",
+    )
+}
+
+/// Report a `dict.get(key)` whose result is kept although the stored value type cannot be copied.
+///
+/// `get` answers with the stored value. A result that is only read (a `match`, `if let` or `while let` whose bindings
+/// are only the argument of `len`, `print` or `println`, an f-string interpolation, or the receiver of a Rust method
+/// with a shared receiver whose result is not kept, or are unused) needs no copy; any other result is the lookup's own
+/// copy of the value, which `value_type` does not provide. `INCAN-T0118` is its stable code.
+pub fn kept_dict_lookup_value_cannot_be_copied(value_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`get` here has to return its own `{value_type}`, and `{value_type}` cannot be copied"),
+        span,
+    )
+    .with_stable_code("INCAN-T0118")
+    .with_hint(
+        "Read the value where it is stored instead: `match table.get(key):` or `if let Some(item) = table.get(key):`, \
+         where `item` is only passed to `len`, `print` or `println`, interpolated in an f-string, used to call a Rust \
+         method with a shared receiver whose result is not kept (an Incan method taking `self` does not count), or not \
+         used",
+    )
+    .with_note("`get` returns the stored value; a result that is returned, bound, passed on or changed is a copy of it")
 }
 
 // -- Validate derive ---------------------------------------------------------
@@ -1452,6 +2368,78 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
     )
     .with_hint("Use a Rust or Incan wrapper whose public receiver has type parameters only")
     .with_note("Incan v0.5 does not accept const values in call-site type-argument syntax")
+}
+
+/// Report a Rust associated call whose owner type arguments nothing in the program fixes (#1720).
+///
+/// `HashMap.new()` leaves `K` and `V` open; Rust would fill them from a later insert, a typed return, or an
+/// annotation on the binding, but a binding that is never read again gives it nothing to work with, and the build
+/// stops on it. `owner` is the receiver as the source spells it (`HashMap`), `method` the associated function,
+/// `type_params` the owner's open parameters, and `binding` the local the result was bound to, or `None` when the
+/// value was discarded. The hint shows both spellings that close the parameters, with example types sized to the
+/// parameter count. `INCAN-T0105` is its stable code.
+pub fn rust_owner_type_args_not_inferred(
+    owner: &str,
+    method: &str,
+    type_params: &[String],
+    binding: Option<&str>,
+    span: Span,
+) -> CompileError {
+    const EXAMPLE_TYPES: [&str; 4] = ["str", "int", "float", "bool"];
+    let params = type_params.join(", ");
+    let examples = EXAMPLE_TYPES
+        .iter()
+        .cycle()
+        .take(type_params.len())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let error = CompileError::type_error(
+        format!("Cannot infer the type arguments '{params}' of '{owner}.{method}()'"),
+        span,
+    )
+    .with_stable_code("INCAN-T0105");
+    match binding {
+        Some(name) => error
+            .with_note(format!("'{name}' is never read after this binding, so nothing later fixes them"))
+            .with_hint(format!(
+                "Write them in the call, '{owner}.{method}[{examples}]()', or annotate the binding, '{name}: {owner}[{examples}] = {owner}.{method}()'"
+            )),
+        None => error
+            .with_note("The value is not bound to a name, so nothing later fixes them")
+            .with_hint(format!("Write them in the call: '{owner}.{method}[{examples}]()'")),
+    }
+}
+
+/// A trait-qualified call `Trait.method(receiver, ...)` names an imported Rust trait whose method signature is not
+/// available, so the compiler cannot tell whether the receiver must be borrowed exclusively, shared, or moved.
+///
+/// The receiver mode is a fact of the Rust declaration. Guessing `&self` produces Rust that rustc rejects against
+/// generated code the author never wrote, so the call is refused with the missing fact named instead (#1375).
+pub fn rust_trait_receiver_mode_unavailable(trait_path: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot determine the receiver of `rust::{trait_path}.{method}`: no signature metadata is available for \
+             this Rust trait method"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Call it as a method on the receiver value (`value.{method}(...)`), or refresh Rust metadata for `{trait_path}`"
+    ))
+    .with_note("A trait-qualified call passes its receiver explicitly, and only the trait's declared receiver says whether that argument is `&mut self`, `&self`, or `self`")
+}
+
+/// A trait-qualified call names a method the inspected Rust trait does not declare.
+///
+/// Rust resolves `Trait::method` only against the trait's own associated items, so a method the trait inherits or
+/// does not have at all fails native compilation; report it against the source call instead (#1375).
+pub fn rust_trait_method_not_declared(trait_path: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust trait `rust::{trait_path}` does not declare an associated function `{method}`"),
+        span,
+    )
+    .with_hint("Qualify the call with the trait that declares the method, or call it as a method on the receiver value")
 }
 
 /// A Rust import is being used as a constructor, but the compiler lacks enough metadata to emit valid Rust.
@@ -1904,6 +2892,45 @@ pub fn tuple_index_requires_int_literal(span: Span) -> CompileError {
     .with_hint("Use a literal index so the compiler can validate bounds")
 }
 
+/// Report a collection literal whose own elements leave part of its type open (`[]`, `[None]`, `(None, 1)`, `{}`) at a
+/// destination that holds two or more types of the literal's kind (`list[int] | list[str]`) (#1832).
+///
+/// Neither the destination nor the elements say which of those types the literal is, so it has none to take.
+pub fn collection_literal_has_no_one_member(destination: &str, members: &[String], span: Span) -> CompileError {
+    let quoted = members
+        .iter()
+        .map(|member| format!("'{member}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let example = members.first().map_or("one member", String::as_str);
+    CompileError::type_error(
+        format!(
+            "Cannot tell which member of '{destination}' this literal is: it could be any of {quoted}, and its \
+             elements do not say which"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Give the literal one member's type first, such as by binding it to a name annotated '{example}'"
+    ))
+}
+
+/// Report a collection literal argument (`[]`, `{}`, `[None]`) whose parameter type names a type parameter of the
+/// callee that no argument fixes, so the call has no type to instantiate it with (#1862).
+pub fn generic_literal_argument_leaves_type_param_open(callee: &str, type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot infer type parameter '{type_param}' of '{callee}': this literal's elements do not say what it is, \
+             and no other argument does"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Pass the type arguments explicitly, as in `{callee}[...](...)`, or give the literal a type first by binding \
+         it to an annotated name"
+    ))
+}
+
 pub fn tuple_index_out_of_bounds(idx: i64, len: usize, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Tuple index {} is out of bounds for tuple of length {}", idx, len),
@@ -1937,13 +2964,22 @@ pub fn index_value_type_mismatch(expected: &str, found: &str, span: Span) -> Com
     ))
 }
 
+/// Report that `list.append(value)` needs a cloneable element type because its argument reads a place.
+///
+/// An argument that reads a name, field or element, or builds a value from one whose type is not `Clone`, leaves the
+/// list holding a copy so the place stays usable. A new value built only from call results, constructors, literals and
+/// `Copy` or `Clone` parts moves into the list and is never reported (#1821).
 pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("List.append requires element type '{}' to be Clone", elem_type),
         span,
     )
-    .with_note("List.append clones non-Copy values before pushing")
-    .with_hint("Add @derive(Clone) to the element type or append a Copy type")
+    .with_note(
+        "List.append copies a value that reads a name, field or element, or is built from one, so the original stays usable",
+    )
+    .with_hint(
+        "Add @derive(Clone) to the element type, append a Copy type, or append a value built only from call results, constructors and literals",
+    )
 }
 
 /// Report that `list.repeat(value, count)` requires cloneable element values.
@@ -1984,18 +3020,420 @@ pub fn list_clone_requires_clone(elem_type: &str, span: Span) -> CompileError {
     .with_hint("Add @derive(Clone) to the element type or clone a list of Copy elements")
 }
 
+/// Where a list whose items a `for` loop takes out is used again (#1844).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TakenListReuse {
+    /// A read of the list after the loop.
+    AfterLoop,
+    /// A read of the list inside the body of the loop that takes its items.
+    InsideLoop,
+    /// An enclosing loop that runs the `for` loop again over the list it already emptied.
+    RepeatedLoop,
+    /// A closure that captured the list before the loop, and can still read it.
+    CapturedBeforeLoop,
+    /// A read that a repeat of an enclosing loop reaches after the loop took the items, before the enclosing loop
+    /// assigns the list a new one.
+    ReadBeforeRefill,
+}
+
+/// Report a list used again after a `for` loop took its items out (#1844).
+///
+/// The loop body hands each item on by value and `item_ty` can be neither copied nor cloned, so the loop takes the
+/// items out of `list`. `use_span` is the use: the read, the read inside the capturing closure, or, when an enclosing
+/// loop repeats the loop, the loop's iterable. `related_span` is the loop's iterable, or, for the repeat, the list's
+/// definition outside the enclosing loop. `INCAN-T0119` is its stable code.
+pub fn taken_list_used_again(
+    list: &str,
+    item_ty: &str,
+    reuse: TakenListReuse,
+    use_span: Span,
+    related_span: Span,
+) -> CompileError {
+    let loop_label = format!("the `for` loop takes the items of `{list}` here");
+    let (message, related_label, hint) = match reuse {
+        TakenListReuse::AfterLoop => (
+            format!("`{list}` is used after the `for` loop that took its items"),
+            loop_label,
+            format!(
+                "Read what the later code needs from `{list}` before the loop, or collect the results in a new list \
+                 inside it"
+            ),
+        ),
+        TakenListReuse::InsideLoop => (
+            format!("`{list}` is used inside the `for` loop that takes its items"),
+            loop_label,
+            format!("Read what the loop needs from `{list}` before the loop starts"),
+        ),
+        TakenListReuse::RepeatedLoop => (
+            format!("the `for` loop that takes the items of `{list}` runs again when the enclosing loop repeats"),
+            format!("`{list}` is defined outside the enclosing loop"),
+            format!("Build `{list}` inside the enclosing loop, so each pass iterates a list of its own"),
+        ),
+        TakenListReuse::CapturedBeforeLoop => (
+            format!("a closure captures `{list}` before the `for` loop that takes its items"),
+            loop_label,
+            format!("Read what the closure needs from `{list}` into a binding of its own before the loop"),
+        ),
+        TakenListReuse::ReadBeforeRefill => (
+            format!(
+                "`{list}` is used where a repeat of the enclosing loop reaches it after the `for` loop took its items"
+            ),
+            loop_label,
+            format!(
+                "Assign `{list}` a new list before this use in each pass, or read what it needs before the enclosing loop"
+            ),
+        ),
+    };
+    CompileError::type_error(message, use_span)
+        .with_stable_code("INCAN-T0119")
+        .with_related_span(related_span, related_label)
+        .with_note(format!(
+            "The loop body hands each `{item_ty}` item on by value, and a `{item_ty}` can be neither copied nor \
+             cloned, so the loop takes the items out of `{list}`"
+        ))
+        .with_hint(hint)
+}
+
+/// What a `for` loop that has to take its items out iterates instead of a list it can take them from (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntakeableIterable<'a> {
+    /// A `mut` parameter, whose items belong to the caller.
+    MutParameter(&'a str),
+    /// The variable of an enclosing `for` loop that reads its items in place.
+    InPlaceLoopVariable(&'a str),
+    /// Another binding that is not a local list, such as a static.
+    Binding(&'a str),
+    /// An element of a list or a value of a dict.
+    Element,
+    /// A field.
+    Field,
+    /// The result of a `list`, `dict` or `set` method, such as `values()`, by method name.
+    CollectionMethod(&'a str),
+    /// `enumerate(...)` or `zip(...)`, by name, which pair up the items of what they iterate.
+    Adapter(&'a str),
+    /// Any other expression.
+    Other,
+}
+
+/// Refuse a `for` loop that has to take its items out of what it iterates and cannot (#1561).
+///
+/// The loop body hands each item on by value and `item_ty` can be neither copied nor cloned, so the loop has to take
+/// the items out of `iterable`, which is only possible for a local list, the variable of an enclosing loop that owns
+/// its items, a parameter not marked `mut`, or a new list such as a call result. `span` is the iterable.
+/// `INCAN-T0119` is its stable code.
+pub fn loop_cannot_take_items(iterable: UntakeableIterable<'_>, item_ty: &str, span: Span) -> CompileError {
+    let what = match iterable {
+        UntakeableIterable::MutParameter(name) => {
+            format!("`{name}`, a `mut` parameter whose items belong to the caller")
+        }
+        UntakeableIterable::InPlaceLoopVariable(name) => {
+            format!("`{name}`, the variable of a `for` loop that reads its items in place")
+        }
+        UntakeableIterable::Binding(name) => format!("`{name}`"),
+        UntakeableIterable::Element => "a list element or dict value".to_string(),
+        UntakeableIterable::Field => "a field".to_string(),
+        UntakeableIterable::CollectionMethod(method) => format!("`{method}()`, which reads the collection in place"),
+        UntakeableIterable::Adapter(name) => format!("`{name}(...)`, which reads what it iterates in place"),
+        UntakeableIterable::Other => "this iterable".to_string(),
+    };
+    CompileError::type_error(
+        format!("the `for` loop cannot take its `{item_ty}` items out of {what}"),
+        span,
+    )
+    .with_stable_code("INCAN-T0119")
+    .with_note(format!(
+        "The loop body hands each `{item_ty}` item on by value, and a `{item_ty}` can be neither copied nor cloned, so \
+         the loop has to take the items out of what it iterates: a local list, the variable of an enclosing loop that \
+         owns its items, a parameter not marked `mut`, or a new list such as a call result"
+    ))
+    .with_hint("Iterate a local list or a parameter not marked `mut` that holds the items, or take the items out one at a time with `pop()`")
+}
+
 pub fn string_index_assignment_not_allowed(span: Span) -> CompileError {
     CompileError::type_error("Strings are immutable - cannot assign to index".to_string(), span)
 }
 
 // -- Tuples ------------------------------------------------------------------
 
-pub fn mutable_tuple(span: Span) -> CompileError {
+/// Report a tuple annotation written without its element types (#1717).
+///
+/// `Tuple` names a family of types, one per element list, so a bare spelling names no type at all and the build
+/// has nothing to emit for it. `spelling` is the word the source used (`Tuple` or `tuple`) so the hint keeps the
+/// author's casing. `INCAN-T0104` is its stable code.
+pub fn tuple_annotation_requires_element_types(spelling: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        "Tuples are immutable and cannot be declared with 'mut'".to_string(),
+        format!("Tuple annotation '{spelling}' is missing its element types"),
         span,
     )
-    .with_hint("Remove 'mut' - tuples cannot be modified after creation")
+    .with_stable_code("INCAN-T0104")
+    .with_hint(format!(
+        "Write one type per element, for example '{spelling}[int, str]' for a pair of an int and a str"
+    ))
+}
+
+/// Report a builtin collection annotation written without its type arguments (#1717, #1749).
+///
+/// `list`, `dict`, `set`, `tuple`, `Option`, `Result`, the frozen collections and `Generator` each name a family of
+/// types, one per argument list, so a bare spelling names no type at all and the build has nothing to emit for it.
+/// `spelling` is the word the source used (`List`, `list`, `Option`, ...) so the message and the hint keep the
+/// author's casing; the family decides which type arguments the hint spells. `INCAN-T0104` is its stable code.
+pub fn collection_annotation_requires_type_arguments(spelling: &str, span: Span) -> CompileError {
+    let family = collections::from_str(spelling);
+    let (missing, arguments) = match family {
+        Some(CollectionTypeId::Tuple) => return tuple_annotation_requires_element_types(spelling, span),
+        Some(CollectionTypeId::Dict | CollectionTypeId::FrozenDict) => ("key and value types", "str, int"),
+        Some(CollectionTypeId::Result) => ("value and error types", "int, str"),
+        Some(CollectionTypeId::Option) => ("value type", "int"),
+        Some(
+            CollectionTypeId::List
+            | CollectionTypeId::Set
+            | CollectionTypeId::FrozenList
+            | CollectionTypeId::FrozenSet
+            | CollectionTypeId::Generator,
+        )
+        | None => ("element type", "int"),
+    };
+    let family_name = match family {
+        Some(family) => collections::as_str(family),
+        None => spelling,
+    };
+    CompileError::type_error(
+        format!("{family_name} annotation '{spelling}' is missing its {missing}"),
+        span,
+    )
+    .with_stable_code("INCAN-T0104")
+    .with_hint(format!(
+        "Write the type arguments, for example '{spelling}[{arguments}]'"
+    ))
+}
+
+// -- Display -----------------------------------------------------------------
+
+/// Where a value is displayed: every position shares one display rule (#1748).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayPosition<'a> {
+    /// An argument of `print` or `println`.
+    Print {
+        /// The spelling the call used (`print` or `println`).
+        builtin: &'a str,
+    },
+    /// The argument of `str(...)`.
+    Str,
+    /// An f-string `{value}` part.
+    Interpolation,
+    /// A type argument bound to a type parameter that requires `Display`.
+    Bound {
+        /// The callee whose type parameter carries the bound.
+        callee: &'a str,
+        /// The type parameter that requires `Display`.
+        type_param: &'a str,
+    },
+}
+
+/// A value with no printed form in any display position (#1748).
+///
+/// A tuple, list, dict, set, `Option` or `Result` renders through its structure in every display position, a scalar or
+/// a `str` renders through its own text, and a model, class, enum or newtype renders through the `Display` it provides:
+/// a `__str__` method, the values of an enum that declares them, or the `message()` of an `Error` adopter. What remains
+/// has no printed form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnprintableValue<'a> {
+    /// A generic type parameter whose declaration does not require a display route.
+    TypeParameter {
+        /// The parameter's source name.
+        name: &'a str,
+    },
+    /// A value of an anonymous union type (`int | str`), which prints once it is narrowed to one member.
+    Union,
+    /// A `Generator` value, whose items exist only as it is consumed.
+    Generator,
+    /// A function or closure value.
+    Function,
+    /// A `bytes` value, which has no text of its own.
+    Bytes,
+    /// A value of type `None`, such as the result of a function that returns `None` or the side of a `Result` that
+    /// nothing gives another type.
+    NoneValue,
+    /// A model, class, enum or newtype value whose type provides no `Display`.
+    Nominal {
+        /// The type as the checker names it.
+        type_name: &'a str,
+    },
+}
+
+impl UnprintableValue<'_> {
+    /// Name the value for a message: `the union value 'x'` when the source spells it as a plain name, otherwise the
+    /// kind with its article (`a union value`), and a nominal type by name (`a value of type 'Point'`), so the article
+    /// never depends on how a type name is pronounced.
+    fn describe(self, name: Option<&str>) -> String {
+        let kind = match self {
+            Self::TypeParameter { name } => return format!("type parameter '{name}'"),
+            Self::Union => "union value".to_string(),
+            Self::Generator => "generator".to_string(),
+            Self::Function => "function".to_string(),
+            Self::Bytes => "bytes value".to_string(),
+            Self::NoneValue => "None value".to_string(),
+            Self::Nominal { type_name } => match name {
+                Some(_) => format!("{type_name} value"),
+                None => return format!("a value of type '{type_name}'"),
+            },
+        };
+        match name {
+            Some(name) => format!("the {kind} '{name}'"),
+            None => format!("a {kind}"),
+        }
+    }
+}
+
+/// Report a displayed value that has no printed form (#1748).
+///
+/// `print`/`println` arguments, the argument of `str(...)`, f-string `{value}` parts and `Display` bounds share one
+/// display rule, so the same value is refused in each; `position` words the message for the position the source used.
+/// `name` is the operand when the source spells it as a plain name (or `self`), `None` for any other expression and for
+/// a bound. The hint names what does display: a narrowed union member, a collected generator's list, a called
+/// function's result, decoded bytes, or a type's `__str__` (and, outside a bound, its `{value:?}` structure, spelled
+/// with the operand's own name when it has one). `INCAN-T0103` is its stable code.
+pub fn value_has_no_printed_form(
+    position: DisplayPosition<'_>,
+    name: Option<&str>,
+    value: UnprintableValue<'_>,
+    span: Span,
+) -> CompileError {
+    let what = value.describe(name);
+    let message = match position {
+        DisplayPosition::Print { builtin } => format!("'{builtin}' cannot print {what}"),
+        DisplayPosition::Str => format!("'str' cannot convert {what} to text"),
+        DisplayPosition::Interpolation => format!("f-string cannot interpolate {what}"),
+        DisplayPosition::Bound { callee, type_param } => {
+            format!("Call to '{callee}' cannot bind {what} to '{type_param}', which requires 'Display'")
+        }
+    };
+    let hint = match value {
+        UnprintableValue::TypeParameter { name } => {
+            format!("Add a Display bound: `{name} with Display`")
+        }
+        UnprintableValue::Union => {
+            "Narrow it to one member first, with match or isinstance, and display that member".to_string()
+        }
+        UnprintableValue::Generator => {
+            "Collect its items first with list(...); a list displays its elements".to_string()
+        }
+        UnprintableValue::Function => "Call it and display the result".to_string(),
+        UnprintableValue::Bytes => {
+            "Decode it to text first with decode(), or display its length with len(...)".to_string()
+        }
+        UnprintableValue::NoneValue => {
+            "Display a value of another type; a Result side that nothing else types is None, so annotate the Result's type to give that side one".to_string()
+        }
+        UnprintableValue::Nominal { type_name } => {
+            // Spell the structure form with the operand's own name; any other expression gets the format spec alone,
+            // so the hint never names a binding the program does not have. A bound displays inside the callee, where
+            // the caller has no f-string part to change.
+            let structure = match (position, name) {
+                (DisplayPosition::Bound { .. }, _) => String::new(),
+                (_, Some(name)) => format!(", or interpolate its structure with f\"{{{name}:?}}\""),
+                (_, None) => {
+                    ", or interpolate its structure by adding the :? format spec to its f-string part".to_string()
+                }
+            };
+            format!("Define __str__(self) -> str on '{type_name}' to give it a printed form{structure}")
+        }
+    };
+    let note = match value {
+        UnprintableValue::TypeParameter { .. } => {
+            "A generic body may display a type parameter only when its declaration requires Display, Error or a trait that supplies __str__"
+        }
+        UnprintableValue::Nominal { .. } => {
+            "A type provides Display through a __str__ method, the values of an enum that declares them, or the message() of an Error adopter; @derive(Display) provides nothing"
+        }
+        _ => {
+            "print, println, str, an f-string {value} and a Display bound share one display rule, and it gives this value no printed form"
+        }
+    };
+    CompileError::type_error(message, span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(hint)
+        .with_note(note)
+}
+
+/// Report a displayed tuple, list, dict, set, frozen collection, `Option` or `Result` that holds a value with no
+/// printed form (#1748).
+///
+/// Inside a structure every element displays as its `{value:?}` structure, and a generator, a function and a `bytes`
+/// value have none, at any depth: the structure is refused in every display position as the element itself is.
+/// `container` is the displayed value's type, `name` the operand when the source spells it as a plain name (or `self`),
+/// and `element` the kind of the element with no printed form. `INCAN-T0103` is its stable code.
+pub fn element_has_no_printed_form(
+    position: DisplayPosition<'_>,
+    name: Option<&str>,
+    container: &str,
+    element: UnprintableValue<'_>,
+    span: Span,
+) -> CompileError {
+    let what = match name {
+        Some(name) => format!("'{name}'"),
+        None => format!("a value of type '{container}'"),
+    };
+    let element_what = element.describe(None);
+    let message = match position {
+        DisplayPosition::Print { builtin } => format!("'{builtin}' cannot print {what}, which holds {element_what}"),
+        DisplayPosition::Str => format!("'str' cannot convert {what} to text, since it holds {element_what}"),
+        DisplayPosition::Interpolation => format!("f-string cannot interpolate {what}, which holds {element_what}"),
+        DisplayPosition::Bound { callee, type_param } => format!(
+            "Call to '{callee}' cannot bind {what} to '{type_param}', which requires 'Display', since it holds {element_what}"
+        ),
+    };
+    let hint = match element {
+        UnprintableValue::Generator => "Collect the generator's items into a list first; a list displays its elements",
+        UnprintableValue::Function => "Hold what the function returns instead of the function",
+        UnprintableValue::Bytes => "Decode the bytes to text first with decode()",
+        _ => "Display the elements that have a printed form",
+    };
+    CompileError::type_error(message, span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(hint)
+        .with_note(
+            "Inside a tuple, list, dict, set, frozen collection, Option or Result every element displays as its {value:?} structure; a generator, a function or bytes has none",
+        )
+}
+
+/// A value an f-string `{value:?}` part cannot render, because its type has no `Debug` form (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndebuggableValue<'a> {
+    /// A `Generator` value, whose items exist only as it is consumed.
+    Generator,
+    /// A function or closure value.
+    Function,
+    /// A value whose type, or a type inside it, implements no `Debug`, such as a `JoinHandle[T]`.
+    Type {
+        /// The type that implements no `Debug`, as the checker names it.
+        type_name: &'a str,
+    },
+}
+
+/// Report an f-string `{value:?}` part whose value has no `Debug` form (#1561).
+///
+/// `{value:?}` renders a value's structure through `Debug`. A generator, a function, and a value whose type (or a type
+/// inside it) implements no `Debug` have no such structure, so the part is refused the way a `{value}` part with no
+/// printed form is. `name` is the operand when the source spells it as a plain name (or `self`), `None` for any other
+/// expression. `INCAN-T0103` is its stable code.
+pub fn value_has_no_debug_form(name: Option<&str>, value: UndebuggableValue<'_>, span: Span) -> CompileError {
+    let what = match (value, name) {
+        (UndebuggableValue::Generator, Some(name)) => format!("the generator '{name}'"),
+        (UndebuggableValue::Generator, None) => "a generator".to_string(),
+        (UndebuggableValue::Function, Some(name)) => format!("the function '{name}'"),
+        (UndebuggableValue::Function, None) => "a function".to_string(),
+        (UndebuggableValue::Type { type_name }, _) => format!("a value of type '{type_name}'"),
+    };
+    let hint = match value {
+        UndebuggableValue::Generator => "Collect its items first with list(...); a list shows its elements",
+        UndebuggableValue::Function => "Call it and interpolate the result",
+        UndebuggableValue::Type { .. } => "Interpolate a value read from it instead, such as one of its fields",
+    };
+    CompileError::type_error(format!("f-string cannot interpolate {what} with ':?'"), span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(hint)
+        .with_note("An f-string {value:?} part renders the value's structure through Debug, and this value has none")
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {
@@ -2124,4 +3562,104 @@ pub fn capability_description_must_be_text(name: &str, span: Span) -> CompileErr
         span,
     )
     .with_hint("Write the description as a quoted string, such as `description = \"Issue a refund\"`")
+}
+
+/// Refuse a `__hash__` call through a type parameter's `Hash` bound (#1561).
+///
+/// A `Hash` bound is met only by `@derive(Hash)` or `Hash` in `@rust.derive(...)`, and neither gives a type a
+/// `__hash__` method (#1822), so the method the stdlib `Hash` trait declares has nothing to call through the bound.
+pub fn hash_method_through_hash_bound(type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("'__hash__' cannot be called on '{type_param}' through its 'Hash' bound"),
+        span,
+    )
+    .with_hint("Bound the type parameter by a trait that declares '__hash__', or use the value as a set element or dict key")
+    .with_note(
+        "A 'Hash' bound is met only by '@derive(Hash)' or 'Hash' in '@rust.derive(...)', which provide no '__hash__' method; a method named '__hash__' is an ordinary method of the type that defines it",
+    )
+}
+
+/// Refuse a call argument that binds a type parameter of the callee to a type another argument's binding does not
+/// unify with (#1561).
+///
+/// `bound` is the type the call binds the parameter to and `found` the type this argument binds it to: in
+/// `take(1, "s")` for `def take[T](x: T, y: T)`, `"s"` binds `T` to `str` and the `1` binds it to `int`.
+pub fn conflicting_type_argument_bindings(
+    callee: &str,
+    type_param: &str,
+    bound: &str,
+    found: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(format!("Type mismatch: expected '{bound}', found '{found}'"), span)
+        .with_expected_actual(bound, found)
+        .with_note(format!(
+            "Another argument of '{callee}' binds type parameter '{type_param}' to '{bound}', and '{type_param}' is one type in a call"
+        ))
+        .with_hint(format!(
+            "Pass arguments of one type for '{type_param}', or write the type argument: {callee}[...](...)"
+        ))
+}
+
+/// Refuse a call that leaves a type parameter with a declared bound open: no argument, and no expected type, fixes
+/// it (#1561).
+pub fn bounded_type_param_left_open(callee: &str, type_param: &str, bound: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot infer type parameter '{type_param}' of '{callee}': no argument fixes it, and its bound '{bound}' needs a type"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Write the type argument, as in `{callee}[...](...)`, pass an argument whose type fixes '{type_param}', or bind the result to an annotated name"
+    ))
+}
+
+/// Refuse a method call on a value of a type parameter whose bounds declare no method of that name (#1561).
+///
+/// Inside the declaration that introduces it, a type parameter has the methods its bounds' traits declare, and
+/// `.clone()`, which the generated Rust bounds by `Clone`. Any other method has nothing to call for a type argument
+/// that lacks it, so the generated Rust refuses it.
+pub fn type_parameter_method_not_declared(type_param: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Type parameter '{type_param}' has no method '{method}(...)': no bound of '{type_param}' declares it"),
+        span,
+    )
+    .with_hint(format!(
+        "Bound '{type_param}' by a trait that declares '{method}' (`{type_param} with Trait`), or declare the value \
+         with a concrete type"
+    ))
+}
+
+/// Refuse an adopter that relies on a default method of a trait another compiled package declares (#1561).
+///
+/// A package's manifest publishes its traits' method signatures, and its generated crate declares each trait method
+/// without a body (defaults are expanded into each adopter's impl), so no default body reaches an adopter built in
+/// another package.
+pub fn package_trait_default_not_available(
+    trait_name: &str,
+    type_name: &str,
+    method: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("'{type_name}' adopts '{trait_name}' from another package and does not define its default method '{method}'"),
+        span,
+    )
+    .with_hint(format!("Define '{method}' in '{type_name}'"))
+    .with_note(
+        "A compiled package publishes the signatures of its traits' methods, not their default bodies, so a type in another package defines each method the trait gives a default",
+    )
+}
+
+/// Refuse an RFC 088 iterator adapter or terminal called on a value that is iterable but is not an iterator (#1561).
+///
+/// A list, set, frozen collection or `Iterable[T]` provides `iter()`; the adapters and terminals are methods of the
+/// `Iterator[T]` that `iter()` returns, and the collection has no method of their name.
+pub fn iterator_method_on_an_iterable(type_name: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Type '{type_name}' has no method '{method}(...)'"), span)
+        .with_hint(format!("Call it on the value's iterator: `.iter().{method}(...)`"))
+        .with_note(format!(
+            "'{method}' is a method of 'Iterator[T]'; a collection or 'Iterable[T]' value provides 'iter()', which returns its iterator"
+        ))
 }

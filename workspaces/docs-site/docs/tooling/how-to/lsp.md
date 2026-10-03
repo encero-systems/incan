@@ -10,7 +10,7 @@ The Incan Language Server provides IDE integration for real-time feedback while 
 | **Hover**            | View function signatures, types, and documentation |
 | **Go-to-Definition** | Jump to symbol definitions (Cmd/Ctrl + Click)      |
 | **Completions**      | Autocomplete for keywords and symbols              |
-| **Highlighting**     | Semantic colouring from the compiler's own reading of the file |
+| **Highlighting**     | Semantic coloring from the compiler's own reading of the file |
 
 ## Installation
 
@@ -89,15 +89,15 @@ hint: Wrap the value with Ok(...) to return success
 
 ### Semantic Highlighting
 
-Editors that support semantic tokens colour Incan from what the compiler actually parsed, rather than from a regex grammar that has to guess. The practical differences you should see:
+Editors that support semantic tokens color Incan from what the compiler actually parsed, rather than from a regex grammar that has to guess. The practical differences you should see:
 
-- A declaration is coloured as the thing it declares, so `model User` and `trait Loggable` do not look like two ordinary identifiers.
-- Type positions come from the parsed program, not from capitalisation. `str` in `label: str` is a type, and a local named `Total` is still a local.
-- `value.lower()` colours `lower` as a method while `value.length` colours `length` as a property.
-- Inside an f-string, the interpolated expressions are coloured as code; only the literal text around them is string content.
-- An embedded fragment — a block where a library's DSL claims another language's syntax inside Incan source, such as markup or style rules — is coloured as that submode, so a tag name or a selector never renders as if it were an Incan local. The expression holes inside a fragment *are* ordinary Incan, and are coloured as such, which is what makes the boundary between the two visible while reading.
+- A declaration is colored as the thing it declares, so `model User` and `trait Loggable` do not look like two ordinary identifiers.
+- Type positions come from the parsed program, not from capitalization. `str` in `label: str` is a type, and a local named `Total` is still a local.
+- `value.lower()` colors `lower` as a method while `value.length` colors `length` as a property.
+- Inside an f-string, the interpolated expressions are colored as code; only the literal text around them is string content.
+- An embedded fragment — a block where a library's DSL claims another language's syntax inside Incan source, such as markup or style rules — is colored as that submode, so a tag name or a selector never renders as if it were an Incan local. The expression holes inside a fragment *are* ordinary Incan, and are colored as such, which is what makes the boundary between the two visible while reading.
 
-Highlighting does not disappear while you type. A file that does not currently parse is still coloured from its token stream; only type positions and embedded-fragment ownership need a successful parse, so those two degrade rather than the whole file going flat.
+Highlighting does not disappear while you type. A file that does not currently parse is still colored from its token stream; only type positions and embedded-fragment ownership need a successful parse, so those two degrade rather than the whole file going flat.
 
 If your editor shows no change, check that its Incan client requests semantic tokens — some clients only enable them when the server is registered as the document's semantic-tokens provider, and a stale server binary predating this support will not advertise it.
 
@@ -113,7 +113,7 @@ When the file type-checks successfully, hover also previews checked public API m
 
 If the file has parse or type errors, diagnostics remain the source of truth and the LSP falls back to syntax-oriented hover details. The current LSP does not expose a workspace command for fetching the full checked API metadata JSON package from the editor; use `incan tools metadata api` for that.
 
-When a checked C binding type-checks successfully, hovering its declaration shows the header, logical system-library capability, resources and their release operations, symbols with their checked C signatures, enum carriers, and plain structures. Hovering a direct raw C call identifies its checked declaration and its `unsafe:` acknowledgement. This is a source-level compiler projection, not generated-Rust, linker, or machine-local toolchain information.
+When a checked C binding type-checks successfully, hovering its declaration shows the header, logical system-library capability, resources and their release operations, symbols with their checked C signatures, enum carriers, and plain structures. Hovering a direct raw C call identifies its checked declaration and its `unsafe:` acknowledgment. This is a source-level compiler projection, not generated-Rust, linker, or machine-local toolchain information.
 
 ### Contract model emit command
 

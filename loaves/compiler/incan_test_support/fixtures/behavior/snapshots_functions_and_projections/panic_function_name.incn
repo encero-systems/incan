@@ -1,0 +1,11 @@
+# behavior: a user function named panic is an ordinary function whose call returns its argument
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_panic_function_codegen
+# expect-stdout:
+#   not the macro
+
+def panic(message: str) -> str:
+    return message
+
+
+def main() -> None:
+    println(panic("not the macro"))

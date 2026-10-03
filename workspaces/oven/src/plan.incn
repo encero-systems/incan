@@ -120,10 +120,15 @@ pub model SelectionError with Error:
 
     pub kind: SelectionErrorKind
     pub fields: list[str]
+    # The rule that refused, in words, when a refusal carries one. It names the check for the operator reading
+    # the response; the kind and fields remain the only stable, machine-facing part.
+    pub detail: str = ""
 
     def message(self) -> str:
         """Describe the refusal without turning supplied evidence into authority."""
-        return f"native selection refused: {self.kind} at {self.fields}"
+        if self.detail == "":
+            return f"native selection refused: {self.kind} at {self.fields}"
+        return f"native selection refused: {self.kind} at {self.fields}: {self.detail}"
 
 
 pub def select_native(request: SelectionRequest) -> Result[NativeSelection, SelectionError]:

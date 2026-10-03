@@ -141,7 +141,7 @@ class Thing with Counter:
     count: int = 0
 
 def main() -> None:
-    t = Thing()
+    mut t = Thing()
     t.bump()
 ```
 

@@ -1,0 +1,18 @@
+# behavior: a decorator on a `self` method that calls the method it decorates, instead of only returning it, is refused at check time
+# expect-diagnostic: INCAN-T0116
+
+class Box:
+    pub value: int
+
+    @traced
+    def label(self, value: int) -> str:
+        return f"{value}"
+
+
+def traced(func: (Box, int) -> str) -> (Box, int) -> str:
+    println(func(Box(value=0), 0))
+    return func
+
+
+def main() -> None:
+    println(Box(value=1).label(2))

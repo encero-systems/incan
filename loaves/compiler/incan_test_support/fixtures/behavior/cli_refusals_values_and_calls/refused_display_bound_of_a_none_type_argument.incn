@@ -1,0 +1,11 @@
+# behavior: a Display-bounded type parameter that an Err argument leaves open is None where the function returns no Result, and None does not meet Display, so the call is refused
+# expect-diagnostic: INCAN-T0103
+
+def first[T with Display](r: Result[T, int]) -> str:
+    match r:
+        Ok(v) => return f"{v}"
+        Err(e) => return "err"
+
+
+def main() -> None:
+    println(first(Err(3)))

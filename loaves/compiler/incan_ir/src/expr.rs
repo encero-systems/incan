@@ -18,7 +18,8 @@ use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_lang::interop::CoercionPolicy;
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_lang::lang::surface::{
-    dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
+    bytes_methods, dict_methods, frozen_dict_methods, frozen_set_methods, iterator_methods, list_methods,
+    result_methods, set_methods, string_methods,
 };
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
@@ -65,6 +66,31 @@ impl TypedExpr {
         self.span = span;
         self
     }
+
+    /// Build the place of element `position` of the tuple `object`, typed `ty`.
+    ///
+    /// The place is an [`IrExprKind::Field`] whose field is the element's decimal position, so `pair[0]` is field `"0"`
+    /// of `pair`; [`positional_field_index`] reads the position back.
+    pub fn tuple_element(object: TypedExpr, position: usize, ty: IrType) -> Self {
+        Self::new(
+            IrExprKind::Field {
+                object: Box::new(object),
+                field: position.to_string(),
+            },
+            ty,
+        )
+    }
+}
+
+/// Return the position a field access names when it reaches a tuple element or a tuple-struct field by position.
+///
+/// A position is not an identifier: a place whose field has a position is spelled as a positional member (`pair.0`),
+/// and a field without one is a declared field's name.
+pub fn positional_field_index(field: &str) -> Option<usize> {
+    if field.is_empty() || !field.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    field.parse().ok()
 }
 
 /// IR expression (alias for TypedExpr for convenience)
@@ -144,6 +170,14 @@ pub enum IrExprKind {
     StaticRead {
         name: String,
         reference_kind: IrStaticReferenceKind,
+        /// Rust module path below the crate root of the module that declares the static, when the read names the
+        /// static through that module rather than through a binding of the module it is emitted in; `name` is then
+        /// the static's canonical projection.
+        ///
+        /// A parameter default is evaluated at every caller that omits the argument, which can be another module with
+        /// no binding of the static, or with a static of the same name of its own, so a static the default reads is
+        /// spelled through its declaring module, as a const it reads is (#1771, #1842).
+        owner_module_path: Option<Vec<String>>,
     },
 
     /// Create a live local binding wrapper from a compiler-managed module static.
@@ -249,7 +283,8 @@ pub enum IrExprKind {
         args: Vec<IrCallArg>,
     },
 
-    // Field access
+    // Field access: a declared field by name, or a tuple element or tuple-struct field by its decimal position (see
+    // [`positional_field_index`]).
     Field {
         object: Box<IrExpr>,
         field: String,
@@ -303,6 +338,11 @@ pub enum IrExprKind {
     // Struct construction
     Struct {
         name: String,
+        /// Explicit source type arguments on the constructor (`Column[T](...)`), lowered in declaration order.
+        ///
+        /// Empty when the source wrote none. Emission threads these onto the constructed path so a construction
+        /// whose type argument no field value determines — a phantom parameter, #1370 — still names it for Rust.
+        type_args: Vec<IrType>,
         fields: Vec<(String, IrExpr)>,
         /// Fill omitted imported Rust named fields with `Default::default()`.
         fill_defaults: bool,
@@ -524,15 +564,19 @@ impl FormatStyle {
 /// Return whether default Incan f-string display should use structured formatting for a backend representation that
 /// does not expose Rust `Display` directly.
 pub fn display_style_uses_structured_debug(ty: &IrType) -> bool {
-    matches!(
-        ty,
+    match ty {
         IrType::List(_)
-            | IrType::Dict(_, _)
-            | IrType::Set(_)
-            | IrType::Tuple(_)
-            | IrType::Option(_)
-            | IrType::Result(_, _)
-    )
+        | IrType::Dict(_, _)
+        | IrType::Set(_)
+        | IrType::Tuple(_)
+        | IrType::Option(_)
+        | IrType::Result(_, _) => true,
+        IrType::NamedGeneric(name, _) => matches!(
+            collection_types::from_str(name),
+            Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict)
+        ),
+        _ => false,
+    }
 }
 
 /// How a variable is accessed
@@ -639,9 +683,18 @@ pub enum Pattern {
     Var(String),
     Literal(IrExpr),
     Tuple(Vec<Pattern>),
+    /// A named-field pattern over a model, class or struct-like variant.
     Struct {
         name: String,
+        /// The fields the pattern spells, each with its sub-pattern, in the order they are printed.
         fields: Vec<(String, Pattern)>,
+        /// Whether the pattern ends in a rest marker covering every field it does not spell.
+        ///
+        /// Lowering sets it when the source pattern leaves unnamed a field it may not name, such as a private field of
+        /// a model matched outside the model's own methods (#1740): that field cannot be spelled even as a wildcard,
+        /// because the generated code for another module's model does not expose it. Every other partial pattern
+        /// spells its omitted fields as wildcards and leaves this `false`.
+        rest: bool,
     },
     Enum {
         name: String,
@@ -749,14 +802,20 @@ pub enum IrMethodDispatch {
     /// Emit a compiler-proved inherent source projection while retaining the selected trait evidence for bound
     /// propagation and receiver mutability.
     SourceProjection(Box<IrTraitDispatch>),
-    /// Keep the emitted call as regular Rust method lookup while retaining this extension-trait import binding.
-    RustExtensionTraitImport { binding: String },
+    /// Keep the emitted call as regular Rust method lookup while retaining these extension-trait import bindings.
+    ///
+    /// One binding is the import the typechecker proved provides the method. Several are the imports with an unknown
+    /// method surface that the call may reach when no inspected surface resolved it; the compiler cannot narrow
+    /// further without metadata, so every listed `use` is retained while the call is reachable (#1450).
+    RustExtensionTraitImport { bindings: Vec<String> },
 }
 
 /// Compiler-owned semantics and emission data for one selected trait dispatch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrTraitDispatch {
-    /// Canonical source declaration name selected by the typechecker, before backend path rewriting.
+    /// The trait as the call site's module spelled it (`JsonSerialize` for an aliased import, `json.Serialize` for a
+    /// module-qualified one), as the typechecker recorded it. This is the written spelling, not the declaration
+    /// name: lowering resolves it to the declaring module and declaration name before building `trait_path`.
     pub trait_source_name: String,
     /// Canonical source module that owns the selected trait, when semantic resolution crossed an import boundary.
     pub trait_module_path: Option<Vec<String>>,
@@ -791,8 +850,18 @@ pub enum MethodKind {
     Iterator(IteratorMethodKind),
     /// Result combinators recognized for `Result[T, E]` receivers.
     Result(result_methods::ResultMethodId),
+    /// Runtime `bytes` methods that route through the text-codec emitter.
+    Bytes(BytesMethodKind),
     /// Internal helper methods that lower to dedicated runtime support.
     Internal(InternalMethodKind),
+}
+
+/// Known `bytes`-method variants handled by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytesMethodKind {
+    /// `data.decode(encoding="utf-8", errors="strict")` → `Result[str, ValidationError]` UTF-8 decoding, strict or
+    /// replacing.
+    Decode,
 }
 
 /// Known string-method variants handled by the compiler.
@@ -818,6 +887,8 @@ pub enum StringMethodKind {
     EndsWith,
     /// `s.contains(needle)` → `str_contains(s, needle)`
     Contains,
+    /// `s.encode(encoding="utf-8")` → `s.as_bytes().to_vec()` behind a UTF-8 label guard
+    Encode,
 }
 
 /// Known collection-method variants handled by the compiler.
@@ -852,6 +923,12 @@ pub enum CollectionMethodKind {
     Reserve,
     /// `list.reserve_exact(n)` → `list.reserve_exact(n as usize)`
     ReserveExact,
+    /// `dict.keys()` → `dict.keys().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.keys().cloned()` directly (#1668).
+    Keys,
+    /// `dict.values()` → `dict.values().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.values().cloned()` directly (#1668).
+    Values,
 }
 
 /// Known iterator-method variants handled by the compiler.
@@ -951,8 +1028,15 @@ impl MethodKind {
                     S::StartsWith => StringMethodKind::StartsWith,
                     S::EndsWith => StringMethodKind::EndsWith,
                     S::Contains => StringMethodKind::Contains,
+                    S::Encode => StringMethodKind::Encode,
                     // The rest are either typechecker-only (return types) or normal method calls:
                     _ => return None,
+                }))
+            }
+            IrType::Bytes | IrType::StaticBytes | IrType::FrozenBytes => {
+                use bytes_methods::BytesMethodId as B;
+                Some(Self::Bytes(match bytes_methods::from_str(name)? {
+                    B::Decode => BytesMethodKind::Decode,
                 }))
             }
             IrType::List(_) => {
@@ -981,8 +1065,10 @@ impl MethodKind {
                 Some(Self::Collection(match id {
                     D::Get => CollectionMethodKind::Get,
                     D::Insert => CollectionMethodKind::Insert,
-                    // keys/values are emitted as normal method calls.
-                    D::Keys | D::Values => return None,
+                    // A dict receiver spells membership `contains_key`, the same emission `key in dict` takes.
+                    D::ContainsKey => CollectionMethodKind::Contains,
+                    D::Keys => CollectionMethodKind::Keys,
+                    D::Values => CollectionMethodKind::Values,
                 }))
             }
             IrType::Set(_) => {
@@ -1006,10 +1092,44 @@ impl MethodKind {
             {
                 Some(Self::Iterator(IteratorMethodKind::Iter))
             }
+            // A frozen dict answers `contains_key` with the keyed membership a dict takes, and a frozen set answers
+            // `contains` with the membership a set takes; their `len` is `len(c)` and `is_empty` is an ordinary call
+            // on the runtime wrapper (#1757).
+            IrType::NamedGeneric(type_name, _)
+                if collection_types::from_str(type_name) == Some(CollectionTypeId::FrozenDict)
+                    && frozen_dict_methods::from_str(name)
+                        == Some(frozen_dict_methods::FrozenDictMethodId::ContainsKey) =>
+            {
+                Some(Self::Collection(CollectionMethodKind::Contains))
+            }
+            IrType::NamedGeneric(type_name, _)
+                if collection_types::from_str(type_name) == Some(CollectionTypeId::FrozenSet)
+                    && frozen_set_methods::from_str(name) == Some(frozen_set_methods::FrozenSetMethodId::Contains) =>
+            {
+                Some(Self::Collection(CollectionMethodKind::Contains))
+            }
             IrType::NamedGeneric(type_name, _) | IrType::Struct(type_name)
                 if core_traits::from_qualified_str(type_name) == Some(TraitId::Iterator) =>
             {
                 iterator_method_kind(name).map(Self::Iterator)
+            }
+            // A generator satisfies `Iterator[T]`: the RFC 088 surface reaches it as an iterator, except its own RFC
+            // 006 methods (`map`, `filter`, `take`, `collect`), which stay generator-typed calls on the runtime
+            // wrapper.
+            IrType::NamedGeneric(type_name, _)
+                if collection_types::from_str(type_name) == Some(CollectionTypeId::Generator) =>
+            {
+                iterator_method_kind(name)
+                    .filter(|kind| {
+                        !matches!(
+                            kind,
+                            IteratorMethodKind::Map
+                                | IteratorMethodKind::Filter
+                                | IteratorMethodKind::Take
+                                | IteratorMethodKind::Collect
+                        )
+                    })
+                    .map(Self::Iterator)
             }
             _ => None,
         }
@@ -1124,5 +1244,25 @@ mod tests {
             );
         }
         assert_eq!(MethodKind::for_receiver(&result_ty, "missing"), None);
+    }
+
+    #[test]
+    fn frozen_collections_use_structured_display_issue1838() {
+        use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
+
+        let frozen = |id| collection_types::as_str(id).to_string();
+        for ty in [
+            IrType::NamedGeneric(frozen(CollectionTypeId::FrozenList), vec![IrType::String]),
+            IrType::NamedGeneric(frozen(CollectionTypeId::FrozenSet), vec![IrType::Float]),
+            IrType::NamedGeneric(
+                frozen(CollectionTypeId::FrozenDict),
+                vec![IrType::String, IrType::Float],
+            ),
+        ] {
+            assert!(
+                display_style_uses_structured_debug(&ty),
+                "expected structured display for {ty:?}"
+            );
+        }
     }
 }

@@ -1,0 +1,37 @@
+# behavior: a generator expression over a list the function still reads afterwards, over a list at its last use and over a one-shot list literal each yield the filtered values, and a comprehension over a generator variable collects what it yields
+# retires: loaves/compiler/incan_emit/src/ownership.rs::owned_iterator_source_moves_last_use_list_var
+# retires: loaves/compiler/incan_emit/src/ownership.rs::owned_iterator_source_clones_reused_list_var
+# retires: loaves/compiler/incan_emit/src/ownership.rs::owned_iterator_source_moves_one_shot_list_expression
+# retires: loaves/compiler/incan_emit/src/ownership.rs::opaque_comprehension_sources_are_consumed_by_value
+# expect-stdout:
+#   [2, 3]
+#   [1, 2, 3]
+#   3 1
+#   [0, 4, 16]
+
+def positive_last_use(values: list[int]) -> Generator[int]:
+    return (x for x in values if x > 0)
+
+
+def positive_one_shot() -> Generator[int]:
+    return (x for x in [1, 2, 3] if x > 0)
+
+
+def count_and_first(values: list[int]) -> str:
+    generated = (x for x in values if x > 0).collect()
+    first = values[0]
+    return f"{len(generated)} {first}"
+
+
+def squares(limit: int) -> Generator[int]:
+    for i in range(limit):
+        yield i * i
+
+
+def main() -> None:
+    println(f"{positive_last_use([-1, 2, 3]).collect():?}")
+    println(f"{positive_one_shot().collect():?}")
+    println(count_and_first([1, 2, 3]))
+    produced = squares(5)
+    evens = [x for x in produced if x % 2 == 0]
+    println(f"{evens:?}")

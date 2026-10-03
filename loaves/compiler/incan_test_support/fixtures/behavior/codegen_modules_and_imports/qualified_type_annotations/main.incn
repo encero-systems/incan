@@ -1,0 +1,42 @@
+# behavior: a module-qualified type spelling names the same type as the direct import in return, field, optional field, parameter and local annotations, and its fields reflect the declaration name (#1437)
+# retires: loaves/compiler/incan_emit/tests/qualified_type_annotation_codegen_tests.rs::a_module_qualified_return_annotation_emits_a_type_path_issue1437
+# retires: loaves/compiler/incan_emit/tests/qualified_type_annotation_codegen_tests.rs::a_module_qualified_type_is_a_path_in_every_annotation_position_issue1437
+# expect-stdout:
+#   x
+#   ok
+#   TomlError
+#   Option[TomlError]
+#   direct:x
+
+import errors
+from errors import TomlError
+
+
+pub model Report:
+    pub failure: errors.TomlError
+    pub maybe: Option[errors.TomlError]
+
+
+pub def result() -> Result[None, errors.TomlError]:
+    return Ok(None)
+
+
+pub def direct_result() -> Result[None, TomlError]:
+    return Ok(None)
+
+
+pub def describe(failure: errors.TomlError) -> str:
+    held: errors.TomlError = failure
+    return held.message
+
+
+def main() -> None:
+    report = Report(failure=errors.make(), maybe=None)
+    println(describe(report.failure))
+    match result():
+        Ok(_) => println("ok")
+        Err(error) => println(error.message)
+    for field in Report.__fields__():
+        println(field.type_name)
+    direct: TomlError = errors.make()
+    println(f"direct:{direct.message}")

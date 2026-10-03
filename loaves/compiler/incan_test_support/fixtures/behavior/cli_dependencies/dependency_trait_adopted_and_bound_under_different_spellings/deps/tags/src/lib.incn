@@ -1,0 +1,15 @@
+pub trait Tag:
+    def tag(self) -> str: ...
+
+    def loud(self) -> str:
+        return f"{self.tag()}!"
+
+
+pub Tagging = Tag
+
+
+pub model Label with Tag:
+    pub name: str
+
+    def tag(self) -> str:
+        return self.name

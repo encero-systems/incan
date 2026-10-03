@@ -1,0 +1,16 @@
+# behavior: a variant pattern with fewer sub-patterns than its variant has payload values is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+enum Shape:
+    Rect(float, float)
+    Empty
+
+
+def width(shape: Shape) -> float:
+    match shape:
+        Shape.Rect(w) => return w
+        Shape.Empty => return 0.0
+
+
+def main() -> None:
+    println(width(Shape.Rect(2.0, 3.0)))

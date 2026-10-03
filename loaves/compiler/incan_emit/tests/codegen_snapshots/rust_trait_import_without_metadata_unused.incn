@@ -1,0 +1,13 @@
+# #1450 control: a metadata-free Rust import with no unresolved method call in the module is
+# still pruned as unused; candidate retention is driven by calls, not by the import alone.
+
+from rust::std::borrow import Borrow
+from rust::std::path import PathBuf
+
+
+pub def keep(value: PathBuf) -> PathBuf:
+    return value
+
+
+def main() -> None:
+    pass

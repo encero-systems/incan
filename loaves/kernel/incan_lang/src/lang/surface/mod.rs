@@ -12,12 +12,13 @@
 pub mod collection_helpers;
 pub mod constructors;
 pub mod functions;
+pub mod method_arity;
 pub mod methods;
 pub mod types;
 
 // Re-export method registries for backwards-compatible paths:
 // `crate::lang::surface::string_methods`, `crate::lang::surface::list_methods`, ...
 pub use methods::{
-    dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    iterator_methods, list_methods, option_methods, result_methods, set_methods, string_methods,
+    bytes_methods, dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods,
+    frozen_set_methods, iterator_methods, list_methods, option_methods, result_methods, set_methods, string_methods,
 };

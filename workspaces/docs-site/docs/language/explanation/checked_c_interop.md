@@ -63,6 +63,18 @@ A package can declare target-specific, package-relative headers, static or bundl
 
 #944 completes the v0.5 Oven handoff: the explicit baker turns the locked target, supplied compiler/SDK evidence, and declared package files into a receipt-bound native plan, and the stager emits a narrow Android/iOS consumer layout. It does not reinterpret package declarations, discover libraries from the host, invoke Cargo, or make Gradle/Xcode application assembly and signing compiler authority. Virtual-device consumers verify the handoff; physical-device deployment remains outside the release criterion.
 
-The same restraint still applies to general pointers. The v0.5 foundation supports NUL-terminated text input, an immediately copied bounded UTF-8 `const char *` result, and two caller-owned bounded span forms: bytes and `f32` elements. A declaration must pair the span's compiler-owned pointer with its length or capacity, and a mutable span is returned only after the native write count has been validated against that capacity. These forms do not expose raw addresses or allow a view to escape. Arbitrary pointer operations, other element representations, callbacks, variadics, and context-manager syntax need separate lifetime and bounds contracts. Opaque resources and output storage remain private compiler-managed carriers, while public APIs use ordinary Incan values.
+The same restraint still applies to general pointers. The v0.5 foundation supports NUL-terminated text input, a `const char *` result copied with a bounded UTF-8 conversion in the `unsafe:` region that received it, and two caller-owned bounded span forms: bytes and `f32` elements. A declaration must pair the span's compiler-owned pointer with its length or capacity, and a mutable span is returned only after the native write count has been validated against that capacity. These forms do not expose raw addresses, and the compiler refuses a text view that is returned, stored, captured or passed on before it is copied. Arbitrary pointer operations, other element representations, callbacks, variadics, and context-manager syntax need separate lifetime and bounds contracts. Opaque resources and output storage remain private compiler-managed carriers, while public APIs use ordinary Incan values.
+
+## How a binding declaration is represented
+
+`binding` is vocabulary surface activated by `from std.interop import c`. It lowers to an ordinary private class decorated with `@c.binding(...)` and extending `BindingDeclaration`. That keeps the ABI declaration inspectable as ordinary language data while making the source read like the contract it describes. The `symbol`, `resource`, `enum` and `struct` bodies inside it are declarations, not executable method bodies.
+
+The compiler emits the private `extern "C"` declaration from the checked binding descriptor. It does not rediscover the function signature from generated Rust.
+
+## A deliberately narrow foundation
+
+The surface lets a module declare a small, explicit C ABI contract and call scalar functions, opaque resources, output positions, bounded spans and text without writing a Rust wrapper first. It is useful for direct scalar C functions, opaque resource ownership, output positions, caller-owned byte and `f32` buffers, bounded NUL-terminated text input, and immediately copied UTF-8 text.
+
+Clang verification runs against the compiler host by default, and the repository verifies its pure checked-ABI fixture in both host modes, Linux x86-64 and macOS arm64.
 
 For a working first binding, start with the [tutorial](../tutorials/checked_c_binding.md). For declaration recipes and diagnostics, use the [binding how-to](../how-to/checked_c_bindings.md). To review what the compiler accepted, use the [inspection how-to](../../tooling/how-to/inspect_checked_c_bindings.md). The [`std.interop` reference](../reference/stdlib/interop.md) is the exact syntax and capability contract.

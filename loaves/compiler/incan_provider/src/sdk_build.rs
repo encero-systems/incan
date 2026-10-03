@@ -43,60 +43,179 @@ pub fn prepare_sdk_provider_inventory_in_store(
     publisher_store_root: Option<&Path>,
     source_root_override: Option<&Path>,
 ) -> ProviderResult<Arc<SdkInventory>> {
-    let stdlib_root = match source_root_override {
-        Some(source_root) => source_root.join("loaves/stdlib"),
-        None => oven_model::toolchain_layout::find_stdlib_root().ok_or_else(|| {
-            ProviderError::failure("cannot locate built-in stdlib sources needed to prepare SDK component providers")
-        })?,
+    let publication = SdkProviderPublication::resolve(publisher_store_root, source_root_override)?;
+    prepare_sdk_provider_inventory_from_sources(
+        &publication.stdlib_root,
+        &publication.executable,
+        &publication.store_root,
+        &publication.distribution_profile,
+        source_root_override,
+    )
+}
+
+/// Return the SDK inventory the source checkout's providers are already published under, without building or
+/// locking anything.
+///
+/// `incan check` publishes the checkout's component providers on demand ([`prepare_sdk_provider_inventory`]), while
+/// the Oven commands (`run`, `build`, `oven bake`, test collection) must never launch that builder on a miss. Before
+/// #1774 they therefore saw no inventory at all in a source checkout, parsed without the syntax the standard library's
+/// vocabulary providers add (`binding` from `std.interop`), and refused a file `incan check` had just accepted. This
+/// lookup lets them reuse exactly the inventory the check path published: same stdlib root, builder, store and
+/// identity, and nothing when that identity has not been published. Inside a provider build, or outside a source
+/// checkout, there is nothing to reuse.
+///
+/// Reuse never makes a command fail that ran before it existed: a checkout whose publication inputs cannot be
+/// resolved, or whose identity cannot be computed (a standard-library or compiler source that does not parse
+/// mid-edit makes the compiler effect digest fail), is reported as having no published inventory, which is what these
+/// commands saw before. Only a published inventory that exists and fails to load is an error, as it is for
+/// `incan check`.
+pub fn find_published_sdk_provider_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
+    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
+        return Ok(None);
+    }
+    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_root()
+        .is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file());
+    if !has_source_catalog {
+        return Ok(None);
+    }
+    let Ok(publication) = SdkProviderPublication::resolve(None, None) else {
+        return Ok(None);
     };
-    let stdlib_root = fs::canonicalize(&stdlib_root).map_err(|error| {
-        ProviderError::failure(format!(
-            "failed to canonicalize built-in stdlib source directory {}: {error}",
-            stdlib_root.display()
-        ))
-    })?;
+    let Ok(identity) = publication.store_identity() else {
+        return Ok(None);
+    };
+    load_published_sdk_inventory(&publication.store_root, &identity)
+}
+
+/// Every input that decides where, and under which identity, the SDK component providers are published.
+///
+/// Publication and reuse resolve these the same way, so a reusing command finds exactly the entry a publishing
+/// command wrote.
+struct SdkProviderPublication {
+    /// Canonical standard-library source root holding the component catalog.
+    stdlib_root: PathBuf,
+    /// The `incan` executable that builds each component.
+    executable: PathBuf,
+    /// Store whose identity directories hold published inventories.
+    store_root: PathBuf,
+    /// Distribution profile folded into the store identity.
+    distribution_profile: String,
+}
+
+impl SdkProviderPublication {
+    /// Resolve the publication inputs from the environment, the caller's publisher store and source override.
+    fn resolve(publisher_store_root: Option<&Path>, source_root_override: Option<&Path>) -> ProviderResult<Self> {
+        let stdlib_root = match source_root_override {
+            Some(source_root) => source_root.join("loaves/stdlib"),
+            None => oven_model::toolchain_layout::find_stdlib_root().ok_or_else(|| {
+                ProviderError::failure(
+                    "cannot locate built-in stdlib sources needed to prepare SDK component providers",
+                )
+            })?,
+        };
+        let stdlib_root = fs::canonicalize(&stdlib_root).map_err(|error| {
+            ProviderError::failure(format!(
+                "failed to canonicalize built-in stdlib source directory {}: {error}",
+                stdlib_root.display()
+            ))
+        })?;
+        let current_exe = env::current_exe()
+            .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
+        let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from);
+        let executable = sdk_provider_builder_executable(cargo_test_binary, current_exe)?;
+        let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
+            .ok()
+            .filter(|profile| !profile.is_empty())
+            .unwrap_or_else(|| "full".to_string());
+        let store_root = publisher_store_root.map(Path::to_path_buf).unwrap_or_else(|| {
+            env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV)
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    if cfg!(test) {
+                        oven_model::toolchain_layout::development_root().join("target/incan_test_sdk_provider_store")
+                    } else {
+                        default_sdk_provider_store(
+                            &stdlib_root,
+                            env::var_os("INCAN_HOME"),
+                            env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")),
+                        )
+                    }
+                })
+        });
+        Ok(Self {
+            stdlib_root,
+            executable,
+            store_root,
+            distribution_profile,
+        })
+    }
+
+    /// Compute the store identity these inputs publish under.
+    fn store_identity(&self) -> ProviderResult<String> {
+        published_sdk_store_identity(&self.stdlib_root, &self.executable, &self.distribution_profile)
+    }
+}
+
+/// Compute the store identity the SDK providers built from these sources are published under.
+///
+/// This is the identity [`prepare_sdk_provider_inventory_from_sources`] publishes under. Computing it may write the
+/// compiler effect-digest memo beside the store (`sdk_store::sdk_provider_effect_digest`), which is a cache, not a
+/// publication.
+fn published_sdk_store_identity(
+    stdlib_root: &Path,
+    executable: &Path,
+    distribution_profile: &str,
+) -> ProviderResult<String> {
+    let workspace_lock = sdk_provider_workspace_lock(stdlib_root);
+    sdk_provider_store_identity(stdlib_root, executable, workspace_lock.as_deref(), distribution_profile)
+}
+
+/// Load the inventory published under `identity` in `store_root`, or `None` when that identity has no entry.
+///
+/// Unlike [`prepare_sdk_provider_inventory_from_sources`] this takes no store lock and never builds or publishes:
+/// publication renames a complete identity directory into place, so an inventory file that exists is whole.
+fn load_published_sdk_inventory(store_root: &Path, identity: &str) -> ProviderResult<Option<Arc<SdkInventory>>> {
+    let inventory_path = store_root.join(identity).join(SDK_INVENTORY_FILE);
+    if !inventory_path.is_file() {
+        return Ok(None);
+    }
+    let inventory =
+        SdkInventory::read_from_path(&inventory_path).map_err(|error| ProviderError::failure(error.to_string()))?;
+    inventory
+        .validate_compiler_compatibility(
+            incan_lang::version::INCAN_VERSION,
+            incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
+        )
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    Ok(Some(Arc::new(inventory)))
+}
+
+/// Publish or reuse an SDK inventory from explicit source, builder and store inputs.
+///
+/// Keeping environment discovery outside this transaction lets callers test real publication and cache hits against
+/// isolated stores without changing process-wide overrides.
+fn prepare_sdk_provider_inventory_from_sources(
+    stdlib_root: &Path,
+    executable: &Path,
+    store_root: &Path,
+    distribution_profile: &str,
+    source_root_override: Option<&Path>,
+) -> ProviderResult<Arc<SdkInventory>> {
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     catalog
         .validate_compiler_version(incan_lang::version::INCAN_VERSION)
         .map_err(|error| ProviderError::failure(error.to_string()))?;
-    let current_exe = env::current_exe()
-        .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
-    let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    let executable = sdk_provider_builder_executable(cargo_test_binary, current_exe)?;
-    let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
-    let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
-        .ok()
-        .filter(|profile| !profile.is_empty())
-        .unwrap_or_else(|| "full".to_string());
-    let store_root = publisher_store_root.map(Path::to_path_buf).unwrap_or_else(|| {
-        env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV)
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                if cfg!(test) {
-                    oven_model::toolchain_layout::development_root().join("target/incan_test_sdk_provider_store")
-                } else {
-                    default_sdk_provider_store(
-                        &stdlib_root,
-                        env::var_os("INCAN_HOME"),
-                        env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")),
-                    )
-                }
-            })
-    });
-    let identity = sdk_provider_store_identity(
-        &stdlib_root,
-        &executable,
-        workspace_lock.as_deref(),
-        &distribution_profile,
-    )?;
-    let _lock = acquire_sdk_provider_store_lock(&store_root)?;
+    let workspace_lock = sdk_provider_workspace_lock(stdlib_root);
+    let identity =
+        sdk_provider_store_identity(stdlib_root, executable, workspace_lock.as_deref(), distribution_profile)?;
+    let _lock = acquire_sdk_provider_store_lock(store_root)?;
     let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
         .filter(|path| !path.is_empty())
-        .map(|path| SdkBuildReports::new(Path::new(&path), &store_root, &identity))
+        .map(|path| SdkBuildReports::new(Path::new(&path), store_root, &identity))
         .transpose()?;
     let artifact_root = store_root.join(&identity);
     let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
@@ -122,14 +241,14 @@ pub fn prepare_sdk_provider_inventory_in_store(
         )));
     }
 
-    let staging_root = staged_sdk_provider_root(&store_root, &identity)?;
+    let staging_root = staged_sdk_provider_root(store_root, &identity)?;
     let staged_inventory = match build_sdk_components_into_staging(
         &catalog,
-        &executable,
+        executable,
         workspace_lock.as_deref(),
         &staging_root,
-        &distribution_profile,
-        source_root_override.map(|source_root| (source_root, stdlib_root.as_path())),
+        distribution_profile,
+        source_root_override.map(|source_root| (source_root, stdlib_root)),
         build_reports.as_ref(),
     ) {
         Ok(inventory) => inventory,
@@ -146,7 +265,7 @@ pub fn prepare_sdk_provider_inventory_in_store(
             artifact_root.display()
         ))
     })?;
-    sync_sdk_provider_store(&store_root)?;
+    sync_sdk_provider_store(store_root)?;
     let published_inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
     let published = SdkInventory::read_from_path(&published_inventory_path).map_err(|error| {
         ProviderError::failure(format!(
@@ -600,6 +719,107 @@ fn nested_sdk_component_build_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A policy-only catalog edit must publish a new inventory, while repeated unchanged requests hit the existing
+    /// entry.
+    #[test]
+    fn sdk_publication_cache_tracks_catalog_policy() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let checkout = temp.path().join("checkout");
+        let stdlib = checkout.join("loaves/stdlib");
+        let emitter = checkout.join("loaves/compiler/incan_emit");
+        fs::create_dir_all(emitter.join("src"))?;
+        fs::create_dir_all(&stdlib)?;
+        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        fs::write(emitter.join("Cargo.toml"), "[package]\nname = \"incan_emit\"\n")?;
+        let catalog_path = stdlib.join(SDK_SOURCE_CATALOG_FILE);
+        let catalog = format!(
+            "[sdk]\nid = \"incan\"\nversion = \"{}\"\ncompiler-requirement = \"={}\"\n[profiles]\ndefault = []\nfull = []\n[components]\n",
+            incan_lang::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
+        );
+        fs::write(&catalog_path, &catalog)?;
+        let store = temp.path().join("store");
+        // No components are compiled: the fixture exercises the real transaction, serialization and cache-hit branch
+        // without substituting a fake publication implementation.
+        let builder = temp.path().join("unused-builder");
+        let first = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        let cached = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        assert_eq!(first.root, cached.root);
+        assert!(!cached.profiles.contains_key("inspection"));
+
+        fs::write(
+            &catalog_path,
+            catalog.replace("[components]", "inspection = []\n[components]"),
+        )?;
+        let changed = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        assert_ne!(first.root, changed.root);
+        assert!(changed.profiles.contains_key("inspection"));
+        let cached_changed =
+            prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        assert_eq!(changed.root, cached_changed.root);
+        assert!(cached_changed.profiles.contains_key("inspection"));
+        let old = SdkInventory::read_from_path(&first.root.join(SDK_INVENTORY_FILE))?;
+        assert!(
+            !old.profiles.contains_key("inspection"),
+            "publication must leave the old immutable entry untouched"
+        );
+        Ok(())
+    }
+
+    /// The reuse-only lookup finds exactly the inventory publication wrote, under the identity publication computes,
+    /// and on a miss neither builds nor publishes one (#1774). Only dot-prefixed cache files, such as the effect-digest
+    /// memo, may appear in the store on a miss.
+    #[test]
+    fn published_inventory_lookup_reuses_the_published_entry_and_never_creates_one()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let checkout = temp.path().join("checkout");
+        let stdlib = checkout.join("loaves/stdlib");
+        let emitter = checkout.join("loaves/compiler/incan_emit");
+        fs::create_dir_all(emitter.join("src"))?;
+        fs::create_dir_all(&stdlib)?;
+        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        fs::write(emitter.join("Cargo.toml"), "[package]\nname = \"incan_emit\"\n")?;
+        fs::write(
+            stdlib.join(SDK_SOURCE_CATALOG_FILE),
+            format!(
+                "[sdk]\nid = \"incan\"\nversion = \"{}\"\ncompiler-requirement = \"={}\"\n[profiles]\ndefault = []\nfull = []\n[components]\n",
+                incan_lang::version::INCAN_VERSION,
+                incan_lang::version::INCAN_VERSION,
+            ),
+        )?;
+        let store = temp.path().join("store");
+        let builder = temp.path().join("unused-builder");
+
+        let identity = published_sdk_store_identity(&stdlib, &builder, "full")?;
+        let before = load_published_sdk_inventory(&store, &identity)?;
+        assert!(before.is_none(), "nothing is published yet");
+        let published_entries = |store: &Path| -> Result<Vec<String>, std::io::Error> {
+            if !store.exists() {
+                return Ok(Vec::new());
+            }
+            fs::read_dir(store)?
+                .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+                .filter(|name| !name.as_ref().is_ok_and(|name| name.starts_with('.')))
+                .collect()
+        };
+        assert!(
+            published_entries(&store)?.is_empty(),
+            "a miss must neither build nor publish an identity"
+        );
+
+        let published =
+            prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        let reused = load_published_sdk_inventory(&store, &identity)?.ok_or("the published inventory must be found")?;
+        assert_eq!(reused.root, published.root, "reuse finds the entry publication wrote");
+        let other_profile = published_sdk_store_identity(&stdlib, &builder, "default")?;
+        assert!(
+            load_published_sdk_inventory(&store, &other_profile)?.is_none(),
+            "another distribution profile is another identity"
+        );
+        Ok(())
+    }
 
     #[test]
     fn sdk_build_reports_reject_store_paths_and_distinguish_cache_hits() -> Result<(), Box<dyn std::error::Error>> {

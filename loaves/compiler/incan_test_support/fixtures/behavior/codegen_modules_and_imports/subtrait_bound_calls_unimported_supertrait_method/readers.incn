@@ -1,0 +1,16 @@
+pub trait Reader[T]:
+    def read(self) -> T: ...
+
+
+pub trait TaggedReader[T] with Reader[T]:
+    def tag(self) -> str: ...
+
+
+pub model Packet with TaggedReader[int]:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+    def tag(self) -> str:
+        return "packet"

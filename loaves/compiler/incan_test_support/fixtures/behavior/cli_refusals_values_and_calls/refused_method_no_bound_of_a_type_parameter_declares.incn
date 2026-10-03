@@ -1,0 +1,9 @@
+# behavior: calling a method on a value of a type parameter that none of its bounds declares is refused
+# expect-diagnostic: INCAN-T0001
+
+def size[T](x: T) -> int:
+    return x.size()
+
+
+def main() -> None:
+    println(size([1]))

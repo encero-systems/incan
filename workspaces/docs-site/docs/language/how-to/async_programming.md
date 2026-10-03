@@ -3,7 +3,7 @@
 Incan's language and API contracts include async/await through a Tokio-backed runtime path. This guide covers that `std.async` source surface.
 
 !!! info "0.5 runtime boundary"
-    The 0.5 toolchain ships the checked task and timeout closure in its full-standard-library Loaf. Complete programs using those supported surfaces can build and run through normal Incan commands without an implicit Cargo fallback. Sections labelled with a compiler limitation remain contract documentation rather than runnable examples.
+    The 0.5 toolchain ships the checked task and timeout closure in its full-standard-library Loaf. Complete programs using those supported surfaces can build and run through normal Incan commands without an implicit Cargo fallback. Sections labeled with a compiler limitation remain contract documentation rather than runnable examples.
 
 !!! important "Async is import-activated"
     `async` and `await` are **soft keywords**: they become reserved keywords only after importing `std.async` (for example `import std.async` or `from std.async.time import sleep`).
@@ -40,6 +40,8 @@ def main() -> None:
     # When async is used, main automatically gets #[tokio::main]
     println("Starting...")
 ```
+
+Import each name from the `std.async` module that declares it, such as `std.async.time` or `std.async.task`, for narrow dependencies, or import the common surface from `std.async` itself; `std.async.prelude` is another path to that same root module.
 
 ## Core Concepts
 
@@ -95,20 +97,9 @@ async def wait_for[T, F with Awaitable[T]](task: F) -> T:
     return await task
 ```
 
-The compiler recognizes direct async calls, Rust-backed futures, `JoinHandle[T]`, and checked wrapper types. Awaiting a `JoinHandle[T]` produces `Result[T, TaskJoinError]`, not `T`, because the spawned task can fail to join.
+The compiler recognizes direct async calls, Rust-backed futures and `JoinHandle[T]`. Awaiting a `JoinHandle[T]` produces `Result[T, TaskJoinError]`, not `T`, because the spawned task can fail to join.
 
-Wrapper types can adopt `Awaitable[T]` only when they contain a compatible awaitable field:
-
-```incan
-import std.async
-from std.async.task import JoinHandle, TaskJoinError
-
-model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
-    handle: JoinHandle[T]
-
-async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
-    return await box
-```
+`Awaitable[T]` is a bound, not something a declaration adopts: a `model`, `class`, `enum` or `newtype` written `with Awaitable[T]` is refused. Pass the `JoinHandle[T]` itself, or take the awaitable through a generic bound as above, with the type arguments written out at the call; see [Awaitable values](../reference/stdlib_traits/awaitable.md).
 
 ## Time Primitives
 
@@ -132,7 +123,7 @@ Run an operation with a time limit:
 from std.async.time import timeout
 
 async def demo() -> None:
-    result = await timeout(5.0, slow_operation)
+    result = await timeout(5.0, slow_operation())
     match result:
         case Ok(value): println(f"Success: {value}")
         case Err(e): println("Operation timed out")
@@ -199,7 +190,7 @@ async def background_work() -> int:
     return 42
 
 # Spawn returns immediately
-handle = spawn(background_work)
+handle = spawn(background_work())
 
 # Do other work...
 println("Working on other things...")
@@ -210,6 +201,95 @@ println(f"Background task returned: {result}")
 ```
 
 Spawned tasks are durable once spawned. Dropping `handle` detaches the task and loses the result; it does not cancel the task. Use `handle.abort()` when an async task should be cancelled.
+
+Write the call of the async function directly as the argument, `spawn(background_work())`. The function itself, `spawn(background_work)`, is refused with `INCAN-T0115`, and so is a name bound to the call first (`pending = background_work()` then `spawn(pending)`): the name has the call's result type, not a task. A function that is not `async def` is refused too; either declare it `async def` or run it with `spawn_blocking`. `timeout`, `timeout_ms` and `race_timeout` take their task the same way.
+
+Keep each handle in its own local variable, or pass it as a parameter, and await it there:
+
+```incan
+from std.async.task import spawn, JoinHandle
+
+async def fetch(id: int) -> int:
+    return id * 10
+
+async def wait_for(handle: JoinHandle[int]) -> int:
+    match await handle:
+        Ok(value) => return value
+        Err(_) => return -1
+
+async def main() -> None:
+    first = spawn(fetch(1))
+    second = spawn(fetch(2))
+    println(await wait_for(first) + await wait_for(second))
+```
+
+A handle cannot be a `model` or `class` field or an `enum` payload (`INCAN-T0113`): those derive `Clone` and `Debug` automatically, and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)). To keep several handles together, put them in a list, as in the next section.
+
+### Await every task in a list
+
+Spawn the tasks into a list, then await each handle in a `for` loop:
+
+```incan
+from std.async import spawn
+
+async def double(n: int) -> int:
+    return n * 2
+
+async def main() -> None:
+    handles = [spawn(double(1)), spawn(double(2))]
+    mut results: list[int] = []
+    for handle in handles:
+        match await handle:
+            Ok(value) => results.append(value)
+            Err(error) => println(f"task failed: {error.message()}")
+    println(len(results))
+```
+
+Awaiting a handle uses it up, so the loop takes the handles out of `handles`, and the compiler refuses a read of `handles` inside or after the loop with `INCAN-T0119`. Keep what the rest of the function needs in a list of its own, like `results` above, or read it before the loop, such as `count = len(handles)`. A closure that reads `handles` is refused too when it is made before the loop, so read the value it needs into a binding of its own first.
+
+To reuse the name, assign it a new list after the loop, outside any branch and where no `break` or `continue` after the loop can skip the assignment. When an enclosing `while` or `loop:` awaits a fresh set of tasks on each pass, build the list inside that loop, or assign it a new list at the start of each pass, before anything in the pass reads it.
+
+When the number of tasks is known only at run time, grow the list with `append`, passing the `spawn(...)` call itself as the argument:
+
+```incan
+from std.async import spawn
+from std.async.task import JoinHandle
+
+async def double(n: int) -> int:
+    return n * 2
+
+async def main() -> None:
+    mut handles: list[JoinHandle[int]] = []
+    for n in range(3):
+        handles.append(spawn(double(n)))
+    mut results: list[int] = []
+    for handle in handles:
+        match await handle:
+            Ok(value) => results.append(value)
+            Err(error) => println(f"task failed: {error.message()}")
+    println(len(results))
+```
+
+Do not bind the handle to a name first: `append` needs an element type that implements `Clone` for a value read from a name, a field or a list element, and a handle does not implement `Clone`, so `first = spawn(double(1))` followed by `handles.append(first)` is refused with `INCAN-T0001`. The same holds for a handle received as a parameter.
+
+A list of lists of handles works the same way, one group at a time:
+
+```incan
+from std.async import spawn
+
+async def double(n: int) -> int:
+    return n * 2
+
+async def main() -> None:
+    groups = [[spawn(double(1))], [spawn(double(2)), spawn(double(3))]]
+    mut results: list[int] = []
+    for group in groups:
+        for handle in group:
+            match await handle:
+                Ok(value) => results.append(value)
+                Err(error) => println(f"task failed: {error.message()}")
+    println(len(results))
+```
 
 ### spawn_blocking
 
@@ -248,9 +328,6 @@ async def cooperative_loop() -> None:
 
 Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.
 
-!!! warning "Current compiler limitation"
-    The channel declarations exist in `std.async.channel`, but the current compiler rejects the documented typed constructor and imported `Sender`/`Receiver` methods. Treat the channel material below as the intended library contract, not as a currently runnable authoring path. Task spawning, joining, and timeouts are runnable in [Build an asynchronous worker pipeline](../tutorials/async_worker_pipeline.md).
-
 ### MPSC Channel (Multi-Producer, Single-Consumer)
 
 **MPSC** stands for **M**ulti-**P**roducer, **S**ingle-**C**onsumer:
@@ -274,7 +351,7 @@ Channels enable safe message passing between concurrent tasks. They're the prima
 from std.async.channel import channel
 
 # Create channel with buffer size 32
-tx, rx = channel[str](32)
+tx, rx = channel(32)
 
 # Sender - blocks if buffer is full (backpressure)
 async def producer() -> None:
@@ -312,7 +389,7 @@ match await tx.reserve():
 from std.async.channel import channel
 from std.async.task import spawn
 
-tx, rx = channel[int](100)
+tx, rx = channel(100)
 
 # Clone sender for each producer
 tx1 = tx.clone()
@@ -358,7 +435,7 @@ async def consume() -> None:
 from std.async.channel import unbounded_channel
 
 # No capacity limit - send always succeeds immediately
-tx, rx = unbounded_channel[int]()
+tx, rx = unbounded_channel()
 
 # These never block
 tx.send(1)
@@ -396,7 +473,7 @@ A **oneshot channel** sends exactly one value. After sending, the sender is cons
 from std.async.channel import oneshot
 from std.async.task import spawn
 
-tx, rx = oneshot[int]()
+tx, rx = oneshot()
 
 spawn(async () -> None:
     result = expensive_computation()
@@ -419,7 +496,7 @@ from std.async.task import spawn
 
 async def compute_in_background(input: Data) -> Result[Output, ComputeError]:
     # Create oneshot for the result
-    tx, rx = oneshot[Result[Output, ComputeError]]()
+    tx, rx = oneshot()
     
     # Spawn the computation
     spawn(async () -> None:
@@ -472,6 +549,8 @@ Mutual exclusion — ensures only **one task** can access the wrapped value at a
 - `guard.get()` — Read the value
 - `guard.set(new_value)` — Write a new value
 - Guard auto-releases when it goes out of scope
+
+`Mutex[T]` and `RwLock[T]` require `T with Clone` because guard reads return cloned values.
 
 ```incan
 from std.async.sync import Mutex
@@ -601,7 +680,7 @@ async def worker(id: int) -> None:
     println(f"Worker {id} starting phase 2")  # All start phase 2 together
 ```
 
-`barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation, so workflows that allow independent participant cancellation should also define how replacement participants arrive or how the whole phase is abandoned. The returned slot is unique within a completed generation, but cancellation can reuse freed slots, so do not treat it as chronological arrival order.
+`barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation, so workflows that allow independent participant cancellation should also define how replacement participants arrive or how the whole phase is abandoned. The returned slot is unique within a completed generation, so it supports leader selection, such as letting the task with slot `0` do the phase's shared work, but cancellation can reuse freed slots, so do not treat it as chronological arrival order.
 
 !!! note "Python equivalent"
     `asyncio.Barrier(n)` (added in Python 3.11) works the same way.
@@ -619,7 +698,7 @@ Simplified timeout returning Option:
 ```incan
 from std.async.race import race_timeout
 
-match await race_timeout(2.0, slow_operation):
+match await race_timeout(2.0, slow_operation()):
     case Some(result): println(f"Got: {result}")
     case None: println("Timed out, using default")
 ```
@@ -696,10 +775,10 @@ Prefer bounded channels to prevent memory issues:
 from std.async.channel import channel, unbounded_channel
 
 # Prefer this:
-tx, rx = channel[Data](100)
+tx, rx = channel(100)
 
 # Over this (unbounded can grow forever):
-tx, rx = unbounded_channel[Data]()
+tx, rx = unbounded_channel()
 ```
 
 ### 4. Handle Cancellation Explicitly
@@ -714,7 +793,7 @@ async def cancellable_work() -> str:
     await sleep(10.0)
     return "done"
 
-handle = spawn(cancellable_work)
+handle = spawn(cancellable_work())
 # This detaches the task and loses the result; the task keeps running.
 _ = handle
 ```
@@ -728,7 +807,7 @@ Use `handle.abort()` when an async task should be cancelled. For blocking work c
 ```incan
 from std.async.time import timeout
 
-result = await timeout(1.0, slow_task)
+result = await timeout(1.0, slow_task())
 match result:
     case Ok(value): process(value)
     case Err(e): println(f"Timed out: {e}")

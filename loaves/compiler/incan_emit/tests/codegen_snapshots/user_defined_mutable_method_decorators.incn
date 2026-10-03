@@ -8,7 +8,7 @@ class Counter:
         self.value = self.value + by
         return self.value
 
-def keep(func: (&mut Counter, int) -> int) -> (&mut Counter, int) -> int:
+def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
     return func
 
 def run(mut counter: Counter) -> int:

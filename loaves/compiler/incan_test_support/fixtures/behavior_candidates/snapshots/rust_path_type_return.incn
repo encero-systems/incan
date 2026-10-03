@@ -1,0 +1,15 @@
+# behavior: a function returning an imported Rust HashMap keyed by Rust String builds an empty map (RFC 041)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_emit_rust_path_type_codegen
+# expect-stdout:
+#   0
+
+from rust::std::collections import HashMap
+from rust::std::string import String
+
+
+def empty_name_index() -> HashMap[String, int]:
+    return HashMap.new()
+
+
+def main() -> None:
+    println(empty_name_index().len())

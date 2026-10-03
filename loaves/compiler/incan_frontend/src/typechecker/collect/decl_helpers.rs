@@ -58,6 +58,7 @@ fn resolve_owner_self_reference(
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
+                    is_mut: param.is_mut,
                 })
                 .collect(),
             Box::new(resolve_owner_self_reference(
@@ -141,6 +142,7 @@ fn shadow_declared_type_params(ty: ResolvedType, type_param_names: &HashSet<Stri
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
+                    is_mut: param.is_mut,
                 })
                 .collect(),
             Box::new(shadow_declared_type_params(*ret, type_param_names)),
@@ -227,22 +229,21 @@ fn method_info_from_decl(
                             .collect(),
                         module_path: checker.trait_bound_module_path(&bound.name),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     })
                     .collect(),
             )
         })
         .collect();
-    let params = method
+    let params: Vec<CallableParam> = method
         .node
         .params
         .iter()
         .map(|p| {
-            CallableParam::named_with_default(
-                p.node.name.clone(),
-                resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty),
-                p.node.kind,
-                p.node.default.is_some(),
-            )
+            let ty = resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty);
+            let is_mut = checker.def_param_shows_changes_to_caller(&p.node, &ty);
+            CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
+                .with_mut(is_mut)
         })
         .collect();
     let return_type = resolve_declared_type(
@@ -263,13 +264,15 @@ fn method_info_from_decl(
             .collect(),
         module_path: checker.trait_bound_module_path(&target.node.name),
         implementation_type_params: Vec::new(),
+        inferred: false,
     });
+    let identity =
+        checker
+            .symbols
+            .member_declaration_identity(&method.node.name, SemanticSourceTargetKind::Method, method.span);
+    checker.record_caller_visible_mut_params(Some(&identity), &method.node.params, &params);
     MethodInfo {
-        identity: Some(checker.symbols.member_declaration_identity(
-            &method.node.name,
-            SemanticSourceTargetKind::Method,
-            method.span,
-        )),
+        identity: Some(identity),
         type_params,
         type_param_bounds,
         type_param_bound_details,

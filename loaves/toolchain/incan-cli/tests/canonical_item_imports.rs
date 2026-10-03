@@ -95,6 +95,51 @@ fn canonical_item_imports_link_and_run_through_oven() -> Result<(), Box<dyn Erro
     Ok(())
 }
 
+/// The project exactly as #1441 reports it bakes and runs: sources beside `loaf.toml` rather than under `src/`, the
+/// entry point declared through `[project.scripts]`, and `import helper::value` called from `main`.
+///
+/// The six-spelling probe above places its modules under `src/`. Root-level sources are discovered from the project
+/// root instead, which is a different discovery root for the sibling import to resolve against, so the reported
+/// layout is pinned on its own: the fix (ec52aa59f) routes the module-item spelling through the item-import
+/// lowering that `from helper import value` takes, and this is the bake that proves the routed import links.
+#[test]
+fn the_reported_project_layout_bakes_and_runs_issue1441() -> Result<(), Box<dyn Error>> {
+    let project = tempfile::tempdir()?;
+    fs::write(
+        project.path().join("helper.incn"),
+        "pub def value() -> int:\n    return 42\n",
+    )?;
+    fs::write(
+        project.path().join("main.incn"),
+        "import helper::value\n\ndef main() -> None:\n    assert value() == 42\n    println(value())\n",
+    )?;
+    fs::write(
+        project.path().join("loaf.toml"),
+        "[project]\nname = \"canonical_import_probe\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"main.incn\"\n",
+    )?;
+
+    let mut bake = project_command(project.path());
+    bake.args(["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut bake)?;
+    let baked = bake.output()?;
+    assert!(
+        baked.status.success(),
+        "native bake of the reported layout failed:\n{}\n{}",
+        String::from_utf8_lossy(&baked.stdout),
+        String::from_utf8_lossy(&baked.stderr)
+    );
+
+    let output = project_command(project.path()).args(["run", "--locked"]).output()?;
+    assert!(
+        output.status.success(),
+        "locked execution of the reported layout failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    Ok(())
+}
+
 /// A module that drops its own import stops resolving, rather than reaching a sibling module's.
 ///
 /// This is the isolation the per-spelling projects used to provide physically. Import resolution is decided in the

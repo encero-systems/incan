@@ -393,7 +393,9 @@ pub fn collect_project_requirements(
         }
     }
     // A namespace's extra crates are a provider fact: a consumer of a compiled provider inherits them through its
-    // metadata, so only a provider build derives them from its own imports here.
+    // metadata, and a consumer that compiles the namespace from source links the same list when the provider plan is
+    // applied (`extend_requirements_with_provider_plan`), so only a provider build derives them from its own imports
+    // here.
     let mut stdlib_namespaces = if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         imported_stdlib_namespaces.clone()
     } else {
@@ -580,8 +582,11 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> ProviderResult<D
     Ok(dependency_spec_from_stdlib_dep(dep))
 }
 
-/// Build a dependency specification from a stdlib dependency requirement.
-fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
+/// Build the exact dependency specification one stdlib dependency requirement contributes to a generated root.
+///
+/// Checked publisher manifests that declare the same crate must agree with this specification by dependency meaning.
+/// Equivalent version-range spellings unify to one stable spelling; every other identity field must agree exactly.
+pub fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
     match dep.source {
         StdlibExtraCrateSource::Version(version) => DependencySpec {
             crate_name: dep.crate_name.to_string(),
@@ -615,18 +620,50 @@ pub fn merge_requirement_dependency(
     candidate: DependencySpec,
     source_label: String,
 ) -> ProviderResult<()> {
-    if let Some(existing) = merged.iter().find(|dep| dep.crate_name == candidate.crate_name) {
+    if let Some(existing) = merged.iter_mut().find(|dep| dep.crate_name == candidate.crate_name) {
         if !dependency_specs_match(existing, &candidate) {
             return Err(ProviderError::failure(format!(
                 "dependency requirement `{}` conflicts with existing collected requirements ({source_label})",
                 candidate.crate_name
             )));
         }
+        retain_canonical_requirement_spelling(existing, &candidate);
         return Ok(());
     }
     merged.push(candidate);
     merged.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
     Ok(())
+}
+
+/// Choose one order-independent spelling after two dependency requirements agree by admitted versions.
+fn retain_canonical_requirement_spelling(existing: &mut DependencySpec, candidate: &DependencySpec) {
+    if candidate.version < existing.version {
+        existing.version.clone_from(&candidate.version);
+    }
+}
+
+#[cfg(test)]
+mod semantic_requirement_identity_tests {
+    use super::*;
+
+    #[test]
+    fn equivalent_requirement_merges_choose_one_stable_spelling() -> ProviderResult<()> {
+        let dependency = |version: &str| DependencySpec {
+            crate_name: "serde".to_string(),
+            version: Some(version.to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let mut left = vec![dependency("1")];
+        merge_requirement_dependency(&mut left, dependency("^1.0.0"), "test".to_string())?;
+        let mut right = vec![dependency("^1.0.0")];
+        merge_requirement_dependency(&mut right, dependency("1"), "test".to_string())?;
+        assert_eq!(left, right);
+        Ok(())
+    }
 }
 
 /// Add a trusted SDK coordinate without treating a consumer's link features as catalog identity.
@@ -649,6 +686,9 @@ pub fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> 
     if left == right {
         return true;
     }
+    if !left.same_version_requirement(right) {
+        return false;
+    }
     let mut left = left.clone();
     let mut right = right.clone();
     for spec in [&mut left, &mut right] {
@@ -656,7 +696,23 @@ pub fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> 
             *path = fs::canonicalize(&*path).unwrap_or_else(|_| path.clone());
         }
     }
-    left == right
+    // The version already agreed by meaning; every other identity field must agree exactly. Destructuring keeps a
+    // new field from silently escaping this comparison.
+    let DependencySpec {
+        crate_name,
+        version: _,
+        features,
+        default_features,
+        source,
+        optional,
+        package,
+    } = &left;
+    *crate_name == right.crate_name
+        && *features == right.features
+        && *default_features == right.default_features
+        && *source == right.source
+        && *optional == right.optional
+        && *package == right.package
 }
 
 /// Merge collected requirement dependencies into resolved dependency sets.
@@ -669,7 +725,7 @@ pub fn merge_project_requirement_dependencies(
     for required in &requirements.dependencies {
         let already_in_dependencies = resolved
             .dependencies
-            .iter()
+            .iter_mut()
             .find(|spec| spec.crate_name == required.crate_name);
         if let Some(existing) = already_in_dependencies {
             if !dependency_specs_match(existing, required) {
@@ -678,19 +734,21 @@ pub fn merge_project_requirement_dependencies(
                     required.crate_name
                 )));
             }
+            retain_canonical_requirement_spelling(existing, required);
             continue;
         }
         let already_in_dev = resolved
             .dev_dependencies
-            .iter()
+            .iter_mut()
             .find(|spec| spec.crate_name == required.crate_name);
         if let Some(existing) = already_in_dev {
-            if existing != required {
+            if !dependency_specs_match(existing, required) {
                 return Err(ProviderError::failure(format!(
                     "dependency `{}` conflicts between dev dependencies and collected project requirements",
                     required.crate_name
                 )));
             }
+            retain_canonical_requirement_spelling(existing, required);
             continue;
         }
         resolved.dependencies.push(required.clone());

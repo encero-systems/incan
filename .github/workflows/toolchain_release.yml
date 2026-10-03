@@ -53,7 +53,8 @@ jobs:
           TARGET: ${{ matrix.target }}
           INCAN_BIN: target/${{ matrix.target }}/release/incan
           INCAN_LSP_BIN: target/${{ matrix.target }}/release/incan-lsp
-          INCAN_STDLIB_ARTIFACT_BUILDER_BIN: target/release/incan
+          INCAN_SDK_PROVIDER_BUILDER_BIN: target/release/incan
+          RUSTUP_TOOLCHAIN: 1.98.0
         run: workspaces/release/toolchain/package_archive.sh "${TARGET}"
       - uses: actions/upload-artifact@v7.0.1
         with:

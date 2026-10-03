@@ -1,0 +1,37 @@
+# behavior: reassigning an inferred mutable variable in straight-line code, in loop branches and in an if block updates the same variable
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_inferred_reassign_codegen
+# expect-stdout:
+#   2
+#   1
+#   1
+
+# Simple mutable variable bump without shadowing
+def bump() -> int:
+    mut x = 1
+    x = x + 1
+    return x
+
+
+# Collatz inner loop: ensure reassignments in branches do not shadow
+def collatz_inner(n: int) -> int:
+    mut num = n
+    while num != 1:
+        if num % 2 == 0:
+            num = num // 2
+        else:
+            num = 3 * num + 1
+    return num
+
+
+# Reassignment in an if-block
+def reassign_in_if() -> int:
+    mut status = 0
+    if status == 0:
+        status = 1
+    return status
+
+
+def main() -> None:
+    println(bump())
+    println(collatz_inner(27))
+    println(reassign_in_if())

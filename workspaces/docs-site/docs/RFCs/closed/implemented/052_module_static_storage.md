@@ -200,7 +200,7 @@ The distinction from `const` is intentional and sharp:
 
 This RFC intentionally distinguishes binding ownership from object mutability. The defining module owns the binding cell, so imported rebinding is invalid. But if a public static stores a mutable object, that shared object may be mutated through ordinary aliasing and method calls.
 
-Rust's `static` is the closest familiar analogue, but Incan is not copying Rust literally. The Rust Reference says a static item "represents an allocation in the program" and that all references point at the same allocation. It also says the initializer is a constant expression and that mutable statics require `unsafe`. Incan keeps the single-live-cell intuition while intentionally choosing eager module initialization and one mutable `static` form instead of Rust's `static` / `static mut` split. See [The Rust Reference: Static items](https://doc.rust-lang.org/reference/items/static-items.html).
+Rust's `static` is the closest familiar analog, but Incan is not copying Rust literally. The Rust Reference says a static item "represents an allocation in the program" and that all references point at the same allocation. It also says the initializer is a constant expression and that mutable statics require `unsafe`. Incan keeps the single-live-cell intuition while intentionally choosing eager module initialization and one mutable `static` form instead of Rust's `static` / `static mut` split. See [The Rust Reference: Static items](https://doc.rust-lang.org/reference/items/static-items.html).
 
 ### Interaction with existing features
 

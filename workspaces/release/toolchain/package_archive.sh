@@ -293,13 +293,17 @@ out_dir="$(cd "$out_dir" && pwd -P)"
 package_dir="$out_dir/dist/incan-${release}-${target}"
 archive="$out_dir/incan-${release}-${target}.tar.gz"
 release_provider_store=""
+release_policy_publisher_home=""
 
-cleanup_release_provider_store() {
+cleanup_release_staging() {
   if [ -n "$release_provider_store" ]; then
     rm -rf "$release_provider_store"
   fi
+  if [ -n "$release_policy_publisher_home" ]; then
+    rm -rf "$release_policy_publisher_home"
+  fi
 }
-trap cleanup_release_provider_store EXIT
+trap cleanup_release_staging EXIT
 
 rm -rf "$package_dir"
 mkdir -p "$package_dir/bin" "$package_dir/crates"
@@ -405,37 +409,14 @@ git show HEAD:Cargo.lock > "$package_dir/crates/Cargo.lock" \
 # under this repository's own `target/` tree -- is prepended in front of it. Resolve Cargo in a
 # way that specific trick cannot intercept, preferring the most explicit source available:
 #   1. `CARGO_BIN`, when the caller names a verified real Cargo directly.
-#   2. The first `cargo` on `PATH` whose directory is NOT inside this repository's own `target/`
-#      tree. A real, system-installed Cargo is never legitimately located there; only a guard or
-#      other build-owned artifact would be.
-#   3. `command -v cargo` outright, unchanged for every caller with no such guard (a real release
-#      build, local manual packaging) and as a last-resort fallback otherwise.
-if [ -n "${CARGO_BIN:-}" ]; then
-  cargo_bin="$CARGO_BIN"
-  [ -x "$cargo_bin" ] || fail "CARGO_BIN does not name an executable: $cargo_bin"
-else
-  cargo_bin=""
-  saved_ifs="$IFS"
-  IFS=':'
-  for path_entry in $PATH; do
-    case "$path_entry" in
-      */target/*) continue ;;
-    esac
-    if [ -x "$path_entry/cargo" ]; then
-      cargo_bin="$path_entry/cargo"
-      break
-    fi
-  done
-  IFS="$saved_ifs"
-  if [ -z "$cargo_bin" ]; then
-    cargo_bin="$(command -v cargo)" || fail "could not resolve Cargo for the release support workspace"
-  fi
-fi
-# The resolved binary's own directory is the real Cargo home (`.cargo/bin/cargo`, whether reached
-# via `CARGO_BIN` or the `PATH` walk above), and `.cargo`/`.rustup` are always installed as
-# siblings under the same parent directory -- regardless of what `$HOME` is later set to at
-# runtime. Capture that real Cargo home now, before `$HOME` gets in the way of anything else that
-# needs it (the offline registry cache below).
+#   2. The first `cargo` on `PATH` whose directory is NOT inside a repository `target/` tree. A real,
+#      system-installed Cargo is never legitimately located there; only a guard or build artifact would be.
+explicit_cargo_bin="${CARGO_BIN:-}"
+cargo_bin="$(workspaces/release/toolchain/resolve_release_cargo.sh "$explicit_cargo_bin")" \
+  || fail "could not resolve authoritative Cargo for release packaging"
+# Resolve the real Cargo home now, before the guarded `$HOME` can hide the offline registry cache.
+# A selected Cargo can be either a user shim or a toolchain executable, so its parent directories
+# alone are not authoritative for the registry location.
 #
 # This sibling derivation breaks for a package-manager rustup install: Homebrew's `rustup` formula
 # keeps its `cargo` shim under `<prefix>/opt/rustup/bin/`, so deriving two directories up lands on
@@ -455,33 +436,11 @@ elif [ -d "$HOME/.cargo/registry" ]; then
 else
   cargo_home_dir="$(dirname "$(dirname "$cargo_bin")")"
 fi
-# The resolved binary is very likely rustup's own multiplexer (a `cargo` symlink or shim next to
-# `rustup` itself), which selects a toolchain at runtime by consulting `$RUSTUP_HOME` (default
-# `$HOME/.rustup`) for a configured default. That lookup fails here even after finding the right
-# Cargo: the guard's sandbox also redirects `HOME` to an isolated, per-root scratch directory with
-# no rustup state at all. Route around rustup's own toolchain selection entirely by resolving
-# directly to one real, installed toolchain's `cargo`.
-#
-# Prefer `$RUSTUP_HOME`/`$HOME/.rustup` first: that is rustup's own authoritative toolchains
-# location regardless of where its `cargo`/`rustup` shim binary physically lives, so it also covers
-# package-manager rustup installs (e.g. Homebrew's `rustup` formula, whose shims live under
-# `<prefix>/opt/rustup/bin/` rather than `~/.cargo/bin/`) where `.cargo`/`.rustup` are not siblings
-# of the resolved binary's directory. Fall back to the sibling-of-Cargo heuristic only when that
-# lookup is empty, which covers the guarded/sandboxed case above where `$HOME` itself is redirected
-# but the resolved Cargo binary's real location still has `.rustup` as a physical sibling.
-direct_toolchain_cargo="$(
-  find "$rustup_home_dir/toolchains" -mindepth 3 -maxdepth 3 \
-    -type f -name cargo -path '*/bin/cargo' 2>/dev/null | head -1
-)"
-if [ -z "$direct_toolchain_cargo" ]; then
-  direct_toolchain_cargo="$(
-    find "$(dirname "$cargo_home_dir")/.rustup/toolchains" -mindepth 3 -maxdepth 3 \
-      -type f -name cargo -path '*/bin/cargo' 2>/dev/null | head -1
-  )"
-fi
-if [ -n "$direct_toolchain_cargo" ] && [ -x "$direct_toolchain_cargo" ]; then
-  cargo_bin="$direct_toolchain_cargo"
-fi
+# A Cargo resolved outside the repository guard is commonly Rustup's shim. Ask its sibling Rustup for the active
+# toolchain's exact Cargo instead of selecting the first directory below `toolchains/`: filesystem order is not
+# toolchain authority. A caller that sets `RUSTUP_TOOLCHAIN` selects that exact toolchain; otherwise Rustup's active
+# override/default applies. The release workflow supplies the supported version explicitly. A caller-provided
+# `CARGO_BIN` remains exact authority and a non-Rustup Cargo installation remains unchanged.
 # `cargo metadata --offline` below resolves its registry cache from `$CARGO_HOME` (default
 # `$HOME/.cargo`), which is equally a victim of the guard's `$HOME` redirect: the offline cache
 # prewarmed into the real Cargo home would otherwise be invisible. `clear_inherited_cargo_environment`
@@ -567,7 +526,46 @@ if [ -n "${INCAN_OVEN_LOAF_DIR:-}" ]; then
   mkdir -p "$(dirname "$loaf_root")"
   cp -R "$INCAN_OVEN_LOAF_DIR" "$loaf_root"
 else
+  command -v jq >/dev/null 2>&1 \
+    || fail "production release packaging requires jq to read the structured Oven bake report"
   rustc_bin="$(resolve_release_rustc)" || fail "could not resolve rustc for the release-only Loaf publisher"
+  [ -f "workspaces/oven/loaf.toml" ] \
+    || fail "release policy project is missing workspaces/oven/loaf.toml"
+  [ -f "workspaces/oven/src/plan_json_main.incn" ] \
+    || fail "release policy entrypoint is missing workspaces/oven/src/plan_json_main.incn"
+  # Prepare the source-authored policy engine first. This explicit project bake owns its compatibility publication;
+  # normal consumers remain Cargo-free. The release family is published only after this exact ProjectOutput exists,
+  # because every Release envelope must bind and execute its policy engine rather than creating a tupleless interim
+  # generation.
+  release_policy_publisher_home="$(mktemp -d "${TMPDIR:-/tmp}/incan-release-policy-${target}.XXXXXX")"
+  policy_bake_report="$release_policy_publisher_home/core-engine-bake.json"
+  policy_toolchain_root="$release_policy_publisher_home/toolchain"
+  mkdir -p "$policy_toolchain_root/bin"
+  cp "$package_dir/bin/incan" "$policy_toolchain_root/bin/incan"
+  [ ! -e "$policy_toolchain_root/share/incan/oven/loafs/envelope.json" ] \
+    || fail "release policy bootstrap unexpectedly has a preexisting Oven Loaf envelope"
+  INCAN_HOME="$release_policy_publisher_home" \
+    INCAN_STDLIB="$staged_stdlib_root" \
+    INCAN_SDK_INVENTORY="$sdk_seed_root/sdk-inventory.json" \
+    INCAN_TOOLCHAIN_CRATES_DIR="$package_dir/crates" \
+    INCAN_INTERNAL_OVEN_LOAF_EXECUTION= \
+    INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT= \
+    CARGO="$cargo_bin" \
+    RUSTC="$rustc_bin" \
+    "$policy_toolchain_root/bin/incan" oven bake \
+      --project "workspaces/oven" \
+      --target "$target" \
+      --format json > "$policy_bake_report" \
+    || fail "could not explicitly bake the release policy project"
+  policy_output="$(workspaces/release/toolchain/select_release_policy_output.sh "$policy_bake_report" "$target")" \
+    || fail "could not select the exact target-bound release core_engine ProjectOutput"
+  policy_engine_store="${policy_output%%	*}"
+  policy_engine_identity="${policy_output#*	}"
+  [ -n "$policy_engine_store" ] && [ -n "$policy_engine_identity" ] && [ "$policy_engine_store" != "$policy_engine_identity" ] \
+    || fail "release policy bake selection did not report store and artifact identity"
+  # Re-enter the explicit publisher with the exact ProjectOutput. Adding the engine member changes the envelope
+  # evidence and can require the ordinary Loafs to be prepared again; the resulting complete generation is committed
+  # atomically with the release member that names this engine identity.
   "$package_dir/bin/incan" oven legacy-cargo bake-loafs \
     --compiler-root "$package_dir" \
     --output "$loaf_root" \
@@ -575,8 +573,15 @@ else
     --sdk-inventory "$sdk_seed_root/sdk-inventory.json" \
     --cargo "$cargo_bin" \
     --rustc "$rustc_bin" \
+    --policy-engine-store "$policy_engine_store" \
+    --policy-engine-identity "$policy_engine_identity" \
+    --policy-engine-target "$target" \
     --format json >/dev/null \
     || fail "could not bake the release Oven Loaf envelope"
+  packaged_policy_identity="$(jq -er '.release_store_member.artifact_identity | select(type == "string" and length > 0)' "$loaf_root/envelope.json")" \
+    || fail "release Oven Loaf envelope did not retain its policy-engine member"
+  [ "$packaged_policy_identity" = "$policy_engine_identity" ] \
+    || fail "release Oven Loaf envelope retained a different policy-engine identity"
 fi
 [ -d "$loaf_root" ] || fail "release package is missing Oven Loafs"
 [ "$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')" = "2" ] \

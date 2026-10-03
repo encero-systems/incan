@@ -133,10 +133,10 @@ def counter() -> int:
 **Error:**
 
 ```bash
-Cannot mutate self - method takes immutable self
+Method 'increment' assigns to 'self.value' but takes 'self'
 ```
 
-**Problem:** Method modifies `self` but doesn't declare `mut self`.
+**Problem:** Method modifies `self` but doesn't declare `mut self`. The same report (`INCAN-T0102`) covers a call that changes a field, such as `self.items.append(x)` or `self.items.pop()`, and a call to one of the type's own `mut self` methods.
 
 **Solution:**
 
@@ -224,6 +224,90 @@ mut current = find_user(id)
 while let Some(user) = current:
     println(user.name)
     current = next_user(user)
+```
+
+### Displaying a Value With No Printed Form
+
+**Error:**
+
+```bash
+'println' cannot print the Point value 'point'
+```
+
+**Problem:** `print`, `println`, `str` and an f-string `{value}` share one display rule (see [Display](../reference/strings.md#display)). A union value, a generator, a function, `bytes`, a value of type `None`, and a model, class, enum or newtype whose type provides no `Display` have no printed form in any of them (`INCAN-T0103`). A type provides `Display` through `__str__`, through the values an enum declares, through `@derive(Display)` (which shows the value's `{value:?}` structure), or through the `message()` of an `Error` adopter. The same refusal applies to a type argument for a `Display` bound. Lists, tuples, dicts, sets, `Option` and `Result` do print: `println(items)` prints `[1, 2, 3]`.
+
+**Solution:** Give the value a printed form, or display something that has one.
+
+```incan
+model Point:
+    x: int
+    y: int
+
+    # Right - define __str__ to give the model a printed form
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
+
+def show(value: int | str) -> None:
+    # Right - narrow a union and print the member
+    match value:
+        int(n) => println(n)
+        str(s) => println(s)
+
+# Right - declare values so each variant displays as its value
+enum Level(str):
+    WARN = "warn"
+
+def main() -> None:
+    point = Point(x=1, y=2)
+    println(point)          # ✅ (1, 2)
+    println(f"{point:?}")   # ✅ the structure: Point { x: 1, y: 2 }
+    println(Level.WARN)     # ✅ warn
+    evens = (n * 2 for n in [1, 2, 3])
+    println(list(evens))    # ✅ collect a generator first: [2, 4, 6]
+```
+
+### Collection Annotation Without Type Arguments
+
+**Error:**
+
+```bash
+List annotation 'List' is missing its element type
+```
+
+**Problem:** `list`, `dict`, `set`, `tuple`, `Option` and `Result` (and the frozen collections and `Generator`) each name a family of types, so the bare word names no type (`INCAN-T0104`). The refusal also applies to a bare word inside another annotation, such as `Option[List]`.
+
+**Solution:**
+
+```incan
+# Wrong
+items: List = [1, 2]  # ❌
+
+# Right
+items: list[int] = [1, 2]  # ✅
+counts: dict[str, int] = {"a": 1}
+maybe: Option[int] = None
+```
+
+### Reserved `__incan_` Names
+
+**Error:**
+
+```bash
+The function '__incan_original_target' starts with '__incan_', a prefix reserved for names the compiler generates
+```
+
+**Problem:** A name the program declares or binds starts with `__incan_`, which is reserved for the compiler (`INCAN-T0111`; see [Reserved name prefix](../reference/imports_and_modules.md#reserved-name-prefix)).
+
+**Solution:** Rename it without the prefix.
+
+```incan
+# Wrong
+pub def __incan_original_target() -> int:  # ❌
+    return 2
+
+# Right
+pub def original_target() -> int:  # ✅
+    return 2
 ```
 
 ## Philosophy: Explicit is Better

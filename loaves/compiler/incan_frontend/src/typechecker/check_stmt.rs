@@ -3,18 +3,21 @@
 use std::collections::HashSet;
 
 use crate::ast::*;
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, SelfMutation};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use crate::symbols::*;
+use incan_lang::NumericTy;
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::keywords;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
-use incan_lang::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
 
 use super::{CAbiSpanLocal, CBindingType, COutputMode, LoopContextKind, TypeChecker};
+
+mod chained;
 use crate::typechecker::helpers::{collection_type_id, ensure_bool_condition, option_ty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +54,7 @@ struct BranchRefinement {
 /// What a value's type says about whether it can be destructured into a fixed number of names.
 ///
 /// Reading this once, in one place, is what keeps the three destructuring sites honest. Each used to answer the
-/// question inline and fall back to `vec![Unknown; n]` for anything it did not recognise, which sized the element
+/// question inline and fall back to `vec![Unknown; n]` for anything it did not recognize, which sized the element
 /// list to the name list and so made the arity guard below it unreachable for a non-tuple (#1125, #1132).
 #[derive(Debug)]
 pub(in crate::typechecker) enum TupleShape {
@@ -60,7 +63,7 @@ pub(in crate::typechecker) enum TupleShape {
     /// A Rust-interop tuple whose arity the compiler can actually read, such as the `(String, JsonValue)` a
     /// `rust::HashMap::items()` yields.
     ///
-    /// Element types are not modelled, so it carries only the count and binds `Unknown` per name. Arity is still
+    /// Element types are not modeled, so it carries only the count and binds `Unknown` per name. Arity is still
     /// checked, so interop is not simply exempted from the guard.
     RustTuple(usize),
     /// A Rust-interop value whose shape the compiler cannot establish.
@@ -86,7 +89,7 @@ pub(in crate::typechecker) enum TupleShape {
 ///
 /// A tuple arrives in two spellings: a tuple *literal* infers [`ResolvedType::Tuple`], while a written `tuple[A, B]`
 /// annotation resolves through the collection-type registry as a [`ResolvedType::Generic`] named `Tuple`. Both are
-/// destructurable and both must be recognised here.
+/// destructurable and both must be recognized here.
 ///
 /// A bare type variable is deliberately [`TupleShape::NotTuple`]. It is not "not yet known" — it is known to be
 /// underdetermined, and `T` can be instantiated as `int`. Incan's bounds are trait-based, so no caller can promise
@@ -101,7 +104,7 @@ pub(in crate::typechecker) fn classify_tuple_shape(ty: &ResolvedType) -> TupleSh
             TupleShape::Tuple(args.clone())
         }
         ResolvedType::Unknown | ResolvedType::Never => TupleShape::Recovery,
-        // A Rust type is destructurable only when its shape can actually be read. The parenthesised tuple
+        // A Rust type is destructurable only when its shape can actually be read. The parenthesized tuple
         // spelling gives a reliable arity — `std.json`'s `key, value = item` over a `rust::HashMap` item is
         // exactly that shape — and everything else is refused rather than assumed.
         ResolvedType::RustPath(path) => match rust_tuple_arity(path) {
@@ -135,6 +138,82 @@ impl TypeChecker {
     // Statements
     // ========================================================================
 
+    /// Check the value of a compound assignment `x op= y` against the type `var_ty` of the local or static it writes.
+    ///
+    /// Numeric operands are checked as `x = x op y`: the operator's result type from the operator result table, then
+    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32`, and `n += 1` and `n |= 1` on an `i32` binding
+    /// combine two `i32` values, and all are accepted, while `x /= 2` on an `int` binding stays refused because its
+    /// `float` result is not assignable to `int` (#1812). A user operator receiver resolves through its in-place or
+    /// binary hook, and any other value must be assignable to the binding.
+    fn check_compound_assignment_value(
+        &mut self,
+        compound: &CompoundAssignmentStmt,
+        var_ty: &ResolvedType,
+        value_ty: &ResolvedType,
+        stmt_span: Span,
+    ) {
+        let binop = compound.op.binary_op();
+        if let (Some(lhs), Some(rhs)) = (numeric_ty_from_resolved(var_ty), numeric_ty_from_resolved(value_ty)) {
+            let result_ty = if numeric_op_from_ast(&binop).is_some() {
+                let target = Spanned::new(Expr::Ident(compound.name.clone()), compound.name_span);
+                self.numeric_arithmetic_result_type(
+                    (&target, var_ty),
+                    binop,
+                    (&compound.value, value_ty),
+                    compound.value.span,
+                )
+            } else if matches!(
+                binop,
+                BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
+            ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
+            {
+                let target = Spanned::new(Expr::Ident(compound.name.clone()), compound.name_span);
+                self.integer_bitwise_result_type(
+                    (&target, var_ty),
+                    binop,
+                    (&compound.value, value_ty),
+                    compound.value.span,
+                )
+            } else {
+                self.errors.push(errors::type_mismatch(
+                    "supported compound operator operands",
+                    &format!("{var_ty} {binop} {value_ty}"),
+                    compound.value.span,
+                ));
+                return;
+            };
+            if !self.types_compatible(&result_ty, var_ty) {
+                self.errors.push(errors::type_mismatch(
+                    &var_ty.to_string(),
+                    &result_ty.to_string(),
+                    compound.value.span,
+                ));
+            }
+        } else if self.is_user_operator_receiver(var_ty) {
+            match self.resolve_compound_assignment_operator(var_ty, compound.op, &compound.value, value_ty, stmt_span) {
+                Some(result_ty) if !self.types_compatible(&result_ty, var_ty) => {
+                    self.errors.push(errors::type_mismatch(
+                        &var_ty.to_string(),
+                        &result_ty.to_string(),
+                        compound.value.span,
+                    ));
+                }
+                Some(_) => {}
+                None => self.errors.push(errors::missing_method(
+                    &var_ty.to_string(),
+                    compound_assignment_fallback_dunder(compound.op),
+                    stmt_span,
+                )),
+            }
+        } else if !self.types_compatible(value_ty, var_ty) {
+            self.errors.push(errors::type_mismatch(
+                &var_ty.to_string(),
+                &value_ty.to_string(),
+                compound.value.span,
+            ));
+        }
+    }
+
     /// Return whether a local annotation names a trait surface that does not yet have a local value representation.
     ///
     /// Callable parameters and returns have dedicated trait-bound lowering paths, but local bindings do not preserve a
@@ -149,6 +228,51 @@ impl TypeChecker {
         }
     }
 
+    /// Return the first trait type written inside another type, as a type argument or a tuple item (`Serialize` in
+    /// `Option[Serialize]`), never the annotation itself.
+    ///
+    /// A trait stands for the types that adopt it only where the whole annotation is the trait: a parameter lowers to
+    /// a hidden type parameter bounded by it and a return to one hidden adopting type. Inside another type it has no
+    /// value representation, and the generated Rust would name a bare trait there (E0782, #1866). A reference or a
+    /// type token wraps the annotation without nesting it. A function type is not searched: its parameters are how a
+    /// decorator names the trait receiver of the method it decorates (`(Service) -> int`).
+    pub(in crate::typechecker) fn trait_type_nested_in(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        self.find_trait_type(ty, false)
+    }
+
+    /// Search `ty` for a trait type, reporting the type itself only when it is `nested` inside the annotation.
+    fn find_trait_type(&self, ty: &ResolvedType, nested: bool) -> Option<ResolvedType> {
+        match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _)
+                if nested && self.lookup_semantic_trait_info(name).is_some() =>
+            {
+                Some(ty.clone())
+            }
+            ResolvedType::Generic(_, items) | ResolvedType::Tuple(items) => {
+                items.iter().find_map(|item| self.find_trait_type(item, true))
+            }
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => self.find_trait_type(inner, true),
+            ResolvedType::FrozenDict(key, value) => self
+                .find_trait_type(key, true)
+                .or_else(|| self.find_trait_type(value, true)),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
+                self.find_trait_type(inner, nested)
+            }
+            _ => None,
+        }
+    }
+
+    /// Refuse a callable parameter, return or local annotation that writes a trait inside another type (#1866).
+    pub(in crate::typechecker) fn refuse_trait_type_nested_in_annotation(&mut self, ty: &ResolvedType, span: Span) {
+        if let Some(trait_type) = self.trait_type_nested_in(ty) {
+            self.errors.push(errors::trait_type_nested_in_annotation_unsupported(
+                &trait_type.to_string(),
+                &ty.to_string(),
+                span,
+            ));
+        }
+    }
+
     /// Validate a statement and its subexpressions.
     ///
     /// Handles assignments (including mutability checks), control flow (`if`, `while`, `for`), returns, and expression
@@ -156,13 +280,19 @@ impl TypeChecker {
     pub fn check_statement(&mut self, stmt: &Spanned<Statement>) {
         match &stmt.node {
             Statement::Assignment(assign) => self.check_assignment(assign, stmt.span),
-            Statement::FieldAssignment(field_assign) => self.check_field_assignment(field_assign, stmt.span),
-            Statement::IndexAssignment(index_assign) => self.check_index_assignment(index_assign, stmt.span),
+            Statement::FieldAssignment(field_assign) => {
+                self.check_field_assignment(field_assign, stmt.span);
+                self.refuse_capturing_reassignment(None, &field_assign.value, field_assign.value.span);
+            }
+            Statement::IndexAssignment(index_assign) => {
+                self.check_index_assignment(index_assign, stmt.span);
+                self.refuse_capturing_reassignment(None, &index_assign.value, index_assign.value.span);
+            }
             Statement::Return(expr) => self.check_return(expr.as_ref(), stmt.span),
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
-            Statement::Loop(loop_stmt) => self.check_loop_stmt(loop_stmt),
-            Statement::While(while_stmt) => self.check_while_stmt(while_stmt),
-            Statement::For(for_stmt) => self.check_for_stmt(for_stmt),
+            Statement::Loop(loop_stmt) => self.check_loop_stmt(loop_stmt, stmt.span),
+            Statement::While(while_stmt) => self.check_while_stmt(while_stmt, stmt.span),
+            Statement::For(for_stmt) => self.check_for_stmt(for_stmt, stmt.span),
             Statement::Unsafe(unsafe_stmt) => self.check_unsafe_stmt(unsafe_stmt),
             Statement::VocabBlock(vocab_block) => {
                 self.errors.push(crate::diagnostics::CompileError::new(
@@ -177,6 +307,7 @@ impl TypeChecker {
             Statement::Surface(surface_stmt) => self.check_surface_stmt(surface_stmt, stmt.span),
             Statement::Expr(expr) => {
                 self.check_expr(expr);
+                self.reject_discarded_open_rust_generic_call(expr.span);
             }
             Statement::VocabExpressionItem(_item) => {
                 self.errors.push(crate::diagnostics::CompileError::new(
@@ -185,7 +316,12 @@ impl TypeChecker {
                 ));
             }
             Statement::Pass => {}
-            Statement::Break(value) => self.check_break_stmt(value.as_ref(), stmt.span),
+            Statement::Break(value) => {
+                if let Some(value) = value {
+                    self.refuse_mut_param_held_by(value);
+                }
+                self.check_break_stmt(value.as_ref(), stmt.span)
+            }
             Statement::Continue => self.check_continue_stmt(stmt.span),
             Statement::CompoundAssignment(compound) => {
                 self.record_write_target_identity(compound.name_span, &compound.name);
@@ -206,79 +342,14 @@ impl TypeChecker {
                     if !is_mutable {
                         self.errors
                             .push(errors::mutation_without_mut(&compound.name, stmt.span));
+                    } else {
+                        self.refuse_caller_visible_mut_param_rebinding(&compound.name, stmt.span);
                     }
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);
+                    self.refuse_capturing_reassignment(Some(&compound.name), &compound.value, compound.name_span);
 
-                    // Treat `x <op>= y` as `x = x <op> y` using numeric policy.
-                    let binop = compound.op.binary_op();
-
-                    let lhs_num = numeric_ty_from_resolved(&var_ty);
-                    let rhs_num = numeric_ty_from_resolved(&value_ty);
-
-                    if let (Some(lhs), Some(rhs)) = (lhs_num, rhs_num) {
-                        if let Some(num_op) = numeric_op_from_ast(&binop) {
-                            let res_num = result_numeric_type(num_op, lhs, rhs, None);
-                            let res_ty = match res_num {
-                                NumericTy::Int => ResolvedType::Int,
-                                NumericTy::Float => ResolvedType::Float,
-                            };
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else if matches!(
-                            binop,
-                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
-                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
-                        {
-                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &ResolvedType::Int.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::type_mismatch(
-                                "supported compound operator operands",
-                                &format!("{} {} {}", var_ty, binop, value_ty),
-                                compound.value.span,
-                            ));
-                        }
-                    } else if self.is_user_operator_receiver(&var_ty) {
-                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
-                            &var_ty,
-                            compound.op,
-                            &compound.value,
-                            &value_ty,
-                            stmt.span,
-                        ) {
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::missing_method(
-                                &var_ty.to_string(),
-                                compound_assignment_fallback_dunder(compound.op),
-                                stmt.span,
-                            ));
-                        }
-                    } else if !self.types_compatible(&value_ty, &var_ty) {
-                        // Non-numeric: fall back to simple compatibility check.
-                        self.errors.push(errors::type_mismatch(
-                            &var_ty.to_string(),
-                            &value_ty.to_string(),
-                            compound.value.span,
-                        ));
-                    }
+                    self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if let Some(static_info) = self.lookup_static_info(&compound.name).cloned() {
                     if static_info.is_imported {
                         self.errors.push(errors::imported_static_reassignment_not_allowed(
@@ -290,86 +361,7 @@ impl TypeChecker {
                     let value_ty = self.check_expr(&compound.value);
                     let var_ty = static_info.ty;
 
-                    let binop = match compound.op {
-                        CompoundOp::Add => BinaryOp::Add,
-                        CompoundOp::Sub => BinaryOp::Sub,
-                        CompoundOp::Mul => BinaryOp::Mul,
-                        CompoundOp::Div => BinaryOp::Div,
-                        CompoundOp::FloorDiv => BinaryOp::FloorDiv,
-                        CompoundOp::Mod => BinaryOp::Mod,
-                        CompoundOp::MatMul => BinaryOp::MatMul,
-                        CompoundOp::BitAnd => BinaryOp::BitAnd,
-                        CompoundOp::BitOr => BinaryOp::BitOr,
-                        CompoundOp::BitXor => BinaryOp::BitXor,
-                        CompoundOp::Shl => BinaryOp::Shl,
-                        CompoundOp::Shr => BinaryOp::Shr,
-                    };
-
-                    let lhs_num = numeric_ty_from_resolved(&var_ty);
-                    let rhs_num = numeric_ty_from_resolved(&value_ty);
-
-                    if let (Some(lhs), Some(rhs)) = (lhs_num, rhs_num) {
-                        if let Some(num_op) = numeric_op_from_ast(&binop) {
-                            let res_num = result_numeric_type(num_op, lhs, rhs, None);
-                            let res_ty = match res_num {
-                                NumericTy::Int => ResolvedType::Int,
-                                NumericTy::Float => ResolvedType::Float,
-                            };
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else if matches!(
-                            binop,
-                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
-                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
-                        {
-                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &ResolvedType::Int.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::type_mismatch(
-                                "supported compound operator operands",
-                                &format!("{} {} {}", var_ty, binop, value_ty),
-                                compound.value.span,
-                            ));
-                        }
-                    } else if self.is_user_operator_receiver(&var_ty) {
-                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
-                            &var_ty,
-                            compound.op,
-                            &compound.value,
-                            &value_ty,
-                            stmt.span,
-                        ) {
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::missing_method(
-                                &var_ty.to_string(),
-                                compound_assignment_fallback_dunder(compound.op),
-                                stmt.span,
-                            ));
-                        }
-                    } else if !self.types_compatible(&value_ty, &var_ty) {
-                        self.errors.push(errors::type_mismatch(
-                            &var_ty.to_string(),
-                            &value_ty.to_string(),
-                            compound.value.span,
-                        ));
-                    }
+                    self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if self.const_decls.contains_key(&compound.name) {
                     self.errors
                         .push(errors::const_reassignment_suggests_static(&compound.name, stmt.span));
@@ -380,6 +372,7 @@ impl TypeChecker {
             Statement::TupleUnpack(unpack) => {
                 // Check the value expression and get its type
                 let value_ty = self.check_expr(&unpack.value);
+                self.refuse_mut_param_held_by(&unpack.value);
 
                 let element_types = self.destructured_element_types(&value_ty, unpack.names.len(), stmt.span);
 
@@ -394,36 +387,54 @@ impl TypeChecker {
             Statement::TupleAssign(assign) => {
                 // Check the value expression (should be a tuple)
                 let value_ty = self.check_expr(&assign.value);
+                self.refuse_mut_param_held_by(&assign.value);
 
                 let element_types = self.destructured_element_types(&value_ty, assign.targets.len(), stmt.span);
 
                 // Check each target expression - must be a valid lvalue
                 for (i, target) in assign.targets.iter().enumerate() {
-                    let target_ty = self.check_expr(target);
                     let expected_ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
+
+                    // A name target follows the rule `name = value` follows, as in a tuple unpacking: a bound name is
+                    // reassigned (it must be `mut`, and a caller-visible `mut` parameter is changed in place, never
+                    // rebound, #1773), and a name with no binding is declared with its element's type.
+                    if let Expr::Ident(name) = &target.node {
+                        self.check_unannotated_assignment_target(
+                            name,
+                            BindingKind::Inferred,
+                            expected_ty,
+                            target.span,
+                            assign.value.span,
+                        );
+                        continue;
+                    }
+                    let target_ty = self.check_expr(target);
 
                     // Check that target is a valid lvalue
                     match &target.node {
-                        Expr::Ident(name) => {
-                            self.record_write_target_identity(target.span, name);
-                            // Check that the variable is mutable
-                            if let Some(var_info) = self.lookup_local_variable_info(name)
-                                && !var_info.is_mutable
+                        Expr::Index(object, _) | Expr::Field(object, _) => {
+                            // Index and field expressions are valid lvalues; type compatibility is checked below.
+                            // An element target is refused where `x[i] = value` is: a tuple's or a string's element,
+                            // for one. A place rooted at the receiver is a write through `self` like any other
+                            // (#1723), and a place rooted at a read-only binding is refused like a single field or
+                            // element write.
+                            if matches!(target.node, Expr::Index(_, _))
+                                && let Some(object_ty) = self.type_info.expr_type(object.span).cloned()
                             {
-                                self.errors.push(errors::mutation_without_mut(name, target.span));
-                            } else if let Some(static_info) = self.lookup_static_info(name) {
-                                if static_info.is_imported {
-                                    self.errors
-                                        .push(errors::imported_static_reassignment_not_allowed(name, target.span));
-                                }
-                            } else if self.const_decls.contains_key(name) {
-                                self.errors
-                                    .push(errors::const_reassignment_suggests_static(name, target.span));
+                                self.refuse_unassignable_element_receiver(&object_ty, target.span);
                             }
-                        }
-                        Expr::Index(_, _) | Expr::Field(_, _) => {
-                            // Index and field expressions are valid lvalues
-                            // Type compatibility is checked below
+                            if let Some(place) = Self::self_rooted_place(target) {
+                                self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
+                            }
+                            let writes_builtin_slot = matches!(target.node, Expr::Field(_, _))
+                                || self
+                                    .type_info
+                                    .expr_type(object.span)
+                                    .is_some_and(|ty| Self::index_assignment_slot_types(ty).is_some());
+                            if writes_builtin_slot {
+                                self.refuse_write_through_read_only_binding(object, target.span);
+                            }
+                            self.note_mut_param_write(target);
                         }
                         _ => {
                             self.errors.push(errors::invalid_tuple_assignment_target(target.span));
@@ -441,30 +452,163 @@ impl TypeChecker {
                 }
             }
             Statement::ChainedAssignment(ca) => {
-                // Check the value expression
-                let value_ty = self.check_expr(&ca.value);
-
-                // Chained source assignment has the same declaration/reassignment distinction as a single target.
-                for (index, target) in ca.targets.iter().enumerate() {
-                    let target_span = ca.target_spans.get(index).copied().unwrap_or(stmt.span);
-                    self.check_unannotated_assignment_target(
-                        target,
-                        ca.binding,
-                        value_ty.clone(),
-                        target_span,
-                        ca.value.span,
-                    );
-                }
+                // The value is refused before the chain's targets are bound, so a target cannot shadow the parameter.
+                self.refuse_mut_param_held_by(&ca.value);
+                self.check_chained_assignment(ca, stmt.span);
+                self.refuse_capturing_reassignment(None, &ca.value, ca.value.span);
             }
         }
         self.reject_unbound_c_abi_span_constructors();
+        self.reject_unbound_scoped_c_string_views(&stmt.node);
+        // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
+        // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
+        self.open_rust_generic_calls.clear();
+    }
+
+    /// Spell a place expression rooted at the method receiver the way the source reads it (`self.width`,
+    /// `self.items[...]`), or return `None` when the expression does not read through `self`.
+    ///
+    /// Only place steps are followed: field reads and index reads, through parentheses. A call in the chain
+    /// (`self.items.clone()`) yields a fresh value, so nothing past it touches the receiver and the walk stops with
+    /// `None`. An index is rendered as `[...]` because the message names the place, not the element.
+    pub(in crate::typechecker) fn self_rooted_place(expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
+            Expr::SelfExpr => Some("self".to_string()),
+            Expr::Paren(inner) => Self::self_rooted_place(inner),
+            Expr::Field(base, field) => Self::self_rooted_place(base).map(|place| format!("{place}.{field}")),
+            Expr::Index(base, _) => Self::self_rooted_place(base).map(|place| format!("{place}[...]")),
+            _ => None,
+        }
+    }
+
+    /// Remember the declaration span of a binding declared without `mut`, whose place a field or element write may not
+    /// go through (see [`Self::refuse_write_through_read_only_binding`]).
+    pub(in crate::typechecker) fn record_read_only_binding(&mut self, is_mutable: bool, declaration_span: Span) {
+        if !is_mutable {
+            self.read_only_binding_spans
+                .insert((declaration_span.start, declaration_span.end));
+        }
+    }
+
+    /// Return the name a written place is rooted at, `items` for `items[0].count`, or `None` for a place rooted at
+    /// anything else, such as `self` or a call result.
+    fn written_place_root(expr: &Spanned<Expr>) -> Option<&str> {
+        match &expr.node {
+            Expr::Ident(name) => Some(name),
+            Expr::Paren(inner) | Expr::Field(inner, _) | Expr::Index(inner, _) => Self::written_place_root(inner),
+            _ => None,
+        }
+    }
+
+    /// Refuse a change at `span`, inside a closure, through the local `symbol_id` (named `name`) that the closure
+    /// captures from its enclosing callable (#1561). Returns whether it was refused.
+    ///
+    /// A closure reads each outer local it names as the value the local holds when the closure is constructed, so a
+    /// change the closure makes through one would change the closure's own copy, which the local never sees. A
+    /// caller-visible `mut` parameter, and a view into one, are refused as held by the closure instead (see
+    /// `note_param_change`).
+    pub(in crate::typechecker) fn refuse_change_through_closure_capture(
+        &mut self,
+        symbol_id: SymbolId,
+        name: &str,
+        span: Span,
+    ) -> bool {
+        if !self.local_is_captured_by_closure(symbol_id) || self.reaches_caller_visible_param(name) {
+            return false;
+        }
+        let error = errors::change_through_closure_capture(name, span);
+        let already_reported = self
+            .errors
+            .iter()
+            .any(|existing| existing.span == error.span && existing.message == error.message);
+        if !already_reported {
+            self.errors.push(error);
+        }
+        true
+    }
+
+    /// Return whether the local `symbol_id` resolves to is held by a callable enclosing the closure being checked, so
+    /// that the closure captures it.
+    pub(in crate::typechecker) fn local_is_captured_by_closure(&self, symbol_id: SymbolId) -> bool {
+        !self.checks_standard_library_source()
+            && self.symbols.get(symbol_id).is_some_and(|symbol| {
+                matches!(symbol.kind, SymbolKind::Variable(_)) && self.symbols.read_crosses_callable_scope(symbol.scope)
+            })
+    }
+
+    /// Refuse a field or element write through a binding declared without `mut` (#1561).
+    ///
+    /// A binding is immutable unless declared `mut`, and that covers what it holds: a local declared by `let` or a
+    /// first plain assignment, or a parameter not marked `mut`, gives no write access to its fields and elements. A
+    /// local bound directly to a module static is an alias of the static's storage and writes through to it, and a
+    /// loop or pattern binding follows the place it binds, so neither is refused here. A change through a local a
+    /// closure captures is refused (see [`Self::refuse_change_through_closure_capture`]). `object` is the place whose
+    /// field or element is written.
+    pub(in crate::typechecker) fn refuse_write_through_read_only_binding(
+        &mut self,
+        object: &Spanned<Expr>,
+        span: Span,
+    ) {
+        let Some(root) = Self::written_place_root(object) else {
+            return;
+        };
+        let Some(symbol_id) = self.symbols.lookup(root) else {
+            return;
+        };
+        if self.refuse_change_through_closure_capture(symbol_id, root, span) {
+            return;
+        }
+        if self.static_alias_bindings.contains_key(&symbol_id) {
+            return;
+        }
+        let Some(symbol) = self.symbols.get(symbol_id) else {
+            return;
+        };
+        if !matches!(symbol.kind, SymbolKind::Variable(_))
+            || !self
+                .read_only_binding_spans
+                .contains(&(symbol.span.start, symbol.span.end))
+        {
+            return;
+        }
+        self.errors.push(errors::mutation_without_mut(root, span));
+    }
+
+    /// Refuse a write to `place`, a place rooted at `self`, when the enclosing method takes a plain `self` (#1723).
+    ///
+    /// The receiver spelling is what the generated code honors: a plain `self` method has no way to write, so the
+    /// assignment or changing call would only fail later, in the build. Outside a plain-`self` method body nothing
+    /// is reported; a `mut self` method writes freely, and a function has no receiver. `mutation` says whether the
+    /// body assigns to the place or calls a method that changes it, which is the difference between the two
+    /// message shapes.
+    pub(in crate::typechecker) fn reject_write_through_immutable_self(
+        &mut self,
+        place: &str,
+        mutation: SelfMutation<'_>,
+        span: Span,
+    ) {
+        let Some(method) = self.current_immutable_self_method.as_deref() else {
+            return;
+        };
+        let error = errors::self_mutation_requires_mut_self(method, place, mutation, span);
+        self.errors.push(error);
     }
 
     /// Validate assignment to an object field, including generic-owner field substitution.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
+        self.refuse_write_through_read_only_binding(&field_assign.object, field_assign.target_span);
+        self.note_mut_param_write(&field_assign.object);
+        self.refuse_mut_param_held_by(&field_assign.value);
         let field = &field_assign.field;
+        if let Some(place) = Self::self_rooted_place(&field_assign.object) {
+            self.reject_write_through_immutable_self(
+                &format!("{place}.{field}"),
+                SelfMutation::Assignment,
+                field_assign.target_span,
+            );
+        }
 
         // Tuples are immutable - disallow field assignment on tuples
         if matches!(obj_ty, ResolvedType::Tuple(_)) {
@@ -476,6 +620,7 @@ impl TypeChecker {
         match &obj_ty {
             ResolvedType::SelfType => {
                 if let Some(expected_ty) = self.trait_required_field_type(field, field_assign.target_span) {
+                    self.record_expr_type(field_assign.target_span, expected_ty.clone());
                     let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                     if !self.types_compatible(&value_ty, &expected_ty) {
                         self.errors.push(errors::field_type_mismatch(
@@ -485,11 +630,13 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
+                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
             }
             ResolvedType::Named(type_name) => {
                 match self.resolve_nominal_field_type(type_name, None, field, field_assign.target_span) {
                     Some(expected_ty) => {
+                        self.record_expr_type(field_assign.target_span, expected_ty.clone());
                         let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {
                             self.errors.push(errors::field_type_mismatch(
@@ -499,6 +646,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
+                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -513,6 +661,7 @@ impl TypeChecker {
                     field_assign.target_span,
                 ) {
                     Some(expected_ty) => {
+                        self.record_expr_type(field_assign.target_span, expected_ty.clone());
                         let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {
                             self.errors.push(errors::field_type_mismatch(
@@ -522,6 +671,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
+                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -534,6 +684,7 @@ impl TypeChecker {
             // would.
             ResolvedType::RustPath(path) => match self.rust_path_field_type(path, field) {
                 Some(expected_ty) => {
+                    self.record_expr_type(field_assign.target_span, expected_ty.clone());
                     let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                     if !self.types_compatible(&value_ty, &expected_ty) {
                         self.errors.push(errors::field_type_mismatch(
@@ -543,6 +694,7 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
+                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
                 None => {
                     self.errors
@@ -560,91 +712,94 @@ impl TypeChecker {
         }
     }
 
+    /// Return the key and value types a list or dict index assignment writes through: `int` and the element type of a
+    /// `list[T]`, the key and value types of a `dict[K, V]`.
+    fn index_assignment_slot_types(obj_ty: &ResolvedType) -> Option<(ResolvedType, ResolvedType)> {
+        let ResolvedType::Generic(name, args) = obj_ty else {
+            return None;
+        };
+        match (collection_type_id(name.as_str()), args.as_slice()) {
+            (Some(CollectionTypeId::List), [element]) => Some((ResolvedType::Int, element.clone())),
+            (Some(CollectionTypeId::Dict), [key, value]) => Some((key.clone(), value.clone())),
+            _ => None,
+        }
+    }
+
     /// Validate list/dict index assignment or RFC 028 `__setitem__` dispatch for user-defined receivers.
+    ///
+    /// The index and the value of a list or dict index assignment are checked against the slot they write, so an
+    /// integer literal written to an element of a `list[float]` takes the float type, as it does in a declaration
+    /// (#1854), and a value written to an `Option` slot is recorded for lowering to wrap (#1858).
     fn check_index_assignment(&mut self, index_assign: &IndexAssignmentStmt, span: Span) {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
+        self.note_mut_param_write(&index_assign.object);
+        self.refuse_mut_param_held_by(&index_assign.value);
+        if let Some(place) = Self::self_rooted_place(&index_assign.object) {
+            self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
+        }
+        let slot_types = Self::index_assignment_slot_types(&obj_ty);
+        if slot_types.is_some() {
+            self.refuse_write_through_read_only_binding(&index_assign.object, span);
+        }
         // Check the index expression
-        let index_ty = self.check_expr(&index_assign.index);
+        let index_ty = self.check_expr_with_expected(&index_assign.index, slot_types.as_ref().map(|(key, _)| key));
         // Check the value expression
-        let value_ty = self.check_expr(&index_assign.value);
+        let value_ty = self.check_expr_with_expected(&index_assign.value, slot_types.as_ref().map(|(_, value)| value));
+        if let Some((_, value_slot_ty)) = &slot_types {
+            self.record_value_destination_if_compatible(index_assign.value.span, &value_ty, value_slot_ty);
+        }
 
         // Verify object is indexable and types match
+        if self.refuse_unassignable_element_receiver(&obj_ty, span) {
+            return;
+        }
         match &obj_ty {
-            ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
-                Some(CollectionTypeId::List) => {
-                    // List[T] - index must be int, value must be T
-                    if !matches!(index_ty, ResolvedType::Int) {
-                        self.errors.push(errors::index_type_mismatch(
-                            "int",
-                            &index_ty.to_string(),
-                            index_assign.index.span,
-                        ));
-                    }
-                    if let Some(elem_ty) = args.first()
-                        && !self.types_compatible(&value_ty, elem_ty)
-                    {
-                        self.errors.push(errors::index_value_type_mismatch(
-                            &elem_ty.to_string(),
-                            &value_ty.to_string(),
-                            index_assign.value.span,
-                        ));
-                    }
+            ResolvedType::Generic(name, args) if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) => {
+                // List[T] - index must be int, value must be T
+                if !matches!(index_ty, ResolvedType::Int) {
+                    self.errors.push(errors::index_type_mismatch(
+                        "int",
+                        &index_ty.to_string(),
+                        index_assign.index.span,
+                    ));
                 }
-                Some(CollectionTypeId::Dict) => {
-                    // Dict[K, V] - index must be K, value must be V
-                    if let Some(key_ty) = args.first()
-                        && !self.types_compatible(&index_ty, key_ty)
-                    {
-                        self.errors.push(errors::index_type_mismatch(
-                            &key_ty.to_string(),
-                            &index_ty.to_string(),
-                            index_assign.index.span,
-                        ));
-                    }
-                    if let Some(val_ty) = args.get(1)
-                        && !self.types_compatible(&value_ty, val_ty)
-                    {
-                        self.errors.push(errors::index_value_type_mismatch(
-                            &val_ty.to_string(),
-                            &value_ty.to_string(),
-                            index_assign.value.span,
-                        ));
-                    }
+                if let Some(elem_ty) = args.first()
+                    && !self.types_compatible(&value_ty, elem_ty)
+                {
+                    self.errors.push(errors::index_value_type_mismatch(
+                        &elem_ty.to_string(),
+                        &value_ty.to_string(),
+                        index_assign.value.span,
+                    ));
                 }
-                _ => {
-                    if self.is_user_operator_receiver(&obj_ty) {
-                        if self
-                            .resolve_index_set_dunder(
-                                &obj_ty,
-                                &index_assign.index,
-                                &index_ty,
-                                &index_assign.value,
-                                &value_ty,
-                                span,
-                            )
-                            .is_none()
-                        {
-                            self.errors
-                                .push(errors::missing_method(&obj_ty.to_string(), "__setitem__", span));
-                        }
-                    } else {
-                        self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
-                    }
-                }
-            },
-            ResolvedType::Tuple(_) => {
-                // Tuples are immutable - cannot assign to index
-                self.errors.push(errors::tuple_field_assignment(span));
             }
-            ResolvedType::Str => {
-                // Strings are immutable in Incan
-                self.errors.push(errors::string_index_assignment_not_allowed(span));
+            ResolvedType::Generic(name, args) if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) => {
+                // Dict[K, V] - index must be K, value must be V
+                if let Some(key_ty) = args.first()
+                    && !self.types_compatible(&index_ty, key_ty)
+                {
+                    self.errors.push(errors::index_type_mismatch(
+                        &key_ty.to_string(),
+                        &index_ty.to_string(),
+                        index_assign.index.span,
+                    ));
+                }
+                if let Some(val_ty) = args.get(1)
+                    && !self.types_compatible(&value_ty, val_ty)
+                {
+                    self.errors.push(errors::index_value_type_mismatch(
+                        &val_ty.to_string(),
+                        &value_ty.to_string(),
+                        index_assign.value.span,
+                    ));
+                }
             }
             ResolvedType::Unknown => {
                 // Don't report additional errors on unknown types
             }
-            ty if self.is_user_operator_receiver(ty) => {
+            // Every other receiver left by the refusal above is a type that defines its own element write.
+            ty => {
                 if self
                     .resolve_index_set_dunder(ty, &index_assign.index, &index_ty, &index_assign.value, &value_ty, span)
                     .is_none()
@@ -653,9 +808,51 @@ impl TypeChecker {
                         .push(errors::missing_method(&ty.to_string(), "__setitem__", span));
                 }
             }
-            _ => {
-                self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
-            }
+        }
+    }
+
+    /// Refuse a write to an element of a value of type `obj_ty` when no element of such a value is assignable, and
+    /// return whether the write was refused.
+    ///
+    /// A list, a dict, a type that defines its own element write and an unknown type are left to the caller. A tuple in
+    /// either spelling and a string are immutable, and any other type, such as a frozen collection, is not indexable
+    /// for a write. `x[i] = value` and an element target of `a, x[i] = value` share this rule, so a tuple
+    /// assignment never writes an element that a single assignment refuses (#1561).
+    fn refuse_unassignable_element_receiver(&mut self, obj_ty: &ResolvedType, span: Span) -> bool {
+        let refusal = match obj_ty {
+            ResolvedType::Generic(name, _) => match collection_type_id(name.as_str()) {
+                Some(CollectionTypeId::List | CollectionTypeId::Dict) => None,
+                // A written `tuple[A, B]` is immutable like a tuple literal's type below.
+                Some(CollectionTypeId::Tuple) => Some(errors::tuple_field_assignment(span)),
+                _ if self.is_user_operator_receiver(obj_ty) => None,
+                _ => Some(errors::not_indexable(&obj_ty.to_string(), span)),
+            },
+            ResolvedType::Tuple(_) => Some(errors::tuple_field_assignment(span)),
+            ResolvedType::Str => Some(errors::string_index_assignment_not_allowed(span)),
+            ResolvedType::Unknown => None,
+            ty if self.is_user_operator_receiver(ty) => None,
+            _ => Some(errors::not_indexable(&obj_ty.to_string(), span)),
+        };
+        let refused = refusal.is_some();
+        self.errors.extend(refusal);
+        refused
+    }
+
+    /// Validate an assignment statement, then remember a local bound directly to a module static (see
+    /// [`Self::note_static_alias_binding`]).
+    ///
+    /// A new binding of a capturing callable takes the callable's own type, and a reassignment of one, or to one, is
+    /// refused (see `capturing_callables.rs`).
+    fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        self.check_assignment_binding(assign, span);
+        self.note_static_alias_binding(assign);
+        let declares = self
+            .lookup_symbol(&assign.name)
+            .is_some_and(|symbol| symbol.span == assign.name_span);
+        if declares {
+            self.note_capturing_binding(&assign.value, assign.name_span, span);
+        } else {
+            self.refuse_capturing_reassignment(Some(&assign.name), &assign.value, assign.name_span);
         }
     }
 
@@ -663,7 +860,7 @@ impl TypeChecker {
     ///
     /// This is the frontend boundary for rejecting unsupported local type annotations before lowering. In particular,
     /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
-    fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+    fn check_assignment_binding(&mut self, assign: &AssignmentStmt, span: Span) {
         let target_span = assign.name_span;
         let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
         // `let` and `mut` are declaration forms: they introduce a binding that may deliberately shadow an active
@@ -685,6 +882,7 @@ impl TypeChecker {
         } else {
             self.check_expr_with_expected(&assign.value, annotated_ty.as_ref())
         };
+        self.refuse_mut_param_held_by(&assign.value);
 
         // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
         // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it
@@ -707,7 +905,10 @@ impl TypeChecker {
             if !is_mutable {
                 self.errors
                     .push(errors::mutation_without_mut(&assign.name, target_span));
+            } else {
+                self.refuse_caller_visible_mut_param_rebinding(&assign.name, target_span);
             }
+            self.note_local_reassignment(&assign.name);
             if !self.types_compatible(&value_ty, &var_ty) {
                 self.errors.push(errors::assignment_type_mismatch(
                     &assign.name,
@@ -718,6 +919,8 @@ impl TypeChecker {
             }
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
+            self.note_list_reassignment(&assign.name, span);
+            self.mark_open_rust_generic_binding_read(&assign.name);
             return;
         }
 
@@ -744,11 +947,6 @@ impl TypeChecker {
         // New binding
         let is_mutable = matches!(assign.binding, BindingKind::Mutable);
 
-        // Tuples are immutable - disallow `mut` on tuple bindings
-        if is_mutable && matches!(value_ty, ResolvedType::Tuple(_)) {
-            self.errors.push(errors::mutable_tuple(span));
-        }
-
         if is_mutable {
             self.mutable_bindings.insert(assign.name.clone());
         }
@@ -761,6 +959,8 @@ impl TypeChecker {
                     &ann_ty.to_string(),
                     ty_ann.span,
                 ));
+            } else {
+                self.refuse_trait_type_nested_in_annotation(&ann_ty, ty_ann.span);
             }
             // Check value matches annotation
             if !self.types_compatible(&value_ty, &ann_ty)
@@ -775,7 +975,11 @@ impl TypeChecker {
             }
             if trait_typed_local { value_ty } else { ann_ty }
         } else {
-            value_ty
+            let settled = self.settle_open_constructor_side(&assign.value, value_ty.clone());
+            if settled != value_ty {
+                self.record_settled_branch_values(&assign.value, &settled);
+            }
+            settled
         };
 
         self.record_assignment_binding_type(span, ty.clone());
@@ -796,10 +1000,17 @@ impl TypeChecker {
         } else {
             self.symbols.define(symbol);
         }
+        self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, &assign.name);
+        self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_raw_result_assignment(&assign.name, assign.value.span);
+        self.bind_scoped_c_string_view_assignment(target_span, assign.value.span);
+        if assign.ty.is_none() {
+            // An annotation is itself what fixes the arguments; only an unannotated binding is watched (#1720).
+            self.bind_open_rust_generic_assignment(&assign.name, assign.value.span);
+        }
         self.consumed_iterator_bindings.remove(&assign.name);
         self.transferred_c_resource_bindings.remove(&assign.name);
     }
@@ -848,7 +1059,10 @@ impl TypeChecker {
                 let declared_ty = var_info.ty.clone();
                 if !is_mutable {
                     self.errors.push(errors::mutation_without_mut(name, target_span));
+                } else {
+                    self.refuse_caller_visible_mut_param_rebinding(name, target_span);
                 }
+                self.note_local_reassignment(name);
                 if !self.types_compatible(&value_ty, &declared_ty) {
                     self.errors.push(errors::assignment_type_mismatch(
                         name,
@@ -859,6 +1073,8 @@ impl TypeChecker {
                 }
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
+                self.note_list_reassignment(name, target_span);
+                self.mark_open_rust_generic_binding_read(name);
                 return;
             }
             if let Some(static_info) = self.lookup_static_info(name) {
@@ -896,6 +1112,7 @@ impl TypeChecker {
         } else {
             self.symbols.define(symbol);
         }
+        self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, name);
         if is_mutable {
             self.mutable_bindings.insert(name.to_string());
@@ -964,6 +1181,38 @@ impl TypeChecker {
         }
     }
 
+    /// Bind a scoped C text view to the new local whose value it is, at the current closure depth (RFC 116).
+    ///
+    /// The local may then be read as the receiver of `copy_utf8` only; see `check_ident`.
+    fn bind_scoped_c_string_view_assignment(&mut self, binding_span: Span, value_span: Span) {
+        if self
+            .unbound_scoped_c_string_views
+            .remove(&(value_span.start, value_span.end))
+        {
+            self.scoped_c_string_view_bindings
+                .insert((binding_span.start, binding_span.end), self.closure_depth);
+        }
+    }
+
+    /// Refuse each scoped C text view the statement just checked neither bound to a local nor copied (RFC 116).
+    ///
+    /// A view that is returned, stored, passed on or placed in a value would outlive the memory it points into. A bare
+    /// expression statement that only discards the view is not an escape.
+    fn reject_unbound_scoped_c_string_views(&mut self, statement: &Statement) {
+        if let Statement::Expr(expr) = statement {
+            self.unbound_scoped_c_string_views
+                .remove(&(expr.span.start, expr.span.end));
+        }
+        let mut escaped = std::mem::take(&mut self.unbound_scoped_c_string_views)
+            .into_iter()
+            .collect::<Vec<_>>();
+        escaped.sort_unstable();
+        for (start, end) in escaped {
+            self.errors
+                .push(errors::scoped_c_string_view_escapes(Span::new(start, end)));
+        }
+    }
+
     /// Give a checked C raw call result the ordinary local name supplied by its enclosing assignment.
     fn bind_c_abi_raw_result_assignment(&mut self, name: &str, value_span: Span) {
         let Some(mut result) = self
@@ -981,6 +1230,82 @@ impl TypeChecker {
         self.c_abi_raw_call_results.push(result);
     }
 
+    /// Attach the open Rust associated call a new binding received to that binding, or refuse it at once when
+    /// the binding is the discard `_` (#1720).
+    ///
+    /// The call was recorded by its span when the method call resolved; a direct `name = call()` is the one place
+    /// a later reader can still fix the owner's type arguments, so the binding is watched until its block ends
+    /// instead of being refused here. `_` is never read, so nothing can fix them and the call is refused at once.
+    fn bind_open_rust_generic_assignment(&mut self, name: &str, value_span: Span) {
+        let Some(call) = self.open_rust_generic_calls.remove(&(value_span.start, value_span.end)) else {
+            return;
+        };
+        if name == "_" {
+            self.errors.push(errors::rust_owner_type_args_not_inferred(
+                &call.owner,
+                &call.method,
+                &call.type_params,
+                None,
+                value_span,
+            ));
+            return;
+        }
+        self.open_rust_generic_bindings.push(super::OpenRustGenericBinding {
+            name: name.to_string(),
+            block: self.current_statement_block,
+            span: value_span,
+            call,
+        });
+    }
+
+    /// Refuse an open Rust associated call whose value a bare expression statement throws away (#1720).
+    ///
+    /// `HashMap.new()` on its own line binds nothing, so no later statement can supply the type arguments Rust
+    /// would need; the call is refused where it stands.
+    fn reject_discarded_open_rust_generic_call(&mut self, expr_span: Span) {
+        let Some(call) = self.open_rust_generic_calls.remove(&(expr_span.start, expr_span.end)) else {
+            return;
+        };
+        self.errors.push(errors::rust_owner_type_args_not_inferred(
+            &call.owner,
+            &call.method,
+            &call.type_params,
+            None,
+            expr_span,
+        ));
+    }
+
+    /// Stop watching the open Rust generic bindings named `name`: a read or a reassignment reached it (#1720).
+    ///
+    /// Any later reader is taken as the one that fixes the type arguments. That is deliberately generous, since
+    /// Rust's own inference decides which uses fix them; the checker refuses only a binding nothing reads at all.
+    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str) {
+        if self.open_rust_generic_bindings.is_empty() {
+            return;
+        }
+        self.open_rust_generic_bindings.retain(|binding| binding.name != name);
+    }
+
+    /// Refuse every open Rust generic binding that the statement block `block` declared and nothing read (#1720).
+    ///
+    /// Called when that block ends. Bindings of enclosing blocks stay watched: a read inside this block already
+    /// released them, and one after it still can.
+    pub(in crate::typechecker) fn reject_unread_open_rust_generic_bindings_of_block(&mut self, block: usize) {
+        let (left_unread, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
+            .into_iter()
+            .partition(|binding| binding.block == block);
+        self.open_rust_generic_bindings = still_watched;
+        for binding in left_unread {
+            self.errors.push(errors::rust_owner_type_args_not_inferred(
+                &binding.call.owner,
+                &binding.call.method,
+                &binding.call.type_params,
+                Some(binding.name.as_str()),
+                binding.span,
+            ));
+        }
+    }
+
     /// Check a return statement against the active function context.
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {
         if matches!(self.current_yield_context, super::YieldContext::Generator { .. }) {
@@ -991,6 +1316,7 @@ impl TypeChecker {
             return;
         }
 
+        self.record_returned_value(expr);
         let return_ty = if let Some(e) = expr {
             let expected_return_ty = self.symbols.current_return_type().cloned();
             self.check_expr_with_expected(e, expected_return_ty.as_ref())
@@ -1006,6 +1332,12 @@ impl TypeChecker {
                 &return_ty.to_string(),
                 span,
             ));
+        }
+        if let (Some(e), Some(expected)) = (expr, self.symbols.current_return_type().cloned()) {
+            self.record_value_destination_if_compatible(e.span, &return_ty, &expected);
+            if matches!(expected, ResolvedType::Function(..)) {
+                self.check_capturing_return(e);
+            }
         }
     }
 
@@ -1056,8 +1388,14 @@ impl TypeChecker {
     }
 
     /// Return whether two union member candidates are equivalent for narrowing.
+    ///
+    /// A `str` and a `FrozenStr` are one semantic string: `isinstance(value, str)` selects a `FrozenStr` member, the
+    /// same way lowering binds that member for the branch, so the branch checks the value as the member it holds
+    /// rather than as the whole union (#1748).
     fn union_member_matches(&self, member: &ResolvedType, target: &ResolvedType) -> bool {
-        self.types_compatible(member, target) && self.types_compatible(target, member)
+        let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str | ResolvedType::FrozenStr);
+        (is_text(member) && is_text(target))
+            || (self.types_compatible(member, target) && self.types_compatible(target, member))
     }
 
     /// Return the type available in the true branch of an `isinstance` check.
@@ -1066,19 +1404,20 @@ impl TypeChecker {
         current_ty: &ResolvedType,
         target_ty: &ResolvedType,
     ) -> Option<ResolvedType> {
+        let member_target = self.union_member_target_spelling(target_ty.clone());
         if let Some(members) = current_ty.union_members() {
             return members
                 .iter()
-                .find(|member| self.union_member_matches(member, target_ty))
-                .cloned();
+                .find(|member| self.union_member_matches(member, &member_target))
+                .map(|member| Self::narrowed_union_member_type(member, target_ty));
         }
 
         if let Some(inner) = current_ty.option_inner_type() {
             if let Some(members) = inner.union_members() {
                 return members
                     .iter()
-                    .find(|member| self.union_member_matches(member, target_ty))
-                    .cloned();
+                    .find(|member| self.union_member_matches(member, &member_target))
+                    .map(|member| Self::narrowed_union_member_type(member, target_ty));
             }
             if self.union_member_matches(inner, target_ty) {
                 return Some(inner.clone());
@@ -1090,15 +1429,16 @@ impl TypeChecker {
 
     /// Return the union-minus-target type after a failed `isinstance` check.
     fn union_minus_type(&self, members: &[ResolvedType], target_ty: &ResolvedType) -> Option<ResolvedType> {
+        let member_target = self.union_member_target_spelling(target_ty.clone());
         let remaining: Vec<_> = members
             .iter()
-            .filter(|member| !self.union_member_matches(member, target_ty))
+            .filter(|member| !self.union_member_matches(member, &member_target))
             .cloned()
             .collect();
         if remaining.len() == members.len() {
             None
         } else {
-            Some(union_ty(remaining))
+            Some(Self::localize_union_member(union_ty(remaining)))
         }
     }
 
@@ -1354,7 +1694,7 @@ impl TypeChecker {
         false_refinement
     }
 
-    /// Check an acknowledgement body in its surrounding ordinary statement scope.
+    /// Check an acknowledgment body in its surrounding ordinary statement scope.
     fn check_unsafe_stmt(&mut self, unsafe_stmt: &UnsafeStmt) {
         self.unsafe_depth += 1;
         self.check_statement_block(&unsafe_stmt.body);
@@ -1384,8 +1724,9 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a statement-form `while`, including ordinary truthiness and pattern-driven `while let` conditions.
-    fn check_while_stmt(&mut self, while_stmt: &WhileStmt) {
+    /// Type-check a statement-form `while` at `span`, including ordinary truthiness and pattern-driven `while let`
+    /// conditions.
+    fn check_while_stmt(&mut self, while_stmt: &WhileStmt, span: Span) {
         match &while_stmt.condition {
             // ---- Context: ordinary boolean `while` condition ----
             Condition::Expr(expr) => {
@@ -1393,7 +1734,7 @@ impl TypeChecker {
                 self.validate_truthiness_condition(&cond_ty, expr.span);
 
                 self.symbols.enter_scope(ScopeKind::Block);
-                self.push_loop_context(LoopContextKind::Statement, None);
+                self.push_loop_context(LoopContextKind::Statement, None, span.start);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
@@ -1401,30 +1742,35 @@ impl TypeChecker {
             // ---- Context: pattern-driven `while let` loop ----
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
-                self.push_loop_context(LoopContextKind::Statement, None);
+                let views = self.enter_pattern_views(&pattern.node, view_param);
+                self.push_loop_context(LoopContextKind::Statement, None, span.start);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
+                self.exit_pattern_views(views);
                 self.symbols.exit_scope();
+                self.note_dict_lookup_let(value, pattern, &while_stmt.body);
             }
         }
     }
 
-    /// Type-check a statement-form `loop:` body.
+    /// Type-check a statement-form `loop:` body; the statement starts at `span`.
     ///
     /// Statement loops share the same loop context stack as `for` / `while`, but they do not accept `break <value>`
     /// because no surrounding expression consumes a result.
-    fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt) {
+    fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt, span: Span) {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.push_loop_context(LoopContextKind::Statement, None);
+        self.push_loop_context(LoopContextKind::Statement, None, span.start);
         self.check_statement_block(&loop_stmt.body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }
 
-    /// Type-check a statement-form `for`, binding the loop pattern from builtin collections or RFC 068 iteration hooks.
-    fn check_for_stmt(&mut self, for_stmt: &ForStmt) {
+    /// Type-check a statement-form `for` at `span`, binding the loop pattern from builtin collections or RFC 068
+    /// iteration hooks.
+    fn check_for_stmt(&mut self, for_stmt: &ForStmt, span: Span) {
         let elem_ty = match &for_stmt.iter.node {
             Expr::Try(inner) => {
                 let iter_ty = self.check_expr(inner);
@@ -1448,10 +1794,19 @@ impl TypeChecker {
             }
             _ => {
                 let iter_ty = self.check_expr(&for_stmt.iter);
+                let iter_ty = self.settle_open_constructor_sides_in_place(&for_stmt.iter, iter_ty);
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };
+        let owns_items = self.plan_for_item_taking(for_stmt, &elem_ty);
 
+        // The iterated place is resolved before the loop's bindings shadow it (`for items in items:`).
+        let loop_view_param = self.loop_view_param(&for_stmt.iter);
+        let derived_views = if loop_view_param.is_none() {
+            self.read_only_derived_loop_views(&for_stmt.iter, &for_stmt.pattern.node)
+        } else {
+            Vec::new()
+        };
         self.symbols.enter_scope(ScopeKind::Block);
         // Record the resolved element type at the pattern's own span. Body IR's `lower_for` already reads the loop
         // pattern's type back through `TypeCheckInfo::expr_type`, and every binding the pattern introduces -- one
@@ -1459,9 +1814,12 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
-        self.push_loop_context(LoopContextKind::Statement, None);
+        self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
+        self.push_loop_context(LoopContextKind::Statement, None, span.start);
+        let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);
+        self.exit_for_loop_body(loop_body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }
@@ -1513,8 +1871,10 @@ impl TypeChecker {
     ///
     /// For expression-form `loop:` bodies this records the break value type so the loop result can be resolved after
     /// the body finishes checking. For statement loops it rejects `break <value>` while still type-checking the
-    /// provided expression to surface any nested errors.
+    /// provided expression to surface any nested errors. The exit is recorded, since it can skip the statements after
+    /// it in the loop it leaves.
     fn check_break_stmt(&mut self, value: Option<&Spanned<Expr>>, span: Span) {
+        self.note_loop_exit(span);
         let Some((loop_kind, expected_break_ty)) = self
             .loop_stack
             .last()
@@ -1553,8 +1913,10 @@ impl TypeChecker {
         }
     }
 
-    /// Validate that `continue` appears inside some active loop context.
+    /// Validate that `continue` appears inside some active loop context, and record the exit, which can skip the
+    /// statements after it in that loop.
     fn check_continue_stmt(&mut self, span: Span) {
+        self.note_loop_exit(span);
         if self.loop_stack.is_empty() {
             self.errors.push(errors::continue_outside_loop(span));
         }
@@ -1660,11 +2022,15 @@ impl TypeChecker {
             Condition::Expr(expr) => self.check_expr_condition_body(expr, body, incoming_refinements),
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.apply_branch_refinements(incoming_refinements);
                 self.check_pattern(pattern, &value_ty);
+                let views = self.enter_pattern_views(&pattern.node, view_param);
                 self.check_statement_block(body);
+                self.exit_pattern_views(views);
                 self.symbols.exit_scope();
+                self.note_dict_lookup_let(value, pattern, body);
                 None
             }
         }
@@ -1753,6 +2119,10 @@ impl TypeChecker {
                 AssertIsPatternKind::Err => scrutinee_ty.result_err_type().cloned().unwrap_or(ResolvedType::Unknown),
                 AssertIsPatternKind::None => ResolvedType::Unit,
             };
+            // The assertion subset defines its one binding here rather than through `check_pattern`, so it records
+            // the same per-pattern-node type fact that walk records (#1245): lowering reads one fact for a pattern
+            // binding whichever construct owns it.
+            self.record_expr_type(span, ty.clone());
             self.validate_protected_builtin_binding(&name, span);
             self.symbols.define(Symbol {
                 name: name.clone(),
@@ -1840,9 +2210,29 @@ impl TypeChecker {
 
     /// Infer the item type for built-in iterable surfaces.
     ///
-    /// This captures language-level iteration semantics, such as strings yielding one-character `str` values and
-    /// bytes yielding `int` values, before the backend chooses the Rust iterator adapter that implements them.
+    /// This captures language-level iteration semantics, such as strings yielding one-character `str` values, bytes
+    /// yielding `int` values, and a type parameter bounded by `Iterable[T]` yielding `T`, before the backend chooses
+    /// the Rust iterator adapter that implements them.
     pub fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {
+        if let Some(type_param) = self.active_type_param_name(iter_ty) {
+            for frame in self.current_type_param_bound_details.iter().rev() {
+                let Some(bounds) = frame.get(type_param) else {
+                    continue;
+                };
+                if let Some(item) = bounds.iter().find_map(|bound| {
+                    let trait_id = builtin_traits::from_qualified_str(&bound.name)
+                        .or_else(|| builtin_traits::from_str(Self::type_bound_source_name(bound)))?;
+                    if matches!(trait_id, TraitId::Iterable | TraitId::Iterator | TraitId::IntoIterator) {
+                        bound.type_args.first().cloned()
+                    } else {
+                        None
+                    }
+                }) {
+                    return item;
+                }
+                break;
+            }
+        }
         match iter_ty {
             ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
             ResolvedType::FrozenDict(key, _) => key.as_ref().clone(),
@@ -1879,11 +2269,15 @@ impl TypeChecker {
     }
 
     /// Infer a loop item type from an iterable expression, falling back to structural `__iter__` / `__next__` hooks.
+    ///
+    /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
+    /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
         iter_ty: &ResolvedType,
     ) -> ResolvedType {
+        self.note_mut_param_iteration(iter_expr, iter_ty);
         if iter_ty.iterator_item_type().is_some()
             && let Expr::Ident(name) = &iter_expr.node
         {

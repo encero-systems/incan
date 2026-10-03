@@ -1,0 +1,41 @@
+# behavior: closures written without parameter annotations take their parameter types from their context, an iterator adapter's or terminal's element, a fold's accumulator and a generic function's parameter once the other arguments fix it, and a generator's own map and filter call them in place
+# retires: loaves/compiler/incan_emit/src/tests/closure_parameter_inference.rs::closures_typed_by_their_context_build_and_run_issue1561
+# expect-stdout:
+#   [2, 4, 6]
+#   ["ADA", "LIN"]
+#   ["ada", "ADA", "lin", "LIN"]
+#   [1, 3]
+#   [1, 2]
+#   true
+#   60
+#   5
+#   A
+#   [10, 20, 30]
+#   [1, 3]
+
+
+def apply_twice[T](f: (T) -> T, value: T) -> T:
+    return f(f(value))
+
+
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+    yield 3
+
+
+def main() -> None:
+    items = [1, 2, 3]
+    names = ["ada", "lin"]
+    println(items.iter().map((x) => x * 2).collect())
+    shouted: list[str] = names.iter().map((name) => name.upper()).collect()
+    println(shouted)
+    println(names.iter().flat_map((name) => [name, name.upper()]).collect())
+    println(items.iter().filter((x) => x % 2 == 1).collect())
+    println(items.iter().take_while((x) => x * 2 < 5).collect())
+    println(names.iter().any((name) => len(name.strip()) > 2))
+    println(items.iter().fold(0, (acc, x) => acc + x * 10))
+    println(apply_twice((x) => x + 1, 3))
+    println(apply_twice((text) => text.upper(), "a"))
+    println(numbers().map((x) => x * 10).collect())
+    println(numbers().filter((x) => x % 2 == 1).collect())

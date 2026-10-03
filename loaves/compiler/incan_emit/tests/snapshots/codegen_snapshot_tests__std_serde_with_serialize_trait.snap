@@ -9,7 +9,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::serde::json::Serialize;
 #[derive(
-    serde::Serialize,
+    ::serde::Serialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,

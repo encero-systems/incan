@@ -1,0 +1,34 @@
+# behavior: Read.by_ref over an owned Rust reader and over a reader behind a RefCell guard yields a reader that reads the remaining text into a mutable str buffer, and read_to_string on a Cursor fills the buffer through the metadata-free fallback
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::read_by_ref_receiver_borrows_owned_reader_without_dereference
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::read_by_ref_receiver_with_recorded_borrow_is_not_reborrowed_again
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::read_by_ref_receiver_reborrows_through_refmut_guard
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::metadata_free_read_to_string_fallback_requires_string_buffer
+# expect-stdout:
+#   hello
+#   5
+#   world
+#   again
+
+from rust::std::cell import RefCell
+from rust::std::io import Cursor, Read
+from rust::std::rc import Rc
+
+
+def read_all(input: Cursor[bytes]) -> str:
+    mut text = ""
+    Read.by_ref(input).read_to_string(text)
+    return text
+
+
+def main() -> None:
+    println(read_all(Cursor.new(b"hello")))
+    mut direct = Cursor.new(b"world")
+    mut count = ""
+    direct.read_to_string(count)
+    println(len(count))
+    println(count)
+    shared = Rc.new(RefCell.new(Cursor.new(b"again")))
+    mut cursor = shared.borrow_mut()
+    mut guarded = ""
+    Read.by_ref(cursor).read_to_string(guarded)
+    println(guarded)

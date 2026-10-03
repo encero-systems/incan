@@ -1,0 +1,22 @@
+# behavior: the chunks default of the stdlib BinaryReader trait returns the ReaderChunks type of its own module, which the adopting program iterates without ever importing that type
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_trait_default_annotation_uses_defining_module_type_path
+# expect-stdout:
+#   2
+#   2
+#   1
+#   done
+
+from std.io import BytesIO, IoError
+
+
+def read_chunks() -> Result[None, IoError]:
+    for chunk in BytesIO(b"abcde").chunks(2)?:
+        println(len(chunk))
+    println("done")
+    return Ok(None)
+
+
+def main() -> None:
+    match read_chunks():
+        Ok(_) => pass
+        Err(err) => println(err.message())

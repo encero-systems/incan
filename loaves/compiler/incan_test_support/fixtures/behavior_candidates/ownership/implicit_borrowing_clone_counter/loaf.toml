@@ -1,0 +1,9 @@
+[project]
+name = "implicit_borrowing_clone_counter"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+borrow_fixture = { path = "rust/borrow_fixture" }

@@ -8,24 +8,16 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn squares(xs: Vec<i64>) -> Vec<i64> {
-    return (xs).iter().copied().map(|x| x * x).collect::<Vec<_>>();
+    return ((xs).into_iter()).map(|x| x * x).collect::<Vec<_>>();
 }
 fn positive_squares(xs: Vec<i64>) -> Vec<i64> {
-    return (xs)
-        .iter()
-        .filter_map(|x| {
-            let x = *x;
-            if x > 0 { Some(x * x) } else { None }
-        })
+    return ((xs).into_iter())
+        .filter_map(|x| { if x > 0 { Some(x * x) } else { None } })
         .collect::<Vec<_>>();
 }
 fn index_by_value(xs: Vec<i64>) -> std::collections::HashMap<i64, i64> {
-    return xs
-        .iter()
-        .filter_map(|x| {
-            let x = *x;
-            if x > 0 { Some((x, x * x)) } else { None }
-        })
+    return ((xs).into_iter())
+        .filter_map(|x| { if x > 0 { Some((x, x * x)) } else { None } })
         .collect::<std::collections::HashMap<_, _>>();
 }
 fn main() {

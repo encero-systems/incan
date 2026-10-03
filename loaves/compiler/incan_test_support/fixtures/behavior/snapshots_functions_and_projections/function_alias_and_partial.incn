@@ -1,0 +1,27 @@
+# behavior: a function called directly, through a same-module binding alias and through a partial with a bound keyword argument gives the target's result each time
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::ordinary_function_declaration_and_call_share_one_projection
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::same_module_function_alias_calls_the_target_projection_without_a_second_definition
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::partial_wrapper_declaration_and_call_share_one_projection
+# expect-stdout:
+#   42
+#   42
+#   GET/
+
+def calculate(value: int) -> int:
+    return value + 1
+
+
+compute = calculate
+
+
+def route(method: str, path: str) -> str:
+    return f"{method}{path}"
+
+
+get = partial route(method="GET")
+
+
+def main() -> None:
+    println(calculate(41))
+    println(compute(41))
+    println(get(path="/"))

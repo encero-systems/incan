@@ -60,7 +60,6 @@ Use the C namespace in the raw declaration, even when a type looks similar to In
 | C `char` | `c.c_char` |
 | Target-sized byte count | `c.Size`, carried as Incan `usize` |
 | Required immutable or mutable pointer | `c.ConstPtr[T]` or `c.MutPtr[T]` |
-| Nullable pointer | `Option[c.ConstPtr[T]]` or `Option[c.MutPtr[T]]` |
 | NUL-terminated text input | `c.cstr(value)?`, then `text.as_const_ptr()` inside `unsafe:` for an exact `c.ConstPtr[c.c_char]` parameter |
 | Temporary `const char *` text result | `view.copy_utf8(max_bytes=<positive int>)` inside the same `unsafe:` region |
 | Opaque resource consumed by the native call | `c.Owned[Handle]` |
@@ -142,7 +141,7 @@ binding Fixture:
 ```incan
 unsafe:
     output = c.out[c.Owned[Handle]]()
-    attempts = c.inout(0)
+    attempts = c.inout(0i32)
     status = Fixture.open(output, attempts)
     if status == Fixture.Status.OK:
         handle = output.take()
@@ -163,7 +162,7 @@ def sqlite_version() -> Result[str, str]:
         return view.copy_utf8(max_bytes=256)
 ```
 
-A `c.ConstPtr[c.c_char]` result is a scoped view. It has no public pointer API: call `copy_utf8(max_bytes=...)` immediately inside the same `unsafe:` region to receive an owned `str`. The argument must be named and positive, and the conversion validates a terminator and UTF-8 within that bound. Do not return, store, capture, or forward `view`; spans, mutable buffers, and zero-copy returned views are not part of this foundation.
+A `c.ConstPtr[c.c_char]` result is a scoped view. It has no public pointer API: call `copy_utf8(max_bytes=...)` on it inside the same `unsafe:` region to receive an owned `str`. The argument must be named and positive, and the conversion validates a terminator and UTF-8 within that bound. The compiler refuses a view that is returned, stored, captured by a closure, or passed on, so keep `view` in the one local you copy it from.
 
 ## Declare constants and a plain layout
 
@@ -259,7 +258,7 @@ After locking, inspect the same target requirements as a deterministic platform 
 incan inspect interop-plan --target aarch64-linux-android --format json
 ```
 
-The plan gives an Oven, Gradle, or Xcode adapter consistent target, artifact, shim, and placement facts without freezing either adapter's task protocol. It is not an Oven resolution receipt or a deployable application: it contains no local SDK path, selected compiler executable, generated artifact, signing identity, licence admission, or credential.
+The plan gives an Oven, Gradle, or Xcode adapter consistent target, artifact, shim, and placement facts without freezing either adapter's task protocol. It is not an Oven resolution receipt or a deployable application: it contains no local SDK path, selected compiler executable, generated artifact, signing identity, license admission, or credential.
 
 Use the explicit v0.5 baker after the package lock is current. First materialize the package's sealed base runtime Loafs; this writes the release receipt without selecting an interop execution receipt, so it is the required first half of an interop bake:
 
@@ -303,6 +302,6 @@ The command inspects the selected source graph, so pass the same feature and SDK
 
 Choose this surface when the library's supported boundary is a compact C ABI and the part you need fits the verified scalar and opaque-resource subset. Prefer [Rust interop](rust_interop.md) when a maintained Rust crate already offers the safe, resource, callback, or asynchronous API you need. A C ABI may still be the right eventual boundary for a library implemented in another language; the implementation language is not the deciding factor.
 
-If the header depends on callbacks, variadics, unions, bitfields, macros that cannot be represented as constants, or nontrivial lifetime rules, do not fake a scalar declaration. A checked C or C++ shim is the intended later adapter; it is not available in this first release slice.
+If the header depends on callbacks, variadics, unions, bitfields, macros that cannot be represented as constants, or nontrivial lifetime rules, do not fake a scalar declaration. Write a C or C++ shim that exposes a compact C ABI over that part, declare its sources as a shim under [`[interop.c]`](../../tooling/reference/project_configuration.md#interopc) in `loaf.toml`, and bind the shim's functions instead.
 
 See [how checked C interop is structured](../explanation/checked_c_interop.md) for the source-of-truth and toolchain boundary, the [binding inspection JSON schema](../../tooling/reference/binding_inspection_schema.md) for tool integration, and the [`std.interop` reference](../reference/stdlib/interop.md) for precise accepted syntax.

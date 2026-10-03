@@ -135,18 +135,30 @@ impl<'a> IrEmitter<'a> {
                 quote! { Result<#o, #e> }
             }
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
-                if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
-                    return quote! { incan_std_core::reflection::FieldInfo };
-                }
-                if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
-                    return quote! { incan_std_core::validation::ValidationError };
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1770 -- a program's own `model FieldInfo` was spelled as the runtime
+                //   reflection type at every use, so `FieldInfo(label="custom")` built a struct without that field
+                //   (E0560).
+                // - Behavior evidence: the `user_model_named_like_a_stdlib_type` behavior fixture.
+                // - Semantic owner: the checked name binding (a module declaration is the program's own type; a stdlib
+                //   surface type is reached only through an import, #1795); this arm only keeps the runtime spelling
+                //   for a name the program does not declare.
+                // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves
+                //   nominal types through their canonical identities and has no bare-name spellings.
+                if !self.local_nominal_type_names.contains(name) {
+                    if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
+                        return quote! { incan_std_core::reflection::FieldInfo };
+                    }
+                    if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
+                        return quote! { incan_std_core::validation::ValidationError };
+                    }
                 }
                 if *self.qualify_internal_canonical_paths.borrow()
                     && let Some(path) = self.emit_dependency_type_path(name)
                 {
                     return path;
                 }
-                Self::emit_path_ident(name)
+                Self::emit_path_ident(self.unbound_nominal_type_path(name))
             }
             IrType::RustDisplay(display) => display.parse().unwrap_or_else(|_| quote! { _ }),
             IrType::ExternalUnion { .. } => self.emit_union_type_path(ty),
@@ -169,7 +181,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     quote! { #n < #(#ts),* > }
                 } else {
-                    let n = Self::emit_path_ident(name);
+                    let n = Self::emit_path_ident(self.unbound_nominal_type_path(name));
                     quote! { #n < #(#ts),* > }
                 }
             }
@@ -190,7 +202,7 @@ impl<'a> IrEmitter<'a> {
                 quote! { fn(#(#ps),*) -> #r }
             }
             IrType::Generic(name) => {
-                let n = format_ident!("{}", name);
+                let n = Self::rust_ident(name);
                 quote! { #n }
             }
             IrType::Ref(inner) => {
@@ -203,6 +215,12 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::Unknown => quote! { _ },
         }
+    }
+
+    /// Return the spelling of a nominal type name in the program being emitted: the crate path lowering recorded for a
+    /// type the program names without binding it (#1561), or the name itself.
+    fn unbound_nominal_type_path<'n>(&'n self, name: &'n str) -> &'n str {
+        self.unbound_nominal_type_paths.get(name).map_or(name, String::as_str)
     }
 
     /// Emit the Rust function type for a callable value.
@@ -229,7 +247,7 @@ impl<'a> IrEmitter<'a> {
         let params: Vec<TokenStream> = type_params
             .iter()
             .map(|tp| {
-                let name = format_ident!("{}", &tp.name);
+                let name = Self::rust_ident(&tp.name);
                 if tp.bounds.is_empty() {
                     quote! { #name }
                 } else {
@@ -247,7 +265,7 @@ impl<'a> IrEmitter<'a> {
         let params: Vec<TokenStream> = type_params
             .iter()
             .map(|tp| {
-                let name = format_ident!("{}", &tp.name);
+                let name = Self::rust_ident(&tp.name);
                 if tp.bounds.is_empty() {
                     quote! { #name }
                 } else {
@@ -264,6 +282,34 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit type parameters with their declared bounds plus one more bound on every parameter: `<T: Clone + Debug>`.
+    ///
+    /// This is the header a Rust derive would generate for its impl, which adds its own trait to each parameter
+    /// unconditionally; a hand-written impl that stands in for a derive uses it so the two are interchangeable.
+    pub fn emit_type_params_with_extra_bound(
+        &self,
+        type_params: &[incan_ir::decl::IrTypeParam],
+        extra_bound: &TokenStream,
+    ) -> TokenStream {
+        if type_params.is_empty() {
+            return quote! {};
+        }
+        let params: Vec<TokenStream> = type_params
+            .iter()
+            .map(|tp| {
+                let name = Self::rust_ident(&tp.name);
+                let bounds: Vec<TokenStream> = tp
+                    .bounds
+                    .iter()
+                    .map(|b| self.emit_trait_bound(b))
+                    .chain(std::iter::once(extra_bound.clone()))
+                    .collect();
+                quote! { #name: #(#bounds)+* }
+            })
+            .collect();
+        quote! { < #(#params),* > }
+    }
+
     /// Emit bare type parameter names without bounds: `<T, E>`.
     ///
     /// Used in type-application positions (return types, `impl Foo<T>`) where Rust does not allow trait bounds — only
@@ -278,7 +324,7 @@ impl<'a> IrEmitter<'a> {
         let names: Vec<TokenStream> = type_params
             .iter()
             .map(|tp| {
-                let name = format_ident!("{}", &tp.name);
+                let name = Self::rust_ident(&tp.name);
                 quote! { #name }
             })
             .collect();
@@ -292,6 +338,20 @@ impl<'a> IrEmitter<'a> {
     fn emit_trait_bound(&self, bound: &incan_ir::decl::IrTraitBound) -> TokenStream {
         if matches!(bound.origin, incan_ir::decl::IrTraitBoundOrigin::RustCapability) && bound.trait_path == "Static" {
             return quote! { 'static };
+        }
+        // A function type that holds any callable of its type is spelled with Rust's `Fn(A) -> R` sugar (#1561).
+        if matches!(bound.origin, incan_ir::decl::IrTraitBoundOrigin::FunctionType) {
+            let params = bound
+                .type_args
+                .iter()
+                .map(|param| self.emit_type(param))
+                .collect::<Vec<_>>();
+            let ret = bound
+                .assoc_types
+                .iter()
+                .map(|(_, ret)| self.emit_type(ret))
+                .collect::<Vec<_>>();
+            return quote! { Fn(#(#params),*) #(-> #ret)* };
         }
 
         // Parse the trait path into segments.
@@ -324,7 +384,7 @@ impl<'a> IrEmitter<'a> {
                 .assoc_types
                 .iter()
                 .map(|(name, ty)| {
-                    let name_ident = format_ident!("{}", name);
+                    let name_ident = Self::rust_ident(name);
                     let ty_tokens = self.emit_type(ty);
                     quote! { #name_ident = #ty_tokens }
                 })
@@ -413,25 +473,31 @@ impl<'a> IrEmitter<'a> {
                     .collect();
                 quote! { (#(#ps),*) }
             }
-            Pattern::Struct { name, fields } => {
+            Pattern::Struct { name, fields, rest } => {
                 // The name may be a bare struct or a qualified enum variant such as `Predicate::KeyValue`; a
                 // qualified one must emit as a path, because `format_ident!` cannot carry `::`.
                 let n: TokenStream = if name.contains("::") {
-                    let idents: Vec<_> = name.split("::").map(|segment| format_ident!("{}", segment)).collect();
+                    let idents: Vec<_> = name.split("::").map(Self::rust_ident).collect();
                     quote! { #(#idents)::* }
                 } else {
-                    let ident = format_ident!("{}", name);
+                    let ident = Self::rust_ident(name);
                     quote! { #ident }
                 };
                 let fs: Vec<_> = fields
                     .iter()
                     .map(|(fname, fpat)| {
-                        let fn_ident = format_ident!("{}", fname);
+                        let fn_ident = Self::rust_ident(fname);
                         let fp = self.emit_pattern_with_mutable_bindings(fpat, mutable_bindings);
                         quote! { #fn_ident: #fp }
                     })
                     .collect();
-                quote! { #n { #(#fs),* } }
+                // Lowering marks a rest it may not spell field by field, such as another module's private field
+                // (#1740); `..` is the only Rust spelling for it.
+                if *rest {
+                    quote! { #n { #(#fs,)* .. } }
+                } else {
+                    quote! { #n { #(#fs),* } }
+                }
             }
             Pattern::Enum {
                 name: _,
@@ -490,11 +556,12 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Incan `str` lowers to Rust `String`. Rust cannot directly match `String` with a string-literal pattern, so
     /// string literal arms become guarded reference patterns while fallback bindings still receive the original
-    /// `String` value.
+    /// `String` value. Any other pattern is emitted with `mutable_bindings` marked mutable.
     pub fn emit_pattern_for_scrutinee(
         &self,
         pattern: &Pattern,
         scrutinee_ty: &IrType,
+        mutable_bindings: &HashSet<String>,
     ) -> (TokenStream, Option<TokenStream>) {
         if matches!(scrutinee_ty, IrType::String) {
             if let Pattern::Literal(lit) = pattern
@@ -517,7 +584,7 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        (self.emit_pattern(pattern), None)
+        (self.emit_pattern_with_mutable_bindings(pattern, mutable_bindings), None)
     }
 
     /// Emit compiler-introduced match-arm bindings.
@@ -550,7 +617,11 @@ impl<'a> IrEmitter<'a> {
         arm: &MatchArm,
         pattern_guard: Option<TokenStream>,
     ) -> Result<Option<TokenStream>, EmitError> {
-        let arm_guard = arm.guard.as_ref().map(|guard| self.emit_expr(guard)).transpose()?;
+        let arm_guard = arm
+            .guard
+            .as_ref()
+            .map(|guard| self.emit_condition_position_expr(guard))
+            .transpose()?;
         let guard = match (pattern_guard, arm_guard) {
             (Some(pattern_guard), Some(arm_guard)) => Some(quote! { (#pattern_guard) && (#arm_guard) }),
             (Some(pattern_guard), None) => Some(pattern_guard),

@@ -1,9 +1,20 @@
 //! Tokio-backed task adapters for `std.async.task`.
 
 use std::fmt;
-use std::future::Future;
+use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+
+/// The Rust realization of the RFC 039 `Awaitable[T]` protocol: a value that `await` turns into `T`.
+///
+/// A generic bound `F with Awaitable[T]` lowers to `F: Awaitable<T>`, and the `IntoFuture<Output = T>` supertrait is
+/// what lets `task.await` compile inside that function. The blanket implementation admits every future-like value
+/// (a `JoinHandle<T>`, an async block, a Rust future crossing the interop boundary), which is exactly the set the
+/// typechecker admits for the bound. The trait is a bound, not something a program implements: a declared type
+/// adopting `Awaitable[T]` is refused by the typechecker, because nothing in generated code could realize it.
+pub trait Awaitable<T>: IntoFuture<Output = T> {}
+
+impl<T, Awaited> Awaitable<T> for Awaited where Awaited: IntoFuture<Output = T> {}
 
 /// Runtime bridge trait for async tasks that produce `T`.
 ///
@@ -131,8 +142,20 @@ pub async fn yield_now() {
 
 #[cfg(test)]
 mod tests {
-    use super::{spawn, spawn_blocking};
+    use super::{Awaitable, spawn, spawn_blocking};
     use tokio::sync::oneshot;
+
+    /// Await through the bound the way generated code does for `F with Awaitable[T]`.
+    async fn wait_for<T, F: Awaitable<T>>(task: F) -> T {
+        task.await
+    }
+
+    #[tokio::test]
+    async fn awaitable_bound_admits_join_handles_and_async_blocks() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(wait_for(spawn(async { 9 })).await?, 9);
+        assert_eq!(wait_for(async { "ready" }).await, "ready");
+        Ok(())
+    }
 
     #[tokio::test]
     async fn join_handle_await_surfaces_task_join_error() {

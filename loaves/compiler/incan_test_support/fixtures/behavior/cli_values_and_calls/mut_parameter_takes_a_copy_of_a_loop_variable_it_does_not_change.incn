@@ -1,0 +1,49 @@
+# behavior: a for loop variable, or a field of one, passed to a mut parameter the callee never changes builds and is read, whether the loop iterates a mut list parameter, an immutable local list, a list of strings or a list of models
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::loop_variables_passed_to_an_unchanged_mut_parameter_are_copied_issue1773
+# expect-stdout:
+#   2
+#   3
+#   3
+#   2
+
+model Cell:
+    pub tags: list[int]
+
+
+def show(mut row: list[int]) -> int:
+    return len(row)
+
+
+def width(mut s: str) -> int:
+    return len(s)
+
+
+def each(mut items: list[list[int]]) -> int:
+    mut t = 0
+    for row in items:
+        t += show(row)
+    return t
+
+
+def total(mut names: list[str]) -> int:
+    mut t = 0
+    for name in names:
+        t += width(name)
+    return t
+
+
+def main() -> None:
+    live: list[list[int]] = [[1], [2]]
+    println(each(live))
+    rows: list[list[int]] = [[1], [2, 3]]
+    mut u = 0
+    for rest in rows:
+        u += show(rest)
+    println(u)
+    mut names: list[str] = ["a", "bc"]
+    println(total(names))
+    cells: list[Cell] = [Cell(tags=[1, 2])]
+    mut v = 0
+    for c in cells:
+        v += show(c.tags)
+    println(v)

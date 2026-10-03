@@ -2,7 +2,7 @@
 # =====================================
 
 # Where cargo places build output, and therefore where every prepared store, prewarmed Loaf, and built binary this
-# Makefile looks for actually lives. `CARGO_TARGET_DIR` is honoured rather than assumed away: a caller that redirects
+# Makefile looks for actually lives. `CARGO_TARGET_DIR` is honored rather than assumed away: a caller that redirects
 # build output — a worktree working under a storage budget, a cache shared between worktrees — otherwise has cargo
 # writing to one directory while make reads from another. The symptom is not a missing file but a misleading one:
 # every target needing the compiler binary fails claiming the project's dependencies were never baked.
@@ -23,10 +23,14 @@ INCAN_TEST_OVEN_HOME ?= $(TARGET_DIR)/incan_test_oven_home
 INCAN_TEST_OVEN_LOAF_ROOT ?= $(TARGET_DIR)/share/incan/oven/loafs
 INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT ?= $(TARGET_DIR)/oven-alpha-release-toolchain
 INCAN_TEST_OVEN_RELEASE_COMPILER_BIN ?= $(TARGET_DIR)/debug/incan
+INCAN_TEST_OVEN_RELEASE_POLICY_HOME ?= $(TARGET_DIR)/oven-alpha-release-policy-home
+INCAN_TEST_OVEN_RELEASE_POLICY_REPORT ?= $(TARGET_DIR)/oven-alpha-release-policy.json
 INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(TARGET_DIR)/oven-compiler-suite-store
 # Caller-owned compiler-suite outputs are one-use. `test-oven` creates a fresh directory below this root and removes
 # it after reporting its physical disk use, so repeated local runs cannot reuse a stale test binary or accumulate it.
 INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT ?= $(TARGET_DIR)
+# Keep this absolute root short: nested Rust fixture tools have platform path-length limits.
+INCAN_TEST_TMP_ROOT ?= /tmp
 # Oven owns the release and compiler-suite storage profiles. Make supplies roots and deliberate test inputs only;
 # refusal tests pass explicit tiny CLI limits rather than redefining production policy here.
 INCAN_TEST_OVEN_BAKE_FORMAT ?= text
@@ -42,11 +46,33 @@ INCAN_TEST_OVEN_TEST_ONE_REPORT ?=
 # consumer toolchain, so the pinned Rust 1.98.0 gates prove their advertised compiler rather than nightly. The named
 # publisher/test-fixture boundary remains explicit; normal Oven build/run/test remains direct-rustc.
 INCAN_TEST_PREWARM_TOOLCHAIN ?= 1.98.0
+# TODO(#1561): the publisher and fixture Cargo toolchains exist for the compatibility publisher's observation of
+# registry closures and retire with it once incan.pub records govern the corpus. The registry checkout and its pin
+# below are not transitional: a bake settles from them for as long as there is a registry.
 INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24
 INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
 INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
+# The C toolchain whose compiles native adoption observes in every Loaf bake: the Command Line Tools on macOS, the
+# system clang elsewhere. The sysroot is canonical because the owner closure binds canonical paths.
+ifeq ($(shell uname -s),Darwin)
+INCAN_TEST_CC ?= /Library/Developer/CommandLineTools/usr/bin/clang
+INCAN_TEST_CXX ?= /Library/Developer/CommandLineTools/usr/bin/clang++
+INCAN_TEST_C_SYSROOT ?= $(realpath /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)
+else
+INCAN_TEST_CC ?= /usr/bin/clang
+INCAN_TEST_CXX ?= /usr/bin/clang++
+INCAN_TEST_C_SYSROOT ?= /usr
+endif
+# Registered Loaf registry checkout (incan.pub) whose adoption manifests govern captured registry units in the
+# release bake; unset, the release publisher keeps every unit observation-governed.
+INCAN_TEST_LOAF_REGISTRY ?=
+# Index commit that checkout must be at; the bake refuses any other revision. Meaningful only with the checkout.
+INCAN_TEST_LOAF_REGISTRY_COMMIT ?=
+# Directory the release bake writes incan.pub harvest proposals into from its own runtime-foundation capture.
+INCAN_TEST_HARVEST_DIR ?=
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
+	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
 	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
 	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)" \
 	INCAN_HOME="$(INCAN_TEST_OVEN_HOME)" \
@@ -205,9 +231,41 @@ rustdoc-gate:
 rustdoc-gate-ci:
 	@python3 scripts/check_changed_rustdocs.py
 
+.PHONY: emitter-freeze  ## quality - Check the frozen Rust-emission tree against its fingerprint manifest
+emitter-freeze:
+	@echo "\033[1mChecking the emitter freeze (loaves/compiler/incan_emit/src/emit)...\033[0m"
+	@cd scripts && python3 -m unittest -q test_check_emitter_freeze
+	@python3 scripts/check_emitter_freeze.py
+
+.PHONY: emitter-freeze-ci
+emitter-freeze-ci:
+	@python3 scripts/check_emitter_freeze.py
+
 .PHONY: doc-paths  ## quality - Check repository paths named in contributor documentation
 doc-paths:
 	@python3 scripts/check_doc_paths.py
+
+.PHONY: us-english-check  ## quality - Fail on UK spellings in tracked text (US English is the standard); us-english-fix rewrites them
+us-english-check:
+	@python3 scripts/check_us_english.py
+
+.PHONY: reference-contract-check  ## quality - Fail when a changed docs-site reference page states more than its contract
+reference-contract-check:
+	@python3 scripts/check_reference_contract.py
+
+.PHONY: us-english-fix  ## quality - Rewrite UK spellings as US English in place, prose and identifiers alike
+us-english-fix:
+	@python3 scripts/check_us_english.py --fix
+
+.PHONY: test-inventory  ## quality - Regenerate the test corpus inventory page from the tree and dispositions.json
+test-inventory:
+	@python3 scripts/test_inventory/render.py
+
+.PHONY: test-inventory-check  ## quality - Fail when a test has no disposition, a twin does not resolve, or the inventory page is stale
+test-inventory-check:
+	@python3 -m unittest discover -q -s scripts/test_inventory -p 'test_collect.py' >/dev/null 2>&1 \
+		|| python3 -m unittest discover -s scripts/test_inventory -p 'test_collect.py'
+	@python3 scripts/test_inventory/collect.py --check
 
 .PHONY: version-gate  ## quality - Require hand-written version literals to match the workspace version
 version-gate:
@@ -265,10 +323,25 @@ pre-commit-fast:
 	$(MAKE) -s rustdoc-gate-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t2=$$(date +%s); \
+	printf "\033[1mChecking the emitter freeze...\033[0m "; \
+	$(MAKE) -s emitter-freeze-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2freeze=$$(date +%s); \
 	printf "\033[1mChecking contributor documentation paths...\033[0m "; \
 	$(MAKE) -s doc-paths; \
 	echo "\033[32mDONE\033[0m"; \
 	t2docs=$$(date +%s); \
+	printf "\033[1mChecking US English spelling...\033[0m "; \
+	$(MAKE) -s us-english-check; \
+	echo "\033[32mDONE\033[0m"; \
+	t2us=$$(date +%s); \
+	printf "\033[1mChecking reference pages state only their contract...\033[0m "; \
+	$(MAKE) -s reference-contract-check; \
+	echo "\033[32mDONE\033[0m"; \
+	printf "\033[1mChecking the test corpus inventory...\033[0m "; \
+	$(MAKE) -s test-inventory-check; \
+	echo "\033[32mDONE\033[0m"; \
+	t2inv=$$(date +%s); \
 	printf "\033[1mChecking version consistency...\033[0m "; \
 	$(MAKE) -s version-gate; \
 	echo "\033[32mDONE\033[0m"; \
@@ -286,7 +359,7 @@ pre-commit-fast:
 	echo "\033[32mDONE\033[0m"; \
 	t4=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, doc-paths=$$((t2docs-t2))s, version-gate=$$((t2a-t2docs))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, oven-ring=$$((t4-t3))s, total=$$((t4-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, emitter-freeze=$$((t2freeze-t2))s, doc-paths=$$((t2docs-t2freeze))s, us-english=$$((t2us-t2docs))s, test-inventory=$$((t2inv-t2us))s, version-gate=$$((t2a-t2inv))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, oven-ring=$$((t4-t3))s, total=$$((t4-start))s"
 
 .PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
 pre-commit-full-gate:
@@ -355,6 +428,16 @@ fetch-release-support-workspace-sources:
 test-oven: test-prewarm-oven-loafs test-prewarm-oven-release-loafs
 	@$(MAKE) --no-print-directory test-oven-replay
 
+.PHONY: test-oven-artifact-equivalence  ## test - Compare one Cargo harvest with one Cargo-free Oven publisher bake
+test-oven-artifact-equivalence: build-quiet
+	@test -n "$(OVEN_EQUIV_CARGO_MANIFEST)" || { echo "OVEN_EQUIV_CARGO_MANIFEST is required" >&2; exit 2; }
+	@test -n "$(OVEN_EQUIV_OVEN_MANIFEST)" || { echo "OVEN_EQUIV_OVEN_MANIFEST is required" >&2; exit 2; }
+	@test -n "$(OVEN_EQUIV_ATTESTATION)" || { echo "OVEN_EQUIV_ATTESTATION is required" >&2; exit 2; }
+	@"$(TARGET_DIR)/debug/incan" oven equivalence \
+		--cargo-manifest "$(OVEN_EQUIV_CARGO_MANIFEST)" \
+		--oven-manifest "$(OVEN_EQUIV_OVEN_MANIFEST)" \
+		--output "$(OVEN_EQUIV_ATTESTATION)"
+
 .PHONY: test-oven-partition  ## test - Replay one deterministic prewarmed Oven compiler-suite partition
 # CI restores the complete compiler and release envelopes before invoking this target. Keep it replay-only: a
 # partition must never silently publish or prewarm an authority that its receipt is supposed to consume.
@@ -367,20 +450,20 @@ test-oven-partition:
 		INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS='--partition-index $(INCAN_TEST_OVEN_PARTITION_INDEX) --partition-count $(INCAN_TEST_OVEN_PARTITION_COUNT)'
 
 # Rust-analyzer fixture metadata creates nested Cargo lockfile copies. The Unix-only Oven suite therefore owns a
-# short `/tmp` scratch directory instead of inheriting an arbitrarily deep worktree `TMPDIR`.
+# short scratch directory below INCAN_TEST_TMP_ROOT instead of an arbitrarily deep worktree TMPDIR.
 .PHONY: test-oven-replay
 test-oven-replay:
 	@echo "\033[1mRunning prepared compiler-suite replay through Oven...\033[0m"
 	@set -e; \
-		suite_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		suite_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		command_started=0; \
-		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)"; \
+		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
 		suite_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-compiler-suite-output.XXXXXX")"; \
-		suite_tmp="$$(mktemp -d "/tmp/incan-oven-suite.XXXXXX")"; \
+		suite_tmp="$$(mktemp -d "$(INCAN_TEST_TMP_ROOT)/incan-oven-suite.XXXXXX")"; \
 		suite_succeeded=false; \
 		cleanup_suite_output() { \
 			suite_status=$$?; \
-			bash "$(CURDIR)/scripts/retain_oven_suite_output.sh" "$$suite_output" "$$suite_tmp" \
+			"$(TARGET_DIR)/debug/incan" oven retain-suite-output "$$suite_output" "$$suite_tmp" \
 				"$$suite_succeeded" "$(abspath $(INCAN_TEST_OVEN_COMPILER_SUITE_REPORT))" "$$suite_status" \
 				"$$suite_started" "$$command_started"; \
 			exit $$?; \
@@ -391,7 +474,7 @@ test-oven-replay:
 		mkdir -p "$$suite_output/cargo-guard"; \
 		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$suite_output/cargo-guard/cargo"; \
 		: > "$$suite_output/cargo-guard/invocations.log"; \
-		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		command_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		PATH="$$suite_output/cargo-guard:$$PATH" \
 			INCAN_OVEN_CARGO_GUARD_LOG="$$suite_output/cargo-guard/invocations.log" TMPDIR="$$suite_tmp" \
 			$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
@@ -497,6 +580,9 @@ test-prewarm-oven-loafs: test-prewarm-sdk
 			--sdk-inventory "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
 			--cargo "$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)" \
 			--rustc "$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)" \
+			--cc "$(INCAN_TEST_CC)" \
+			--cxx "$(INCAN_TEST_CXX)" \
+			--c-sysroot "$(INCAN_TEST_C_SYSROOT)" \
 			--format "$(INCAN_TEST_OVEN_BAKE_FORMAT)" $(if $(INCAN_TEST_OVEN_BAKE_REPORT),> "$(INCAN_TEST_OVEN_BAKE_REPORT)",)
 
 .PHONY: test-prewarm-oven-release-loafs
@@ -508,7 +594,43 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 	@if [ "$$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then \
 		codesign --force --sign - "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan"; \
 	fi
-	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+	@set -eu; \
+		command -v jq >/dev/null 2>&1; \
+		cargo_bin="$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)"; \
+		rustc_bin="$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"; \
+		target="$$("$$rustc_bin" -vV | sed -n 's/^host: //p')"; \
+		test -n "$$target"; \
+		cc_bin="$(INCAN_TEST_CC)"; \
+		cxx_bin="$(INCAN_TEST_CXX)"; \
+		c_sysroot="$(INCAN_TEST_C_SYSROOT)"; \
+		test -x "$$cc_bin"; \
+		test -x "$$cxx_bin"; \
+		test -d "$$c_sysroot"; \
+		mkdir -p "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
+		policy_home="$$(mktemp -d "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX")"; \
+		trap 'rm -rf "$$policy_home"' EXIT HUP INT TERM; \
+		policy_toolchain_root="$$policy_home/toolchain"; \
+		mkdir -p "$$policy_toolchain_root/bin"; \
+		cp "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$policy_toolchain_root/bin/incan"; \
+		test ! -e "$$policy_toolchain_root/share/incan/oven/loafs/envelope.json"; \
+		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+			INCAN_HOME="$$policy_home" \
+			INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
+			INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+			INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
+			INCAN_INTERNAL_OVEN_LOAF_EXECUTION= INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT= \
+			CARGO="$$cargo_bin" RUSTC="$$rustc_bin" \
+			"$$policy_toolchain_root/bin/incan" oven bake \
+				--project "$(CURDIR)/workspaces/oven" --target "$$target" --format json \
+				> "$(INCAN_TEST_OVEN_RELEASE_POLICY_REPORT)"; \
+		policy_output="$$(workspaces/release/toolchain/select_release_policy_output.sh \
+			"$(INCAN_TEST_OVEN_RELEASE_POLICY_REPORT)" "$$target")"; \
+		policy_engine_store="$${policy_output%%	*}"; \
+		policy_engine_identity="$${policy_output#*	}"; \
+		test -n "$$policy_engine_store"; \
+		test -n "$$policy_engine_identity"; \
+		test "$$policy_engine_store" != "$$policy_engine_identity"; \
+		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 		"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" oven legacy-cargo bake-loafs \
@@ -516,8 +638,17 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 			--output "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/share/incan/oven/loafs" \
 			--envelope release \
 			--sdk-inventory "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
-			--cargo "$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)" \
-			--rustc "$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"
+			--cargo "$$cargo_bin" \
+			--rustc "$$rustc_bin" \
+			--cc "$$cc_bin" \
+			--cxx "$$cxx_bin" \
+			--c-sysroot "$$c_sysroot" \
+			--policy-engine-store "$$policy_engine_store" \
+			--policy-engine-identity "$$policy_engine_identity" \
+			--policy-engine-target "$$target" \
+			$(if $(INCAN_TEST_LOAF_REGISTRY),--loaf-registry "$(INCAN_TEST_LOAF_REGISTRY)",) \
+			$(if $(INCAN_TEST_LOAF_REGISTRY_COMMIT),--loaf-registry-commit "$(INCAN_TEST_LOAF_REGISTRY_COMMIT)",) \
+			$(if $(INCAN_TEST_HARVEST_DIR),--harvest-dir "$(INCAN_TEST_HARVEST_DIR)",)
 
 .PHONY: test-oven-focused
 test-oven-focused:
@@ -534,7 +665,7 @@ test-oven-focused:
 .PHONY: test-oven-report-retention
 test-oven-report-retention:
 	@python3 scripts/test_oven_transcript_retention.py
-	@cd scripts && python3 -m unittest test_reconcile_oven_partitions
+	@$(TOOLS)/cargo_narrow.sh $(CURDIR) test -p oven-cli --lib partition_reconciliation
 
 .PHONY: test-oven-pr-regressions
 test-oven-pr-regressions: test-oven-report-retention
@@ -599,8 +730,8 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 .PHONY: test-rust-inspect  ## test - Run focused rust-inspect regression tests
 test-rust-inspect:
 	@echo "\033[1mRunning rust-inspect focused tests...\033[0m"
-	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::test_rust_inspect_unavailable_stays_permissive_for_method_calls
-	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
+	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::rust_metadata_and_methods::test_rust_inspect_unavailable_stays_permissive_for_method_calls
+	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::rust_imports_and_types::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
 
 .PHONY: generated-rust-audit-gate  ## test - Run deterministic generated Rust audit helper checks
 generated-rust-audit-gate:
@@ -750,15 +881,15 @@ test-one: test-prewarm-oven-loafs
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
 	@set -e; \
-		root_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		root_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		command_started=0; \
-		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)"; \
+		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
 		root_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-test-one.XXXXXX")"; \
-		root_tmp="$$(mktemp -d "/tmp/incan-oven-root.XXXXXX")"; \
+		root_tmp="$$(mktemp -d "$(INCAN_TEST_TMP_ROOT)/incan-oven-root.XXXXXX")"; \
 		root_succeeded=false; \
 		cleanup_root_output() { \
 			root_status=$$?; \
-			bash "$(CURDIR)/scripts/retain_oven_suite_output.sh" "$$root_output" "$$root_tmp" \
+			"$(TARGET_DIR)/debug/incan" oven retain-suite-output "$$root_output" "$$root_tmp" \
 				"$$root_succeeded" "$(abspath $(INCAN_TEST_OVEN_TEST_ONE_REPORT))" "$$root_status" \
 				"$$root_started" "$$command_started"; \
 			exit $$?; \
@@ -769,7 +900,7 @@ test-one: test-prewarm-oven-loafs
 		mkdir -p "$$root_output/cargo-guard"; \
 		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$root_output/cargo-guard/cargo"; \
 		: > "$$root_output/cargo-guard/invocations.log"; \
-		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
+		command_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
 		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \
 			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
 			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
@@ -871,9 +1002,13 @@ toolchain-release-smoke: toolchain-release-build
 # DataFusion, and the clean rooms provision Rust twice -- so they run in front of a release, not every PR.
 # =============================================================================
 
-.PHONY: gate-incql  ## gate - Build the real IncQL consumer end to end (INCQL_CHECKOUT=..., INCAN=...)
+.PHONY: gate-incql  ## gate - Prove the pinned Cargo-free IncQL closure (INCQL_CHECKOUT=..., INCAN=..., INCQL_EQUIVALENCE_REPORT=...)
 gate-incql:
-	@bash scripts/gate_incql.sh --incan "$${INCAN:-"$(TARGET_DIR)/release/incan"}"
+	@test -n "$${INCQL_CHECKOUT:-}" || { echo "INCQL_CHECKOUT is required" >&2; exit 2; }
+	@test -n "$${INCAN:-}" || { echo "INCAN is required" >&2; exit 2; }
+	@test -n "$${INCQL_EQUIVALENCE_REPORT:-}" || { echo "INCQL_EQUIVALENCE_REPORT is required" >&2; exit 2; }
+	@bash scripts/gate_incql.sh --incql "$${INCQL_CHECKOUT}" --incan "$${INCAN}" \
+		--equivalence-report "$${INCQL_EQUIVALENCE_REPORT}"
 
 .PHONY: gate-cleanroom  ## gate - Install into containers with and without a mismatched Rust (DIST=...)
 gate-cleanroom:

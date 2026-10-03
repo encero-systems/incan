@@ -1,0 +1,10 @@
+# behavior: a constant read from an imported Rust module alias has its value
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rust_interop_field_access_codegen
+# expect-stdout:
+#   3.141592653589793
+
+import rust::std::f64::consts as consts
+
+
+def main() -> None:
+    println(consts.PI)

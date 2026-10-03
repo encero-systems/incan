@@ -70,7 +70,7 @@ fn legacy_cargo_capacity_abort_terminates_descendants() -> Result<(), Box<dyn st
     write_executable(
         &cargo,
         &format!(
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' 'cargo oven-pr-fixture'\n  exit 0\nfi\ntarget_dir=''\nprevious=''\nfor argument in \"$@\"; do\n  if [ \"$previous\" = \"--target-dir\" ]; then\n    target_dir=$argument\n  fi\n  previous=$argument\ndone\nmkdir -p \"$target_dir\"\nsleep 30 &\nprintf '%s\\n' \"$!\" > \"{}\"\ndd if=/dev/zero of=\"$target_dir/overflow\" bs=131072 count=1 2>/dev/null\nwait\n",
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' 'cargo oven-pr-fixture'\n  exit 0\nfi\nif [ \"$1\" = \"metadata\" ]; then\n  printf '%s\\n' '{{\"packages\":[],\"resolve\":null}}'\n  exit 0\nfi\ntarget_dir=''\nprevious=''\nfor argument in \"$@\"; do\n  if [ \"$previous\" = \"--target-dir\" ]; then\n    target_dir=$argument\n  fi\n  previous=$argument\ndone\nmkdir -p \"$target_dir\"\nsleep 30 &\nprintf '%s\\n' \"$!\" > \"{}\"\ndd if=/dev/zero of=\"$target_dir/overflow\" bs=131072 count=1 2>/dev/null\nwait\n",
             descendant_pid.display(),
         ),
     )?;
@@ -99,6 +99,9 @@ fn legacy_cargo_capacity_abort_terminates_descendants() -> Result<(), Box<dyn st
         generated_project: project,
         cargo,
         rustc,
+        cc: None,
+        cxx: None,
+        c_sysroot: None,
         sdk_inventory: None,
         compiler_loaf_root: None,
         base_loaf: None,
@@ -110,6 +113,7 @@ fn legacy_cargo_capacity_abort_terminates_descendants() -> Result<(), Box<dyn st
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
         provider_compilations: &[],
         compact_debug_info: false,
+        retain_equivalence_artifacts: false,
         source_compiler_vocab_support: false,
     });
 

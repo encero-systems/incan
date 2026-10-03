@@ -1,0 +1,2 @@
+pub def absolute(n: int = abs(-3)) -> int:
+    return n

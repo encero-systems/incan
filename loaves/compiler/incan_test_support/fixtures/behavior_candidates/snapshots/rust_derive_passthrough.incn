@@ -1,0 +1,15 @@
+# behavior: a model carrying pass-through Rust derives is constructible and readable (RFC 043)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc043_rust_derive_passthrough_codegen
+# expect-stdout:
+#   1
+
+from rust::serde import Serialize
+
+
+@rust.derive(Serialize, Default, Eq, Hash)
+pub model PayloadKey:
+    pub value: int
+
+
+def main() -> None:
+    println(PayloadKey(value=1).value)
