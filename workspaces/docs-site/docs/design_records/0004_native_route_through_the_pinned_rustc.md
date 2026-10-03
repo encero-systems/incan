@@ -38,6 +38,7 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
     - an owned `str` borrowed as `&str`;
     - a capturing closure expression passed as `impl FnOnce`;
     - a Rust caller using `<library>::caller::incan`, instantiating a generic Incan function from metadata.
+- Incan code drives a Rust layer built against rustc's internals. One driver builds that layer, an Incan unit that fills its body plan, and a Rust executable that calls the Incan unit. The executable runs rustc in its own process and compiles a program whose function body the Incan code planned.
 
 ## Decision
 
@@ -46,6 +47,8 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 - The front end is a rustc driver, a separate Loaf built against exactly the toolchain's pinned rustc.
 - It is the only code in the project that uses rustc's internal interface.
 - It refuses to run, before any effect, when the rustc library it loads is not the pinned one.
+- Permission to use rustc's internals is a declared property of a unit's invocation, which the driver grants through rustc's tracked `unstable_features` option, so it is part of the unit's identity. It is never inherited from an ambient `RUSTC_BOOTSTRAP`, which Oven already strips. Only the driver Loaf's own units declare it.
+- The driver's executable root depends on rustc's shared library directly, because rustc links `std` from that library, which already contains it, only for a root that names it.
 - This is how Rust ships its own tools that need rustc's internals: a separate driver built against one exact rustc, invoked by Cargo in rustc's place.
 
 **Oven invokes it per unit, for both languages.**
@@ -129,7 +132,7 @@ So code generation and linking dominate a small unit. rustc does not reuse analy
 
 **Open, to settle before this record is accepted:**
 
-- **How the Incan lowering reaches rustc.** The lowering is Incan by decision. A narrow Rust layer owns every rustc type and presents a plain builder of blocks, places, calls and drops addressed by index. The lowering drives that builder and is compiled first by the previous compiler. Whether Incan's Rust interop and Rust inspection can reach a crate built against rustc's internal interface, and hold up when it is linked into the driver, is untested. Until RFC 097 ships, Incan reaches Rust but Rust cannot call Incan, so the Incan side has to drive the Rust layer and hand it complete bodies.
+- **How the Incan lowering reaches rustc.** The lowering is Incan by decision. A narrow Rust layer owns every rustc type and presents a plain builder of blocks, places, calls and drops addressed by index. The lowering drives that builder and is compiled first by the previous compiler. On the native route this works: the spike's Incan unit calls that layer as an ordinary call in one crate graph, and the executable embedding it runs rustc. Still untested is the real checker typing that layer's API through Rust inspection, which reads the layer's source while that source names rustc's internal crates.
 - **MIR or THIR.** Bodies could enter rustc one stage earlier, as THIR, so that rustc builds drop paths, unwind paths and pattern code itself. The cost is constructing typed expression trees that must agree with rustc's type-check results. The spike tested MIR only.
 - **Generic bodies of published Loaves.** How do they reach a native consumer: through the rustc metadata of the Loaf's compiled unit, through RFC 123's executable representation, or both?
 - **Async.** How do Incan `async` bodies lower: as MIR coroutines the front end builds, or by another route?
@@ -139,6 +142,7 @@ So code generation and linking dominate a small unit. rustc does not reuse analy
 - A native code generator of Incan's own, such as Cranelift. Generic, trait and async Rust can only be instantiated by rustc.
 - An interpreter that calls compiled Rust. The Body IR interpreter proved Body IR carries complete semantics; it does not ship.
 - Rust source generated in memory and handed to rustc. That is still generated Rust.
+- A fork of rustc. The driver already gets everything a fork would give: it decides unstable-feature permission per unit, and rustc's driver callbacks and query overrides carry items, bodies, spans and cross-crate metadata. A fork would not remove the churn of rustc's internals; it would turn a driver upgrade into rebasing a patch series every release. It would also mean building and shipping rustc and LLVM for every target, owning security backports, and making Rust built through Incan differ from upstream. Revisit only when a needed hook cannot be had through callbacks or query overrides, such as resolving Incan items without AST injection, injecting THIR, or tying rustc's incremental reuse to unit identity. Even then, propose the hook upstream first, as Clippy and Miri did for theirs.
 - Linking rustc into the compiler. Every compiler binary, including the language server, would then carry rustc's library and build against its unstable interface.
 - Inspection of the native route. That is a separate design.
 - More than one rustc per toolchain release (DD-0002).
@@ -148,6 +152,7 @@ So code generation and linking dominate a small unit. rustc does not reuse analy
 Revisit this record when any of the following happens:
 
 - A rustc upgrade costs more than a driver upgrade.
+- The driver needs a rustc hook that callbacks and query overrides cannot provide, and upstream declines to add it.
 - The resident driver fails the 0.6 inner-loop bar: an unchanged `incan run` under 50 ms over the program's own run time, a one-line edit to first output under 250 ms, and a test case that builds a project under 1 s.
 - The interop check shows that the lowering cannot reach rustc from Incan.
 
