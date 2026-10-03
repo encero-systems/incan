@@ -108,7 +108,7 @@ impl rustc_driver::Callbacks for Callbacks {
     }
     fn after_crate_root_parsing(&mut self, _c: &rustc_interface::interface::Compiler, krate: &mut ast::Crate) -> rustc_driver::Compilation {
         let span = krate.spans.inner_span;
-        let pair_of_t = || TySpec("Pair", vec![t("T")]);
+        let pair_of_t = || TySpec("Pair".to_string(), vec![t("T")]);
         krate.items.push(model("Pair", generics(&[("T", &[])], span), &[("first", t("T")), ("second", t("T"))], span));
         let params = [("pair", pair_of_t()), ("take_first", t("bool"))];
         krate.items.push(function("choose", generics(&[("T", &["Copy"])], span), &params, t("T"), span));

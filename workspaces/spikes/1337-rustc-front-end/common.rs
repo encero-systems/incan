@@ -12,10 +12,10 @@ use thin_vec::{ThinVec, thin_vec};
 // ---- Declarations: AST items, never source text ----
 
 /// A type as the front end names it: a path with optional generic arguments, `Name` or `Name<A, B>`.
-pub struct TySpec(pub &'static str, pub Vec<TySpec>);
+pub struct TySpec(pub String, pub Vec<TySpec>);
 
-pub fn t(name: &'static str) -> TySpec {
-    TySpec(name, Vec::new())
+pub fn t(name: &str) -> TySpec {
+    TySpec(name.to_string(), Vec::new())
 }
 
 pub fn ident(name: &str, span: Span) -> Ident {
@@ -31,7 +31,7 @@ fn segment(name: &str, args: &[TySpec], span: Span) -> ast::PathSegment {
 }
 
 pub fn ty(spec: &TySpec, span: Span) -> Box<ast::Ty> {
-    let path = ast::Path { span, segments: thin_vec![segment(spec.0, &spec.1, span)], tokens: None };
+    let path = ast::Path { span, segments: thin_vec![segment(&spec.0, &spec.1, span)], tokens: None };
     Box::new(ast::Ty { id: ast::DUMMY_NODE_ID, kind: ast::TyKind::Path(None, path), span, tokens: None })
 }
 

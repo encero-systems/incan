@@ -28,7 +28,7 @@ extern crate thin_vec;
 
 mod common;
 
-use common::{Cfg, extern_crate, extern_item, function, local_item, public, t};
+use common::{Cfg, extern_crate, extern_item, function, local_item, model, public, t};
 use incan_frontend::body_ir::build_body_ir_module_v0;
 use incan_frontend::{lexer, parser, typechecker::TypeChecker};
 use incan_lang::lang::builtins::BuiltinFnId;
@@ -51,6 +51,12 @@ use std::sync::OnceLock;
 static MODULE: OnceLock<bir::BodyIrModule> = OnceLock::new();
 /// Where the `.incn` file starts in rustc's source map, so Body IR spans become rustc spans.
 static SOURCE_START: OnceLock<BytePos> = OnceLock::new();
+/// The models this unit declares, which are the only nominal types the lowering maps to Rust structs.
+static MODELS: OnceLock<std::collections::BTreeSet<String>> = OnceLock::new();
+
+fn is_unit_model(name: &str) -> bool {
+    MODELS.get().is_some_and(|models| models.contains(name))
+}
 
 // ============================================================================
 // Front end: the real Incan checker and Body IR builder, in-process
@@ -63,19 +69,43 @@ fn check_and_build(source: &str) -> Result<bir::BodyIrModule, String> {
     let module_path = vec!["kernels".to_string()];
     checker.set_current_module_path(Some(module_path.clone()));
     checker.check_program(&program).map_err(|errors| format!("checking failed: {errors:?}"))?;
-    Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+    // Body IR gives a decorated function its source body, but a decorator can replace what the function does:
+    // `@rust.extern` delegates to a Rust function and its `...` body is only a placeholder. Body IR does not record
+    // that, so lowering such a body would silently compile the placeholder. Refuse every decorated function until
+    // the checked facts say what the decorator means.
+    for declaration in &program.declarations {
+        if let incan_frontend::ast::Declaration::Function(function) = &declaration.node
+            && !function.decorators.is_empty()
+        {
+            return Err(format!("native lowering of `{}` does not support decorated functions (such as `@rust.extern`) yet", function.name));
+        }
+    }
+    let module = build_body_ir_module_v0(&program, &module_path, checker.type_info());
+    let mut names = std::collections::BTreeSet::new();
+    for body in &module.bodies {
+        if !names.insert(body.name.as_str()) {
+            return Err(format!("native lowering of `{}` does not support overloaded functions yet", body.name));
+        }
+        if body.locals.iter().any(|local| matches!(local.origin, bir::LocalOrigin::Receiver { .. })) {
+            return Err(format!("native lowering of `{}` does not support methods yet", body.name));
+        }
+    }
+    Ok(module)
 }
 
 /// The rustc spelling of an Incan type this lowering supports.
-fn type_name(ty: &IncanType) -> Option<&'static str> {
-    match ty {
-        IncanType::Primitive(IncanPrimitiveType::Int) => Some("i64"),
-        IncanType::Primitive(IncanPrimitiveType::Bool) => Some("bool"),
-        IncanType::Primitive(IncanPrimitiveType::Float) => Some("f64"),
-        IncanType::Primitive(IncanPrimitiveType::Unit) => Some("()"),
-        IncanType::Primitive(IncanPrimitiveType::Str) => Some("String"),
-        _ => None,
-    }
+fn type_name(ty: &IncanType) -> Option<String> {
+    let name = match ty {
+        IncanType::Primitive(IncanPrimitiveType::Int) => "i64",
+        IncanType::Primitive(IncanPrimitiveType::Bool) => "bool",
+        IncanType::Primitive(IncanPrimitiveType::Float) => "f64",
+        IncanType::Primitive(IncanPrimitiveType::Unit) => "()",
+        IncanType::Primitive(IncanPrimitiveType::Str) => "String",
+        // A model is the Rust struct of the same name the driver declares for it (RFC 121).
+        IncanType::Named(name) if is_unit_model(name) => name.as_str(),
+        _ => return None,
+    };
+    Some(name.to_string())
 }
 
 fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
@@ -85,6 +115,7 @@ fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
         IncanType::Primitive(IncanPrimitiveType::Float) => Some(tcx.types.f64),
         IncanType::Primitive(IncanPrimitiveType::Unit) => Some(tcx.types.unit),
         IncanType::Primitive(IncanPrimitiveType::Str) => Some(string_ty(tcx)),
+        IncanType::Named(name) if is_unit_model(name) => Some(tcx.type_of(local_item(tcx, name)).instantiate_identity().skip_normalization()),
         _ => None,
     }
 }
@@ -190,16 +221,38 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     }
 
     fn place(&self, place: &bir::Place) -> Place<'tcx> {
-        if !place.projection.is_empty() {
-            self.refuse("place projections");
+        let bir::PlaceRoot::Local(root) = &place.root else { self.refuse("global places") };
+        let mut current = self.places.get(&root.0).copied().unwrap_or_else(|| self.refuse("an unplanned local"));
+        for elem in &place.projection {
+            match elem {
+                bir::PlaceElem::Field { name, .. } => current = self.field_place(current, name),
+                _ => self.refuse("index or slice projections"),
+            }
         }
-        let Some(local) = local_of(place) else { self.refuse("global places") };
-        self.places.get(&local).copied().unwrap_or_else(|| self.refuse("an unplanned local"))
+        current
     }
 
-    fn operand(&self, operand: &bir::Operand) -> Operand<'tcx> {
+    /// `base.name`, by the field's position in the model's Rust struct, which keeps the declared field order.
+    fn field_place(&self, base: Place<'tcx>, name: &str) -> Place<'tcx> {
+        let ty::Adt(adt, args) = base.ty(&self.cfg.locals, self.tcx).ty.kind() else { self.refuse("a field of a non-model value") };
+        let Some((index, field)) = adt.non_enum_variant().fields.iter_enumerated().find(|(_, f)| f.name.as_str() == name) else {
+            self.refuse(&format!("the field `{name}`"));
+        };
+        // Incan field types name no associated types, so there is nothing to normalize.
+        let field_ty = field.ty(self.tcx, args).skip_normalization();
+        self.tcx.mk_place_field(base, index, field_ty)
+    }
+
+    fn operand(&mut self, operand: &bir::Operand) -> Operand<'tcx> {
         let span = self.cfg.span;
         match operand {
+            bir::Operand::Constant(bir::Constant::Str(text)) => {
+                // A `str` literal is an owned `String`: `ToString::to_string("...")`, as the emitted route's
+                // `"...".to_string()`.
+                let literal = common::str_literal(self.tcx, text, span);
+                let owned = self.to_string_of(literal, self.tcx.types.str_, span);
+                Operand::Move(owned)
+            }
             bir::Operand::Constant(bir::Constant::Int(v)) => Operand::const_from_scalar(self.tcx, self.tcx.types.i64, Scalar::from_i64(*v), span),
             bir::Operand::Constant(bir::Constant::Bool(b)) => Operand::const_from_scalar(self.tcx, self.tcx.types.bool, Scalar::from_bool(*b), span),
             bir::Operand::Constant(bir::Constant::Float(text)) => {
@@ -265,6 +318,7 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             }
             bir::Rvalue::BinaryOp(op, lhs, rhs) => self.lower_binary(*op, lhs, rhs, dest, span),
             bir::Rvalue::Format(parts) => self.lower_format(parts, dest, span),
+            bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), args) => self.lower_construction(target, args, dest, span),
             other => self.refuse(&format!("the rvalue `{}`", rvalue_name(other))),
         }
     }
@@ -347,10 +401,11 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     }
 
     fn lower_call(&mut self, destination: Option<&bir::Place>, callee: &bir::Callee, args: &[bir::ArgumentElement], span: Span) {
-        let operands: Vec<Operand<'tcx>> = args.iter().map(|arg| match arg {
-            bir::ArgumentElement::One(operand) => self.operand(operand),
-            _ => self.refuse("named or spread arguments"),
-        }).collect();
+        let mut operands: Vec<Operand<'tcx>> = Vec::with_capacity(args.len());
+        for arg in args {
+            let bir::ArgumentElement::One(operand) = arg else { self.refuse("named or spread arguments") };
+            operands.push(self.operand(operand));
+        }
         let Some(dest) = destination.map(|d| self.place(d)) else { self.refuse("calls without a destination") };
         let bir::Callee::Function(bir::CallableTarget::Named(target)) = callee else { self.refuse("calls other than to named functions") };
         if target.builtin == Some(BuiltinFnId::Range) {
@@ -381,14 +436,16 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             // The emitter expands `println` into Rust's `println!` macro, which nothing can call. The native route calls
             // a runtime function instead; here the spike's runtime shim stands in for the stdlib's.
             let Ok([text]) = <[Operand<'tcx>; 1]>::try_from(operands) else { self.refuse("`println` with other than one argument") };
-            if text.ty(&self.cfg.locals, self.tcx) != string_ty(self.tcx) {
-                self.refuse("`println` of a non-`str` value");
-            }
+            // `println(x)` displays a non-`str` value first, as the emitted `println!("{}", x)` does.
+            let text = if text.ty(&self.cfg.locals, self.tcx) == string_ty(self.tcx) { text } else { Operand::Move(self.string_of_value(text, span)) };
             self.call(extern_item(self.tcx, &["incan_native_rt", "println"]), &[], vec![text], dest, span);
             return;
         }
         if target.builtin.is_some() {
             self.refuse(&format!("the builtin `{}`", target.name));
+        }
+        if !MODULE.get().is_some_and(|module| module.bodies.iter().any(|body| body.name == target.name)) {
+            self.refuse(&format!("calls to `{}`, which this unit does not define (an import or an alias)", target.name));
         }
         self.call(local_item(self.tcx, &target.name), &[], operands, dest, span);
     }
@@ -396,6 +453,19 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     /// An f-string: `incan_std_core::strings::fstring(parts, args)`, the runtime call the emitted route makes. `parts`
     /// holds one more literal than there are values, empty where two values or an end meet; each value becomes a
     /// `String` through `ToString::to_string`, which is `Display` for `int` and `str`.
+    /// `Model(field=value, ..)`: Body IR binds the arguments to the model's declared field order, which is the order of
+    /// the Rust struct the driver declared, so they become its fields positionally.
+    fn lower_construction(&mut self, target: &bir::ConstructorTarget, args: &[bir::ArgumentElement], dest: Place<'tcx>, span: Span) {
+        let mut fields = Vec::with_capacity(args.len());
+        for arg in args {
+            let bir::ArgumentElement::One(operand) = arg else { self.refuse("named or spread constructor arguments") };
+            fields.push(self.operand(operand));
+        }
+        let model = local_item(self.tcx, &target.name);
+        let kind = AggregateKind::Adt(model, VariantIdx::from_u32(0), self.tcx.mk_args(&[]), None, None);
+        self.cfg.assign(self.current, dest, Rvalue::Aggregate(Box::new(kind), IndexVec::from_raw(fields)), span);
+    }
+
     fn lower_format(&mut self, format: &[bir::FormatPart], dest: Place<'tcx>, span: Span) {
         let tcx = self.tcx;
         let (mut literals, mut values, mut pending) = (Vec::new(), Vec::new(), String::new());
@@ -428,21 +498,51 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
 
     /// `ToString::to_string(&value)` into a fresh `String`.
     fn display_string(&mut self, value: &bir::Operand, span: Span) -> Place<'tcx> {
-        let tcx = self.tcx;
-        let value = self.operand(value);
-        let value_ty = value.ty(&self.cfg.locals, tcx);
-        if !(value_ty.is_integral() || value_ty == string_ty(tcx)) {
-            self.refuse(&format!("displaying a value of type `{value_ty}`"));
+        // A borrowed place, such as `borrow(user.name)`, is displayed where it is, without a copy.
+        if let bir::Operand::Place(source) = value
+            && source.fact == bir::OwnershipFact::Borrow
+        {
+            let tcx = self.tcx;
+            let place = self.place(&source.place);
+            let place_ty = place.ty(&self.cfg.locals, tcx).ty;
+            self.require_displayable(place_ty);
+            let erased = tcx.lifetimes.re_erased;
+            let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, place_ty));
+            self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, place), span);
+            return self.to_string_of(Operand::Move(borrowed), place_ty, span);
         }
+        let value = self.operand(value);
+        self.string_of_value(value, span)
+    }
+
+    /// Display an owned value: hold it in a temporary and call `ToString::to_string` on a borrow of it.
+    fn string_of_value(&mut self, value: Operand<'tcx>, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
+        let value_ty = value.ty(&self.cfg.locals, tcx);
+        self.require_displayable(value_ty);
         let held = self.cfg.temp(value_ty);
         self.cfg.assign(self.current, held, Rvalue::Use(value, WithRetag::Yes), span);
         let erased = tcx.lifetimes.re_erased;
         let borrowed = self.cfg.temp(Ty::new_imm_ref(tcx, erased, value_ty));
         self.cfg.assign(self.current, borrowed, Rvalue::Ref(erased, BorrowKind::Shared, held), span);
+        self.to_string_of(Operand::Move(borrowed), value_ty, span)
+    }
+
+    /// `ToString::to_string(reference)` for a reference to a `self_ty`, into a fresh `String`.
+    fn to_string_of(&mut self, reference: Operand<'tcx>, self_ty: Ty<'tcx>, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
         let Some(to_string) = tcx.get_diagnostic_item(rustc_span::Symbol::intern("to_string_method")) else { self.refuse("displaying without `ToString`") };
         let text = self.cfg.temp(string_ty(tcx));
-        self.call(to_string, &[value_ty.into()], vec![Operand::Move(borrowed)], text, span);
+        self.call(to_string, &[self_ty.into()], vec![reference], text, span);
         text
+    }
+
+    /// `int` and `str` display through `Display`. `float` needs the stdlib's Python-style spelling, so it is refused
+    /// until that helper is wired in.
+    fn require_displayable(&self, ty: Ty<'tcx>) {
+        if !(ty.is_integral() || ty == string_ty(self.tcx)) {
+            self.refuse(&format!("displaying a value of type `{ty}`"));
+        }
     }
 
     /// `&[elements]` as a `&[T]` slice: an array temporary, borrowed, then unsized as Rust coerces `&[T; N]`.
@@ -637,15 +737,27 @@ impl rustc_driver::Callbacks for Callbacks {
         if module.bodies.iter().any(calls_println) {
             krate.items.push(extern_crate("incan_native_rt", span));
         }
+        let _ = MODELS.set(module.nominal_declarations.iter().map(|model_decl| model_decl.name.clone()).collect());
+        // Each model is a Rust struct with its fields in declared order, the order constructions bind to.
+        for model_decl in &module.nominal_declarations {
+            if model_decl.type_parameter_count > 0 {
+                dcx.fatal(format!("native lowering does not support the generic model `{}` yet", model_decl.name));
+            }
+            let fields: Option<Vec<(&str, common::TySpec)>> = model_decl.fields.iter().zip(&model_decl.field_types)
+                .map(|(field, ty)| type_name(ty).map(|ty| (field.as_str(), t(&ty))))
+                .collect();
+            let Some(fields) = fields else { dcx.fatal(format!("native lowering does not support a field type of `{}` yet", model_decl.name)) };
+            krate.items.push(public(model(&model_decl.name, ast::Generics::default(), &fields, span)));
+        }
         for body in &module.bodies {
             let ty_of = |local: &bir::LocalId| body.locals.iter().find(|l| l.id == *local).and_then(|l| type_name(&l.ty));
             let params: Option<Vec<(&str, common::TySpec)>> = body.param_locals.iter().zip(&body.params)
-                .map(|(local, param)| ty_of(local).map(|ty| (param.name.as_str(), t(ty))))
+                .map(|(local, param)| ty_of(local).map(|ty| (param.name.as_str(), t(&ty))))
                 .collect();
             let (Some(params), Some(ret)) = (params, type_name(&body.return_type)) else {
                 dcx.fatal(format!("native lowering does not support the signature of `{}` yet", body.name));
             };
-            krate.items.push(public(function(&body.name, ast::Generics::default(), &params, t(ret), span)));
+            krate.items.push(public(function(&body.name, ast::Generics::default(), &params, t(&ret), span)));
         }
         let _ = MODULE.set(module);
         rustc_driver::Compilation::Continue

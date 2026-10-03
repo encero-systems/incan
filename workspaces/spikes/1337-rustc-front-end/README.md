@@ -77,6 +77,27 @@ The largest blockers are:
 
 Two entries are Body IR gaps rather than lowering gaps: 314 bodies have locals of `Unknown` type, and 232 contain `Unsupported` statements. Build it like the step 11 driver, without `RUSTC_BOOTSTRAP`, and run it over a list of `.incn` paths.
 
+## Corpus native lane
+
+`corpus_lane.sh` is the first cut of the corpus native lane. It compiles every single-file behavior fixture that records `expect-stdout` through the driver, runs it, and compares stdout and exit code with the fixture's header. Each fixture lands in exactly one outcome: pass, wrong, refused (with the lowering's named reason), failed (a lowering defect), or unchecked (the in-process front end lacks the project or stdlib context). Out-of-scope shapes are counted, never dropped.
+
+On the 873 behavior fixtures the first run found:
+
+- **one miscompile.** A `@rust.extern` function's `...` placeholder body ran as an empty function, because Body IR records no sign of the delegation. The lowering now refuses decorated functions by name.
+- **failures that were refusals in disguise.** Methods, overloads, classes and imported names crashed instead of refusing; they now refuse by name.
+
+The current run:
+
+| outcome | fixtures |
+|---|---|
+| pass | 8 |
+| refused, by name | 455 |
+| unchecked | 2 |
+| failed | 0 |
+| out of scope | 408 |
+
+The largest refusal is methods, at 118 fixtures.
+
 ## Not yet tested
 
 Lowering the rest of Body IR beyond step 11's subset, and Oven driving the front end with JEC unit reuse.
