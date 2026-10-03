@@ -84,18 +84,18 @@ fn measure_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Body<'tcx> {
 }
 
 /// Row 3, owned callable. `shift(value: int, offset: int) -> int`: `return apply(value, (x) => x + offset)`. The
-/// lambda is a real Rust closure: its `DefId` and capture list come from the skeleton in `shift`'s placeholder body,
+/// closure expression is a real Rust closure: its `DefId` and capture list come from the skeleton in `shift`'s placeholder body,
 /// and `apply`'s `impl FnOnce` parameter is instantiated at its closure type.
 fn shift_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Body<'tcx> {
     let mut cfg = Cfg::new(tcx, def);
     let span = cfg.span;
     let entry = BasicBlock::from_u32(0);
-    let Some(&lambda) = closures_of(tcx, def).first() else { tcx.dcx().fatal("`shift` declares no closure") };
-    let closure_ty = tcx.type_of(lambda).instantiate_identity().skip_normalization();
-    let ty::Closure(_, closure_args) = closure_ty.kind() else { tcx.dcx().fatal("the lambda is not a closure") };
+    let Some(&closure) = closures_of(tcx, def).first() else { tcx.dcx().fatal("`shift` declares no closure") };
+    let closure_ty = tcx.type_of(closure).instantiate_identity().skip_normalization();
+    let ty::Closure(_, closure_args) = closure_ty.kind() else { tcx.dcx().fatal("the closure expression did not become a closure") };
 
     let callback = cfg.temp(closure_ty);
-    let kind = AggregateKind::Closure(lambda.to_def_id(), closure_args);
+    let kind = AggregateKind::Closure(closure.to_def_id(), closure_args);
     let offset = Operand::Copy(cfg.arg(1));
     cfg.assign(entry, callback, Rvalue::Aggregate(Box::new(kind), IndexVec::from_raw(vec![offset])), span);
     let value = Operand::Copy(cfg.arg(0));
@@ -104,8 +104,8 @@ fn shift_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Body<'tcx> {
     cfg.finish()
 }
 
-/// The lambda's own body: `x + offset`, reading the captured `offset` through the closure environment.
-fn lambda_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Body<'tcx> {
+/// The closure's own body: `x + offset`, reading the captured `offset` through the closure environment.
+fn closure_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Body<'tcx> {
     let mut cfg = Cfg::new(tcx, def);
     let span = cfg.span;
     let entry = BasicBlock::from_u32(0);
@@ -135,7 +135,7 @@ fn choose_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Body<'tcx> {
 
 fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>> {
     if tcx.def_kind(def) == DefKind::Closure {
-        return tcx.alloc_steal_mir(lambda_body(tcx, def));
+        return tcx.alloc_steal_mir(closure_body(tcx, def));
     }
     match tcx.opt_item_name(def.to_def_id()).map(|n| n.to_string()).as_deref() {
         Some("bump") => tcx.alloc_steal_mir(bump_body(tcx, def)),
@@ -156,12 +156,12 @@ impl rustc_driver::Callbacks for Callbacks {
     fn after_crate_root_parsing(&mut self, _c: &rustc_interface::interface::Compiler, krate: &mut ast::Crate) -> rustc_driver::Compilation {
         let span = krate.spans.inner_span;
         let pair_of_t = || TySpec("Pair", vec![t("T")]);
-        let lambda = closure_skeleton(&[("x", t("i64"))], t("i64"), &["offset"], span);
+        let closure = closure_skeleton(&[("x", t("i64"))], t("i64"), &["offset"], span);
         let scores = thin_vec![
             public(model("Pair", generics(&[("T", &[])], span), &[("first", t("T")), ("second", t("T"))], span)),
             public(function("bump", ast::Generics::default(), &[("value", t("i64"))], t("i64"), span)),
             public(function("measure", ast::Generics::default(), &[("text", t("String"))], t("i64"), span)),
-            public(function_with_closures("shift", ast::Generics::default(), &[("value", t("i64")), ("offset", t("i64"))], t("i64"), thin_vec![lambda], span)),
+            public(function_with_closures("shift", ast::Generics::default(), &[("value", t("i64")), ("offset", t("i64"))], t("i64"), thin_vec![closure], span)),
             public(function("choose", generics(&[("T", &["Copy"])], span), &[("pair", pair_of_t()), ("take_first", t("bool"))], t("T"), span)),
         ];
         let caller = public(module("caller", thin_vec![public(module("incan", thin_vec![public(glob_use(&["crate", "scores"], span))], span))], span));
