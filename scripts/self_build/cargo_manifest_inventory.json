@@ -2553,7 +2553,7 @@
       "kind": "third-party",
       "origin": "registry",
       "workspace_inherited": false,
-      "version_req": "36.0.16",
+      "version_req": "36.0.17",
       "features": [
        "cranelift",
        "runtime",
@@ -2567,7 +2567,7 @@
       "kind": "third-party",
       "origin": "registry",
       "workspace_inherited": false,
-      "version_req": "36.0.16",
+      "version_req": "36.0.17",
       "features": [
        "preview1"
       ],
@@ -3201,7 +3201,7 @@
       "kind": "third-party",
       "origin": "registry",
       "workspace_inherited": false,
-      "version_req": "36.0.16",
+      "version_req": "36.0.17",
       "features": [
        "cranelift",
        "runtime",
