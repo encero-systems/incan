@@ -68,3 +68,11 @@ expect_output step6_program "incan 2.5 9"
 build_driver step7_incn_spans
 INCAN_SOURCE="$here/scores.incn" compile_with step7_incn_spans step7_program
 expect_panic_at step7_program "scores.incn:3:12:" "attempt to add with overflow"
+
+# Step 8 is a three-crate graph: Rust `host` <- Incan `policy` (no Rust source) <- Rust `app`.
+build_driver step8_boundary_rows
+rustc +"$toolchain" --edition 2024 --crate-type rlib --crate-name host "$here/step8_host.rs" -o "$out/libhost.rlib"
+"$out/step8_boundary_rows" --sysroot "$sysroot" --edition 2024 --cap-lints allow --crate-type rlib --crate-name policy \
+  --extern host="$out/libhost.rlib" -L "$out" -o "$out/libpolicy.rlib" - </dev/null 2>"$out/policy.log"
+rustc +"$toolchain" --edition 2024 --extern policy="$out/libpolicy.rlib" -L "$out" "$here/step8_app.rs" -o "$out/step8_app"
+expect_output step8_app "42 5 15 second"

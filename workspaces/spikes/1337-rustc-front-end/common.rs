@@ -5,7 +5,7 @@ use rustc_ast as ast;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::mir::*;
-use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
 
@@ -86,23 +86,111 @@ pub fn enumeration(name: &str, variants: &[(&str, Vec<TySpec>)], span: Span) -> 
 
 /// `fn <name><generics>(<param>: <ty>, ..) -> <ret> { loop {} }` -- the placeholder body is replaced by `mir_built`.
 pub fn function(name: &str, generics: ast::Generics, params: &[(&str, TySpec)], ret: TySpec, span: Span) -> Box<ast::Item> {
+    function_with_closures(name, generics, params, ret, ThinVec::new(), span)
+}
+
+fn expr(kind: ast::ExprKind, span: Span) -> Box<ast::Expr> {
+    Box::new(ast::Expr { id: ast::DUMMY_NODE_ID, kind, span, attrs: ThinVec::new(), tokens: None })
+}
+
+fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
+    Box::new(ast::Block { stmts, id: ast::DUMMY_NODE_ID, rules: ast::BlockCheckMode::Default, span, tokens: None })
+}
+
+/// `{ <stmts> loop {} }`: a body that diverges, so it type-checks against any return type.
+fn placeholder(mut stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
+    let diverge = expr(ast::ExprKind::Loop(block(ThinVec::new(), span), None, span), span);
+    stmts.push(ast::Stmt { id: ast::DUMMY_NODE_ID, kind: ast::StmtKind::Expr(diverge), span });
+    block(stmts, span)
+}
+
+fn params(list: &[(&str, TySpec)], span: Span) -> ThinVec<ast::Param> {
     let id = ast::DUMMY_NODE_ID;
-    let inputs = params.iter().map(|(p, spec)| ast::Param {
+    list.iter().map(|(p, spec)| ast::Param {
         attrs: ThinVec::new(), ty: ty(spec, span),
         pat: Box::new(ast::Pat { id, kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(p, span), None), span, tokens: None }),
         id, span, is_placeholder: false,
+    }).collect()
+}
+
+/// `move |<params>| -> <ret> { <capture>; .. loop {} };` -- a closure skeleton inside a function's placeholder body.
+/// It gives the closure a `DefId`, and typeck infers its kind and upvars from the captured names it mentions, so the
+/// capture list is part of the declaration Incan supplies. The real closure body is MIR, supplied like any other.
+pub fn closure_skeleton(params_list: &[(&str, TySpec)], ret: TySpec, captures: &[&str], span: Span) -> ast::Stmt {
+    let reads = captures.iter().map(|c| ast::Stmt {
+        id: ast::DUMMY_NODE_ID, kind: ast::StmtKind::Semi(expr(ast::ExprKind::Path(None, ast::Path::from_ident(ident(c, span))), span)), span,
     }).collect();
-    let empty = ast::Block { stmts: ThinVec::new(), id, rules: ast::BlockCheckMode::Default, span, tokens: None };
-    let diverge = ast::Expr { id, kind: ast::ExprKind::Loop(Box::new(empty), None, span), span, attrs: ThinVec::new(), tokens: None };
-    let body = ast::Block { stmts: thin_vec![ast::Stmt { id, kind: ast::StmtKind::Expr(Box::new(diverge)), span }], id, rules: ast::BlockCheckMode::Default, span, tokens: None };
+    let body = expr(ast::ExprKind::Block(placeholder(reads, span), None), span);
+    let closure = ast::Closure {
+        binder: ast::ClosureBinder::NotPresent, capture_clause: ast::CaptureBy::Value { move_kw: span }, constness: ast::Const::No,
+        coroutine_kind: None, movability: ast::Movability::Movable,
+        fn_decl: Box::new(ast::FnDecl { inputs: params(params_list, span), output: ast::FnRetTy::Ty(ty(&ret, span)) }),
+        body, fn_decl_span: span, fn_arg_span: span,
+    };
+    ast::Stmt { id: ast::DUMMY_NODE_ID, kind: ast::StmtKind::Semi(expr(ast::ExprKind::Closure(Box::new(closure)), span)), span }
+}
+
+/// A function whose placeholder body holds closure skeletons ahead of its diverging `loop {}`.
+pub fn function_with_closures(name: &str, generics: ast::Generics, params_list: &[(&str, TySpec)], ret: TySpec, closures: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Item> {
+    let inputs = params(params_list, span);
+    let body = placeholder(closures, span);
     let sig = ast::FnSig { header: ast::FnHeader::default(), decl: Box::new(ast::FnDecl { inputs, output: ast::FnRetTy::Ty(ty(&ret, span)) }), span };
     item(ast::ItemKind::Fn(Box::new(ast::Fn {
         defaultness: ast::Defaultness::Implicit, ident: ident(name, span), generics, sig,
-        contract: None, define_opaque: None, body: Some(Box::new(body)), eii_impls: ThinVec::new(),
+        contract: None, define_opaque: None, body: Some(body), eii_impls: ThinVec::new(),
     })), span)
 }
 
+/// Makes an item `pub`, and a model's fields with it, as an Incan `pub` export is.
+pub fn public(mut item: Box<ast::Item>) -> Box<ast::Item> {
+    let span = item.span;
+    item.vis = ast::Visibility { kind: ast::VisibilityKind::Public, span, tokens: None };
+    if let ast::ItemKind::Struct(_, _, ast::VariantData::Struct { fields, .. }) = &mut item.kind {
+        for field in fields.iter_mut() {
+            field.vis = ast::Visibility { kind: ast::VisibilityKind::Public, span, tokens: None };
+        }
+    }
+    item
+}
+
+/// `mod <name> { <items> }`, inline.
+pub fn module(name: &str, items: ThinVec<Box<ast::Item>>, span: Span) -> Box<ast::Item> {
+    let spans = ast::ModSpans { inner_span: span, inject_use_span: span };
+    item(ast::ItemKind::Mod(ast::Safety::Default, ident(name, span), ast::ModKind::Loaded(items, ast::Inline::Yes, spans)), span)
+}
+
+/// `extern crate <name>;` -- loads a dependency the checked program names, so its items have `DefId`s to call.
+pub fn extern_crate(name: &str, span: Span) -> Box<ast::Item> {
+    item(ast::ItemKind::ExternCrate(None, ident(name, span)), span)
+}
+
+/// `use <segments>::*;`
+pub fn glob_use(segments: &[&str], span: Span) -> Box<ast::Item> {
+    let path = ast::Path { span, segments: segments.iter().map(|s| ast::PathSegment::from_ident(ident(s, span))).collect(), tokens: None };
+    item(ast::ItemKind::Use(ast::UseTree { prefix: path, kind: ast::UseTreeKind::Glob(span) }), span)
+}
+
 // ---- Bodies: MIR the front end builds ----
+
+/// The item at `crate::module::..::name` in a dependency, by walking its public module tree. This is how a checked
+/// call plan's canonical path becomes the `DefId` a `Call` terminator names.
+pub fn extern_item(tcx: TyCtxt<'_>, path: &[&str]) -> DefId {
+    let missing = || -> ! { tcx.dcx().fatal(format!("the front end needs `{}`, and no loaded crate has it", path.join("::"))) };
+    let Some((krate, rest)) = path.split_first() else { missing() };
+    let Some(cnum) = tcx.crates(()).iter().copied().find(|c| tcx.crate_name(*c).as_str() == *krate) else { missing() };
+    let mut current = cnum.as_def_id();
+    for segment in rest {
+        let child = tcx.module_children(current).iter().find(|c| c.ident.name.as_str() == *segment);
+        let Some(def_id) = child.and_then(|c| c.res.opt_def_id()) else { missing() };
+        current = def_id;
+    }
+    current
+}
+
+/// The closures declared inside `parent`'s placeholder body, in declaration order.
+pub fn closures_of(tcx: TyCtxt<'_>, parent: LocalDefId) -> Vec<LocalDefId> {
+    tcx.nested_bodies_within(parent).iter().filter(|d| tcx.def_kind(*d) == rustc_hir::def::DefKind::Closure).collect()
+}
 
 pub fn local_item(tcx: TyCtxt<'_>, name: &str) -> DefId {
     tcx.hir_crate_items(()).free_items().map(|i| i.owner_id.to_def_id())
@@ -122,15 +210,23 @@ pub struct Cfg<'tcx> {
 }
 
 impl<'tcx> Cfg<'tcx> {
+    /// A closure's body takes its environment first (`&Closure`, `&mut Closure` or `Closure`, by the closure kind
+    /// typeck inferred), then its declared parameters, as rustc's own `mir_build` lays it out.
     pub fn new(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Self {
         let span = tcx.def_span(def);
-        let sig = tcx.fn_sig(def).instantiate_identity().skip_binder();
+        let sig = tcx.typeck(def).liberated_fn_sigs()[tcx.local_def_id_to_hir_id(def)];
         let mut locals = IndexVec::new();
         locals.push(LocalDecl::new(sig.output(), span));
-        for input in sig.inputs() {
+        let closure_ty = tcx.type_of(def).instantiate_identity().skip_normalization();
+        let env = match closure_ty.kind() {
+            ty::Closure(_, args) => Some(tcx.closure_env_ty(closure_ty, args.as_closure().kind(), tcx.lifetimes.re_erased)),
+            _ => None,
+        };
+        for input in env.iter().chain(sig.inputs()) {
             locals.push(LocalDecl::new(*input, span));
         }
-        let mut cfg = Cfg { tcx, def, span, arg_count: sig.inputs().len(), locals, blocks: IndexVec::new() };
+        let arg_count = locals.len() - 1;
+        let mut cfg = Cfg { tcx, def, span, arg_count, locals, blocks: IndexVec::new() };
         cfg.block();
         cfg
     }
@@ -154,6 +250,24 @@ impl<'tcx> Cfg<'tcx> {
 
     pub fn terminate(&mut self, bb: BasicBlock, kind: TerminatorKind<'tcx>, span: Span) {
         self.blocks[bb].terminator = Some(Terminator { source_info: SourceInfo::outermost(span), kind, attributes: ThinVec::new() });
+    }
+
+    /// Ends `bb` with a call of `callee::<generic_args>(args)` into `destination`, and returns the block the call
+    /// continues in.
+    pub fn call(&mut self, bb: BasicBlock, callee: DefId, generic_args: &[ty::GenericArg<'tcx>], args: Vec<Operand<'tcx>>, destination: Place<'tcx>) -> BasicBlock {
+        let span = self.span;
+        let next = self.block();
+        let kind = TerminatorKind::Call {
+            func: Operand::function_handle(self.tcx, callee, generic_args.iter().copied(), span),
+            args: args.into_iter().map(|node| rustc_span::Spanned { node, span }).collect(),
+            destination,
+            target: Some(next),
+            unwind: UnwindAction::Continue,
+            call_source: CallSource::Normal,
+            fn_span: span,
+        };
+        self.terminate(bb, kind, span);
+        next
     }
 
     pub fn finish(self) -> Body<'tcx> {
