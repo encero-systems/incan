@@ -62,7 +62,7 @@ fn is_unit_model(name: &str) -> bool {
 // Front end: the real Incan checker and Body IR builder, in-process
 // ============================================================================
 
-fn check_and_build(source: &str) -> Result<(bir::BodyIrModule, Vec<String>), String> {
+fn check_and_build(source: &str) -> Result<Checked, String> {
     let tokens = lexer::lex(source).map_err(|errors| format!("lexing failed: {errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("parsing failed: {errors:?}"))?;
     let mut checker = TypeChecker::new();
@@ -96,13 +96,15 @@ fn check_and_build(source: &str) -> Result<(bir::BodyIrModule, Vec<String>), Str
     // A model's decorators (`@derive`), adopted traits, aliases, partials and properties all change what the model
     // means natively, and none of them is in Body IR's nominal declarations yet.
     let mut fieldless_models = Vec::new();
+    let mut model_derives = std::collections::BTreeMap::new();
     for declaration in &program.declarations {
         if let incan_frontend::ast::Declaration::Model(model_decl) = &declaration.node {
-            let extras = !model_decl.decorators.is_empty() || !model_decl.traits.is_empty() || !model_decl.method_aliases.is_empty()
+            let extras = !model_decl.traits.is_empty() || !model_decl.method_aliases.is_empty()
                 || !model_decl.method_partials.is_empty() || !model_decl.properties.is_empty() || !model_decl.type_params.is_empty();
             if extras {
-                return Err(format!("native lowering of `{}` does not support model decorators, traits, aliases, partials, properties or type parameters yet", model_decl.name));
+                return Err(format!("native lowering of `{}` does not support model traits, aliases, partials, properties or type parameters yet", model_decl.name));
             }
+            model_derives.insert(model_decl.name.to_string(), plain_derives(&model_decl.name, &model_decl.decorators)?);
             if model_decl.fields.is_empty() {
                 fieldless_models.push(model_decl.name.to_string());
             }
@@ -118,7 +120,56 @@ fn check_and_build(source: &str) -> Result<(bir::BodyIrModule, Vec<String>), Str
     // Body IR declares only the models its first consumer could run; a field-less model with methods is not among
     // them. Its Rust struct needs nothing Body IR would supply, so the driver declares it from the source.
     fieldless_models.retain(|name| !module.nominal_declarations.iter().any(|declared| &declared.name == name));
-    Ok((module, fieldless_models))
+    Ok(Checked { module, fieldless_models, model_derives })
+}
+
+/// What the driver needs from the front end: Body IR, the field-less models Body IR omits, and each model's Rust
+/// derives.
+struct Checked {
+    module: bir::BodyIrModule,
+    fieldless_models: Vec<String>,
+    model_derives: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// A model's `@derive(..)` names, when every one is a plain built-in derive whose Rust derive means the same thing,
+/// expanded through the kernel's implication table (`Eq` brings `PartialEq`, `Ord` brings `PartialOrd`, `Eq` and
+/// `PartialEq`) exactly as the emitter's lowering expands it. `Display`, `Default`, serde and anything resolved
+/// through an import are refused: their resolution lives in the emitter's lowering, not in the checked facts.
+fn plain_derives(model: &str, decorators: &[incan_frontend::ast::Spanned<incan_frontend::ast::Decorator>]) -> Result<Vec<String>, String> {
+    use incan_lang::lang::derives::{self, DeriveId};
+    let plain = [DeriveId::Debug, DeriveId::Eq, DeriveId::PartialEq, DeriveId::Ord, DeriveId::PartialOrd, DeriveId::Hash, DeriveId::Clone, DeriveId::Copy];
+    let refuse = |what: String| Err(format!("native lowering of `{model}` does not support {what} yet"));
+    let mut names: Vec<String> = Vec::new();
+    for decorator in decorators {
+        let decorator = &decorator.node;
+        // A bare `@derive` is spelled with the one-segment path `derive`.
+        if !(decorator.name == "derive" && decorator.path.parent_levels == 0 && decorator.path.segments == ["derive"]) {
+            return refuse(format!("the model decorator `@{}`", decorator.name));
+        }
+        for arg in &decorator.args {
+            let incan_frontend::ast::DecoratorArg::Positional(expr) = arg else { return refuse("a keyword argument to `@derive`".to_string()) };
+            let Some(name) = incan_frontend::decorator_resolution::derive_argument_name(&expr.node) else { return refuse("a non-name `@derive` argument".to_string()) };
+            match derives::from_str(&name) {
+                Some(id) if plain.contains(&id) => {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+                _ => return refuse(format!("the derive `{name}`")),
+            }
+        }
+    }
+    for (derive, implied) in derives::DERIVE_IMPLICATIONS {
+        if names.iter().any(|name| name == derives::as_str(*derive)) {
+            for implied in *implied {
+                let implied = derives::as_str(*implied).to_string();
+                if !names.contains(&implied) {
+                    names.push(implied);
+                }
+            }
+        }
+    }
+    Ok(names)
 }
 
 /// The model a method belongs to: its receiver's type. `None` for a free function.
@@ -1162,7 +1213,15 @@ impl rustc_driver::Callbacks for Callbacks {
         let file = compiler.sess.source_map().load_file(&self.source)
             .unwrap_or_else(|e| dcx.fatal(format!("cannot load Incan source {}: {e}", self.source.display())));
         let Some(text) = file.src.as_deref() else { dcx.fatal("the loaded Incan source has no text") };
-        let (module, fieldless_models) = check_and_build(text).unwrap_or_else(|e| dcx.fatal(e));
+        let Checked { module, fieldless_models, model_derives } = check_and_build(text).unwrap_or_else(|e| dcx.fatal(e));
+        // `#[derive(X)]` once per derive, on the struct of the model that asked for it.
+        let with_derives = |mut item: Box<ast::Item>, name: &str| {
+            for derive in model_derives.get(name).into_iter().flatten() {
+                let attr = rustc_ast::attr::mk_attr_nested_word(&compiler.sess.psess.attr_id_generator, ast::AttrStyle::Outer, ast::Safety::Default, rustc_span::Symbol::intern("derive"), rustc_span::Symbol::intern(derive), item.span);
+                item.attrs.push(attr);
+            }
+            item
+        };
         let _ = SOURCE_START.set(file.start_pos);
         let span = krate.spans.inner_span;
         krate.items.push(extern_crate("incan_std_core", span));
@@ -1171,7 +1230,7 @@ impl rustc_driver::Callbacks for Callbacks {
         }
         let _ = MODELS.set(module.nominal_declarations.iter().map(|model_decl| model_decl.name.clone()).chain(fieldless_models.iter().cloned()).collect());
         for name in &fieldless_models {
-            krate.items.push(public(model(name, ast::Generics::default(), &[], span)));
+            krate.items.push(with_derives(public(model(name, ast::Generics::default(), &[], span)), name));
         }
         // Each model is a Rust struct with its fields in declared order, the order constructions bind to.
         for model_decl in &module.nominal_declarations {
@@ -1182,7 +1241,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 .map(|(field, ty)| type_spec(ty).map(|ty| (field.as_str(), ty)))
                 .collect();
             let Some(fields) = fields else { dcx.fatal(format!("native lowering does not support a field type of `{}` yet", model_decl.name)) };
-            krate.items.push(public(model(&model_decl.name, ast::Generics::default(), &fields, span)));
+            krate.items.push(with_derives(public(model(&model_decl.name, ast::Generics::default(), &fields, span)), &model_decl.name));
         }
         // Free functions become crate-root items; each model's methods become one inherent `impl` block.
         let mut methods: std::collections::BTreeMap<&str, thin_vec::ThinVec<Box<ast::AssocItem>>> = std::collections::BTreeMap::new();
