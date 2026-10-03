@@ -54,15 +54,10 @@ INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
 INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
 # The C toolchain whose compiles native adoption observes in every Loaf bake: the Command Line Tools on macOS, the
 # system clang elsewhere. The sysroot is canonical because the owner closure binds canonical paths.
-ifeq ($(shell uname -s),Darwin)
-INCAN_TEST_CC ?= /Library/Developer/CommandLineTools/usr/bin/clang
-INCAN_TEST_CXX ?= /Library/Developer/CommandLineTools/usr/bin/clang++
-INCAN_TEST_C_SYSROOT ?= $(realpath /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)
-else
-INCAN_TEST_CC ?= /usr/bin/clang
-INCAN_TEST_CXX ?= /usr/bin/clang++
-INCAN_TEST_C_SYSROOT ?= /usr
-endif
+INCAN_TEST_NATIVE_TOOLCHAIN_DEFAULTS := $(shell workspaces/release/toolchain/resolve_release_native_toolchain.sh)
+INCAN_TEST_CC ?= $(word 1,$(INCAN_TEST_NATIVE_TOOLCHAIN_DEFAULTS))
+INCAN_TEST_CXX ?= $(word 2,$(INCAN_TEST_NATIVE_TOOLCHAIN_DEFAULTS))
+INCAN_TEST_C_SYSROOT ?= $(word 3,$(INCAN_TEST_NATIVE_TOOLCHAIN_DEFAULTS))
 # Registered Loaf registry checkout (incan.pub) whose adoption manifests govern captured registry units in the
 # release bake; unset, the release publisher keeps every unit observation-governed.
 INCAN_TEST_LOAF_REGISTRY ?=

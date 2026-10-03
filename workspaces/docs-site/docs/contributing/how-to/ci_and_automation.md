@@ -91,13 +91,14 @@ TARGET="aarch64-apple-darwin"
 INCAN_BIN="target/${TARGET}/release/incan" \
 INCAN_LSP_BIN="target/${TARGET}/release/incan-lsp" \
 INCAN_SDK_PROVIDER_BUILDER_BIN="target/release/incan" \
-RUSTUP_TOOLCHAIN="1.98.0" \
 workspaces/release/toolchain/package_archive.sh "${TARGET}" --out-dir dist
 ```
 
 The release workflow prewarms the support workspace's registry sources before packaging. The packager resolves and verifies the reduced support workspace lock with Cargo's offline mode, ships it as `<package>/crates/Cargo.lock`, and retains the SDK provider seed's shared lock. Other compiler and SDK preparation subprocesses are not covered by that offline flag. An installed compiler selects its own `<toolchain>/crates/Cargo.lock` ahead of any enclosing checkout lock, so SDK component identity and rebuilding continue to use the dependency closure shipped with that toolchain.
 
-`CARGO_BIN` is the highest-precedence Cargo selection when a caller supplies an exact executable. Otherwise the packager skips Cargo executables under a `target/` directory and selects the first remaining Cargo on `PATH`. When that executable has a sibling Rustup, `RUSTUP_TOOLCHAIN` selects an exact toolchain; without it, Rustup's active override or default applies. A Cargo installation without a sibling Rustup is used directly. The release workflow sets `RUSTUP_TOOLCHAIN=1.98.0`; local packaging follows the same rule only when the caller sets that variable.
+`CARGO_BIN` is the highest-precedence Cargo selection when a caller supplies an exact executable. Otherwise the packager skips Cargo executables under a `target/` directory and asks the matching Rustup for the compatibility publisher's pinned `nightly-2026-03-24` Cargo. `INCAN_RELEASE_PUBLISHER_TOOLCHAIN` can select another exact publisher toolchain for a controlled packaging run; it does not change the Rust 1.98.0 compiler identity sealed into the Loafs.
+
+Release Loaf publication uses the same native-toolchain defaults as the compiler suite: Command Line Tools `clang`, `clang++`, and the canonical macOS SDK on macOS, or `/usr/bin/clang`, `/usr/bin/clang++`, and `/usr` elsewhere. Set all three of `INCAN_RELEASE_CC`, `INCAN_RELEASE_CXX`, and `INCAN_RELEASE_C_SYSROOT` to exact paths to override them.
 
 Expect two publication phases. The command first publishes the ordinary release Loaf family under the staged package, then bakes the release policy project against that package-local family. That explicit release-policy bake materializes its admitted runtime foundation, rebuilds the runtime dependency closure with the retained compiler, selects the exact `core_engine` output for `TARGET` from the structured bake report, and republishes the envelope with those retained members. A later normal command that selects the release `ToolchainLoaf` only acquires and proves that same-generation closure; an absent or invalid closure refuses rather than triggering a consumer bake. A failure in either phase stops archive creation.
 

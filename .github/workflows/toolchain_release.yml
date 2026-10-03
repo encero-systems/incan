@@ -33,6 +33,9 @@ jobs:
         with:
           toolchain: 1.98.0
           targets: wasm32-wasip1,${{ matrix.target }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-24
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-${{ matrix.target }}
@@ -55,6 +58,7 @@ jobs:
           INCAN_LSP_BIN: target/${{ matrix.target }}/release/incan-lsp
           INCAN_SDK_PROVIDER_BUILDER_BIN: target/release/incan
           RUSTUP_TOOLCHAIN: 1.98.0
+          INCAN_RELEASE_PUBLISHER_TOOLCHAIN: nightly-2026-03-24
         run: workspaces/release/toolchain/package_archive.sh "${TARGET}"
       - uses: actions/upload-artifact@v7.0.1
         with:
