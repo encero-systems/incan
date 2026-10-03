@@ -41,6 +41,7 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 - Incan code drives a Rust layer built against rustc's internals. One driver builds that layer, an Incan unit that fills its body plan, and a Rust executable that calls the Incan unit. The executable runs rustc in its own process and compiles a program whose function body the Incan code planned.
 - Real Body IR runs natively. The driver runs this repository's Incan front end in-process and lowers the unchanged kernels of the `fib` and `collatz` benchmarks to MIR, calling the same stdlib runtime helpers the emitted route calls. The output is identical to the emitted-Rust route's for the same sources, and optimized runtime is on par.
 - Whole programs compile natively. The unchanged `fib`, `collatz` and `mandelbrot` benchmark programs, `main` included, compile from source to native binaries with no Rust source at any point. Their output is identical to the emitted route's, and optimized runtime is at parity.
+- A first corpus native lane runs. It compiles every single-file behavior fixture that records its expected output, runs it natively, and compares stdout and exit code. 22 fixtures pass, none produce wrong output, none fail, and 441 are refused with the construct they need named. The lane caught one miscompile, a `@rust.extern` placeholder run as a body (#2023), and three lowering defects, all fixed.
 
 ## Decision
 
@@ -139,7 +140,7 @@ The inner loop on real Body IR, with an optimized driver and the front end in-pr
 
 **Builtins the emitter expands as macros become runtime functions.** The emitted route turns `println` into Rust's `println!` macro, which no MIR can call. Natively each such builtin is a call to a stdlib runtime function that invokes the macro itself, so behavior such as output capture under a test harness is unchanged.
 
-**The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both. Body IR must also record parameter modes. Today it passes an argument to a `mut` parameter as a copy and lets the callee drop it, where RFC 129 and the emitted route write through (#2022).
+**The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both. Body IR must also record parameter modes. Today it passes an argument to a `mut` parameter as a copy and lets the callee drop it, where RFC 129 and the emitted route write through (#2022). It must also carry the facts the lowering currently compensates for: extern delegation (#2023), the checked type of a literal, which leaves an `int` literal accepted as a `float` as an integer constant, the receiver mode of mutating builtin methods, and the precise type of a `range(..)` value.
 
 **Open, to settle before this record is accepted:**
 
