@@ -136,7 +136,7 @@ The inner loop on real Body IR, with an optimized driver and the front end in-pr
 - It turns structured Body IR into a control-flow graph and emits drops and cleanup blocks; rustc's drop elaboration handles which drops actually run.
 - When the lowering is wrong, the failure is an internal compiler error rather than a readable diagnostic. So lowering defects are harder to diagnose than emitted-Rust defects were.
 
-**The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both.
+**The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both. Body IR must also record parameter modes. Today it passes an argument to a `mut` parameter as a copy and lets the callee drop it, where RFC 129 and the emitted route write through (#2022).
 
 **Open, to settle before this record is accepted:**
 
