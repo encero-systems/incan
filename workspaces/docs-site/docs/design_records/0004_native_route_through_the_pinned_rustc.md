@@ -90,6 +90,13 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 - A Rust call's callee and generic arguments come from the checked call plan, resolved by canonical path.
 - They are never recovered from generated names.
 
+**New code is Incan unless Rust is clearly better.**
+
+- The native route's new code is written in Incan by default. That includes the Body IR → MIR lowering, drop and unwind building, and the driver's own orchestration.
+- Rust is used only where it is the better tool. Here that is the narrow layer that holds rustc's internal types, which are bound to rustc's lifetimes and interned values, plus any code where exact lifetimes and borrows matter for performance.
+- Every piece that stays Rust names its reason.
+- Once both languages share one crate graph, splitting a component across them costs nothing at the boundary, so this extends Incan's standing self-hosting rule to the compiler's own internals.
+
 **Ring placement.**
 
 - The lowering from Body IR to MIR belongs to the compiler ring, beside the checker that owns Body IR.
@@ -122,8 +129,7 @@ So code generation and linking dominate a small unit. rustc does not reuse analy
 
 **Open, to settle before this record is accepted:**
 
-- **Writing the lowering in Incan.** The intended shape is bilingual. A narrow Rust layer owns every rustc type, which is full of lifetimes and interned values, and presents a plain builder of blocks, places, calls and drops addressed by index. The lowering itself is Incan code driving that builder, compiled first by the previous compiler. Whether Incan's Rust interop and Rust inspection can reach a crate built against rustc's internal interface, and hold up when it is linked into the driver, is untested.
-- **MIR or THIR.** Bodies could enter rustc one stage earlier, as THIR, so that rustc builds drop paths, unwind paths and pattern code itself. The cost is constructing typed expression trees that must agree with rustc's type-check results. The spike tested MIR only.
+- **How the Incan lowering reaches rustc.** The lowering is Incan by decision. A narrow Rust layer owns every rustc type and presents a plain builder of blocks, places, calls and drops addressed by index. The lowering drives that builder and is compiled first by the previous compiler. Whether Incan's Rust interop and Rust inspection can reach a crate built against rustc's internal interface, and hold up when it is linked into the driver, is untested. Until RFC 097 ships, Incan reaches Rust but Rust cannot call Incan, so the Incan side has to drive the Rust layer and hand it complete bodies.- **MIR or THIR.** Bodies could enter rustc one stage earlier, as THIR, so that rustc builds drop paths, unwind paths and pattern code itself. The cost is constructing typed expression trees that must agree with rustc's type-check results. The spike tested MIR only.
 - **Generic bodies of published Loaves.** How do they reach a native consumer: through the rustc metadata of the Loaf's compiled unit, through RFC 123's executable representation, or both?
 - **Async.** How do Incan `async` bodies lower: as MIR coroutines the front end builds, or by another route?
 
@@ -142,7 +148,7 @@ Revisit this record when any of the following happens:
 
 - A rustc upgrade costs more than a driver upgrade.
 - The resident driver fails the 0.6 inner-loop bar: an unchanged `incan run` under 50 ms over the program's own run time, a one-line edit to first output under 250 ms, and a test case that builds a project under 1 s.
-- The interop check shows that the lowering cannot be written in Incan.
+- The interop check shows that the lowering cannot reach rustc from Incan.
 
 ## Provenance
 
