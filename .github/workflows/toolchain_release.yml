@@ -33,7 +33,9 @@ jobs:
         with:
           toolchain: 1.98.0
           targets: wasm32-wasip1,${{ matrix.target }}
-      - uses: dtolnay/rust-toolchain@master
+      # Only the compatibility publisher's Cargo comes from this toolchain. Install it without changing Rustup's
+      # default, so the release builds below stay on the supported Rust release.
+      - uses: ./.github/actions/install-nightly-toolchain
         with:
           toolchain: nightly-2026-03-24
       - uses: Swatinem/rust-cache@v2
