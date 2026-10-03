@@ -60,6 +60,23 @@ The step-3 driver compiles and links `step3_program.rs` to a native binary in ab
 - **Spans are free once the file is in the source map.** `SourceMap::load_file` registers the `.incn` file. Spans built from its `start_pos` flow into panic locations, debuginfo and backtraces with no further work.
 - **rustc's internal API moves between releases.** This spike hit five differences against older documentation (`Terminator::attributes`, `Spanned`'s path, `Defaultness::Implicit`, `Rvalue::Use` taking a `WithRetag`, and field types returned as `Unnormalized`). Each rustc upgrade is a front-end upgrade; the toolchain already pins one rustc, which bounds that cost. The `rustc-dev` component installs rustc's sources under `lib/rustlib/rustc-src`, which is the reference for each upgrade.
 
+## Census
+
+`census.rs` runs the real front end over a corpus and checks every body against the subset the native lowering covers, ranking what blocks the rest. Over the behavior fixtures, the examples and the benchmarks (973 files, 202 of which need a project around them to check), it finds 2,357 bodies, of which 247 are covered today.
+
+The largest blockers are:
+
+- nominal types (models, classes, enums, newtypes): 921 bodies;
+- borrow operand facts: 879;
+- field and index projections: 589;
+- aggregate construction: 572;
+- `List`: 490;
+- string constants: 443, which is also the largest sole blocker, at 59 bodies;
+- `match`: 297;
+- `Result`: 245.
+
+Two entries are Body IR gaps rather than lowering gaps: 314 bodies have locals of `Unknown` type, and 232 contain `Unsupported` statements. Build it like the step 11 driver, without `RUSTC_BOOTSTRAP`, and run it over a list of `.incn` paths.
+
 ## Not yet tested
 
 Lowering the rest of Body IR beyond step 11's subset, and Oven driving the front end with JEC unit reuse.
