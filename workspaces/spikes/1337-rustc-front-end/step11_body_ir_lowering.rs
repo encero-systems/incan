@@ -58,6 +58,13 @@ fn is_unit_model(name: &str) -> bool {
     MODELS.get().is_some_and(|models| models.contains(name))
 }
 
+/// The fieldless enums this unit declares.
+static ENUMS: OnceLock<std::collections::BTreeSet<String>> = OnceLock::new();
+
+fn is_unit_enum(name: &str) -> bool {
+    ENUMS.get().is_some_and(|enums| enums.contains(name))
+}
+
 // ============================================================================
 // Front end: the real Incan checker and Body IR builder, in-process
 // ============================================================================
@@ -87,12 +94,12 @@ fn check_and_build(source: &str) -> Result<Checked, String> {
     for declaration in &program.declarations {
         use incan_frontend::ast::Declaration;
         let kind = match &declaration.node {
-            Declaration::Function(_) | Declaration::Model(_) | Declaration::Docstring(_) => continue,
+            // Enums are admitted here and checked against Body IR's fieldless enums once Body IR exists.
+            Declaration::Function(_) | Declaration::Model(_) | Declaration::Docstring(_) | Declaration::Enum(_) => continue,
             Declaration::Import(_) => "imports",
             Declaration::Const(_) | Declaration::Static(_) => "module constants and statics",
             Declaration::Class(_) => "classes",
             Declaration::Trait(_) => "traits",
-            Declaration::Enum(_) => "enums",
             Declaration::Newtype(_) => "newtypes",
             Declaration::Alias(_) | Declaration::Partial(_) | Declaration::TypeAlias(_) => "aliases and partials",
             _ => "this kind of top-level declaration",
@@ -134,6 +141,14 @@ fn check_and_build(source: &str) -> Result<Checked, String> {
     for body in &module.bodies {
         if !names.insert((receiver_owner(body), body.name.as_str())) {
             return Err(format!("native lowering of `{}` does not support overloaded functions yet", body.name));
+        }
+    }
+    // Only fieldless enums are lowered so far; an enum with payloads or backing values is refused by name.
+    for declaration in &program.declarations {
+        if let incan_frontend::ast::Declaration::Enum(enum_decl) = &declaration.node
+            && !module.fieldless_enum_declarations.iter().any(|fieldless| fieldless.name == enum_decl.name)
+        {
+            return Err(format!("native lowering of `{}` does not support enums with payloads or values yet", enum_decl.name));
         }
     }
     // Body IR declares only the models its first consumer could run; a field-less model with methods is not among
@@ -238,7 +253,7 @@ fn type_spec(ty: &IncanType) -> Option<common::TySpec> {
         IncanType::Primitive(IncanPrimitiveType::Unit) => "()",
         IncanType::Primitive(IncanPrimitiveType::Str) => "String",
         // A model is the Rust struct of the same name the driver declares for it (RFC 121).
-        IncanType::Named(name) if is_unit_model(name) => name.as_str(),
+        IncanType::Named(name) if is_unit_model(name) || is_unit_enum(name) => name.as_str(),
         _ => return None,
     };
     Some(t(name))
@@ -251,7 +266,7 @@ fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
         IncanType::Primitive(IncanPrimitiveType::Float) => Some(tcx.types.f64),
         IncanType::Primitive(IncanPrimitiveType::Unit) => Some(tcx.types.unit),
         IncanType::Primitive(IncanPrimitiveType::Str) => Some(string_ty(tcx)),
-        IncanType::Named(name) if is_unit_model(name) => Some(tcx.type_of(local_item(tcx, name)).instantiate_identity().skip_normalization()),
+        IncanType::Named(name) if is_unit_model(name) || is_unit_enum(name) => Some(tcx.type_of(local_item(tcx, name)).instantiate_identity().skip_normalization()),
         IncanType::Generic { base, args } if base == "List" => match args.as_slice() {
             [element] => Some(vec_ty(tcx, mir_ty(tcx, element)?)),
             _ => None,
@@ -537,8 +552,13 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
 
     /// `Clone::clone(&place)`: Body IR's copy of a non-`Copy` value, such as a list passed where it is read again later.
     fn clone_of(&mut self, place: &bir::Place, span: Span) -> Place<'tcx> {
-        let tcx = self.tcx;
         let source = self.place(place);
+        self.clone_place(source, span)
+    }
+
+    /// `Clone::clone(&source)` into a fresh temporary.
+    fn clone_place(&mut self, source: Place<'tcx>, span: Span) -> Place<'tcx> {
+        let tcx = self.tcx;
         let source_ty = source.ty(&self.cfg.locals, tcx).ty;
         let Some(clone_trait) = tcx.lang_items().clone_trait() else { self.refuse("copies without the `Clone` lang item") };
         let Some(clone) = tcx.associated_item_def_ids(clone_trait).iter().copied().find(|d| tcx.item_name(*d).as_str() == "clone") else {
@@ -656,6 +676,13 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), args) => self.lower_construction(target, args, dest, span),
             bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => self.lower_list(elements, dest, span),
             bir::Rvalue::ResultVariant(variant) => self.lower_result_variant(variant, dest, span),
+            bir::Rvalue::FieldlessEnumVariant(target) => {
+                let enum_def = local_item(self.tcx, &target.enum_name);
+                let variant = self.variant_index(enum_def, &target.variant_name);
+                let kind = AggregateKind::Adt(enum_def, variant, self.tcx.mk_args(&[]), None, None);
+                self.cfg.assign(self.current, dest, Rvalue::Aggregate(Box::new(kind), IndexVec::new()), span);
+            }
+            bir::Rvalue::Match { scrutinee, arms } => self.lower_match(scrutinee, arms, dest, span),
             other => self.refuse(&format!("the rvalue `{}`", rvalue_name(other))),
         }
     }
@@ -899,6 +926,130 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     /// An f-string: `incan_std_core::strings::fstring(parts, args)`, the runtime call the emitted route makes. `parts`
     /// holds one more literal than there are values, empty where two values or an end meet; each value becomes a
     /// `String` through `ToString::to_string`, which is `Display` for `int` and `str`.
+    /// The index of the variant named `name` in the enum `enum_def`.
+    fn variant_index(&self, enum_def: rustc_hir::def_id::DefId, name: &str) -> VariantIdx {
+        let adt = self.tcx.adt_def(enum_def);
+        adt.variants().iter_enumerated().find(|(_, v)| v.name.as_str() == name).map(|(index, _)| index)
+            .unwrap_or_else(|| self.refuse(&format!("the variant `{name}`")))
+    }
+
+    /// `match scrutinee: arms`: each arm in source order tests its pattern against the scrutinee where it lies,
+    /// branching to the next arm on a mismatch, then binds, runs its guard, its body, and stores its result. The
+    /// checker proved the match exhaustive, so falling past the last arm is unreachable.
+    fn lower_match(&mut self, scrutinee: &bir::Operand, arms: &[bir::MatchArm], dest: Place<'tcx>, span: Span) {
+        let tcx = self.tcx;
+        let place = match scrutinee {
+            bir::Operand::Place(source) => self.place(&source.place),
+            _ => {
+                let value = self.operand(scrutinee);
+                let held = self.cfg.temp(value.ty(&self.cfg.locals, tcx));
+                self.cfg.assign(self.current, held, Rvalue::Use(value, WithRetag::Yes), span);
+                held
+            }
+        };
+        let dest_ty = dest.ty(&self.cfg.locals, tcx).ty;
+        let join = self.cfg.block();
+        for arm in arms {
+            let next_arm = self.cfg.block();
+            self.test_pattern(&arm.pattern, place, next_arm, span);
+            for stmt in &arm.guard_stmts {
+                self.lower_statement(stmt);
+            }
+            if let Some(guard) = &arm.guard {
+                let guard = self.operand(guard);
+                let guarded = self.cfg.block();
+                self.cfg.terminate(self.current, TerminatorKind::SwitchInt { discr: guard, targets: SwitchTargets::static_if(0, next_arm, guarded) }, span);
+                self.current = guarded;
+            }
+            for stmt in &arm.body_stmts {
+                self.lower_statement(stmt);
+            }
+            let result = self.operand_expecting(&arm.result, dest_ty);
+            self.cfg.assign(self.current, dest, Rvalue::Use(result, WithRetag::Yes), span);
+            self.cfg.terminate(self.current, TerminatorKind::Goto { target: join }, span);
+            self.current = next_arm;
+        }
+        self.cfg.terminate(self.current, TerminatorKind::Unreachable, span);
+        self.current = join;
+    }
+
+    /// Test `pattern` against `place`: on a mismatch jump to `fail`; on a match continue in the current block with the
+    /// pattern's bindings assigned.
+    fn test_pattern(&mut self, pattern: &bir::Pattern, place: Place<'tcx>, fail: BasicBlock, span: Span) {
+        let tcx = self.tcx;
+        let mut place = place;
+        while let ty::Ref(..) = place.ty(&self.cfg.locals, tcx).ty.kind() {
+            place = tcx.mk_place_deref(place);
+        }
+        let place_ty = place.ty(&self.cfg.locals, tcx).ty;
+        match pattern {
+            bir::Pattern::Wildcard => {}
+            bir::Pattern::Var(binding) => self.bind(binding, place, span),
+            bir::Pattern::Literal(literal @ (bir::Constant::Int(_) | bir::Constant::Bool(_))) => {
+                let literal = self.operand(&bir::Operand::Constant(literal.clone()));
+                let equal = self.cfg.temp(tcx.types.bool);
+                self.cfg.assign(self.current, equal, Rvalue::BinaryOp(BinOp::Eq, Box::new((Operand::Copy(place), literal))), span);
+                self.branch_on(Operand::Move(equal), fail, span);
+            }
+            bir::Pattern::FieldlessEnumVariant(target) => {
+                let enum_def = local_item(tcx, &target.enum_name);
+                let variant = self.variant_index(enum_def, &target.variant_name);
+                self.test_variant(place, place_ty, variant, fail, span);
+            }
+            bir::Pattern::Result { variant, fields } => {
+                let ty::Adt(adt, args) = place_ty.kind() else { self.refuse("a `Result` pattern on a non-`Result` value") };
+                let (adt, args) = (*adt, *args);
+                let (index, payload_ty) = match variant {
+                    bir::ResultVariantKind::Ok => (0, args.type_at(0)),
+                    bir::ResultVariantKind::Err => (1, args.type_at(1)),
+                };
+                self.test_variant(place, place_ty, VariantIdx::from_u32(index), fail, span);
+                if let [field] = fields.as_slice() {
+                    let payload = tcx.mk_place_field(tcx.mk_place_downcast(place, adt, VariantIdx::from_u32(index)), FieldIdx::from_u32(0), payload_ty);
+                    self.test_pattern(field, payload, fail, span);
+                }
+            }
+            other => self.refuse(&format!("the pattern `{}`", format!("{other:?}").split(['(', ' ', '{']).next().unwrap_or("?"))),
+        }
+    }
+
+    /// Continue when `place` holds `variant`; otherwise jump to `fail`.
+    fn test_variant(&mut self, place: Place<'tcx>, place_ty: Ty<'tcx>, variant: VariantIdx, fail: BasicBlock, span: Span) {
+        let tcx = self.tcx;
+        let ty::Adt(adt, _) = place_ty.kind() else { self.refuse("a variant pattern on a non-enum value") };
+        let expected = adt.discriminant_for_variant(tcx, variant).val;
+        let discr = self.cfg.temp(place_ty.discriminant_ty(tcx));
+        self.cfg.assign(self.current, discr, Rvalue::Discriminant(place), span);
+        let matched = self.cfg.block();
+        self.cfg.terminate(self.current, TerminatorKind::SwitchInt { discr: Operand::Move(discr), targets: SwitchTargets::static_if(expected, matched, fail) }, span);
+        self.current = matched;
+    }
+
+    /// Continue when `condition` is true; otherwise jump to `fail`.
+    fn branch_on(&mut self, condition: Operand<'tcx>, fail: BasicBlock, span: Span) {
+        let matched = self.cfg.block();
+        self.cfg.terminate(self.current, TerminatorKind::SwitchInt { discr: condition, targets: SwitchTargets::static_if(0, fail, matched) }, span);
+        self.current = matched;
+    }
+
+    /// Bind a pattern variable to the value at `place`: a copy for a `Copy` value; otherwise moved or cloned as Body IR
+    /// decided. A binding by reference is refused until the binding's reference type is in Body IR.
+    fn bind(&mut self, binding: &bir::PatternBinding, place: Place<'tcx>, span: Span) {
+        let tcx = self.tcx;
+        let local = self.places.get(&binding.local.0).copied().unwrap_or_else(|| self.refuse("an unplanned pattern binding"));
+        let place_ty = place.ty(&self.cfg.locals, tcx).ty;
+        let value = if place_ty.is_trivially_pure_clone_copy() {
+            Operand::Copy(place)
+        } else {
+            match binding.fact {
+                bir::OwnershipFact::Move => Operand::Move(place),
+                bir::OwnershipFact::Clone => Operand::Move(self.clone_place(place, span)),
+                other => self.refuse(&format!("a `{other:?}` pattern binding")),
+            }
+        };
+        self.cfg.assign(self.current, local, Rvalue::Use(value, WithRetag::Yes), span);
+    }
+
     /// `Ok(value)` or `Err(error)`: Rust's `Result` variant, with the payload typed as the variant's field.
     fn lower_result_variant(&mut self, variant: &bir::ResultVariant, dest: Place<'tcx>, span: Span) {
         let tcx = self.tcx;
@@ -1225,9 +1376,20 @@ fn is_builtin_range(callee: &bir::Callee) -> bool {
 
 /// Visit every statement in `block`, including those nested in `if` and `loop`.
 fn visit_statements(block: &bir::Block, visit: &mut impl FnMut(&bir::Statement)) {
-    for stmt in &block.stmts {
+    visit_statement_list(&block.stmts, visit);
+}
+
+/// Visit every statement in `stmts`, including those nested in `if`, `loop` and the arms of a `match`.
+fn visit_statement_list(stmts: &[bir::Statement], visit: &mut impl FnMut(&bir::Statement)) {
+    for stmt in stmts {
         visit(stmt);
         match &stmt.kind {
+            bir::StatementKind::Assign { rvalue: bir::Rvalue::Match { arms, .. }, .. } => {
+                for arm in arms {
+                    visit_statement_list(&arm.guard_stmts, visit);
+                    visit_statement_list(&arm.body_stmts, visit);
+                }
+            }
             bir::StatementKind::If { then_block, else_block, .. } => {
                 visit_statements(then_block, visit);
                 if let Some(block) = else_block {
@@ -1254,7 +1416,20 @@ fn lower_body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, body: &bir::Body) -> Bod
     cfg.terminate(exit, TerminatorKind::Return, cfg.span);
     let mut lowering = Lowering { tcx, body, cfg, places: HashMap::new(), current: BasicBlock::from_u32(0), loops: Vec::new(), exit, list_iters: std::collections::HashSet::new() };
     lowering.plan_locals();
-    lowering.lower_block(&body.block);
+    // Body IR records a value-returning function's trailing `match` result as a discarded expression statement with
+    // no `return`. The checker accepted that body only because the trailing value is the result, so a final
+    // expression statement in a non-unit function is lowered as its return.
+    let returns_value = body.return_type != IncanType::Primitive(IncanPrimitiveType::Unit);
+    match body.block.stmts.split_last() {
+        Some((bir::Statement { kind: bir::StatementKind::Expr { value }, span: last_span }, rest)) if returns_value => {
+            for stmt in rest {
+                lowering.lower_statement(stmt);
+            }
+            let span = lowering.span(last_span);
+            lowering.lower_return(Some(value), span);
+        }
+        _ => lowering.lower_block(&body.block),
+    }
     // A `None`-returning function returns `()` when it falls off its end. For a function that returns a value, falling
     // off the end is unreachable: the checker proved every path returns, and the block a `return` leaves behind is
     // never entered.
@@ -1329,6 +1504,18 @@ impl rustc_driver::Callbacks for Callbacks {
         let _ = MODELS.set(module.nominal_declarations.iter().map(|model_decl| model_decl.name.clone()).chain(fieldless_models.iter().cloned()).collect());
         for name in &fieldless_models {
             krate.items.push(with_derives(public(model(name, ast::Generics::default(), &[], span)), name));
+        }
+        // Each fieldless enum is a Rust enum with its variants in declared order, carrying the derives the emitted
+        // route gives one (`Debug`, `Clone`, `PartialEq`). Those defaults live in the emitter's lowering today; the
+        // checked facts should carry them.
+        let _ = ENUMS.set(module.fieldless_enum_declarations.iter().map(|enum_decl| enum_decl.name.clone()).collect());
+        for enum_decl in &module.fieldless_enum_declarations {
+            let variants: Vec<(&str, Vec<common::TySpec>)> = enum_decl.variants.iter().map(|variant| (variant.name.as_str(), Vec::new())).collect();
+            let mut item = public(common::enumeration(&enum_decl.name, &variants, span));
+            for derive in ["Debug", "Clone", "PartialEq"] {
+                item.attrs.push(rustc_ast::attr::mk_attr_nested_word(&compiler.sess.psess.attr_id_generator, ast::AttrStyle::Outer, ast::Safety::Default, rustc_span::Symbol::intern("derive"), rustc_span::Symbol::intern(derive), span));
+            }
+            krate.items.push(item);
         }
         // Each model is a Rust struct with its fields in declared order, the order constructions bind to.
         for model_decl in &module.nominal_declarations {

@@ -97,14 +97,14 @@ The current run:
 
 | outcome | fixtures |
 |---|---|
-| pass | 23 |
-| refused, by name | 440 |
+| pass | 24 |
+| refused, by name | 439 |
 | unchecked | 2 |
 | failed | 0 |
 | wrong | 0 |
 | out of scope | 408 |
 
-It also now covers `Result` (`Ok`, `Err`, `?` with the same error type, and a failing `main`) and plain `@derive`s on models. The lane caught a second behavior difference: `import this` prints a banner as an import side effect, which Body IR does not carry. The lowering now refuses every top-level declaration other than functions, models and docstrings by its kind.
+It also now covers `Result` (`Ok`, `Err`, `?` with the same error type, and a failing `main`), plain `@derive`s on models, fieldless enums, and `match` over enum variants, `Result` variants, `int`/`bool` literals, bindings and guards. It caught one more Body IR gap: a value-returning function's trailing `match` is recorded as a discarded expression statement with no `return`, so the lowering treats a final expression statement as the return value. The lane caught a second behavior difference: `import this` prints a banner as an import side effect, which Body IR does not carry. The lowering now refuses every top-level declaration other than functions, models and docstrings by its kind.
 
 The largest refusals are:
 
