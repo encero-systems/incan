@@ -1,0 +1,20 @@
+from rust::shapes import Stmt as RustStmt, sample
+
+type Stmt = rusttype RustStmt:
+    def noop(self) -> None:
+        ...
+
+def describe(stmt: Stmt) -> str:
+    match stmt:
+        Stmt.Assign(place=place, value=value) =>
+            return f"assign {place} {value}"
+        Stmt.Return(value) =>
+            return f"return {value}"
+        Stmt.Continue =>
+            return "continue"
+        _ =>
+            return "other"
+
+def main() -> None:
+    for i in range(3):
+        println(describe(sample(i)))
