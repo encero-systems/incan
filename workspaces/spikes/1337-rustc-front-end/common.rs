@@ -31,6 +31,10 @@ fn segment(name: &str, args: &[TySpec], span: Span) -> ast::PathSegment {
 }
 
 pub fn ty(spec: &TySpec, span: Span) -> Box<ast::Ty> {
+    // `()` is the unit tuple, also inside a generic such as `Result<(), String>`.
+    if spec.0 == "()" {
+        return Box::new(ast::Ty { id: ast::DUMMY_NODE_ID, kind: ast::TyKind::Tup(ThinVec::new()), span, tokens: None });
+    }
     let path = ast::Path { span, segments: thin_vec![segment(&spec.0, &spec.1, span)], tokens: None };
     Box::new(ast::Ty { id: ast::DUMMY_NODE_ID, kind: ast::TyKind::Path(None, path), span, tokens: None })
 }

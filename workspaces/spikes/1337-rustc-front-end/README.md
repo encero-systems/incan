@@ -97,19 +97,22 @@ The current run:
 
 | outcome | fixtures |
 |---|---|
-| pass | 22 |
-| refused, by name | 441 |
+| pass | 23 |
+| refused, by name | 440 |
 | unchecked | 2 |
 | failed | 0 |
 | wrong | 0 |
 | out of scope | 408 |
 
+It also now covers `Result` (`Ok`, `Err`, `?` with the same error type, and a failing `main`) and plain `@derive`s on models. The lane caught a second behavior difference: `import this` prints a banner as an import side effect, which Body IR does not carry. The lowering now refuses every top-level declaration other than functions, models and docstrings by its kind.
+
 The largest refusals are:
 
-- model decorators, traits and type parameters: 104 fixtures;
-- classes, enums, newtypes and imported types in signatures: 31;
-- `Result`: 29;
-- `mut` parameters, held back by #2022: 29.
+- imports: 113 fixtures. A program that imports from the stdlib needs the stdlib's own native units, which is where Oven building several units, and the toolchain building its own stdlib, come in.
+- classes: 39;
+- module constants: 31;
+- traits: 27;
+- enums: 17.
 
 ## Not yet tested
 

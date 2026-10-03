@@ -80,6 +80,25 @@ fn check_and_build(source: &str) -> Result<Checked, String> {
             return Err(format!("native lowering of `{}` does not support decorated functions (such as `@rust.extern`) yet", function.name));
         }
     }
+    // Only functions, models and docstrings are lowered. Everything else at the top level carries meaning Body IR does
+    // not: an import can run module effects (`import this` prints a banner) and binds names this unit does not
+    // define; a constant, enum, class or trait has no Body IR declaration the lowering could follow. Refusing them by
+    // kind keeps any of them from compiling silently into something else.
+    for declaration in &program.declarations {
+        use incan_frontend::ast::Declaration;
+        let kind = match &declaration.node {
+            Declaration::Function(_) | Declaration::Model(_) | Declaration::Docstring(_) => continue,
+            Declaration::Import(_) => "imports",
+            Declaration::Const(_) | Declaration::Static(_) => "module constants and statics",
+            Declaration::Class(_) => "classes",
+            Declaration::Trait(_) => "traits",
+            Declaration::Enum(_) => "enums",
+            Declaration::Newtype(_) => "newtypes",
+            Declaration::Alias(_) | Declaration::Partial(_) | Declaration::TypeAlias(_) => "aliases and partials",
+            _ => "this kind of top-level declaration",
+        };
+        return Err(format!("native lowering does not support {kind} yet"));
+    }
     // A `mut` parameter writes through to the caller (RFC 129), but Body IR passes its argument as a copy (#2022).
     // Lowering that copy would compile a program that silently mutates a throwaway value, so refuse it by name.
     let mut_parameter = |params: &[incan_frontend::ast::Spanned<incan_frontend::ast::Param>]| params.iter().any(|param| param.node.is_mut);
@@ -205,6 +224,13 @@ fn type_spec(ty: &IncanType) -> Option<common::TySpec> {
     {
         return Some(common::TySpec("Vec".to_string(), vec![type_spec(element)?]));
     }
+    // `Result[T, E]` is Rust's `Result<T, E>`, so a failing `main` exits as a Rust `main` returning `Err` does.
+    if let IncanType::Generic { base, args } = ty
+        && base == "Result"
+        && let [ok, err] = args.as_slice()
+    {
+        return Some(common::TySpec("Result".to_string(), vec![type_spec(ok)?, type_spec(err)?]));
+    }
     let name = match ty {
         IncanType::Primitive(IncanPrimitiveType::Int) => "i64",
         IncanType::Primitive(IncanPrimitiveType::Bool) => "bool",
@@ -230,8 +256,21 @@ fn mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &IncanType) -> Option<Ty<'tcx>> {
             [element] => Some(vec_ty(tcx, mir_ty(tcx, element)?)),
             _ => None,
         },
+        IncanType::Generic { base, args } if base == "Result" => match args.as_slice() {
+            [ok, err] => Some(result_ty(tcx, mir_ty(tcx, ok)?, mir_ty(tcx, err)?)),
+            _ => None,
+        },
         _ => None,
     }
+}
+
+/// The `Result` item.
+fn result_def(tcx: TyCtxt<'_>) -> rustc_hir::def_id::DefId {
+    tcx.get_diagnostic_item(rustc_span::Symbol::intern("Result")).unwrap_or_else(|| tcx.dcx().fatal("this sysroot does not name `Result`"))
+}
+
+fn result_ty<'tcx>(tcx: TyCtxt<'tcx>, ok: Ty<'tcx>, err: Ty<'tcx>) -> Ty<'tcx> {
+    Ty::new_adt(tcx, tcx.adt_def(result_def(tcx)), tcx.mk_args(&[ok.into(), err.into()]))
 }
 
 /// The `Vec` item.
@@ -516,6 +555,12 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     /// An operand where a value of `expected` type is wanted. Body IR keeps an `int` literal the checker accepted as a
     /// `float` (`f = 1`, `half(5)`) as an integer constant, so it is lowered as the float the checker meant.
     fn operand_expecting(&mut self, operand: &bir::Operand, expected: Ty<'tcx>) -> Operand<'tcx> {
+        // `None` where a `()` is wanted, as in `Ok(None)` for a `Result[None, E]`, is the unit value.
+        if let bir::Operand::Constant(bir::Constant::None) = operand
+            && expected.is_unit()
+        {
+            return Operand::Constant(Box::new(ConstOperand { span: self.cfg.span, user_ty: None, const_: Const::zero_sized(expected) }));
+        }
         if let bir::Operand::Constant(bir::Constant::Int(value)) = operand
             && expected.is_floating_point()
         {
@@ -572,6 +617,7 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             bir::StatementKind::Continue => self.jump_out(|(header, _)| header, "continue", span),
             bir::StatementKind::Return { value } => self.lower_return(value.as_ref(), span),
             bir::StatementKind::IterNext { destination, iterator, .. } => self.lower_iter_next(destination, iterator, span),
+            bir::StatementKind::TryPropagate { destination, operand, error_routing } => self.lower_try(destination, operand, error_routing, span),
             // An expression statement only discards an already-computed value.
             bir::StatementKind::Expr { .. } => {}
             bir::StatementKind::Drop { local } => {
@@ -609,6 +655,7 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
             bir::Rvalue::Format(parts) => self.lower_format(parts, dest, span),
             bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), args) => self.lower_construction(target, args, dest, span),
             bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => self.lower_list(elements, dest, span),
+            bir::Rvalue::ResultVariant(variant) => self.lower_result_variant(variant, dest, span),
             other => self.refuse(&format!("the rvalue `{}`", rvalue_name(other))),
         }
     }
@@ -852,6 +899,57 @@ impl<'a, 'tcx> Lowering<'a, 'tcx> {
     /// An f-string: `incan_std_core::strings::fstring(parts, args)`, the runtime call the emitted route makes. `parts`
     /// holds one more literal than there are values, empty where two values or an end meet; each value becomes a
     /// `String` through `ToString::to_string`, which is `Display` for `int` and `str`.
+    /// `Ok(value)` or `Err(error)`: Rust's `Result` variant, with the payload typed as the variant's field.
+    fn lower_result_variant(&mut self, variant: &bir::ResultVariant, dest: Place<'tcx>, span: Span) {
+        let tcx = self.tcx;
+        let dest_ty = dest.ty(&self.cfg.locals, tcx).ty;
+        let ty::Adt(_, args) = dest_ty.kind() else { self.refuse("a `Result` variant into a non-`Result` place") };
+        let (index, payload_ty) = match variant.kind {
+            bir::ResultVariantKind::Ok => (0, args.type_at(0)),
+            bir::ResultVariantKind::Err => (1, args.type_at(1)),
+        };
+        let payload = self.operand_expecting(&variant.payload, payload_ty);
+        let kind = AggregateKind::Adt(result_def(tcx), VariantIdx::from_u32(index), args, None, None);
+        self.cfg.assign(self.current, dest, Rvalue::Aggregate(Box::new(kind), IndexVec::from_raw(vec![payload])), span);
+    }
+
+    /// `value?` on a `Result`: the `Ok` payload into `destination`, or an early `return Err(error)` with the same
+    /// error, as Rust's `?` does when no conversion is needed. A required error conversion is refused for now.
+    fn lower_try(&mut self, destination: &bir::Place, operand: &bir::Operand, routing: &bir::TryErrorRouting, span: Span) {
+        let tcx = self.tcx;
+        if !matches!(routing, bir::TryErrorRouting::SameType { .. }) {
+            self.refuse("`?` that converts the error");
+        }
+        let value = self.operand(operand);
+        let value_ty = value.ty(&self.cfg.locals, tcx);
+        let ty::Adt(adt, args) = value_ty.kind() else { self.refuse("`?` on a non-`Result` value") };
+        if adt.did() != result_def(tcx) {
+            self.refuse(&format!("`?` on a `{value_ty}`"));
+        }
+        let (adt, args) = (*adt, *args);
+        let held = self.cfg.temp(value_ty);
+        self.cfg.assign(self.current, held, Rvalue::Use(value, WithRetag::Yes), span);
+        let discr = self.cfg.temp(value_ty.discriminant_ty(tcx));
+        self.cfg.assign(self.current, discr, Rvalue::Discriminant(held), span);
+        let (ok_block, err_block) = (self.cfg.block(), self.cfg.block());
+        self.cfg.terminate(self.current, TerminatorKind::SwitchInt { discr: Operand::Move(discr), targets: SwitchTargets::static_if(0, ok_block, err_block) }, span);
+
+        // ---- Err(error): return Err(error) ----
+        self.current = err_block;
+        let error = tcx.mk_place_field(tcx.mk_place_downcast(held, adt, VariantIdx::from_u32(1)), FieldIdx::from_u32(0), args.type_at(1));
+        let return_ty = Place::return_place().ty(&self.cfg.locals, tcx).ty;
+        let ty::Adt(_, return_args) = return_ty.kind() else { self.refuse("`?` in a function that does not return a `Result`") };
+        let kind = AggregateKind::Adt(result_def(tcx), VariantIdx::from_u32(1), return_args, None, None);
+        self.cfg.assign(self.current, Place::return_place(), Rvalue::Aggregate(Box::new(kind), IndexVec::from_raw(vec![Operand::Move(error)])), span);
+        self.cfg.terminate(self.current, TerminatorKind::Goto { target: self.exit }, span);
+
+        // ---- Ok(value): continue with the payload ----
+        self.current = ok_block;
+        let payload = tcx.mk_place_field(tcx.mk_place_downcast(held, adt, VariantIdx::from_u32(0)), FieldIdx::from_u32(0), args.type_at(0));
+        let dest = self.place_to_write(destination);
+        self.cfg.assign(self.current, dest, Rvalue::Use(Operand::Move(payload), WithRetag::Yes), span);
+    }
+
     /// `Model(field=value, ..)`: Body IR binds the arguments to the model's declared field order, which is the order of
     /// the Rust struct the driver declared, so they become its fields positionally.
     fn lower_construction(&mut self, target: &bir::ConstructorTarget, args: &[bir::ArgumentElement], dest: Place<'tcx>, span: Span) {
