@@ -3811,7 +3811,7 @@ impl<
                             return Some(item);
                         }
                         None => {
-                            self.current = None::<_>;
+                            self.current = None::<Nested>;
                         }
                     };
                 }
@@ -3887,7 +3887,7 @@ for FlatMapIterator<T, Source, U, Nested> {
                             return Some(item);
                         }
                         None => {
-                            self.current = None::<_>;
+                            self.current = None::<Nested>;
                         }
                     };
                 }
