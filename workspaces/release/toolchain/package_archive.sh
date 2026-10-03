@@ -595,12 +595,13 @@ else
     || fail "release Oven Loaf envelope retained a different policy-engine identity"
 fi
 [ -d "$loaf_root" ] || fail "release package is missing Oven Loafs"
-[ "$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')" = "2" ] \
+loaf_count="$(jq -er '.loafs | length' "$loaf_root/envelope.json")" \
+  || fail "release package has no readable Oven Loaf envelope"
+[ "$loaf_count" = "2" ] \
   || fail "release package must contain one release core and one debug Oven foundation Loaf"
 
 sdk_component_count="$(find "$sdk_seed_root/components" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 sdk_payload_bytes="$(find "$sdk_seed_root" -type f -exec wc -c {} + | awk '$2 != "total" { total += $1 } END { print total + 0 }')"
-loaf_count="$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')"
 loaf_payload_bytes="$(find "$loaf_root" -type f -exec wc -c {} + | awk '$2 != "total" { total += $1 } END { print total + 0 }')"
 loaf_physical_bytes="$(du -sk "$loaf_root" | awk '{ print $1 * 1024 }')"
 

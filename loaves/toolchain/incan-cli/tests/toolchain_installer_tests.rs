@@ -366,6 +366,8 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
     assert!(script.contains("--policy-engine-target \"$target\""));
     assert!(script.contains(".release_store_member.artifact_identity"));
+    assert!(script.contains("jq -er '.loafs | length' \"$loaf_root/envelope.json\""));
+    assert!(!script.contains("find \"$loaf_root\" -name loaf.json"));
     assert!(script.contains("release_policy_publisher_home=\"$(mktemp -d"));
     assert!(script.contains("rm -rf \"$release_policy_publisher_home\""));
     Ok(())
