@@ -40,6 +40,7 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
     - a Rust caller using `<library>::caller::incan`, instantiating a generic Incan function from metadata.
 - Incan code drives a Rust layer built against rustc's internals. One driver builds that layer, an Incan unit that fills its body plan, and a Rust executable that calls the Incan unit. The executable runs rustc in its own process and compiles a program whose function body the Incan code planned.
 - Real Body IR runs natively. The driver runs this repository's Incan front end in-process and lowers the unchanged kernels of the `fib` and `collatz` benchmarks to MIR, calling the same stdlib runtime helpers the emitted route calls. The output is identical to the emitted-Rust route's for the same sources, and optimized runtime is on par.
+- Whole programs compile natively. The unchanged `fib`, `collatz` and `mandelbrot` benchmark programs, `main` included, compile from source to native binaries with no Rust source at any point. Their output is identical to the emitted route's, and optimized runtime is at parity.
 
 ## Decision
 
@@ -129,12 +130,14 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 
 So code generation and linking dominate a small unit. rustc does not reuse analysis across compilations in memory.
 
-The inner loop on real Body IR, with an optimized driver and the front end in-process: compiling the Incan unit of the two benchmark kernels takes about 43 ms, of which analysis is about 8 ms above process start. Linking the binary takes about 89 ms. A one-line edit therefore reaches a linked binary in about 132 ms, against the 0.6 bar of 250 ms.
+The inner loop on real Body IR, with an optimized driver and the front end in-process: compiling the Incan unit of the two benchmark kernels takes about 43 ms, of which analysis is about 8 ms above process start. Linking the binary takes about 89 ms. A one-line edit therefore reaches a linked binary in about 132 ms, against the 0.6 bar of 250 ms. For a whole program compiled as one unit, unchanged `fib.incn` source becomes a linked native binary in about 70 ms in a fresh driver process, so a one-line edit reaches first output in about 75 ms, against 680 ms today.
 
 **The lowering is the largest piece of work.**
 
 - It turns structured Body IR into a control-flow graph and emits drops and cleanup blocks; rustc's drop elaboration handles which drops actually run.
 - When the lowering is wrong, the failure is an internal compiler error rather than a readable diagnostic. So lowering defects are harder to diagnose than emitted-Rust defects were.
+
+**Builtins the emitter expands as macros become runtime functions.** The emitted route turns `println` into Rust's `println!` macro, which no MIR can call. Natively each such builtin is a call to a stdlib runtime function that invokes the macro itself, so behavior such as output capture under a test harness is unchanged.
 
 **The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both. Body IR must also record parameter modes. Today it passes an argument to a `mut` parameter as a copy and lets the callee drop it, where RFC 129 and the emitted route write through (#2022).
 
