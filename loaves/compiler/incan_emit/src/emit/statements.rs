@@ -920,6 +920,8 @@ impl<'a> IrEmitter<'a> {
     ///
     /// This is what turns a bare `str` literal into an owned `String` when the target asks for one, so every context
     /// that hands a value to a typed slot goes through it: a `let`, or a `match` arm feeding the match's own result.
+    /// Unlike a callee signature's generic placeholders at a call site, a generic in an assignment target is in scope
+    /// at the write itself, so a `None` stored in `Option[T]` must be emitted as `None::<T>`.
     pub fn emit_value_for_target(&self, value: &TypedExpr, target_ty: &IrType) -> Result<TokenStream, EmitError> {
         let emitted = self.emit_assignment_value(value, Some(target_ty))?;
         if matches!(value.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) {
@@ -953,6 +955,14 @@ impl<'a> IrEmitter<'a> {
                     target_ty: Some(target_ty),
                 },
             );
+        }
+
+        if matches!(value.kind, IrExprKind::None)
+            && let Some(IrType::Option(inner)) = expected_ty
+            && !Self::is_unresolved_type(inner)
+        {
+            let inner_ty = self.emit_type(inner);
+            return Ok(quote! { None::<#inner_ty> });
         }
 
         if let Some(target_ty) = expected_ty

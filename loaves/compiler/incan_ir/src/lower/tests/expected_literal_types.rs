@@ -521,7 +521,8 @@ fn field_write<'ir>(stmts: &'ir [IrStmt], field: &str, occurrence: usize) -> Res
 }
 
 /// #1986: lowering retains the checked storage type on direct and nested field assignment targets so emission applies
-/// the ordinary assignment conversion to values such as a `str` constant's borrowed representation.
+/// the ordinary assignment conversion to values such as a `str` constant's borrowed representation, and a generic
+/// model field keeps its in-scope type parameter.
 #[test]
 fn field_assignment_targets_retain_their_checked_storage_type_issue1986() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -533,6 +534,12 @@ model Label:
 
 model Holder:
     label: Label
+
+model Slot[T]:
+    current: Option[T] = None
+
+    def clear(mut self) -> None:
+        self.current = None
 
 def main() -> None:
     mut label = Label(text="initial")
@@ -553,6 +560,50 @@ def main() -> None:
         })
         .collect::<Vec<_>>();
     assert_eq!(fields, vec![("text", &IrType::String), ("text", &IrType::String)]);
+
+    let slot_impl = ir
+        .declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Impl(implementation)
+                if implementation.target_type == "Slot" && implementation.trait_name.is_none() =>
+            {
+                Some(implementation)
+            }
+            _ => None,
+        })
+        .ok_or("missing the inherent `Slot` impl")?;
+    let clear = slot_impl
+        .methods
+        .iter()
+        .find(|method| {
+            matches!(
+                method.body.first(),
+                Some(IrStmt {
+                    kind: IrStmtKind::Assign { .. },
+                    ..
+                })
+            )
+        })
+        .ok_or("missing `Slot.clear`")?;
+    let Some(IrStmt {
+        kind: IrStmtKind::Assign {
+            target: AssignTarget::Field { ty, .. },
+            ..
+        },
+        ..
+    }) = clear.body.first()
+    else {
+        return Err(format!(
+            "`Slot.clear` must start with a field assignment: {:?}",
+            clear.body
+        ));
+    };
+    assert_eq!(
+        ty,
+        &IrType::Option(Box::new(IrType::Generic("T".to_string()))),
+        "the generic field assignment target keeps the declared storage type"
+    );
     Ok(())
 }
 

@@ -129,8 +129,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
-      "sha256": "6538b49e9c9d5aba2992c50510303a302e92f9b64ceb6c7eba10370257bd2ef2",
-      "lines": 1994
+      "sha256": "54b5b2df34a8c0c67e59ee9b107925fb197ba354525e0c3c79f2a3af9a067d96",
+      "lines": 2004
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
@@ -777,6 +777,21 @@
       "compatibility_issue": "1998",
       "behavior_evidence": "unimported_nominal_types::an_empty_list_keeps_the_import_of_its_expected_model_element_type and constructor_arguments_name_field_types_the_module_does_not_import behavior fixture",
       "semantic_owner": "generated-use analysis retains nominal imports when empty-list destination typing becomes textual Rust",
+      "retirement_condition": "the Rust-source backend is deleted (#654)"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1986",
+      "behavior_evidence": "generic_option_field_none_assignment_statement_issue1986, generic_option_field_none_assignment_match_arm_issue1986, generic_option_field_none_assignment_nested_match_issue1986, and stdlib prewarm build",
+      "semantic_owner": "lowering field storage types and assignment value-use conversion",
       "retirement_condition": "the Rust-source backend is deleted (#654)"
     }
   ]

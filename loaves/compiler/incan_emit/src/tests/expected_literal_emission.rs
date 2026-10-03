@@ -6,6 +6,7 @@
 //! binding (#1860), is wrapped in each `Some` layer; an empty list passed to a generic parameter is written with the
 //! instantiated element type (#1862); and `Option[str].unwrap_or` takes an owned fallback (#1875).
 
+use super::generated_programs::run_with_stdlib;
 use crate::codegen::IrCodegen;
 use incan_frontend::{lexer, parser};
 
@@ -438,6 +439,85 @@ def main() -> None:
         code.contains("r#box.label = \"y\".to_string();"),
         "the field write needs an owned string:\n{code}"
     );
+    Ok(())
+}
+
+/// #1986: a direct assignment of `None` to a generic model's `Option[T]` field keeps `T` as the stored payload type.
+#[test]
+fn generic_option_field_none_assignment_statement_issue1986() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = run_with_stdlib(
+        r#"
+model Slot[T]:
+    pub current: Option[T] = None
+
+    def clear(mut self) -> None:
+        self.current = None
+
+
+def main() -> None:
+    mut slot = Slot[int]()
+    slot.clear()
+    match slot.current:
+        Some(value) => println(value)
+        None => println(0)
+"#,
+    )?;
+    assert_eq!(stdout, "0\n");
+    Ok(())
+}
+
+/// #1986: an assignment arm keeps the declared `Option[T]` field type instead of the arm's unit result type.
+#[test]
+fn generic_option_field_none_assignment_match_arm_issue1986() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = run_with_stdlib(
+        r#"
+model Slot[T]:
+    pub current: Option[T] = None
+
+    def clear(mut self, requested: bool) -> None:
+        match requested:
+            true => self.current = None
+            false => return
+
+
+def main() -> None:
+    mut slot = Slot[int]()
+    slot.clear(true)
+    match slot.current:
+        Some(value) => println(value)
+        None => println(0)
+"#,
+    )?;
+    assert_eq!(stdout, "0\n");
+    Ok(())
+}
+
+/// #1986: a nested assignment arm keeps the declared `Option[T]` field type through both enclosing matches.
+#[test]
+fn generic_option_field_none_assignment_nested_match_issue1986() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = run_with_stdlib(
+        r#"
+model Slot[T]:
+    pub current: Option[T] = None
+
+    def clear(mut self, outer: bool, inner: bool) -> None:
+        match outer:
+            true =>
+                match inner:
+                    true => self.current = None
+                    false => return
+            false => return
+
+
+def main() -> None:
+    mut slot = Slot[int]()
+    slot.clear(true, true)
+    match slot.current:
+        Some(value) => println(value)
+        None => println(0)
+"#,
+    )?;
+    assert_eq!(stdout, "0\n");
     Ok(())
 }
 
