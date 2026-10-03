@@ -187,6 +187,23 @@ pub fn extern_item(tcx: TyCtxt<'_>, path: &[&str]) -> DefId {
     current
 }
 
+/// The associated function `name` in an inherent `impl` of the type `ty_def` -- `BodyPlan.new()` in Incan. Inherent
+/// methods are not module children, so a call plan's path to one resolves through the type's impls.
+pub fn inherent_method(tcx: TyCtxt<'_>, ty_def: DefId, name: &str) -> DefId {
+    tcx.inherent_impls(ty_def).iter()
+        .flat_map(|imp| tcx.associated_item_def_ids(*imp).iter().copied())
+        .find(|d| tcx.item_name(*d).as_str() == name)
+        .unwrap_or_else(|| tcx.dcx().fatal(format!("`{}` has no inherent method `{name}`", tcx.def_path_str(ty_def))))
+}
+
+/// A string literal: a `&'static str` constant over interned bytes, as rustc's own `mir_build` lowers `"..."`.
+pub fn str_literal<'tcx>(tcx: TyCtxt<'tcx>, text: &str, span: Span) -> Operand<'tcx> {
+    let alloc_id = tcx.allocate_bytes_dedup(text.as_bytes(), rustc_middle::mir::interpret::CTFE_ALLOC_SALT);
+    let value = ConstValue::Slice { alloc_id, meta: text.len() as u64 };
+    let ty = Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, tcx.types.str_);
+    Operand::Constant(Box::new(ConstOperand { span, user_ty: None, const_: Const::Val(value, ty) }))
+}
+
 /// The closures declared inside `parent`'s placeholder body, in declaration order.
 pub fn closures_of(tcx: TyCtxt<'_>, parent: LocalDefId) -> Vec<LocalDefId> {
     tcx.nested_bodies_within(parent).iter().filter(|d| tcx.def_kind(*d) == rustc_hir::def::DefKind::Closure).collect()

@@ -20,12 +20,14 @@ compile_with() {
 }
 
 expect_output() {
-  actual=$("$out/$1")
-  if [ "$actual" != "$2" ]; then
-    printf 'FAIL %s: expected "%s", got "%s"\n' "$1" "$2" "$actual" >&2
+  name=$1 expected=$2
+  shift 2
+  actual=$("$out/$name" "$@")
+  if [ "$actual" != "$expected" ]; then
+    printf 'FAIL %s: expected "%s", got "%s"\n' "$name" "$expected" "$actual" >&2
     exit 1
   fi
-  printf 'ok   %s -> %s\n' "$1" "$actual"
+  printf 'ok   %s -> %s\n' "$name" "$actual"
 }
 
 expect_panic_at() {
@@ -76,3 +78,20 @@ rustc +"$toolchain" --edition 2024 --crate-type rlib --crate-name host "$here/st
   --extern host="$out/libhost.rlib" -L "$out" -o "$out/libpolicy.rlib" - </dev/null 2>"$out/policy.log"
 rustc +"$toolchain" --edition 2024 --extern policy="$out/libpolicy.rlib" -L "$out" "$here/step8_app.rs" -o "$out/step8_app"
 expect_output step8_app "42 5 15 second"
+
+# Step 9: Incan code drives the rustc seam. One driver builds every unit; `rustc_private` is a declared permission.
+build_driver step9_rustc_seam
+unset RUSTC_BOOTSTRAP
+unit() { "$out/step9_rustc_seam" --sysroot "$sysroot" --edition 2024 --cap-lints allow -L "$out" "$@"; }
+if "$out/step9_rustc_seam" --sysroot "$sysroot" --edition 2024 --crate-type rlib --crate-name mir_seam \
+  "$here/step9_seam.rs" -o "$out/refused.rlib" 2>/dev/null; then
+  printf 'FAIL step9: the seam built without the declared --incan-allow-rustc-private\n' >&2
+  exit 1
+fi
+printf 'ok   step9_seam -> refused without --incan-allow-rustc-private\n'
+unit --incan-allow-rustc-private --crate-type rlib --crate-name mir_seam "$here/step9_seam.rs" -o "$out/libmir_seam.rlib"
+unit --incan-unit --crate-type rlib --crate-name planner --extern mir_seam="$out/libmir_seam.rlib" \
+  -o "$out/libplanner.rlib" - </dev/null 2>"$out/planner.log"
+unit --incan-allow-rustc-private --extern planner="$out/libplanner.rlib" "$here/step9_app.rs" -o "$out/step9_app"
+expect_output step9_app "in-process rustc exit status 0" "$here/step9_target.rs" "$out/step9_target" "$sysroot"
+expect_output step9_target "answer() = 42"
