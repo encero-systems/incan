@@ -20,7 +20,6 @@ use crate::build::backend_selection::{
 };
 use crate::build::{BuildCommandOptions, elapsed_ms};
 use crate::build_report::BuildReportOptions;
-use crate::cargo_policy::CargoPolicy;
 use crate::error::{CliError, CliResult};
 use crate::modules::collect_modules_detailed_with_session;
 use crate::project::resolve_project_root;
@@ -157,7 +156,10 @@ pub fn build_replacement_file_report(
             "replacement execution keeps stdout and stderr for the program; use --report-output <file> with --report json",
         ));
     }
-    reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
+    crate::cargo_policy::reject_normal_cargo_controls(
+        &options.cargo_policy,
+        options.generated_cargo_target_dir.as_ref(),
+    )?;
     let start = Instant::now();
     let entrypoint = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
@@ -355,53 +357,19 @@ fn package_execution_requirement_error(
     ))
 }
 
-/// Reject controls that only have meaning for the retired Cargo execution backend.
-///
-/// Lock strictness is deliberately not rejected: it validates compiler-owned `oven.lock` consistency before Oven
-/// selection without launching Cargo. Offline is already satisfied because this normal path starts neither Cargo nor
-/// a networked dependency resolver.
-pub fn reject_normal_cargo_controls(cargo_policy: &CargoPolicy, target_dir: Option<&PathBuf>) -> CliResult<()> {
-    if !cargo_policy.extra_args.is_empty() || target_dir.is_some() {
-        return Err(CliError::failure(
-            "Oven Alpha normal build and run do not accept Cargo passthrough or target-directory controls; use the supported Oven-native provider/dependency envelope instead",
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::build::test_support::replacement_build_options;
     use std::fs;
-    use std::path::PathBuf;
 
     use crate::build::backend_selection::REPLACEMENT_EXECUTION_REPORT_SCHEMA_VERSION;
     use crate::build_report::BuildReportOptions;
-    use crate::cargo_policy::CargoPolicy;
     use crate::error::CliError;
     #[cfg(test)]
     use incan_frontend::body_ir::build_body_ir_module_v0;
     use incan_frontend::{body_ir, lexer, parser, typechecker};
     use incan_provider::FeatureSelection;
-
-    #[test]
-    fn oven_normal_commands_keep_lock_strictness_but_reject_cargo_backend_controls() {
-        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(true, false, false, Vec::new()), None).is_ok());
-        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(false, true, false, Vec::new()), None).is_ok());
-        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(false, false, true, Vec::new()), None).is_ok());
-        assert!(
-            reject_normal_cargo_controls(
-                &CargoPolicy::explicit(false, false, false, vec!["--timings".to_string()]),
-                None,
-            )
-            .is_err()
-        );
-        assert!(
-            reject_normal_cargo_controls(&CargoPolicy::default(), Some(&PathBuf::from("target/generated-cargo")),)
-                .is_err()
-        );
-    }
 
     #[test]
     fn the_replacement_build_uses_the_session_selected_package_feature_projection()

@@ -328,3 +328,47 @@ fn a_rust_extern_body_records_its_delegation_and_no_placeholder_statements_issue
     );
     Ok(())
 }
+
+// ---- Representation gaps and identity well-formedness ----
+
+#[test]
+fn a_body_reports_a_representation_gap_nested_anywhere_in_it() -> Result<(), Box<dyn std::error::Error>> {
+    // The refusal sits inside an `if` inside a `match` arm; the walk must still find it.
+    let source = format!(
+        "def run(n: int) -> int:\n  match n:\n    1 => return 1\n    _ =>\n      if n > 2:\n{}      return 0\n\ndef clean(n: int) -> int:\n  return n + 1\n",
+        stand_in_refusal_stmt("        ")
+    );
+    let module = build(&source, &["m", "representation_gaps"])?;
+    let run = body_named(&module, "run")?;
+    assert!(
+        run.first_representation_gap().is_some(),
+        "a nested refusal is a gap: {}",
+        run.render_snapshot()
+    );
+    let clean = body_named(&module, "clean")?;
+    assert_eq!(clean.first_representation_gap(), None, "{}", clean.render_snapshot());
+    Ok(())
+}
+
+#[test]
+fn a_lowered_body_is_well_formed_and_a_tampered_one_is_not() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def helper() -> int:\n  return 1\n\ndef main() -> int:\n  return helper()\n",
+        &["m", "identity"],
+    )?;
+    for body in &module.bodies {
+        assert!(
+            module.body_has_canonical_direct_call_id(body),
+            "{}",
+            body.render_snapshot()
+        );
+        assert!(module.is_own_span_declaration_id(&body.direct_call_id));
+    }
+    let mut tampered = body_named(&module, "helper")?.clone();
+    tampered.direct_call_id = body_named(&module, "main")?.direct_call_id.clone();
+    assert!(
+        !module.body_has_canonical_direct_call_id(&tampered),
+        "a body carrying another declaration's identity must not pass"
+    );
+    Ok(())
+}
