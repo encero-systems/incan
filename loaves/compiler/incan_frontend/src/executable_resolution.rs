@@ -190,7 +190,7 @@ pub fn resolve_executable_requirements(
         });
         match declaration {
             ExecutableDeclaration::Body(body) => {
-                module.bodies.push(body);
+                module.bodies.push(*body);
             }
             ExecutableDeclaration::Nominal(value) => module.nominal_declarations.push(value),
             ExecutableDeclaration::FieldlessEnum(value) => module.fieldless_enum_declarations.push(value),

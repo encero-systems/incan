@@ -1436,6 +1436,14 @@ pub fn prepare_free_function_execution_in_graph<'module, 'args>(
 /// runtime promises to refuse. Provider-host availability is checked separately across the reachable computation
 /// once during preparation; runtime invocation still rechecks the host and authority.
 pub fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
+    // An `@rust.extern` body delegates to a Rust item this executor cannot call, and its empty block is not the
+    // function (#2023). Executing it would return as if the delegated function had done nothing.
+    if let Some(delegation) = &body.extern_delegation {
+        return Err(unsupported(
+            format!("`@rust.extern` delegation to `{}`", delegation.rust_path()),
+            body.span,
+        ));
+    }
     // An `async def` produces an awaitable even when its body has no explicit `await`. Executing its statements as
     // an ordinary scalar body would erase task construction, suspension, wake, cancellation, and receipt semantics
     // that belong to #1155. The stored declaration fact is therefore a direct profile boundary, not something this
@@ -8029,6 +8037,7 @@ mod tests {
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             is_async: true,
+            extern_delegation: None,
         };
         let winner = Rc::new(RefCell::new(ReplacementTask {
             id: 0,
