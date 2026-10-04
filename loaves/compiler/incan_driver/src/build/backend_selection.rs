@@ -3,75 +3,27 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::backend::selection::{
-    BackendKind, BackendSelection, FallbackOutcome, ShadowComparisonState, finalize_receipt, resolve_execution,
-    select_backend, unavailable_shadow_comparison,
-};
-use crate::build::BackendSelectionOptions;
+use crate::backend::selection::{BackendKind, BackendSelection, finalize_receipt, select_backend};
 use crate::build::rust_extern::module_source_identity;
 use crate::error::{CliError, CliResult};
 use incan_frontend::{ParsedModule, diagnostics};
 
-/// Why a shadow comparison is unavailable: the Body IR interpreter it compared against is removed (#1337).
-const SHADOW_COMPARISON_REMOVED_REASON: &str =
-    "the compiler has one execution route; the Body IR interpreter a shadow comparison ran against is removed";
-
-/// Shadow-comparison state for one build's backend execution receipt.
+/// Declare the backend for one build over its collected modules, before codegen runs (#986).
 ///
-/// No build can request a comparison any more, so this is `NotRequested`; the receipt keeps the field until its
-/// schema collapses to the one route.
-pub fn backend_shadow_comparison(selection: &BackendSelection) -> ShadowComparisonState {
-    unavailable_shadow_comparison(selection.shadow_requested, SHADOW_COMPARISON_REMOVED_REASON)
+/// The one route is the legacy Rust-emission backend until the direct route replaces it; the selection binds it to the
+/// content identity of the modules being compiled, at both the executable (`prepare_oven_project`) and library
+/// (`prepare_library_project`) call sites.
+pub fn select_build_backend(modules: &[ParsedModule]) -> BackendSelection {
+    select_backend(BackendKind::Legacy, module_source_identity(modules))
 }
 
-/// Declare and resolve a backend selection for one build, before codegen runs (#986).
-///
-/// Combines [`select_backend`] and [`resolve_execution`] — identical at both the executable (`prepare_oven_project`)
-/// and library (`prepare_library_project`) call sites — into the one step callers actually need: a declared selection
-/// plus the backend they must invoke, or a visible refusal.
-pub fn select_and_resolve_backend(
-    backend_options: &BackendSelectionOptions,
-    modules: &[ParsedModule],
-) -> CliResult<(BackendSelection, BackendKind)> {
-    let selection = select_backend(
-        backend_options.requested,
-        backend_options.explicit,
-        backend_options.shadow,
-        module_source_identity(modules),
-        backend_options.fallback_policy,
-    );
-    let executed = resolve_execution(&selection, selection.selected_backend.is_implemented())
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    Ok((selection, executed))
-}
-
-/// Bind a real output identity to a resolved backend selection and surface any declared fallback (#986). Combines
-/// [`finalize_receipt`], [`backend_shadow_comparison`], and [`report_backend_fallback`] — identical at both build-path
-/// call sites — into one step.
+/// Bind a real output identity to a build's backend selection (#986), with the diagnostic contract in force.
 pub fn finalize_backend_receipt(
     selection: &BackendSelection,
-    executed: BackendKind,
     output_identity: String,
 ) -> CliResult<crate::backend::selection::BackendExecutionReceipt> {
-    let receipt = finalize_receipt(
-        selection,
-        executed,
-        output_identity,
-        backend_shadow_comparison(selection),
-        diagnostics::DIAGNOSTIC_SCHEMA_VERSION,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
-    report_backend_fallback(&receipt);
-    Ok(receipt)
-}
-
-/// Surface a declared backend fallback on stderr, visible even when `--report` is not requested.
-fn report_backend_fallback(receipt: &crate::backend::selection::BackendExecutionReceipt) {
-    if let FallbackOutcome::Declared { from, to } = receipt.fallback_outcome {
-        eprintln!(
-            "⚠ backend fallback: `{from:?}` was selected but is not available; executed `{to:?}` instead (declared, not silent)"
-        );
-    }
+    finalize_receipt(selection, output_identity, diagnostics::DIAGNOSTIC_SCHEMA_VERSION)
+        .map_err(|error| CliError::failure(error.to_string()))
 }
 
 /// Compiler-owned, project-relative destination for a build's backend-selection execution receipt.
