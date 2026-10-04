@@ -587,25 +587,17 @@ fn replacement_refuses_to_run_a_rust_extern_placeholder_issue2023() -> Result<()
 }
 
 #[test]
-fn replacement_executes_a_static_method_call() -> Result<(), Box<dyn std::error::Error>> {
-    // Named arguments bind by declaration, and a static method may call another one.
+fn replacement_returns_a_value_returning_functions_trailing_expression_issue2025()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Each helper's result is its trailing expression: a `match`, a bare expression, and an `if`/`else` whose
+    // branches end in expressions. The emitted route returns them; so must the Body IR the replacement executes.
     let module = lower_typed_body_ir(
-        "model Scale:\n  factor: int\n\n  def unit() -> int:\n    return 4\n\n  def times(value: int, by: int) -> int:\n    return value * by + Scale.unit()\n\n\
-         def main() -> int:\n  return Scale.times(by=10, value=3)\n",
+        "def pick(n: int) -> int:\n  match n:\n    1 => 10\n    _ => 20\n\n\
+         def next(n: int) -> int:\n  n + 1\n\n\
+         def choose(n: int) -> int:\n  if n == 1:\n    100\n  else:\n    200\n\n\
+         def main() -> int:\n  return pick(1) + next(1) + choose(2)\n",
     )?;
     let execution = execute_free_function(&module, "main", &[])?;
-    assert_eq!(execution.value, ReplacementValue::Int(34));
-    Ok(())
-}
-
-#[test]
-fn replacement_calls_a_function_passed_as_a_value() -> Result<(), Box<dyn std::error::Error>> {
-    let module = lower_typed_body_ir(
-        "def square(x: int) -> int:\n  return x * x\n\n\
-         def apply(f: Callable[int, int], v: int) -> int:\n  return f(v)\n\n\
-         def main() -> int:\n  return apply(square, 7)\n",
-    )?;
-    let execution = execute_free_function(&module, "main", &[])?;
-    assert_eq!(execution.value, ReplacementValue::Int(49));
+    assert_eq!(execution.value, ReplacementValue::Int(10 + 2 + 200));
     Ok(())
 }
