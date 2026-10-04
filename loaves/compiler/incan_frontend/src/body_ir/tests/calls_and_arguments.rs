@@ -1103,3 +1103,64 @@ fn a_static_method_call_is_a_direct_call_to_the_method_body() -> Result<(), Box<
     }
     Ok(())
 }
+
+#[test]
+fn a_module_qualified_stdlib_call_carries_the_selected_declaration() -> Result<(), Box<dyn std::error::Error>> {
+    // `import std.math` + `math.sqrt(..)` selects the same declaration `from std.math import sqrt` does, and records
+    // it.
+    let module = build(
+        "import std.math\n\ndef main() -> float:\n  return math.sqrt(16.0)\n",
+        &["m", "stdlib_module_call"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let targets = named_targets(&module, "main");
+    let sqrt = targets
+        .iter()
+        .find(|target| target.name == "sqrt")
+        .ok_or_else(|| format!("no named call to `sqrt`: {rendered}"))?;
+    assert!(
+        sqrt.canonical.is_some(),
+        "the stdlib callee must keep its identity: {rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_static_call_on_a_type_parameter_keeps_the_type_it_is_called_on() -> Result<(), Box<dyn std::error::Error>> {
+    // `T.default()` under a `Default` bound is a trait's associated function; the type parameter selects its
+    // implementation, so the call records it.
+    let module = build(
+        "def make[T with Default]() -> T:\n  return T.default()\n\ndef main() -> int:\n  return make[int]()\n",
+        &["m", "type_param_static"],
+    )?;
+    let rendered = body_named(&module, "make")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let targets = named_targets(&module, "make");
+    let default = targets
+        .iter()
+        .find(|target| target.name.ends_with("default"))
+        .ok_or_else(|| format!("no named call to `default`: {rendered}"))?;
+    assert_eq!(
+        default.receiver_type,
+        Some(IncanType::TypeVar("T".to_string())),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn calling_a_call_dunder_adopter_is_a_call_of_its_dunder() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Doubler:\n  extra: int\n\n  def __call__(self, value: int) -> int:\n    return value * 2 + self.extra\n\ndef main() -> int:\n  d = Doubler(extra=1)\n  return d(3)\n",
+        &["m", "call_dunder"],
+    )?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(
+        rendered.contains("method:__call__"),
+        "the call must dispatch to `__call__`: {rendered}"
+    );
+    Ok(())
+}

@@ -54,7 +54,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Statement::TupleUnpack(tuple_unpack) => {
                 self.lower_tuple_unpack(tuple_unpack, remaining, scope, span, out)
             }
-            ast::Statement::TupleAssign(tuple_assign) => self.lower_tuple_assign(tuple_assign, scope, span, out),
+            ast::Statement::TupleAssign(tuple_assign) => {
+                self.lower_tuple_assign(tuple_assign, remaining, scope, span, out)
+            }
             ast::Statement::ChainedAssignment(chained_assignment) => {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
@@ -535,9 +537,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// not implement `TupleAssign` at all (`loaves/compiler/incan_ir/src/lower/stmt.rs` returns a `LoweringError`), so
     /// there is no existing behavior to mirror here -- the evaluation order above is v0's own design, chosen
     /// specifically to make `a, b = b, a` swap correctly.
+    ///
+    /// A target written as a bare name (`items[0], fresh = ...`) binds that name as an ordinary assignment would,
+    /// declaring it when the checker proved this is its first binding, so later reads find a local.
     pub(super) fn lower_tuple_assign(
         &mut self,
         tuple_assign: &ast::TupleAssignStmt,
+        remaining: &[ast::Spanned<ast::Statement>],
         scope: bir::ScopeId,
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
@@ -568,8 +574,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ));
         }
 
-        for (target, value) in tuple_assign.targets.iter().zip(element_operands) {
-            let place = self.lower_expr_to_place(target, scope, out);
+        for ((target, value), element_ty) in tuple_assign.targets.iter().zip(element_operands).zip(element_types) {
+            let place = if let ast::Expr::Ident(name) = &target.node {
+                match self.bind_multi_target_name(
+                    name,
+                    element_ty,
+                    ast::BindingKind::Inferred,
+                    scope,
+                    target.span,
+                    remaining,
+                ) {
+                    Ok(place) => place,
+                    Err(reason) => {
+                        self.push_unsupported_stmt(reason, span, out);
+                        return;
+                    }
+                }
+            } else {
+                self.lower_expr_to_place(target, scope, out)
+            };
             if !place.permits_write() {
                 let target = place.global().map_or_else(
                     || "tuple assignment target".to_string(),
