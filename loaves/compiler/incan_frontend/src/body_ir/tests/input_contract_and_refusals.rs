@@ -372,3 +372,105 @@ fn a_lowered_body_is_well_formed_and_a_tampered_one_is_not() -> Result<(), Box<d
     );
     Ok(())
 }
+
+#[test]
+fn retained_declarations_are_well_formed_and_tampered_ones_are_not() -> Result<(), Box<dyn std::error::Error>> {
+    // Two models with a same-named field, and two enums of each kind with a same-named member, so a member identity
+    // copied from the other declaration is coherent in every respect but its owner.
+    let source = "model A:\n  value: int\n  other: int\n\nmodel B:\n  value: int\n\n\
+                  enum E:\n  V\n  W\n\nenum F:\n  V\n\n\
+                  enum P(int):\n  V = 1\n  W = 2\n\nenum Q(int):\n  V = 3\n\n\
+                  def main() -> int:\n  a = A(value=1, other=2)\n  b = B(value=3)\n  e = E.V\n  f = F.V\n\
+                  \n  return a.value + b.value + P.V.value() + Q.V.value()\n";
+    let module = build(source, &["m", "declaration_identity"])?;
+    let nominal = |name: &str| {
+        module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .ok_or(format!("missing model {name}"))
+    };
+    let fieldless = |name: &str| {
+        module
+            .fieldless_enum_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .ok_or(format!("missing enum {name}"))
+    };
+    let valued = |name: &str| {
+        module
+            .value_enum_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .ok_or(format!("missing value enum {name}"))
+    };
+
+    // ---- Lowered records pass ----
+    for name in ["A", "B"] {
+        assert!(
+            module.is_well_formed_nominal_declaration(nominal(name)?),
+            "model {name}"
+        );
+    }
+    for name in ["E", "F"] {
+        assert!(
+            module.is_well_formed_fieldless_enum_declaration(fieldless(name)?),
+            "enum {name}"
+        );
+    }
+    for name in ["P", "Q"] {
+        assert!(
+            module.is_well_formed_value_enum_declaration(valued(name)?),
+            "value enum {name}"
+        );
+    }
+
+    // ---- A member identity transplanted from a same-named member of another declaration fails ----
+    let mut foreign_field = nominal("A")?.clone();
+    foreign_field.field_identities[0] = nominal("B")?.field_identities[0].clone();
+    assert!(
+        !module.is_well_formed_nominal_declaration(&foreign_field),
+        "B.value in A"
+    );
+    let mut foreign_variant = fieldless("E")?.clone();
+    foreign_variant.variants[0] = fieldless("F")?.variants[0].clone();
+    assert!(
+        !module.is_well_formed_fieldless_enum_declaration(&foreign_variant),
+        "F.V in E"
+    );
+    let mut foreign_value = valued("P")?.clone();
+    foreign_value.variants[0] = valued("Q")?.variants[0].clone();
+    assert!(
+        !module.is_well_formed_value_enum_declaration(&foreign_value),
+        "Q.V in P"
+    );
+
+    // ---- A duplicated member fails ----
+    let mut duplicate_field = nominal("A")?.clone();
+    duplicate_field.field_identities[1] = duplicate_field.field_identities[0].clone();
+    assert!(
+        !module.is_well_formed_nominal_declaration(&duplicate_field),
+        "duplicate field"
+    );
+    let mut duplicate_variant = fieldless("E")?.clone();
+    duplicate_variant.variants[1] = duplicate_variant.variants[0].clone();
+    assert!(
+        !module.is_well_formed_fieldless_enum_declaration(&duplicate_variant),
+        "duplicate variant"
+    );
+
+    // ---- A member whose identity names another member fails ----
+    let mut mismatched_field = nominal("A")?.clone();
+    mismatched_field.fields.swap(0, 1);
+    assert!(
+        !module.is_well_formed_nominal_declaration(&mismatched_field),
+        "swapped field names"
+    );
+    let mut mismatched_variant = valued("P")?.clone();
+    mismatched_variant.variants[0].name = "W2".to_string();
+    assert!(
+        !module.is_well_formed_value_enum_declaration(&mismatched_variant),
+        "renamed variant"
+    );
+    Ok(())
+}
