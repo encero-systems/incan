@@ -360,6 +360,29 @@ pub struct Body {
     /// [`StatementKind::Yield`] would therefore be wrong, not merely a different implementation. This is the first
     /// declaration-level fact `Body` carries; see [`Self::is_generator`]'s docs for why that one stayed derived.
     pub is_async: bool,
+    /// The Rust function this body delegates to, when the source declaration is `@rust.extern` (#2023).
+    ///
+    /// An extern declaration's source body is a `...` placeholder: what runs is the Rust item of the same name in the
+    /// module the file binds with `rust.module(...)`. Such a body carries this fact and an empty [`Self::block`], so
+    /// there is nothing a consumer could execute by mistake. A consumer either calls the named Rust item or refuses
+    /// the call; it must never run the empty block as if it were the function.
+    pub extern_delegation: Option<ExternDelegation>,
+}
+
+/// The Rust item an `@rust.extern` declaration delegates to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternDelegation {
+    /// The checked `rust.module(...)` path of the declaring file, such as `incan_std_testing`.
+    pub rust_module: String,
+    /// The Rust item's name inside that module; the source declaration's own name.
+    pub rust_item: String,
+}
+
+impl ExternDelegation {
+    /// The delegated item's Rust path, `module::item`.
+    pub fn rust_path(&self) -> String {
+        format!("{}::{}", self.rust_module, self.rust_item)
+    }
 }
 
 impl Body {
@@ -429,6 +452,9 @@ impl Body {
             for param in &self.params {
                 let _ = writeln!(&mut out, "    {}", param.render_snapshot());
             }
+        }
+        if let Some(delegation) = &self.extern_delegation {
+            let _ = writeln!(&mut out, "  extern rust {}", delegation.rust_path());
         }
         render_block(&mut out, &self.block, 1);
         if !self.runtime_requirements.is_empty() {
@@ -3509,6 +3535,7 @@ mod tests {
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             is_async: false,
+            extern_delegation: None,
         }
     }
 

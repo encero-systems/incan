@@ -559,6 +559,34 @@ fn replacement_writes_a_mut_list_parameter_back_to_the_caller_issue2022() -> Res
 }
 
 #[test]
+fn replacement_refuses_to_run_a_rust_extern_placeholder_issue2023() -> Result<(), Box<dyn std::error::Error>> {
+    // The emitted route aborts inside `incan_std_testing::fail_t`. This executor cannot call that Rust item, and the
+    // extern's `...` body is not the function, so the only honest outcomes are delegating or refusing, and the refusal
+    // must say it is the delegation that was refused rather than some construct of the placeholder.
+    let module = lower_typed_body_ir(
+        "rust.module(\"incan_std_testing\")\n\n\
+         @rust.extern\ndef fail_t(msg: str) -> None:\n  ...\n\n\
+         def main() -> int:\n  fail_t(\"boom\")\n  return 7\n",
+    )?;
+    match execute_free_function(&module, "main", &[]) {
+        Ok(execution) => Err(format!(
+            "an extern placeholder must not run, but `main` returned {:?}",
+            execution.value
+        )
+        .into()),
+        Err(error) => {
+            assert!(
+                error
+                    .to_string()
+                    .contains("`@rust.extern` delegation to `incan_std_testing::fail_t`"),
+                "the refusal must name the delegated Rust item: {error}"
+            );
+            Ok(())
+        }
+    }
+}
+
+#[test]
 fn replacement_returns_a_value_returning_functions_trailing_expression_issue2025()
 -> Result<(), Box<dyn std::error::Error>> {
     // Each helper's result is its trailing expression: a `match`, a bare expression, and an `if`/`else` whose

@@ -295,3 +295,36 @@ fn projection_through_an_active_feature_lowers_exactly_as_an_ungated_program_doe
     );
     Ok(())
 }
+
+// ---- `@rust.extern` delegation (#2023) ----
+
+#[test]
+fn a_rust_extern_body_records_its_delegation_and_no_placeholder_statements_issue2023()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "rust.module(\"incan_std_testing\")\n\n@rust.extern\ndef fail_t(msg: str) -> None:\n    ...\n\ndef main() -> None:\n    fail_t(\"boom\")\n";
+    let module = build(source, &["m", "extern_delegation"])?;
+    let extern_body = body_named(&module, "fail_t")?;
+    let delegation = extern_body
+        .extern_delegation
+        .as_ref()
+        .ok_or("an `@rust.extern` body must record its delegation")?;
+    assert_eq!(delegation.rust_path(), "incan_std_testing::fail_t");
+    assert!(
+        extern_body.block.stmts.is_empty(),
+        "an extern's `...` placeholder must not become statements: {}",
+        extern_body.render_snapshot()
+    );
+    assert!(
+        extern_body
+            .render_snapshot()
+            .contains("extern rust incan_std_testing::fail_t"),
+        "the snapshot must show the delegation: {}",
+        extern_body.render_snapshot()
+    );
+    let caller = body_named(&module, "main")?;
+    assert!(
+        caller.extern_delegation.is_none(),
+        "an ordinary body records no delegation"
+    );
+    Ok(())
+}

@@ -360,6 +360,7 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
         local_value_enum_declarations: &local_value_enum_declarations,
         module_identity: "m",
         provider_operations: &provider_operations,
+        rust_module: None,
     };
     let mut builder = BodyBuilder::new(&lowering_facts, IncanType::Unknown);
     let scope = builder.new_scope(None, HirSourceSpan::new(0, 1));
