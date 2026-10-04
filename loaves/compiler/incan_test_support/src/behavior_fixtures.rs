@@ -7,15 +7,14 @@
 //! through `incan run` (the legacy generated-Rust route) and `incan check`; when slice 7 flips the route underneath,
 //! the fixtures do not change. The contributor-facing description of the format is the family's `README.md`.
 //!
-//! The runner discovers every fixture in an area, materializes each one as a scratch project under
+//! Every fixture is its own libtest case. The runner materializes the fixture as a scratch project under
 //! `INCAN_TEST_TMP_ROOT`, bakes the in-fixture providers a project fixture declares (its `loaf.toml` path
 //! dependencies, in dependency order, with no Cargo authority: a provider whose bake needs Cargo fails under the
-//! suite's guard, attributed to the fixture), runs it, compares the observables and reports **every** failing
-//! fixture with its path and its expected-versus-actual, so one libtest case per area still attributes a failure to
-//! the fixture that caused it. Roots are thin: `loaves/toolchain/incan-cli/tests/behavior_<area>_tests.rs` calls
-//! [`assert_area_green`] and nothing else, and no behavior root is registered for a suite capability. The inventory
-//! (`scripts/test_inventory/collect.py`) reads the same header for its `# retires:` lines, so the header grammar here
-//! and the collector's reader must agree.
+//! suite's guard, attributed to the fixture), runs it and compares the observables with its header. Roots are
+//! generated: `loaves/toolchain/incan-cli/tests/behavior_<area>_tests.rs` holds one `#[test]` per fixture of the
+//! area, each calling [`assert_fixture_holds`], and `crate::behavior_roots` keeps the roots equal to the areas. No
+//! behavior root is registered for a suite capability. The inventory (`scripts/test_inventory/collect.py`) reads the
+//! same header for its `# retires:` lines, so the header grammar here and the collector's reader must agree.
 
 use std::error::Error;
 use std::fmt;
@@ -32,16 +31,6 @@ pub const BEHAVIOR_FIXTURES_ROOT: &str = "behavior";
 
 /// The entrypoint every materialized fixture project runs and checks.
 const ENTRYPOINT: &str = "src/main.incn";
-
-/// The most fixtures one leaf area may hold.
-///
-/// An area is one libtest case, and the compiler suite runs roots on two threads with no slicing inside a case
-/// (#1549 slices by case), so the case is the unit of budget: at roughly 3.5 s per fixture locally and 6-10 s on the
-/// four-core CI runner, 60 fixtures is about 3.5 minutes locally and 6-10 minutes in CI, the most one case should
-/// cost. A larger family splits into leaf areas of at most this size, each its own `#[test]` in the root file (one
-/// root file may hold several, one per leaf area) and its own `fixture_roots` entry in the inventory; only leaf
-/// areas are declared there, because a parent directory of areas would be discovered as module fixtures.
-pub const MAX_FIXTURES_PER_AREA: usize = 60;
 
 /// The two block directives, whose lines follow them indented.
 const EXPECT_STDOUT: &str = "expect-stdout";
@@ -539,9 +528,8 @@ pub fn area_dir(area: &str) -> PathBuf {
 ///
 /// An entry is a single-file fixture (`<name>.incn`), a module directory (`<name>/main.incn`) or a project directory
 /// (`<name>/loaf.toml`). Hidden entries are skipped; anything else is refused, because a stray file in an area
-/// would otherwise silently prove nothing. An area with no fixture at all is refused for the same reason, and so is
-/// an area with more than [`MAX_FIXTURES_PER_AREA`] fixtures: the area is one libtest case, and a case that large
-/// no longer fits the suite's per-root budget.
+/// would otherwise silently prove nothing. An area with no fixture at all is refused for the same reason. An area has
+/// no size limit: each fixture is its own libtest case, and the compiler suite slices a heavy root by case.
 pub fn discover(area_dir: &Path) -> Result<Vec<BehaviorFixture>, FixtureFormatError> {
     let area_display = checkout_relative(area_dir);
     let entries = fs::read_dir(area_dir).map_err(|error| FixtureFormatError {
@@ -571,16 +559,29 @@ pub fn discover(area_dir: &Path) -> Result<Vec<BehaviorFixture>, FixtureFormatEr
             reason: "the area has no fixture; an empty area proves nothing".to_string(),
         });
     }
-    if fixtures.len() > MAX_FIXTURES_PER_AREA {
-        return Err(FixtureFormatError {
-            path: area_display,
-            reason: format!(
-                "the area holds {} fixtures; a leaf area holds at most {MAX_FIXTURES_PER_AREA} (one libtest case, about 3.5 minutes locally and 6-10 minutes on the CI runner). Split it into leaf areas of at most {MAX_FIXTURES_PER_AREA} fixtures, one `#[test]` per area in the root file calling `assert_area_green`, each leaf declared in `fixture_roots`",
-                fixtures.len()
-            ),
-        });
-    }
     Ok(fixtures)
+}
+
+/// Find and parse the fixture called `name` in an area: the single file `<name>.incn`, else the directory `<name>/`.
+///
+/// This is how a generated root's case reaches its fixture, so a fixture that was renamed or removed without its
+/// root being regenerated fails here, naming the path it looked for.
+pub fn fixture_in_area(area: &str, name: &str) -> Result<BehaviorFixture, FixtureFormatError> {
+    let dir = area_dir(area);
+    let file = dir.join(format!("{name}.incn"));
+    if file.is_file() {
+        return parse_fixture(&file);
+    }
+    let directory = dir.join(name);
+    if directory.is_dir() {
+        return parse_fixture(&directory);
+    }
+    Err(FixtureFormatError {
+        path: checkout_relative(&directory),
+        reason: format!(
+            "the area has no fixture `{name}` (neither `{name}.incn` nor `{name}/`); regenerate the area's root with `make behavior-roots`"
+        ),
+    })
 }
 
 /// Parse one fixture from its file or directory.
@@ -774,58 +775,21 @@ pub enum Outcome {
     Pending(FixtureFailure),
 }
 
-/// What running an area produced: every fixture attempted, and every one that failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AreaReport {
-    /// The area directory, checkout-relative.
-    pub area: String,
-    /// Checkout-relative paths of the fixtures that showed what they declared.
-    pub passed: Vec<String>,
-    /// Every fixture that did not, in discovery order.
-    pub failures: Vec<FixtureFailure>,
-    /// Every `pending:` fixture that does not hold yet, with what it showed; these do not fail the area.
-    pub pending: Vec<FixtureFailure>,
-}
-
-impl AreaReport {
-    /// The report as one message: a headline, then each failure with its expected-versus-actual.
-    pub fn message(&self) -> String {
-        let mut out = format!(
-            "{} of {} behavior fixture(s) failed in {}{}\n",
-            self.failures.len(),
-            self.passed.len() + self.failures.len() + self.pending.len(),
-            self.area,
-            if self.pending.is_empty() {
-                String::new()
-            } else {
-                format!(" ({} pending)", self.pending.len())
-            }
-        );
-        for failure in &self.failures {
+/// The message of an area's pending check when `pending:` fixtures now show what they declare: a headline, then each
+/// fixture with the line to remove.
+fn stale_pending_message(area: &str, stale: &[FixtureFailure]) -> String {
+    let mut out = format!(
+        "{} pending behavior fixture(s) in {area} now show what they declare; remove their `pending:` lines\n",
+        stale.len()
+    );
+    for failure in stale {
+        out.push('\n');
+        out.push_str(&failure.to_string());
+        if !out.ends_with('\n') {
             out.push('\n');
-            out.push_str(&failure.to_string());
-            if !out.ends_with('\n') {
-                out.push('\n');
-            }
         }
-        if !self.pending.is_empty() {
-            out.push_str("\npending:\n");
-            for pending in &self.pending {
-                out.push_str("  ");
-                out.push_str(&pending.path);
-                out.push('\n');
-            }
-        }
-        if !self.passed.is_empty() {
-            out.push_str("\npassed:\n");
-            for path in &self.passed {
-                out.push_str("  ");
-                out.push_str(path);
-                out.push('\n');
-            }
-        }
-        out
     }
+    out
 }
 
 /// The directory scratch projects are created under: `INCAN_TEST_TMP_ROOT` when the harness set it, else the
@@ -1081,43 +1045,41 @@ fn indent_block(text: &str) -> String {
     indent_lines(text.lines())
 }
 
-/// Run every fixture in an area and collect the report; a fixture that cannot be read or run at all, or an area
-/// over [`MAX_FIXTURES_PER_AREA`], is an error of the harness, not a failure of the fixture, and comes back as `Err`.
-pub fn run_area(area: &str) -> Result<AreaReport, Box<dyn Error>> {
-    let dir = area_dir(area);
-    let fixtures = discover(&dir)?;
-    let scratch = scratch_root()?;
-    let mut report = AreaReport {
-        area: checkout_relative(&dir),
-        passed: Vec::new(),
-        failures: Vec::new(),
-        pending: Vec::new(),
-    };
-    for fixture in &fixtures {
-        match run_fixture(fixture, &scratch)? {
-            Outcome::Passed => report.passed.push(fixture.display_path()),
-            Outcome::Failed(failure) => report.failures.push(failure),
-            Outcome::Pending(failure) => report.pending.push(failure),
-        }
+/// The call each case of a generated behavior root makes: run the fixture `name` of `area` and fail with its
+/// expected-versus-actual unless it shows what its header declares.
+///
+/// A harness error (an unreadable or missing fixture, a missing scratch root) comes back as `Err`; a fixture that ran
+/// and did not show what it declared is a panic carrying the report, so libtest prints it as written rather than as
+/// one escaped string. A `pending:` fixture's case is generated `#[ignore]`d with its reason, so it runs only when
+/// ignored cases are asked for, and then it fails while it is still red: that run is asking what is left to fix.
+pub fn assert_fixture_holds(area: &str, name: &str) -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_in_area(area, name)?;
+    match run_fixture(&fixture, &scratch_root()?)? {
+        Outcome::Passed => Ok(()),
+        Outcome::Failed(failure) | Outcome::Pending(failure) => panic!("{failure}"),
     }
-    Ok(report)
 }
 
-/// The one call a behavior root makes: run the area and fail with every failing fixture's expected-versus-actual.
+/// The one case a generated root adds when its area has `pending:` fixtures: every one of them must still not show
+/// what it declares.
 ///
-/// A harness error (an unreadable fixture, a missing scratch root, an area over [`MAX_FIXTURES_PER_AREA`]) comes
-/// back as `Err`; a fixture that ran and did not show what it declared is an assertion failure, so libtest prints
-/// the report as written rather than as one escaped string. A root file holds one `#[test]` per leaf area, each
-/// making this call, so the suite's two-thread root budget can run two areas of one family concurrently.
-///
-/// Pending fixtures do not fail the area; the report lists them on stderr, so a run shows which tests are still red
-/// and why without blocking the suite.
-pub fn assert_area_green(area: &str) -> Result<(), Box<dyn Error>> {
-    let report = run_area(area)?;
-    assert!(report.failures.is_empty(), "{}", report.message());
-    for pending in &report.pending {
-        eprintln!("pending fixture {}\n{}\n", pending.path, pending.detail);
+/// Their own cases are ignored, so without this a pending fixture that started to hold would go unnoticed and its
+/// marker would outlive what it describes. Each one still red is listed on stderr with what it showed; each one that
+/// now holds fails this case, naming the `pending:` line to remove.
+pub fn assert_pending_fixtures_still_wait(area: &str) -> Result<(), Box<dyn Error>> {
+    let scratch = scratch_root()?;
+    let mut stale = Vec::new();
+    for fixture in discover(&area_dir(area))?
+        .iter()
+        .filter(|fixture| fixture.header.pending.is_some())
+    {
+        match run_fixture(fixture, &scratch)? {
+            Outcome::Pending(failure) => eprintln!("pending fixture {}\n{}\n", failure.path, failure.detail),
+            Outcome::Failed(failure) => stale.push(failure),
+            Outcome::Passed => {}
+        }
     }
+    assert!(stale.is_empty(), "{}", stale_pending_message(area, &stale));
     Ok(())
 }
 
@@ -1387,24 +1349,21 @@ mod tests {
         Ok(())
     }
 
-    /// An area is one libtest case, so it is capped: 60 fixtures pass discovery, 61 are refused naming the rule.
+    /// A case reaches its fixture by name, as a single file or a directory; a name with neither is refused, naming
+    /// the regeneration that fixes the root.
     #[test]
-    fn discovery_refuses_an_area_over_the_cap() -> TestResult {
-        let tmp = tempfile::tempdir()?;
-        let area = tmp.path().join("area");
-        fs::create_dir_all(&area)?;
-        for index in 0..MAX_FIXTURES_PER_AREA {
-            fs::write(
-                area.join(format!("f{index:03}.incn")),
-                "# behavior: b\n# expect-exit: 0\n",
-            )?;
-        }
-        assert_eq!(discover(&area)?.len(), MAX_FIXTURES_PER_AREA);
-        fs::write(area.join("one_too_many.incn"), "# behavior: b\n# expect-exit: 0\n")?;
-        let error = discover(&area).err().ok_or("an area over the cap must be refused")?;
-        assert!(error.reason.contains("holds 61 fixtures"), "{error}");
-        assert!(error.reason.contains("at most 60"), "{error}");
-        assert!(error.reason.contains("one `#[test]` per area"), "{error}");
+    fn a_fixture_is_found_by_name_in_its_area() -> TestResult {
+        let single = fixture_in_area("smoke", &discover(&area_dir("smoke"))?[0].name)?;
+        assert_eq!(single.layout, FixtureLayout::SingleFile);
+        let directory = discover(&area_dir("harness"))?
+            .into_iter()
+            .find(|fixture| fixture.layout != FixtureLayout::SingleFile)
+            .ok_or("the harness area has a directory fixture")?;
+        assert_eq!(fixture_in_area("harness", &directory.name)?.path, directory.path);
+        let missing = fixture_in_area("smoke", "no_such_fixture")
+            .err()
+            .ok_or("a missing fixture must be refused")?;
+        assert!(missing.reason.contains("make behavior-roots"), "{missing}");
         Ok(())
     }
 
@@ -1638,36 +1597,25 @@ mod tests {
         assert_eq!(normalize_lexically(Path::new("a/../../b")), PathBuf::from("../b"));
     }
 
-    /// A report names every failing fixture, its behavior and the mismatch, and lists what passed.
+    /// The pending check names every fixture that now holds, its behavior and the line to remove.
     #[test]
-    fn report_message_lists_every_failure() {
-        let report = AreaReport {
-            area: "loaves/x/behavior/smoke".to_string(),
-            passed: vec!["loaves/x/behavior/smoke/ok.incn".to_string()],
-            failures: vec![
-                FixtureFailure {
-                    path: "loaves/x/behavior/smoke/a.incn".to_string(),
-                    behavior: "a".to_string(),
-                    detail: "stdout differs\n".to_string(),
-                },
-                FixtureFailure {
-                    path: "loaves/x/behavior/smoke/b.incn".to_string(),
-                    behavior: "b".to_string(),
-                    detail: "exit code: expected 0, got 1\n".to_string(),
-                },
-            ],
-            pending: vec![FixtureFailure {
-                path: "loaves/x/behavior/smoke/p.incn".to_string(),
-                behavior: "p".to_string(),
-                detail: "pending: the direct route\nstdout differs\n".to_string(),
-            }],
-        };
-        let message = report.message();
-        assert!(message.starts_with("2 of 4 behavior fixture(s) failed in loaves/x/behavior/smoke (1 pending)"));
-        assert!(message.contains("--- loaves/x/behavior/smoke/a.incn\nbehavior: a\nstdout differs"));
-        assert!(message.contains("--- loaves/x/behavior/smoke/b.incn\nbehavior: b\nexit code: expected 0, got 1"));
-        assert!(message.contains("pending:\n  loaves/x/behavior/smoke/p.incn"));
-        assert!(message.contains("passed:\n  loaves/x/behavior/smoke/ok.incn"));
+    fn stale_pending_message_names_each_fixture() {
+        let stale = [
+            FixtureFailure {
+                path: "loaves/x/behavior/smoke/a.incn".to_string(),
+                behavior: "a".to_string(),
+                detail: "the fixture now shows what it declares, but its header still says `pending: x`".to_string(),
+            },
+            FixtureFailure {
+                path: "loaves/x/behavior/smoke/b.incn".to_string(),
+                behavior: "b".to_string(),
+                detail: "the fixture now shows what it declares, but its header still says `pending: y`\n".to_string(),
+            },
+        ];
+        let message = stale_pending_message("smoke", &stale);
+        assert!(message.starts_with("2 pending behavior fixture(s) in smoke now show what they declare"));
+        assert!(message.contains("--- loaves/x/behavior/smoke/a.incn\nbehavior: a\n"));
+        assert!(message.contains("--- loaves/x/behavior/smoke/b.incn\nbehavior: b\n"));
     }
 
     /// `pending:` records why a fixture does not hold yet; it is optional, single, and needs a reason.

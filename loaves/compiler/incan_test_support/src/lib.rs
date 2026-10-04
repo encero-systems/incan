@@ -9,6 +9,7 @@
 //! twin corpus of the #1561 cutover.
 
 pub mod behavior_fixtures;
+pub mod behavior_roots;
 pub mod builtin_stdlib;
 pub mod canonical_projection;
 pub mod cli_project;
