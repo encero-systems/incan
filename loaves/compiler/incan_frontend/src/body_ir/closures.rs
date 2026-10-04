@@ -298,9 +298,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ty,
                 span: source_param.map_or(hir_span_value, |param| hir_span(param.param_span)),
                 default,
-                // A partial's residual parameters forward to its target; the target declaration owns the `mut` marker.
-                mutable: false,
+                // The forwarding closure keeps the target's passing contract: a `mut` parameter stays `mut`, so its
+                // caller lends the argument and the forwarded call writes through to it.
+                mutable: param.is_mut,
             });
+            if param.is_mut {
+                self.borrowed_parameters.insert(local);
+            }
             call_arg_locals.push(local);
             saved_bindings.push((param_name.clone(), previous));
         }
@@ -314,7 +318,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let ty = semantic_type_from_resolved(&param.ty);
                 let place = bir::Place::from_local(local);
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
+                let operand = bir::Operand::place(place, fact, last_use);
+                if param.is_mut {
+                    self.borrow_for_mut_parameter(operand)
+                } else {
+                    operand
+                }
             })
             .collect();
         let ret_ty = semantic_type_from_resolved(&binding.return_type);

@@ -233,10 +233,21 @@ pub struct IncanCallableParam {
     /// A caller may override this parameter by name. Positional invocation instead skips it and fills the remaining
     /// residual parameters in declaration order. Ordinary callable parameters always set this to `false`.
     pub is_partial_preset: bool,
+    /// Whether the parameter is declared `mut`: a non-`Copy` argument is then borrowed mutably and the caller sees the
+    /// callee's writes (RFC 129).
+    ///
+    /// It is part of the function type, as the checker's own function compatibility requires matching `mut` markers:
+    /// a function with a `mut` parameter and one without pass arguments differently. Metadata written before this
+    /// field existed decodes it as `false`.
+    #[serde(default)]
+    pub is_mut: bool,
 }
 
 impl fmt::Display for IncanCallableParam {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_mut {
+            write!(f, "mut ")?;
+        }
         match self.kind {
             IncanCallableParamKind::Normal => write!(f, "{}", self.ty),
             IncanCallableParamKind::RestPositional => write!(f, "*{}", self.ty),
@@ -353,6 +364,7 @@ mod tests {
                     kind: IncanCallableParamKind::Normal,
                     has_default: false,
                     is_partial_preset: false,
+                    is_mut: false,
                 },
                 IncanCallableParam {
                     name: Some("rest".to_string()),
@@ -360,6 +372,7 @@ mod tests {
                     kind: IncanCallableParamKind::RestPositional,
                     has_default: false,
                     is_partial_preset: false,
+                    is_mut: false,
                 },
             ],
             return_type: Box::new(IncanType::Tuple(vec![
