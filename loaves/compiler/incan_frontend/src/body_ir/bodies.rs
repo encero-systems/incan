@@ -248,6 +248,13 @@ pub(super) fn lower_method_body(
             .and_then(|b| b.params.get(index))
             .map(|p| semantic_type_from_resolved(&p.ty))
             .unwrap_or(IncanType::Unknown);
+        // In a declared type's own method, a parameter typed `Self` (`other: Self`) is that type, as the checker reads
+        // it; only a trait default keeps `Self` open, and its `receiver_ty` is `Self` already.
+        let ty = if ty == IncanType::SelfType {
+            receiver_ty.clone()
+        } else {
+            ty
+        };
         let local = builder.declare_new_local(
             param.node.name.clone(),
             ty,
