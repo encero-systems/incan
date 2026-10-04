@@ -29,7 +29,7 @@ use incan_driver::build::output_materialization::{
 use incan_driver::build::output_paths::{normalized_project_entrypoint, project_root_for_completed_output};
 use incan_driver::build::oven_project::prepare_oven_project;
 use incan_driver::build::plan_authority::explicit_bake_profiles;
-use incan_driver::build::replacement::{build_replacement_file_report, reject_normal_cargo_controls};
+use incan_driver::build::replacement::build_replacement_file_report;
 use incan_driver::build::rust_extern::{RustExternBuildFailureKind, RustExternDeclContext};
 use incan_driver::build::{
     BackendSelectionOptions, BuildCommandOptions, CompletedOutputPolicy, OvenBakeProjectTarget, OvenPreparedProject,
@@ -39,6 +39,7 @@ use incan_driver::build_report::{
     BuildReportMode, BuildReportOptions, RustInspectionFormat, artifact_report, rust_inspection_report,
 };
 use incan_driver::cargo_policy::CargoPolicy;
+use incan_driver::cargo_policy::reject_normal_cargo_controls;
 use incan_driver::project::resolve_project_root;
 use incan_frontend::diagnostics;
 use incan_provider::FeatureSelection;
