@@ -19,42 +19,6 @@
       "expected_fingerprint": "0xdbb6cb2d2f7e5615"
     },
     {
-      "path": "loaves/compiler/incan_driver/src/backend/shadow/abs_sum_profile_tests.rs",
-      "category": "shadow comparison legacy-route requirement environment flag",
-      "expected_count": 1,
-      "expected_fingerprint": "0x26029eabba9d5342"
-    },
-    {
-      "path": "loaves/compiler/incan_driver/src/backend/shadow/enumerate_zip_tests.rs",
-      "category": "shadow comparison legacy-route requirement environment flag",
-      "expected_count": 1,
-      "expected_fingerprint": "0x6d92bc56a991a48f"
-    },
-    {
-      "path": "loaves/compiler/incan_driver/src/backend/shadow/json_stringify_tests.rs",
-      "category": "shadow comparison legacy-route requirement environment flag",
-      "expected_count": 6,
-      "expected_fingerprint": "0x25f4d476ba282831"
-    },
-    {
-      "path": "loaves/compiler/incan_driver/src/backend/shadow/legacy_oven.rs",
-      "category": "Cargo environment variable filtering for the legacy Oven route",
-      "expected_count": 1,
-      "expected_fingerprint": "0xc92aa5a8e9ab74d1"
-    },
-    {
-      "path": "loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs",
-      "category": "shadow comparison legacy-route requirement environment flag",
-      "expected_count": 1,
-      "expected_fingerprint": "0x6d92bc56a991a48f"
-    },
-    {
-      "path": "loaves/compiler/incan_driver/src/backend/shadow/mod.rs",
-      "category": "shadow comparison entrypoint name, std::process observability exclusion and runtime failure message classification",
-      "expected_count": 7,
-      "expected_fingerprint": "0x413857b09adc9312"
-    },
-    {
       "path": "loaves/compiler/incan_driver/src/build/bake.rs",
       "category": "Oven bake profile selection",
       "expected_count": 3,
@@ -121,12 +85,6 @@
       "expected_fingerprint": "0x7a60930e105ab2a0"
     },
     {
-      "path": "loaves/compiler/incan_driver/src/build/replacement.rs",
-      "category": "replacement backend main-function selection",
-      "expected_count": 1,
-      "expected_fingerprint": "0x6fe760297364f1c3"
-    },
-    {
       "path": "loaves/compiler/incan_driver/src/build/reuse.rs",
       "category": "packaged-Loaf store relative path compatibility",
       "expected_count": 2,
@@ -187,22 +145,10 @@
       "expected_fingerprint": "0x20dd2e3b43ec0187"
     },
     {
-      "path": "loaves/compiler/incan_driver/src/replacement_compatibility.rs",
-      "category": "replacement-compatibility registry: repository path traversal checks, evidence kinds, and the capability and feature identifiers the anchor profiles and body-corpus mappings key on",
-      "expected_count": 40,
-      "expected_fingerprint": "0x2bb3122e34c9a456"
-    },
-    {
       "path": "loaves/compiler/incan_driver/src/rust_inspect_workspace.rs",
       "category": "rust-inspect workspace prewarm flags, lock-projection and primitive-namespace compatibility",
       "expected_count": 5,
       "expected_fingerprint": "0x2149b316c851f3d0"
-    },
-    {
-      "path": "loaves/compiler/incan_driver/src/shadow_support.rs",
-      "category": "shadow comparison Oven Loaf environment flag and stdlib import exclusion",
-      "expected_count": 2,
-      "expected_fingerprint": "0x94412866de1f8595"
     },
     {
       "path": "loaves/compiler/incan_driver/src/testing/discovery.rs",
@@ -353,18 +299,6 @@
       "category": "central Rust reference-shape compatibility",
       "expected_count": 2,
       "expected_fingerprint": "0x1f31d645283d8922"
-    },
-    {
-      "path": "loaves/compiler/incan_emit/src/replacement/executable_resolution_tests.rs",
-      "category": "executable-resolution fixture program, module-name and executable-surface assertions",
-      "expected_count": 16,
-      "expected_fingerprint": "0x57b05cb06a4d87b3"
-    },
-    {
-      "path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
-      "category": "replacement executor value-target selection",
-      "expected_count": 1,
-      "expected_fingerprint": "0xfe49ea402cb9f33b"
     },
     {
       "path": "loaves/compiler/incan_emit/src/trait_bound_inference.rs",
