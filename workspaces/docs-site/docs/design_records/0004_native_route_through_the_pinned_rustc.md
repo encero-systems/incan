@@ -1,7 +1,7 @@
 ---
 id: DD-0004
-title: Compile Incan directly through the pinned rustc, with a driver Loaf that Oven invokes
-status: Draft
+title: Isolate the native compiler driver in a pinned Loaf
+status: Accepted
 type: design-decision
 date: 2026-10-03
 review_target: v0.6
@@ -10,183 +10,50 @@ sources:
   - https://github.com/encero-systems/incan/issues/1675
   - https://github.com/encero-systems/incan/issues/654
   - DD-0002
-  - RFC 097
-  - RFC 119
-  - RFC 120
-  - RFC 121
-  - RFC 123
   - RFC 124
 ---
 
-# DD-0004: Compile Incan directly through the pinned rustc, with a driver Loaf that Oven invokes
+# DD-0004: Isolate the native compiler driver in a pinned Loaf
 
 ## Context
 
-By the end of 0.6 there is no Cargo, no generated Rust, and Oven is fast and usable. Today an Incan program becomes native code one way: the compiler emits Rust source and Oven compiles it with direct rustc. Removing Rust generation (#654) needs a route that produces native code without Rust source, and #1337 owns it.
+[Issue #1337](https://github.com/encero-systems/incan/issues/1337) establishes Incan's direct compilation route: Incan and Rust units share one compilation graph, with no generated Rust source or Cargo on the build path. This record chooses the driver boundary for that route.
 
-#1337 settled the direction: Incan becomes a second front end to the rustc the toolchain pins (DD-0002), so Rust crates and Incan modules share one crate graph and rustc does what only it can do, namely instantiate generic Rust, resolve traits and lower async. What it left open is the shape of the front end. That front end has to use rustc's unstable internal interface, which changes every release, and the shape decides how far that instability reaches into the rest of the compiler and toolchain.
-
-A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-end/run.sh`) settled the mechanism on Rust 1.98.0, built and driven by plain rustc with no Cargo. It showed the following:
-
-- Bodies supplied as MIR replace placeholder bodies.
-- Items injected after parsing are real rustc items that Rust names and rustc checks calls against.
-- Models and enums are Rust ADTs that Rust constructs and matches and Incan code reads.
-- A generic Incan function and model are written once and instantiated from Rust and from Incan.
-- `.incn` spans reach panic locations and backtraces.
-- #1337's four boundary rows run across a three-unit graph whose Incan unit has an empty crate root:
-    - a free call;
-    - an owned `str` borrowed as `&str`;
-    - a capturing closure expression passed as `impl FnOnce`;
-    - a Rust caller using `<library>::caller::incan`, instantiating a generic Incan function from metadata.
-- Incan code drives a Rust layer built against rustc's internals. One driver builds that layer, an Incan unit that fills its body plan, and a Rust executable that calls the Incan unit. The executable runs rustc in its own process and compiles a program whose function body the Incan code planned.
-- Real Body IR runs natively. The driver runs this repository's Incan front end in-process and lowers the unchanged kernels of the `fib` and `collatz` benchmarks to MIR, calling the same stdlib runtime helpers the emitted route calls. The output is identical to the emitted-Rust route's for the same sources, and optimized runtime is on par.
-- Whole programs compile natively. The unchanged `fib`, `collatz` and `mandelbrot` benchmark programs, `main` included, compile from source to native binaries with no Rust source at any point. Their output is identical to the emitted route's, and optimized runtime is at parity.
-- A first corpus lane runs on the direct route. It compiles every single-file behavior fixture that records its expected output, runs it natively, and compares stdout and exit code. 24 fixtures pass, none produce wrong output, none fail, and 439 are refused with the construct they need named. The lane caught two behavior differences and three lowering defects, all fixed or refused:
-    - a `@rust.extern` placeholder run as a body (#2023);
-    - an `import this` whose module effect Body IR does not carry.
-
-    The largest refusal is imports, at 113 fixtures: a program that imports from the stdlib needs the stdlib's own units compiled natively, which is where Oven building several units, and the toolchain building its own stdlib, come in.
+rustc's internal interface changes between releases. Incan already pins its Rust toolchain ([DD-0002](0002_single_pinned_rust_version.md)); the remaining choice is where that interface lives and how Oven invokes it.
 
 ## Decision
 
-**There is one route, the direct route.** Incan compiles through the pinned rustc with no generated Rust. It replaces the Rust-emission route rather than running beside it, and the Body IR interpreter is removed (#1337).
+**The native compiler driver is a separate Loaf built against the toolchain's exact pinned rustc.**
 
-**The driver is its own Loaf, pinned to rustc.**
+- Oven invokes the driver for each Incan or Rust compilation unit. The driver's build identity enters the identity of every unit it compiles, under [RFC 124](../RFCs/124_oven_store_unit_identity_and_cross_plan_artifact_sharing.md).
+- The driver runs the Incan front end in-process. Incan declarations enter rustc as items; checked Body IR supplies their MIR bodies. No Rust source is generated, and no serialized checker-to-lowering handoff is needed.
+- New lowering and orchestration code is authored in Incan. The Rust exception is the narrow adapter that holds rustc's internal types and turns the lowering's plain-data plan into MIR. Only the driver Loaf's own units may use rustc's internal interface.
+- Oven owns a resident driver process and reuses it across compilation requests. Analysis-only commands continue to use the front end without loading rustc.
 
-- The front end is a rustc driver, a separate Loaf built against exactly the toolchain's pinned rustc.
-- It is the only code in the project that uses rustc's internal interface.
-- It refuses to run, before any effect, when the rustc library it loads is not the pinned one.
-- Permission to use rustc's internals is a declared property of a unit's invocation, which the driver grants through rustc's tracked `unstable_features` option, so it is part of the unit's identity. It is never inherited from an ambient `RUSTC_BOOTSTRAP`, which Oven already strips. Only the driver Loaf's own units declare it.
-- The driver's executable root depends on rustc's shared library directly, because rustc links `std` from that library, which already contains it, only for a root that names it.
-- This is how Rust ships its own tools that need rustc's internals: a separate driver built against one exact rustc, invoked by Cargo in rustc's place.
-
-**Oven invokes it per unit, for both languages.**
-
-- Oven plans the units and invokes the driver once per unit, as Cargo invokes rustc.
-- A Rust unit given to the driver compiles exactly as rustc would compile it.
-- Every unit, in either language, therefore has one compiler identity. The driver's build identity is part of the identity of every unit it compiles (RFC 124).
-
-**Oven keeps the driver resident.**
-
-- Oven owns a long-running driver process and reuses it across units.
-- The language server starts it and keeps it warm while an editor is open.
-- Terminal and CI builds use it when it is running, and start it when it is not.
-
-**The Incan front end runs inside the driver.**
-
-- The checker and Body IR do not use rustc's internals, so the driver depends on them as ordinary libraries and runs them in-process.
-- There is no serialized handoff between the checker and the lowering. In particular, RFC 123's executable representation is not a carrier for the driver.
-- Commands that do not compile, such as `incan check` and the language server's analysis, never load rustc.
-
-**Declarations become rustc items; bodies become MIR.**
-
-- Every Incan declaration enters rustc as an item before rustc resolves names. That covers functions, models, enums, generic parameters with their bounds, modules, re-exports, and RFC 097's caller namespace.
-- A function's source body is a placeholder that is never compiled. Its compiled body is MIR lowered from checked Body IR.
-- An Incan unit's crate root contains no Rust source, and no Rust source is produced for it, on disk or in memory.
-- Models and enums are Rust ADTs with RFC 121's representation.
-- Every linker-visible symbol for an Incan declaration is recoverable to its canonical identity (RFC 120).
-
-**Bodies enter as MIR, and rustc elaborates drops.**
-
-- Bodies are supplied as MIR, not THIR. THIR names variables by `HirId`, and rustc schedules their drops through a scope tree computed from the HIR body, which for an Incan function is a placeholder. Supplying THIR would require first mirroring every body into AST, which is generated Rust under another name.
-- The lowering emits a drop for every owned value at each scope exit and a cleanup block on every call that can unwind, as rustc's own MIR building does. rustc's drop elaboration removes the drops of values that were moved, so the lowering never tracks which paths moved a value. The spike shows each value dropped exactly once on normal and unwinding paths.
-
-**Closure expressions declare their captures.**
-
-- Each closure expression enters as a closure inside its enclosing function's declaration, naming the variables it captures.
-- rustc determines a closure's kind and captured state from the declaration, not from MIR.
-
-**Incan's checker is the authority.**
-
-- A program the checker accepts must lower to MIR that rustc accepts.
-- A rustc rejection of front-end-supplied MIR is a compiler defect, never a user diagnostic. The spike showed why this has to be enforced by the checker: a missing trait bound in supplied MIR makes rustc fail with an internal compiler error, and a use-after-move gives a Rust-worded `E0382` at whatever span the MIR carries.
-- User-facing diagnostics come from Incan's checker, and rustc's lints are not reported for Incan items. Lints that run before MIR see only placeholder bodies.
-
-**Calls into Rust come from the call plan.**
-
-- A Rust call's callee and generic arguments come from the checked call plan, resolved by canonical path.
-- They are never recovered from generated names.
-
-**New code is Incan.**
-
-- The direct route's code is written in Incan. That includes the Body IR → MIR lowering, which fills the plan, drop and unwind building, and the driver's own orchestration.
-- One piece is Rust because it must be: the driver's layer that turns a finished plan into MIR. rustc's internal interface exists only as Rust crates, and only the driver unit may depend on them.
-- Nothing else on the direct route is Rust.
-
-**Ring placement.**
-
-- The lowering from Body IR to MIR belongs to the compiler ring, beside the checker that owns Body IR.
-- The driver executable belongs to the toolchain ring.
-- Oven learns the driver's location through the compiler's provider facet, so the Oven ring continues to know Incan by name only.
+The lowering belongs in the compiler ring; the driver executable belongs in the toolchain ring. Oven locates it through the compiler's provider facet.
 
 ## Consequences
 
-**Upgrade cost is bounded.** Each rustc upgrade includes a driver upgrade, and nothing else in the compiler moves. In about six hundred lines, the spike hit five differences from older rustc documentation, so the cost is real but contained in one Loaf.
+The compiler's dependence on rustc's unstable interface is concentrated in one adapter. Each Rust upgrade requires verifying and, where necessary, updating that adapter. The front end remains usable independently for checking and editor analysis.
 
-**Nothing new is needed at run time.** The `rustc` executable is itself a thin binary over rustc's shared library, and the driver loads the same library. The developer-only `rustc-dev` component is needed to build the driver, not to run it. Building the driver needs rustc's unstable-features escape hatch.
+The driver shares rustc's type and code-generation machinery with Rust units. Incan still owns semantic checking and Body IR lowering: invalid supplied MIR is a compiler defect. Construct coverage and end-to-end build performance must be proven through #1337's acceptance checks.
 
-**The resident driver saves the fixed cost and no more.** Measured on macOS arm64 for a minimal unit:
-
-| | time |
-|---|---|
-| Compile and link in a fresh process | ~73 ms |
-| Process start and loading rustc's library | ~21 ms |
-| Each compilation in an already-running process | ~41 ms |
-| Analysis alone | ~2 ms |
-
-So code generation and linking dominate a small unit. rustc does not reuse analysis across compilations in memory.
-
-The inner loop on real Body IR, with an optimized driver and the front end in-process: compiling the Incan unit of the two benchmark kernels takes about 43 ms, of which analysis is about 8 ms above process start. Linking the binary takes about 89 ms. A one-line edit therefore reaches a linked binary in about 132 ms, against the 0.6 bar of 250 ms. For a whole program compiled as one unit, unchanged `fib.incn` source becomes a linked native binary in about 70 ms in a fresh driver process, so a one-line edit reaches first output in about 75 ms, against 680 ms today.
-
-**The lowering is the largest piece of work.**
-
-- It turns structured Body IR into a control-flow graph and emits drops and cleanup blocks; rustc's drop elaboration handles which drops actually run.
-- When the lowering is wrong, the failure is an internal compiler error rather than a readable diagnostic. So lowering defects are harder to diagnose than emitted-Rust defects were.
-
-**Builtins the emitter expands as macros become runtime functions.** The emitted route turns `println` into Rust's `println!` macro, which no MIR can call. Natively each such builtin is a call to a stdlib runtime function that invokes the macro itself, so behavior such as output capture under a test harness is unchanged.
-
-**The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both. Body IR must also record parameter modes. Today it passes an argument to a `mut` parameter as a copy and lets the callee drop it, where RFC 129 and the emitted route write through (#2022). It must also carry the facts the lowering currently compensates for: a value-returning function's trailing result, now a discarded expression statement (#2025), extern delegation (#2023), the checked type of a literal, which leaves an `int` literal accepted as a `float` as an integer constant, the receiver mode of mutating builtin methods, and the precise type of a `range(..)` value.
-
-**The Incan lowering meets rustc through a plain-data plan.** The lowering is Incan by decision. It consumes Body IR (Incan matches Body IR's enum shapes, struct variants included) and fills a plan of blocks, places, calls and drops addressed by index. The plan's crate is plain Rust data that names no rustc type. The driver, the one unit allowed rustc's internals, turns a finished plan into MIR. The lowering never calls into rustc code.
-
-A layer that owns rustc's types cannot be what the lowering imports. As a `[rust-dependencies]` crate it does not bake without the driver-only `rustc_private` permission, so the checker never sees its API. A plain-data plan crate bakes, typechecks and runs like any other Rust dependency (spike probes `rustc_seam_check` and `mir_plan_check`).
-
-**A published Loaf ships its governed bodies.** A Loaf's executable representation (RFC 123) carries the checked Body IR of its public declarations under the publisher's canonical identities. The manifest selects it, its digest is verified before anything is decoded, and only a public identity it declares covered is usable. A consumer on the direct route never runs anything else: an uncovered, inconsistent or unverifiable body is refused. This includes public functions with type parameters. The consumer lowers such a function's governed body from the representation and instantiates it at its own types in its own compilation, so a published Loaf does not depend on the rustc that compiled it. The representation's coverage therefore grows to public functions with type parameters, which it refuses today.
-
-**Async lowers to MIR coroutines that rustc transforms.** An `async def` enters rustc as an `async fn` declaration, so rustc gives it a coroutine `DefId` and kind the way a closure skeleton gets its own. The lowering writes the coroutine body as MIR:
-
-- `await x` becomes `IntoFuture::into_future(x)` followed by a loop that polls the pinned future and suspends with `Yield` while it is `Pending`, as rustc's own desugaring does.
-- `race for` polls its arms in source order.
-
-rustc's coroutine transform then builds the state machine: its layout, the locals saved across suspension points and their drops. The async behavior fixtures prove this when the direct route reaches async.
+Keeping the driver resident avoids repeated process startup and library loading. It also makes driver lifecycle and per-request isolation part of the implementation work.
 
 ## Non-goals
 
-- A native code generator of Incan's own, such as Cranelift. Generic, trait and async Rust can only be instantiated by rustc.
-- An interpreter that calls compiled Rust. The Body IR interpreter proved Body IR carries complete semantics; it is removed (#1337).
-- Rust source generated in memory and handed to rustc. That is still generated Rust.
-- A fork of rustc. The driver already gets everything a fork would give: it decides unstable-feature permission per unit, and rustc's driver callbacks and query overrides carry items, bodies, spans and cross-crate metadata. A fork would not remove the churn of rustc's internals; it would turn a driver upgrade into rebasing a patch series every release. It would also mean building and shipping rustc and LLVM for every target, owning security backports, and making Rust built through Incan differ from upstream. Revisit only when a needed hook cannot be had through callbacks or query overrides, such as resolving Incan items without AST injection, injecting THIR, or tying rustc's incremental reuse to unit identity. Even then, propose the hook upstream first, as Clippy and Miri did for theirs.
-- Linking rustc into the compiler. Every compiler binary, including the language server, would then carry rustc's library and build against its unstable interface.
-- Inspection of the direct route. That is a separate design.
-- More than one rustc per toolchain release (DD-0002).
+This record does not define lowering algorithms, package-publication contracts, caller APIs, the resident-process protocol, or a rustc fork. Implementation details, spike evidence, measurements, and required adjustments to existing RFCs are tracked in [#1337](https://github.com/encero-systems/incan/issues/1337).
 
 ## Revisit condition
 
-Revisit this record when any of the following happens:
-
-- A rustc upgrade costs more than a driver upgrade.
-- The driver needs a rustc hook that callbacks and query overrides cannot provide, and upstream declines to add it.
-- The resident driver fails the 0.6 inner-loop bar: an unchanged `incan run` under 50 ms over the program's own run time, a one-line edit to first output under 250 ms, and a test case that builds a project under 1 s.
-- The interop check shows that the lowering cannot reach rustc from Incan.
+Revisit the boundary if a required operation cannot be expressed through rustc's available hooks, if upgrades require spreading rustc-specific code beyond the adapter, or if the integrated route cannot meet #1337's performance requirements.
 
 ## Provenance
 
-This record derives from #1337's design and its spike, and from the 0.6 end state recorded on #1675 and #654. It applies DD-0002's single pinned rustc and is consistent with RFC 097, RFC 119, RFC 120, RFC 121 and RFC 124. It supersedes the open driver-shape question in #1337's design comment of 2026-10-03, which preferred a thin driver fed serialized checked facts. It does not change any RFC.
+Accepted on 2026-10-04. This record preserves the driver shape explored by #1337's spike and applies DD-0002's pinned-toolchain policy. It replaces the earlier proposal in #1337 to feed a thin driver serialized checked facts. The broader route and cutover remain owned by #1337, [#1675](https://github.com/encero-systems/incan/issues/1675), and [#654](https://github.com/encero-systems/incan/issues/654); this record does not amend an RFC or claim implementation completion. `review_target` identifies a review point.
 
 ## References
 
-- #1337: Incan compiles natively at HIR through the pinned rustc, with no generated Rust.
-- #1675: Slice 7, the 0.6 cutover.
-- #654: removal of Rust generation.
-- Spike: `workspaces/spikes/1337-rustc-front-end/` on `feature/1337-rustc-front-end`.
-- DD-0002, RFC 097, RFC 119, RFC 120, RFC 121, RFC 123, RFC 124.
+- [#1337: Direct-route implementation, evidence, and acceptance](https://github.com/encero-systems/incan/issues/1337)
+- [DD-0002: Single pinned Rust version](0002_single_pinned_rust_version.md)
+- [RFC 124: Oven store unit identity](../RFCs/124_oven_store_unit_identity_and_cross_plan_artifact_sharing.md)
