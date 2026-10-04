@@ -1,0 +1,12 @@
+# behavior: refuses f string interpolation it cannot render identically, as the legacy route runs it
+# expect-stdout:
+#   [1, 2]
+
+
+def program_result() -> str:
+  values = [1, 2]
+  return f"{values}"
+
+
+def main() -> None:
+    println(program_result())

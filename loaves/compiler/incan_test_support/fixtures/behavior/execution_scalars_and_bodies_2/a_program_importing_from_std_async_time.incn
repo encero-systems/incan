@@ -1,0 +1,13 @@
+# behavior: a program that imports from std.async.time runs
+# expect-stdout:
+#   42
+
+from std.async.time import sleep
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

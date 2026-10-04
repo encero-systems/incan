@@ -1,0 +1,10 @@
+# behavior: uses python signed floor division and modulo
+# expect-stdout:
+#   -2
+
+def program_result() -> int:
+  return 7 % -3
+
+
+def main() -> None:
+    println(program_result())

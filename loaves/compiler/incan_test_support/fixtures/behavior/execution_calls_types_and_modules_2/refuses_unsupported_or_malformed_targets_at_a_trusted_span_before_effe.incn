@@ -1,0 +1,12 @@
+# behavior: refuses unsupported or malformed targets at a trusted span before effects, as the legacy route runs it
+# expect-stdout:
+#   must not run
+#   true
+
+def probe(value: int | str) -> bool:
+  println("must not run")
+  return isinstance(value, int)
+
+
+def main() -> None:
+    println(probe(1))

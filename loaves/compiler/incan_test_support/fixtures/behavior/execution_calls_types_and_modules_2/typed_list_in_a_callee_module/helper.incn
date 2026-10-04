@@ -1,0 +1,3 @@
+pub def widen(value: u8) -> u8:
+    values: List[u8] = [value]
+    return values[0]

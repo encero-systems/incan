@@ -1,0 +1,16 @@
+# behavior: preserves source defined zip over the global builtin spelling
+# expect-stdout:
+#   source zip
+#   42
+
+
+def zip(left: list[int], right: list[int]) -> int:
+  println("source zip")
+  return 42
+
+def source_defined_zip() -> int:
+  return zip([1], [2])
+
+
+def main() -> None:
+    println(source_defined_zip())

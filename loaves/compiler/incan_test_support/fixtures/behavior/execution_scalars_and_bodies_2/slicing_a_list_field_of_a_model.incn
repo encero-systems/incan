@@ -1,0 +1,15 @@
+# behavior: slicing a list field of a model gives a new list
+# expect-stdout:
+#   [40]
+
+model Bucket:
+    values: list[int]
+
+
+def program_result() -> list[int]:
+    bucket = Bucket(values=[40, 2])
+    return bucket.values[0:1]
+
+
+def main() -> None:
+    println(program_result())

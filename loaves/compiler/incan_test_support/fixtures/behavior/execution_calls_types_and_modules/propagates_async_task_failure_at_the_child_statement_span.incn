@@ -1,0 +1,17 @@
+# behavior: propagates async task failure at the child statement span, stopping the program
+# expect-stdout:
+# expect-exit: 101
+
+
+import std.async
+
+async def child() -> int:
+  assert false
+  return 7
+
+async def program_result() -> int:
+  return await child()
+
+
+async def main() -> None:
+    await program_result()

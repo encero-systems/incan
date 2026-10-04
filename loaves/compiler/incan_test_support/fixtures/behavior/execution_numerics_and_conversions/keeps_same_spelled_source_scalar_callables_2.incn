@@ -1,0 +1,14 @@
+# behavior: keeps same spelled source scalar callables
+# expect-stdout:
+#   99
+
+
+def int(value: str) -> int:
+  return 99
+
+def program_result() -> int:
+  return int("not a builtin conversion")
+
+
+def main() -> None:
+    println(program_result())

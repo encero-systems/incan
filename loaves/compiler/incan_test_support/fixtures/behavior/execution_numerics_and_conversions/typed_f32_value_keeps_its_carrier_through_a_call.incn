@@ -1,0 +1,13 @@
+# behavior: an f32 value passed through a function prints the same before and after the call, without widening
+# expect-stdout:
+#   1.2345679
+#   1.2345679
+
+def identity(value: f32) -> f32:
+    println(value)
+    return value
+
+
+def main() -> None:
+    value: f32 = 1.2345679
+    println(identity(value))

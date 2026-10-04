@@ -1,0 +1,15 @@
+# behavior: short writes preserve output and identity
+# expect-stdout:
+#   a
+#   b
+#   c 2
+#   42
+
+def program_result() -> int:
+  println("a\nb")
+  println("c", 2)
+  return 42
+
+
+def main() -> None:
+    println(program_result())

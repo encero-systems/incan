@@ -1,0 +1,25 @@
+# behavior: returns a value returning functions trailing expression (#2025)
+# pending: the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   212
+
+def pick(n: int) -> int:
+  match n:
+    1 => 10
+    _ => 20
+
+def next(n: int) -> int:
+  n + 1
+
+def choose(n: int) -> int:
+  if n == 1:
+    100
+  else:
+    200
+
+def program_result() -> int:
+  return pick(1) + next(1) + choose(2)
+
+
+def main() -> None:
+    println(program_result())

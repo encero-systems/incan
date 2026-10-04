@@ -1,0 +1,16 @@
+# behavior: refuses an idless nominal constructor at its original source span, as the legacy route runs it
+# expect-stdout:
+#   42
+
+
+model Pair:
+  left: int
+  right: int
+
+def program_result() -> int:
+  pair = Pair(right=2, left=40)
+  return pair.left + pair.right
+
+
+def main() -> None:
+    println(program_result())

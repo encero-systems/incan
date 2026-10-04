@@ -1,0 +1,8 @@
+# behavior: preserves decimal observation without entering binary float
+# expect-stdout:
+#   19.99
+
+
+def main() -> None:
+  value: decimal[5, 2] = 19.99d
+  println(value)

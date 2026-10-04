@@ -1,0 +1,13 @@
+# behavior: source local bool keeps its declaration identity
+# expect-stdout:
+#   42
+
+def bool(value: int) -> int:
+  return value + 1
+
+def observe() -> int:
+  return bool(41)
+
+
+def main() -> None:
+    println(observe())

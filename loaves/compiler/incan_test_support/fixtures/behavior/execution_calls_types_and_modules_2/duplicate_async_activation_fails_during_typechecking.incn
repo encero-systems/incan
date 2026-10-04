@@ -1,0 +1,8 @@
+# behavior: duplicate async activation fails during typechecking
+# expect-diagnostic: INCAN-I0001
+
+import std.async
+import std.async
+
+def main() -> int:
+  return 42

@@ -1,0 +1,20 @@
+# behavior: executes json stringify for the admitted scalar domain
+# expect-stdout:
+#   null
+
+
+def negative() -> str:
+  return json_stringify(-9223372036854775807)
+
+def truth() -> str:
+  return json_stringify(true)
+
+def escaped() -> str:
+  return json_stringify("line\né\t\\\"")
+
+def absent() -> str:
+  return json_stringify(None)
+
+
+def main() -> None:
+    println(absent())

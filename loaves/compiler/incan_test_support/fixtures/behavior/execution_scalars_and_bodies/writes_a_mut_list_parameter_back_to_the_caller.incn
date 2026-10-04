@@ -1,0 +1,21 @@
+# behavior: writes a mut list parameter back to the caller (#2022)
+# expect-stdout:
+#   310
+
+def bump(mut items: List[int]) -> None:
+  items[0] = items[0] + 1
+
+def inc(mut n: int) -> None:
+  n = n + 1
+
+def program_result() -> int:
+  mut items: List[int] = [1, 5]
+  bump(items)
+  bump(items)
+  mut n = 10
+  inc(n)
+  return items[0] * 100 + n
+
+
+def main() -> None:
+    println(program_result())

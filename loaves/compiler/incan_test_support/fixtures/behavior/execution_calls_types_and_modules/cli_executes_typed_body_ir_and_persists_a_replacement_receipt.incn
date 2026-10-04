@@ -1,0 +1,14 @@
+# behavior: cli executes typed body ir and persists a replacement receipt
+# expect-stdout:
+#   42
+
+def program_result() -> int:
+  left = 40
+  right = 2
+  if left > right:
+    return left + right
+  return right
+
+
+def main() -> None:
+    println(program_result())

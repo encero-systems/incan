@@ -1,0 +1,13 @@
+# behavior: scalar conversion failures keep their canonical class and original input, as the legacy route runs it
+# expect-stdout:
+#   before conversion
+# expect-exit: 101
+
+def parse(value: str) -> str:
+    println("before conversion")
+    parsed = float(value)
+    return str(parsed)
+
+
+def main() -> None:
+    println(parse("1_000._50"))

@@ -1,0 +1,13 @@
+# behavior: preserves float direct arguments and results
+# expect-stdout:
+#   argument ran
+#   1.5
+
+
+def show(value: float) -> str:
+  println("argument ran")
+  return str(value)
+
+
+def main() -> None:
+    println(show(1.5))

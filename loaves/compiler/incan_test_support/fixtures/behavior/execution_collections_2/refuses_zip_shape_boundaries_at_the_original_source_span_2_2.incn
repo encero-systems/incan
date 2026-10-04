@@ -1,0 +1,11 @@
+# behavior: the checker refuses zip shape boundaries at the original source span 2
+# expect-diagnostic: INCAN-T0001
+
+
+def zip_arity_boundary() -> int:
+  pairs = zip([1])
+  return 0
+
+
+def main() -> None:
+    println(zip_arity_boundary())
