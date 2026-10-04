@@ -15,6 +15,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 const TOOLS: [&str; 3] = ["incan", "generate_lang_reference", "generate_feature_inventory"];
+/// Path of this executable as the CI workflow invokes it.
+const RECORDER: &str = "target/debug/incan-ci-tool-outputs";
 const ROOT_INPUTS: [&str; 4] = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain"];
 const RECIPE: [&str; 2] = [
     "CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics",
@@ -120,28 +122,49 @@ struct OutputManifest {
     outputs: BTreeMap<String, String>,
 }
 
-/// Parse the process arguments and run one operation, publishing fail-closed CI outputs on error.
-pub fn run_from_environment() -> io::Result<()> {
+/// How one operation ended once its CI outputs were published.
+#[derive(Debug)]
+pub enum Completion {
+    /// The operation produced its evidence.
+    Done,
+    /// The operation could not vouch for the tool outputs. Its fail-closed outputs are published, so CI continues on
+    /// the cold compiler build: these outputs are an accelerator, never a gate.
+    Unavailable(io::Error),
+}
+
+/// Parse the process arguments and run one operation, publishing fail-closed CI outputs when it is unavailable.
+///
+/// An error means the fail-closed outputs themselves could not be published.
+pub fn run_from_environment() -> io::Result<Completion> {
     let cli = Cli::parse();
     let unavailable = unavailable_context(&cli.operation);
-    match run(cli.operation) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            publish_github_outputs(&BTreeMap::from([
-                ("eligible", "false"),
-                ("hit", "false"),
-                ("admitted", "false"),
-            ]))?;
-            if let Some((state, operation)) = unavailable {
-                fs::create_dir_all(&state)?;
-                write_json(
-                    &state.join(format!("{operation}-unavailable.json")),
-                    &json!({"status": "unavailable", "detail": error.to_string()}),
-                )?;
-            }
-            Err(error)
-        }
+    let github_output = env::var_os("GITHUB_OUTPUT").map(PathBuf::from);
+    settle(run(cli.operation), unavailable, github_output.as_deref())
+}
+
+/// Turn an operation result into its completion, publishing fail-closed outputs and evidence for a refusal.
+fn settle(
+    result: io::Result<()>,
+    unavailable: Option<(PathBuf, &'static str)>,
+    github_output: Option<&Path>,
+) -> io::Result<Completion> {
+    let Err(error) = result else {
+        return Ok(Completion::Done);
+    };
+    if let Some(github_output) = github_output {
+        append_github_outputs(
+            github_output,
+            &BTreeMap::from([("eligible", "false"), ("hit", "false"), ("admitted", "false")]),
+        )?;
     }
+    if let Some((state, operation)) = unavailable {
+        fs::create_dir_all(&state)?;
+        write_json(
+            &state.join(format!("{operation}-unavailable.json")),
+            &json!({"status": "unavailable", "detail": error.to_string()}),
+        )?;
+    }
+    Ok(Completion::Unavailable(error))
 }
 
 /// Return the state path and operation name used for unavailable evidence.
@@ -494,13 +517,14 @@ fn collect_evidence(workspace: &Path, candidate: Option<&Candidate>, logs: &[Pat
         ));
     }
     let mut records = Vec::new();
+    let mut owners = RegistryOwners::default();
     for value in paths {
         let path = if Path::new(&value).is_absolute() {
             PathBuf::from(&value)
         } else {
             workspace.join(&value)
         };
-        match candidate.and_then(|candidate| record_input(candidate, &path).ok()) {
+        match candidate.and_then(|candidate| record_input(candidate, &path, &mut owners).ok()) {
             Some(record) => records.push(record),
             None if candidate.is_none()
                 && path.starts_with(workspace)
@@ -761,8 +785,108 @@ fn verify_cargo_environment(
     }
 }
 
+/// One locked registry package: its lock source and checksum, and the digest of every regular archive member.
+struct RegistryOwner {
+    source: String,
+    checksum: String,
+    files: BTreeMap<String, String>,
+}
+
+/// Registry packages authenticated during one operation, keyed by extracted package root.
+///
+/// A build consumes many files of each package, and authenticating a package hashes every member of its archive.
+/// Each package is therefore authenticated once, and a refusal is kept like a success, so the cost follows the
+/// number of packages rather than the number of consumed files.
+#[derive(Default)]
+struct RegistryOwners {
+    lock: Option<toml::Value>,
+    owners: BTreeMap<PathBuf, Result<RegistryOwner, String>>,
+}
+
+impl RegistryOwners {
+    /// Return the authenticated owner of one extracted package root, authenticating it on first use.
+    fn owner(&mut self, workspace: &Path, cargo_home: &Path, root: &Path) -> io::Result<&RegistryOwner> {
+        if !self.owners.contains_key(root) {
+            let authenticated = self
+                .authenticate(workspace, cargo_home, root)
+                .map_err(|error| error.to_string());
+            self.owners.insert(root.to_path_buf(), authenticated);
+        }
+        match self.owners.get(root) {
+            Some(Ok(owner)) => Ok(owner),
+            Some(Err(detail)) => Err(io::Error::other(detail.clone())),
+            None => Err(io::Error::other("registry owner was not recorded")),
+        }
+    }
+
+    /// Return the workspace lock, parsing it on first use.
+    fn lock(&mut self, workspace: &Path) -> io::Result<&toml::Value> {
+        if self.lock.is_none() {
+            let text = fs::read_to_string(workspace.join("Cargo.lock"))?;
+            self.lock = Some(toml::from_str(&text).map_err(io::Error::other)?);
+        }
+        self.lock
+            .as_ref()
+            .ok_or_else(|| io::Error::other("workspace lock is unavailable"))
+    }
+
+    /// Bind one extracted package root to its exact locked archive and inventory that archive's members.
+    fn authenticate(&mut self, workspace: &Path, cargo_home: &Path, root: &Path) -> io::Result<RegistryOwner> {
+        let no_owner = || io::Error::other("registry source path has no package owner");
+        let package_directory = root.file_name().ok_or_else(no_owner)?.to_string_lossy().into_owned();
+        let index = root.parent().and_then(Path::file_name).ok_or_else(no_owner)?;
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(root.join("Cargo.toml"))?).map_err(io::Error::other)?;
+        let name = manifest["package"]["name"]
+            .as_str()
+            .ok_or_else(|| io::Error::other("registry package has no name"))?;
+        let version = manifest["package"]["version"]
+            .as_str()
+            .ok_or_else(|| io::Error::other("registry package has no version"))?;
+        if package_directory != format!("{name}-{version}") {
+            return Err(io::Error::other(
+                "extracted registry directory differs from its package identity",
+            ));
+        }
+        let matches = self.lock(workspace)?["package"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| {
+                entry["name"].as_str() == Some(name)
+                    && entry["version"].as_str() == Some(version)
+                    && entry["source"]
+                        .as_str()
+                        .is_some_and(|source| source.starts_with("registry+"))
+            })
+            .collect::<Vec<_>>();
+        let unlocked = || io::Error::other("registry input lacks one exact locked checksum owner");
+        if matches.len() != 1 {
+            return Err(unlocked());
+        }
+        let checksum = matches[0]["checksum"].as_str().ok_or_else(unlocked)?.to_owned();
+        let source = matches[0]["source"].as_str().unwrap_or_default().to_owned();
+        let archive = cargo_home
+            .join("registry/cache")
+            .join(index)
+            .join(format!("{package_directory}.crate"));
+        let files = authenticated_archive_files(&archive, &checksum, &package_directory)?;
+        let manifest_digest = file_digest(&root.join("Cargo.toml"))?;
+        if files.get("Cargo.toml").map(String::as_str) != Some(manifest_digest.as_str()) {
+            return Err(io::Error::other(
+                "extracted package manifest differs from the locked archive",
+            ));
+        }
+        Ok(RegistryOwner {
+            source,
+            checksum,
+            files,
+        })
+    }
+}
+
 /// Verify a consumed workspace or registry input against its authoritative owner.
-fn record_input(candidate: &Candidate, path: &Path) -> io::Result<Value> {
+fn record_input(candidate: &Candidate, path: &Path, owners: &mut RegistryOwners) -> io::Result<Value> {
     let workspace = Path::new(&candidate.inputs.workspace);
     if path.starts_with(workspace) {
         return local_record(candidate, path);
@@ -770,6 +894,11 @@ fn record_input(candidate: &Candidate, path: &Path) -> io::Result<Value> {
     let cargo_home = env::var_os("CARGO_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".cargo"));
+    registry_record(workspace, &cargo_home, path, owners)
+}
+
+/// Verify a consumed registry file against the locked archive of the package that owns it.
+fn registry_record(workspace: &Path, cargo_home: &Path, path: &Path, owners: &mut RegistryOwners) -> io::Result<Value> {
     let registry = cargo_home.join("registry/src");
     let relative = path.strip_prefix(&registry).map_err(|_| {
         io::Error::other("input is neither covered workspace source nor a regular locked registry file")
@@ -786,61 +915,17 @@ fn record_input(candidate: &Candidate, path: &Path) -> io::Result<Value> {
     };
     let root = registry.join(index).join(package_directory);
     let normalized = normalize_owned_path(path, &root)?;
-    let manifest: toml::Value =
-        toml::from_str(&fs::read_to_string(root.join("Cargo.toml"))?).map_err(io::Error::other)?;
-    let name = manifest["package"]["name"]
-        .as_str()
-        .ok_or_else(|| io::Error::other("registry package has no name"))?;
-    let version = manifest["package"]["version"]
-        .as_str()
-        .ok_or_else(|| io::Error::other("registry package has no version"))?;
-    if package_directory.to_string_lossy() != format!("{name}-{version}") {
-        return Err(io::Error::other(
-            "extracted registry directory differs from its package identity",
-        ));
-    }
-    let lock: toml::Value =
-        toml::from_str(&fs::read_to_string(workspace.join("Cargo.lock"))?).map_err(io::Error::other)?;
-    let matches = lock["package"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|entry| {
-            entry["name"].as_str() == Some(name)
-                && entry["version"].as_str() == Some(version)
-                && entry["source"]
-                    .as_str()
-                    .is_some_and(|source| source.starts_with("registry+"))
-        })
-        .collect::<Vec<_>>();
-    if matches.len() != 1 {
-        return Err(io::Error::other("registry input lacks one exact locked checksum owner"));
-    }
-    let checksum = matches[0]["checksum"]
-        .as_str()
-        .ok_or_else(|| io::Error::other("registry input lacks one exact locked checksum owner"))?;
-    let source = matches[0]["source"].as_str().unwrap_or_default();
-    let archive = cargo_home
-        .join("registry/cache")
-        .join(index)
-        .join(format!("{}.crate", package_directory.to_string_lossy()));
-    let files = authenticated_archive_files(&archive, checksum, &package_directory.to_string_lossy())?;
-    let manifest_digest = file_digest(&root.join("Cargo.toml"))?;
-    if files.get("Cargo.toml").map(String::as_str) != Some(manifest_digest.as_str()) {
-        return Err(io::Error::other(
-            "extracted package manifest differs from the locked archive",
-        ));
-    }
+    let owner = owners.owner(workspace, cargo_home, &root)?;
     let relative = normalized
         .strip_prefix(&root)
         .map_err(io::Error::other)?
         .to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/");
     let sha256 = file_digest(&normalized)?;
-    if files.get(&relative).map(String::as_str) != Some(sha256.as_str()) {
+    if owner.files.get(&relative).map(String::as_str) != Some(sha256.as_str()) {
         return Err(io::Error::other("registry file differs from the locked archive"));
     }
-    Ok(json!({"path": normalized, "sha256": sha256, "source": source, "package_checksum": checksum}))
+    Ok(json!({"path": normalized, "sha256": sha256, "source": owner.source, "package_checksum": owner.checksum}))
 }
 
 /// Authenticate and inventory regular members of one locked registry archive without extracting them.
@@ -996,13 +1081,14 @@ fn verify_bundle(bundle: &Path, candidate: &Candidate) -> io::Result<()> {
     {
         return Err(io::Error::other("bundle has incomplete consumed-input evidence"));
     }
+    let mut owners = RegistryOwners::default();
     for record in files {
         let path = PathBuf::from(
             record["path"]
                 .as_str()
                 .ok_or_else(|| io::Error::other("consumed file has no path"))?,
         );
-        if record_input(candidate, &path)? != *record {
+        if record_input(candidate, &path, &mut owners)? != *record {
             return Err(io::Error::other("consumed input bytes changed"));
         }
     }
@@ -1063,11 +1149,13 @@ fn record_cargo_messages(destination: &Path, stream: impl BufRead, mut diagnosti
 }
 
 /// Verify that CI invokes the exact fingerprinted recipe through this recorder.
+///
+/// The recorder is the built executable, not `cargo run`: the build coordinates are read from this process's
+/// environment, and a Cargo or Rustup launcher adds its own per-process variables to it.
 fn verify_workflow_recipe(workspace: &Path) -> io::Result<()> {
     let workflow = fs::read_to_string(workspace.join(".github/workflows/ci.yml"))?;
     for command in RECIPE {
-        let expected =
-            format!("{command} | cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- record ");
+        let expected = format!("{command} | {RECORDER} record ");
         if workflow.matches(&expected).count() != 1 {
             return Err(io::Error::other(
                 "workflow build command differs from the fingerprinted recipe",
@@ -1131,6 +1219,11 @@ fn publish_github_outputs<V: AsRef<str>>(values: &BTreeMap<&str, V>) -> io::Resu
     let Some(path) = env::var_os("GITHUB_OUTPUT") else {
         return Ok(());
     };
+    append_github_outputs(Path::new(&path), values)
+}
+
+/// Append step outputs to one GitHub output file.
+fn append_github_outputs<V: AsRef<str>>(path: &Path, values: &BTreeMap<&str, V>) -> io::Result<()> {
     let mut output = OpenOptions::new().create(true).append(true).open(path)?;
     for (name, value) in values {
         writeln!(output, "{name}={}", value.as_ref())?;
@@ -1287,6 +1380,79 @@ mod tests {
         Ok(())
     }
 
+    /// Create one locked registry package under a fixture Cargo home: extracted sources, archive and workspace lock.
+    fn registry_package(root: &Path) -> io::Result<(PathBuf, PathBuf, PathBuf)> {
+        let workspace = root.join("workspace");
+        let cargo_home = root.join("cargo-home");
+        let sources = cargo_home.join("registry/src/index");
+        let package = sources.join("example-1.0.0");
+        fs::create_dir_all(package.join("src"))?;
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"example\"\nversion = \"1.0.0\"\n",
+        )?;
+        fs::write(package.join("src/lib.rs"), "pub mod part;\n")?;
+        fs::write(package.join("src/part.rs"), "pub fn part() {}\n")?;
+        let cache = cargo_home.join("registry/cache/index");
+        fs::create_dir_all(&cache)?;
+        let archive = cache.join("example-1.0.0.crate");
+        let status = Command::new("tar")
+            .env("COPYFILE_DISABLE", "1")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&sources)
+            .args([
+                "example-1.0.0/Cargo.toml",
+                "example-1.0.0/src/lib.rs",
+                "example-1.0.0/src/part.rs",
+            ])
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other("fixture archive could not be written"));
+        }
+        fs::create_dir_all(&workspace)?;
+        fs::write(
+            workspace.join("Cargo.lock"),
+            format!(
+                "version = 4\n\n[[package]]\nname = \"example\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"{}\"\n",
+                file_digest(&archive)?
+            ),
+        )?;
+        Ok((workspace, cargo_home, archive))
+    }
+
+    #[test]
+    fn registry_package_is_authenticated_once_for_all_its_consumed_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (workspace, cargo_home, archive) = registry_package(&fs::canonicalize(root.path())?)?;
+        let package = cargo_home.join("registry/src/index/example-1.0.0");
+        let library = package.join("src/lib.rs");
+        let part = package.join("src/part.rs");
+        let archive_bytes = fs::read(&archive)?;
+
+        let mut owners = RegistryOwners::default();
+        let first = registry_record(&workspace, &cargo_home, &library, &mut owners)?;
+        assert_eq!(first["source"], "registry+https://example.invalid/index");
+        // With the archive gone, a second file of the package can only be verified from the kept owner.
+        fs::remove_file(&archive)?;
+        let second = registry_record(&workspace, &cargo_home, &part, &mut owners)?;
+        assert_eq!(second["package_checksum"], first["package_checksum"]);
+        assert_eq!(owners.owners.len(), 1);
+
+        // A refusal is kept for the operation too, and a later operation authenticates afresh.
+        let mut refused = RegistryOwners::default();
+        assert!(registry_record(&workspace, &cargo_home, &library, &mut refused).is_err());
+        fs::write(&archive, archive_bytes)?;
+        assert!(registry_record(&workspace, &cargo_home, &library, &mut refused).is_err());
+        assert!(registry_record(&workspace, &cargo_home, &library, &mut RegistryOwners::default()).is_ok());
+
+        // Each consumed file is still compared with its own archive member.
+        fs::write(&part, "pub fn changed() {}\n")?;
+        assert!(registry_record(&workspace, &cargo_home, &part, &mut owners).is_err());
+        Ok(())
+    }
+
     #[test]
     fn output_manifest_requires_exact_executable_tools_and_bytes() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
@@ -1329,6 +1495,56 @@ mod tests {
                 .is_some_and(|error| error.contains("CARGO_REGISTRIES_PRIVATE_INDEX"))
         );
         assert!(error.as_deref().is_some_and(|error| !error.contains("secret")));
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_launcher_variables_are_unsupported_build_configuration() {
+        for name in ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "RUST_RECURSION_COUNT"] {
+            let error = build_environment(vec![(name.to_owned(), "launcher".to_owned())])
+                .err()
+                .map(|error| error.to_string());
+            assert!(error.as_deref().is_some_and(|error| error.contains(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn repository_workflow_runs_the_recorder_as_a_plain_executable() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        verify_workflow_recipe(&workspace)?;
+        let workflow = fs::read_to_string(workspace.join(".github/workflows/ci.yml"))?;
+        assert!(
+            !workflow.contains("--bin incan-ci-tool-outputs --"),
+            "the recorder reads its own environment as build coordinates and must not be launched through `cargo run`"
+        );
+        assert!(workflow.contains(&format!("{RECORDER} identity ")));
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_operation_publishes_fail_closed_outputs_and_completes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let state = root.path().join("state");
+        let github_output = root.path().join("github-output");
+        let completion = settle(
+            Err(io::Error::other("refused")),
+            Some((state.clone(), "identity")),
+            Some(&github_output),
+        )?;
+        assert!(matches!(completion, Completion::Unavailable(error) if error.to_string() == "refused"));
+        assert_eq!(
+            fs::read_to_string(&github_output)?,
+            "admitted=false\neligible=false\nhit=false\n"
+        );
+        let evidence: Value = read_json(&state.join("identity-unavailable.json"))?;
+        assert_eq!(evidence, json!({"status": "unavailable", "detail": "refused"}));
+
+        let untouched = root.path().join("untouched-output");
+        assert!(matches!(settle(Ok(()), None, Some(&untouched))?, Completion::Done));
+        assert!(!untouched.exists());
+
+        let unpublishable = root.path().join("missing-directory/github-output");
+        assert!(settle(Err(io::Error::other("refused")), None, Some(&unpublishable)).is_err());
         Ok(())
     }
 
