@@ -33,12 +33,6 @@
       ]
     },
     {
-      "path": "loaves/toolchain/incan-cli/src/lib.rs",
-      "reaches": [
-        "incan_driver::backend::selection"
-      ]
-    },
-    {
       "path": "loaves/toolchain/incan-cli/src/test_runner/execution.rs",
       "reaches": [
         "incan_frontend::ast",
