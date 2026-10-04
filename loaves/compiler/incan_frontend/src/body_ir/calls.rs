@@ -11,7 +11,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// moved: the caller keeps owning it (an operand that had selected a move is un-moved, so the caller still
     /// drops it) and sees the callee's changes. A `Copy` argument stays a copy, matching the emitted route's
     /// by-value `mut` scalar, and a compiler temporary keeps its move, since no caller can observe writes to it.
-    fn borrow_for_mut_parameter(&mut self, operand: bir::Operand) -> bir::Operand {
+    pub(super) fn borrow_for_mut_parameter(&mut self, operand: bir::Operand) -> bir::Operand {
         let bir::Operand::Place(mut source) = operand else {
             return operand;
         };

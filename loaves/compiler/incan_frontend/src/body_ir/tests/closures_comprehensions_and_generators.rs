@@ -836,3 +836,81 @@ fn a_function_named_as_a_value_is_a_forwarding_closure_to_it() -> Result<(), Box
     );
     Ok(())
 }
+
+/// The forwarding closure a function value or partial lowers to in `body`: its parameters and its forwarding call's
+/// argument facts, in declaration order.
+fn forwarding_closure(body: &bir::Body) -> Option<(Vec<bool>, Vec<bir::OwnershipFact>)> {
+    body.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Closure { params, body, .. },
+            ..
+        } => body.stmts.iter().find_map(|inner| match &inner.kind {
+            bir::StatementKind::Call { args, .. } => Some((
+                params.iter().map(|param| param.mutable).collect(),
+                args.iter()
+                    .filter_map(|arg| match arg {
+                        bir::ArgumentElement::One(bir::Operand::Place(place)) => Some(place.fact),
+                        _ => None,
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
+/// The first-argument fact of the first call through a local callable value in `body`.
+fn local_call_first_argument_fact(body: &bir::Body) -> Option<bir::OwnershipFact> {
+    body.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Local(_)),
+            args,
+            ..
+        } => match args.first() {
+            Some(bir::ArgumentElement::One(bir::Operand::Place(place))) => Some(place.fact),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+#[test]
+fn a_function_value_keeps_its_mut_parameters_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // `f = bump` is the same callable as `bump`: calling it lends the list, and the forwarding call lends it on, so
+    // `bump`'s write reaches the caller's list instead of a copy.
+    let source = "def bump(mut xs: List[int]) -> None:\n  xs[0] = 9\n\n\
+                  def alias() -> int:\n  mut xs = [1]\n  f = bump\n  f(xs)\n  return xs[0]\n";
+    let module = build(source, &["m", "mut_function_value"])?;
+    let alias = body_named(&module, "alias")?;
+    let rendered = alias.render_snapshot();
+    assert_eq!(
+        forwarding_closure(alias),
+        Some((vec![true], vec![bir::OwnershipFact::MutBorrow])),
+        "{rendered}"
+    );
+    assert_eq!(
+        local_call_first_argument_fact(alias),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_partial_keeps_its_residual_mut_parameter_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def put(mut xs: List[int], v: int) -> None:\n  xs[0] = v\n\n\
+                  def fill() -> int:\n  mut xs = [1]\n  set_five = partial put(v=5)\n  set_five(xs)\n  return xs[0]\n";
+    let module = build(source, &["m", "mut_partial_residual"])?;
+    let fill = body_named(&module, "fill")?;
+    let rendered = fill.render_snapshot();
+    let (mutable, facts) = forwarding_closure(fill).ok_or_else(|| format!("no forwarding closure: {rendered}"))?;
+    assert_eq!(mutable, vec![true, false], "{rendered}");
+    assert_eq!(facts.first(), Some(&bir::OwnershipFact::MutBorrow), "{rendered}");
+    assert_eq!(
+        local_call_first_argument_fact(fill),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{rendered}"
+    );
+    Ok(())
+}
