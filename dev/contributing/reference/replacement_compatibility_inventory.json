@@ -3543,13 +3543,13 @@
       },
       {
         "id": "language.numeric-complete",
-        "contract": "Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.",
+        "contract": "Exact signed and unsigned widths, finite f32, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison; f64 is float and travels as the ordinary float value. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.",
         "probes": [
           {
             "id": "probe:language.numeric-complete:binding-and-refusal",
             "positive": {
               "outcome": "AcceptedBehavior",
-              "contract": "Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.",
+              "contract": "Exact signed and unsigned widths, finite f32, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison; f64 is float and travels as the ordinary float value. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.",
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
@@ -6300,13 +6300,13 @@
       },
       {
         "id": "interop.rust-and-c",
-        "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.",
+        "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.",
         "probes": [
           {
             "id": "probe:interop.rust-and-c:binding-and-refusal",
             "positive": {
               "outcome": "AcceptedBehavior",
-              "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.",
+              "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.",
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",

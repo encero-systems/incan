@@ -1939,6 +1939,8 @@
       
         
       
+        
+      
     
     
     
@@ -2633,6 +2635,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/decorators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decorators and callables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/string_processing/" class="md-nav__link">
         
   
@@ -2881,6 +2911,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2995,6 +3031,34 @@
     
   
     Code style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../assignments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Assignments
   
 
     
@@ -3271,22 +3335,44 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#import-syntax" class="md-nav__link">
+  <a href="#import-forms" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Import syntax
+        Import forms
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Import syntax">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bindings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bindings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bindings">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#python-style-from-module-import" class="md-nav__link">
+  <a href="#module-bindings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Python-style: from module import ...
+        Module bindings
       
     </span>
   </a>
@@ -3294,10 +3380,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#parenthesized-import-lists-single-line-or-multi-line" class="md-nav__link">
+  <a href="#collisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Parenthesized import lists (single-line or multi-line)
+        Collisions
       
     </span>
   </a>
@@ -3305,10 +3391,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-style-import-moduleitem" class="md-nav__link">
+  <a href="#standard-library-type-names" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Rust-style: import module::item
+        Standard-library type names
       
     </span>
   </a>
@@ -3316,10 +3402,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#imported-names-and-core-builtin-functions" class="md-nav__link">
+  <a href="#builtin-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Imported names and core builtin functions
+        Builtin functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reserved-name-prefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reserved name prefix
       
     </span>
   </a>
@@ -3332,10 +3429,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#published-library-namespaces" class="md-nav__link">
+  <a href="#exports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Published library namespaces
+        Exports
       
     </span>
   </a>
@@ -3343,138 +3440,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#import-path-rules" class="md-nav__link">
+  <a href="#re-exports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Import path rules
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Import path rules">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#child-directory-imports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Child directory imports
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#parent-directory-imports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Parent directory imports
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#absolute-imports-project-root" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Absolute imports (project root)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#exported-aliases" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Exported aliases
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Exported aliases">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#path-summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Path summary
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-prelude" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The prelude
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="The prelude">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#types-always-available" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Types always available
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#type-aliases-and-naming-conventions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Type aliases and naming conventions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#built-in-functions-always-available" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Built-in functions (always available)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#special-import-import-this" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Special import: import this
+        Re-exports
       
     </span>
   </a>
@@ -3482,29 +3451,28 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#incan-standard-library-std" class="md-nav__link">
+  <a href="#package-namespaces" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Incan standard library (std.*)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Incan standard library (std.*)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#available-modules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Available modules
+        Package namespaces
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
+  <a href="#the-std-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The std root
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#soft-keywords" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3514,117 +3482,12 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#import-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Import examples
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reserved-root-namespaces" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reserved root namespaces
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
-  <a href="#stdlib-module-stdmath" class="md-nav__link">
+  <a href="#rust-crate-imports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Stdlib module: std.math
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Stdlib module: std.math">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#available-constants" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Available constants
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#available-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Available functions
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#stdlib-module-stdasync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Stdlib module: std.async
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Stdlib module: std.async">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#time-helpers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Time helpers
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#concurrency-helpers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Concurrency helpers
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rust-standard-library-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Rust standard library access
+        Rust crate imports
       
     </span>
   </a>
@@ -3632,38 +3495,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust-crates-vs-incan-modules-important" class="md-nav__link">
+  <a href="#import-python" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Rust crates vs Incan modules (important)
+        import python
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Rust crates vs Incan modules (important)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#version-and-feature-annotations-rust-crates-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Version and feature annotations (Rust crates only)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#current-status-and-limitations" class="md-nav__link">
+  <a href="#import-this" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Current status and limitations
+        import this
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -3714,6 +3571,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../frozen_collections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frozen collections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../numeric_semantics/" class="md-nav__link">
         
   
@@ -3722,6 +3607,34 @@
     
   
     Numeric semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../match_patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Match patterns
   
 
     
@@ -3923,7 +3836,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_21" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -3945,14 +3858,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_21" id="__nav_3_4_21_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_18">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_21_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_21">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4738,7 +4651,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_22" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -4760,14 +4673,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_22" id="__nav_3_4_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_19">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_22">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5015,10 +4928,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_20" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_23" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_20" id="__nav_3_4_20_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_23" id="__nav_3_4_23_label" tabindex="0">
             
   
   
@@ -5036,8 +4949,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_20_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_20">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_23_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_23">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5296,6 +5209,8 @@
       
         
       
+        
+      
     
     
     
@@ -5465,7 +5380,7 @@
   <span class="md-ellipsis">
     
   
-    Checked catalogues and loaded registries
+    Checked catalogs and loaded registries
   
 
     
@@ -5550,6 +5465,34 @@
     
   
     Control flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/functions_and_calls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Functions and calls
   
 
     
@@ -6067,7 +6010,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_27" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -6089,14 +6032,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_27" id="__nav_3_5_27_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_26">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_27_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_27">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8385,6 +8328,8 @@
       
         
       
+        
+      
     
     
     
@@ -8499,6 +8444,34 @@
     
   
     Generated Rust quality
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/rust_source_backend_deprecation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust-source backend deprecation
   
 
     
@@ -8707,6 +8680,8 @@
       
         
       
+        
+      
     
     
     
@@ -8813,6 +8788,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../contributing/reference/test_corpus_inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test corpus inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
         
   
@@ -8876,7 +8879,7 @@
   <span class="md-ellipsis">
     
   
-    Rust-source backend deprecation policy
+    Rust-source backend migration notes and freeze
   
 
     
@@ -9907,22 +9910,44 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#import-syntax" class="md-nav__link">
+  <a href="#import-forms" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Import syntax
+        Import forms
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Import syntax">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#module-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bindings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bindings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bindings">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#python-style-from-module-import" class="md-nav__link">
+  <a href="#module-bindings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Python-style: from module import ...
+        Module bindings
       
     </span>
   </a>
@@ -9930,10 +9955,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#parenthesized-import-lists-single-line-or-multi-line" class="md-nav__link">
+  <a href="#collisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Parenthesized import lists (single-line or multi-line)
+        Collisions
       
     </span>
   </a>
@@ -9941,10 +9966,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-style-import-moduleitem" class="md-nav__link">
+  <a href="#standard-library-type-names" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Rust-style: import module::item
+        Standard-library type names
       
     </span>
   </a>
@@ -9952,10 +9977,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#imported-names-and-core-builtin-functions" class="md-nav__link">
+  <a href="#builtin-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Imported names and core builtin functions
+        Builtin functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reserved-name-prefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reserved name prefix
       
     </span>
   </a>
@@ -9968,10 +10004,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#published-library-namespaces" class="md-nav__link">
+  <a href="#exports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Published library namespaces
+        Exports
       
     </span>
   </a>
@@ -9979,138 +10015,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#import-path-rules" class="md-nav__link">
+  <a href="#re-exports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Import path rules
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Import path rules">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#child-directory-imports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Child directory imports
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#parent-directory-imports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Parent directory imports
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#absolute-imports-project-root" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Absolute imports (project root)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#exported-aliases" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Exported aliases
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Exported aliases">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#path-summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Path summary
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-prelude" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The prelude
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="The prelude">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#types-always-available" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Types always available
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#type-aliases-and-naming-conventions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Type aliases and naming conventions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#built-in-functions-always-available" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Built-in functions (always available)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#special-import-import-this" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Special import: import this
+        Re-exports
       
     </span>
   </a>
@@ -10118,29 +10026,28 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#incan-standard-library-std" class="md-nav__link">
+  <a href="#package-namespaces" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Incan standard library (std.*)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Incan standard library (std.*)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#available-modules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Available modules
+        Package namespaces
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
+  <a href="#the-std-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The std root
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#soft-keywords" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10150,117 +10057,12 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#import-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Import examples
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reserved-root-namespaces" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reserved root namespaces
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
-  <a href="#stdlib-module-stdmath" class="md-nav__link">
+  <a href="#rust-crate-imports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Stdlib module: std.math
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Stdlib module: std.math">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#available-constants" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Available constants
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#available-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Available functions
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#stdlib-module-stdasync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Stdlib module: std.async
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Stdlib module: std.async">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#time-helpers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Time helpers
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#concurrency-helpers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Concurrency helpers
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rust-standard-library-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Rust standard library access
+        Rust crate imports
       
     </span>
   </a>
@@ -10268,38 +10070,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust-crates-vs-incan-modules-important" class="md-nav__link">
+  <a href="#import-python" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Rust crates vs Incan modules (important)
+        import python
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Rust crates vs Incan modules (important)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#version-and-feature-annotations-rust-crates-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Version and feature annotations (Rust crates only)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#current-status-and-limitations" class="md-nav__link">
+  <a href="#import-this" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Current status and limitations
+        import this
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -10327,300 +10123,278 @@
 
 
 <h1 id="imports-and-modules-reference">Imports and modules (reference)<a class="headerlink" href="#imports-and-modules-reference" title="Permanent link">&para;</a></h1>
-<p>This page is the reference for import syntax, path rules, and prelude contents.</p>
-<p>If you want the conceptual overview, see: <a href="./">Imports and modules</a>.</p>
-<h2 id="import-syntax">Import syntax<a class="headerlink" href="#import-syntax" title="Permanent link">&para;</a></h2>
-<p>Incan supports two styles that can be mixed freely.</p>
-<h3 id="python-style-from-module-import">Python-style: <code>from module import ...</code><a class="headerlink" href="#python-style-from-module-import" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import multiple items at once</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="kn">import</span> <span class="nc">User</span><span class="p">,</span> <span class="nc">Product</span><span class="p">,</span> <span class="nc">Order</span>
-
-<span class="c1"># Import with aliases</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">format_currency</span> <span class="k">as</span> <span class="n">fmt</span><span class="p">,</span> <span class="n">validate_email</span> <span class="k">as</span> <span class="n">check_email</span>
+<p>This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the <code>std</code> root, soft keywords, Rust crate imports, <code>import python</code>, and <code>import this</code>. Refusals of an import are reported with <code>INCAN-I0001</code>, syntax errors with <code>INCAN-P0001</code>, and refusals made when a project builds or locks with <code>INCAN-C0001</code>, unless a rule below names another code.</p>
+<h2 id="import-forms">Import forms<a class="headerlink" href="#import-forms" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Binds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>from M import a, b as c</code></td>
+<td><code>a</code> and <code>c</code></td>
+</tr>
+<tr>
+<td><code>from M import (a, b as c,)</code></td>
+<td>The same; the list may span lines and end with a comma</td>
+</tr>
+<tr>
+<td><code>import M</code>, <code>import M as x</code></td>
+<td>The module <code>M</code>, as the last segment of its path, or as <code>x</code></td>
+</tr>
+<tr>
+<td><code>import M::item</code>, <code>import M.item</code>, <code>import M::item as x</code></td>
+<td>The declaration <code>item</code> of <code>M</code> when <code>M::item</code> is not a module; otherwise the module <code>M::item</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><code>.</code> and <code>::</code> are interchangeable between path segments. After <code>pub</code>, the separator is <code>::</code>; <code>pub.</code> is refused (<code>INCAN-P0001</code>). After <code>rust</code>, <code>.</code> is accepted with a warning.</li>
+<li><code>import a.b.c</code> binds <code>c</code>.</li>
+<li>Refused (<code>INCAN-P0001</code>): a wildcard, <code>from M import *</code>, and an empty list, <code>from M import ()</code>.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="kn">import</span> <span class="nc">User</span><span class="p">,</span> <span class="nc">Product</span> <span class="k">as</span> <span class="nc">Item</span>      <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">format_currency</span> <span class="k">as</span> <span class="n">fmt</span><span class="p">,</span>
+    <span class="n">validate_email</span><span class="p">,</span>
+<span class="p">)</span>                                             <span class="c1"># accepted</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">db.models</span>                              <span class="c1"># accepted</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">db</span><span class="p">::</span><span class="n">models</span><span class="p">::</span><span class="nc">User</span>                       <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>                          <span class="c1"># refused: wildcard (INCAN-P0001)</span>
 </code></pre></div>
-<h3 id="parenthesized-import-lists-single-line-or-multi-line">Parenthesized import lists (single-line or multi-line)<a class="headerlink" href="#parenthesized-import-lists-single-line-or-multi-line" title="Permanent link">&para;</a></h3>
-<p>Use parentheses when the list is long or for readability. This works for both regular modules and <code>rust::</code> imports.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">some_lib</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-  <span class="n">module_a</span> <span class="k">as</span> <span class="nc">A</span><span class="p">,</span>
-  <span class="n">module_b</span><span class="p">,</span>
-  <span class="n">module_c</span> <span class="k">as</span> <span class="nc">C</span><span class="p">,</span>
-  <span class="n">module_d</span><span class="p">,</span>
-<span class="p">)</span>
+<h2 id="module-paths">Module paths<a class="headerlink" href="#module-paths" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Resolves from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>models</code>, <code>db.models</code>, <code>db::models</code></td>
+<td>The importing file's directory, then the source root</td>
+</tr>
+<tr>
+<td><code>..common</code>, <code>super::common</code></td>
+<td>The parent of the importing file's directory</td>
+</tr>
+<tr>
+<td><code>...common</code>, <code>super::super::common</code></td>
+<td>Two directories above the importing file's directory</td>
+</tr>
+<tr>
+<td><code>crate.config</code>, <code>crate::config</code></td>
+<td>The source root</td>
+</tr>
+<tr>
+<td><code>pub::pkg</code>, <code>pub::pkg.sub</code></td>
+<td>The dependency package <code>pkg</code> (see <a href="#package-namespaces">Package namespaces</a>)</td>
+</tr>
+<tr>
+<td><code>std.name</code></td>
+<td>The Incan standard library (see <a href="#the-std-root">The <code>std</code> root</a>)</td>
+</tr>
+<tr>
+<td><code>rust::crate::item</code></td>
+<td>The Rust crate <code>crate</code>; <code>rust::std::...</code> is the Rust standard library</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>A run of <code>n</code> leading dots climbs <code>n - 1</code> directories. Each <code>super</code> climbs one. A single leading <code>.</code> is refused (<code>INCAN-P0001</code>).</li>
+<li>The source root is the <code>[build] source-root</code> of <code>loaf.toml</code>; else the project's <code>src/</code> directory, when present; else the project root, the directory that holds <code>loaf.toml</code>.</li>
+<li>Modules may import each other in a cycle. A module that imports itself is refused (<code>INCAN-T0001</code>).</li>
+</ul>
+<p>A module path <code>a.b</code> names the first of these files that exists: <code>a/b.incn</code>, <code>a/b.incan</code>, <code>a/b/mod.incn</code>, <code>a/b/mod.incan</code>, <code>a/b/__init__.incn</code>, <code>a/b/__init__.incan</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># store/relative.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..db.schema</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Database</span>          <span class="c1"># accepted</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">polars</span> <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
-  <span class="nc">A</span><span class="p">,</span>
-  <span class="nc">B</span> <span class="k">as</span> <span class="n">b</span><span class="p">,</span>
-  <span class="n">pandas</span> <span class="k">as</span> <span class="n">pd</span><span class="p">,</span>
-  <span class="n">foo</span><span class="p">,</span>
-<span class="p">)</span>
+<span class="c1"># store/parent.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">super</span><span class="p">::</span><span class="n">db</span><span class="p">::</span><span class="n">schema</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Database</span>    <span class="c1"># accepted</span>
+
+<span class="c1"># app/store/nested.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">...db.schema</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Database</span>         <span class="c1"># accepted</span>
 </code></pre></div>
-<p>Trailing commas are allowed in parenthesized lists.</p>
-<h3 id="rust-style-import-moduleitem">Rust-style: <code>import module::item</code><a class="headerlink" href="#rust-style-import-moduleitem" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import a specific item</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">models</span><span class="p">::</span><span class="nc">User</span>
+<h2 id="bindings">Bindings<a class="headerlink" href="#bindings" title="Permanent link">&para;</a></h2>
+<h3 id="module-bindings">Module bindings<a class="headerlink" href="#module-bindings" title="Permanent link">&para;</a></h3>
+<p><code>import models</code> binds the module. Its public functions are called through the binding, <code>models.parse(path)</code>, and its public types and traits are named through it in any annotation: <code>models.Config</code> is the declaration <code>from models import Config</code> binds.</p>
+<p>Refused (<code>INCAN-T0001</code>): a qualified annotation whose root is not a module binding, or whose member is not a type or trait the module declares. The name <code>c</code> bound by <code>from std.interop import c</code> is not a module binding; its members, such as <code>c.i32</code>, are specified in <a href="../stdlib/interop/"><code>std.interop</code></a>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">models</span>
 
-<span class="c1"># Import with an alias</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">utils</span><span class="p">::</span><span class="n">format_currency</span> <span class="k">as</span> <span class="n">fmt</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">models</span><span class="o">.</span><span class="nc">Config</span><span class="p">:</span>     <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="n">models</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="imported-names-and-core-builtin-functions">Imported names and core builtin functions<a class="headerlink" href="#imported-names-and-core-builtin-functions" title="Permanent link">&para;</a></h3>
-<p>An explicit import creates a normal binding in the importing module. If it has the same spelling as an ordinary ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision. The output spellings <code>print</code> and <code>println</code> are immutable language functions rather than fallback bindings, so a declaration or import cannot replace either one.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># aggregates.incn</span>
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">sum</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-  <span class="k">return</span> <span class="n">value</span> <span class="o">+</span> <span class="mi">1</span>
+<h3 id="collisions">Collisions<a class="headerlink" href="#collisions" title="Permanent link">&para;</a></h3>
+<ul>
+<li>An import binds its local name in the module scope, beside the module's declarations.</li>
+<li>A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous.</li>
+<li><code>std</code> and <code>rust</code> cannot be bound as local names, by a declaration or an import (<code>INCAN-T0001</code> on a declaration). The exception is an import that binds the root of its own path, such as <code>import std.web as std</code>. <code>import rust::std</code> without <code>as</code> binds <code>std</code> and is refused.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">codecs.prelude</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">codecs_prelude</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">compression.prelude</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">compression_prelude</span>   <span class="c1"># accepted</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">std</span>                                <span class="c1"># refused: std is reserved</span>
+</code></pre></div>
+<h3 id="standard-library-type-names">Standard-library type names<a class="headerlink" href="#standard-library-type-names" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A standard-library type name, such as <code>Response</code> from <code>std.web</code>, names that type after an import that binds it.</li>
+<li>A module-level <code>model</code>, <code>class</code>, <code>enum</code>, <code>trait</code>, <code>newtype</code> or <code>type</code> declaration of the same name is the type that name refers to throughout the module: in annotations, including the method signatures of the declaration itself, and in calls that construct the type.</li>
+<li>Refused (<code>INCAN-T0001</code>): the name in an annotation of a module that neither declares nor imports it.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="kt">Response</span><span class="p">:</span>
+    <span class="n">body</span><span class="p">:</span> <span class="nb">str</span>
 
-<span class="c1"># report.incn</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">make</span><span class="p">(</span><span class="n">body</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>          <span class="c1"># accepted</span>
+        <span class="k">return</span> <span class="kt">Response</span><span class="p">(</span><span class="n">body</span><span class="o">=</span><span class="n">body</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="builtin-functions">Builtin functions<a class="headerlink" href="#builtin-functions" title="Permanent link">&para;</a></h3>
+<ul>
+<li>An import with the name of a builtin function, such as <code>sum</code>, is what an unqualified call of that name calls.</li>
+<li><code>std.builtins.&lt;name&gt;</code> always calls the builtin function <code>name</code>.</li>
+<li><code>print</code> and <code>println</code> cannot be bound by a declaration, a local, a parameter or a type parameter (<code>INCAN-T0001</code>), or by an import (<code>INCAN-I0001</code>). Fields and methods may use those names.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># report.incn</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">aggregates</span><span class="w"> </span><span class="kn">import</span> <span class="nb">sum</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">report</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-  <span class="n">local_total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">41</span><span class="p">)</span>                     <span class="c1"># calls aggregates.sum: 42</span>
-  <span class="n">builtin_total</span> <span class="o">=</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>  <span class="c1"># calls the core builtin: 3</span>
-  <span class="k">return</span> <span class="n">local_total</span> <span class="o">+</span> <span class="n">builtin_total</span>
+    <span class="n">local_total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">41</span><span class="p">)</span>                     <span class="c1"># accepted</span>
+    <span class="n">builtin_total</span> <span class="o">=</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>  <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="n">local_total</span> <span class="o">+</span> <span class="n">builtin_total</span>
 </code></pre></div>
-<p><code>std.builtins.&lt;name&gt;</code> is the explicit escape hatch when an ordinary unqualified builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.</p>
-<p>Imports share the ordinary lexical namespace with declarations. A second declaration or import cannot silently replace an existing same-scope binding with the same local spelling. Repeating an import of the same proven declaration is a duplicate binding; importing different declarations under the same local spelling is ambiguous. Use an explicit alias when both imported targets are intentional:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">codecs.prelude</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">codecs_prelude</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">compression.prelude</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">compression_prelude</span>
-</code></pre></div>
-<p>The first valid registration remains the active lookup binding while the compiler reports the later collision, so invalid source cannot change the meaning of subsequent references.</p>
-<h2 id="published-library-namespaces">Published library namespaces<a class="headerlink" href="#published-library-namespaces" title="Permanent link">&para;</a></h2>
-<p><code>incan build --lib</code> preserves the checked module hierarchy below a library's configured source root (normally <code>src/</code>). A source directory becomes a public package namespace automatically; there is no <code>pub module</code> declaration.</p>
-<p>Given this producer layout:</p>
-<div class="language-text highlight"><pre><span></span><code>src/
-├── lib.incn
-└── hyperquant/
-    ├── index.incn
-    └── search.incn
-</code></pre></div>
-<p>public declarations in the immediate source files are available through the directory namespace:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">hees_ai</span> <span class="kn">import</span><span class="w"> </span><span class="nn">hyperquant</span>
-
-<span class="nb">index</span> <span class="o">=</span> <span class="n">hyperquant</span><span class="o">.</span><span class="n">build_index</span><span class="p">()</span>
-<span class="n">matches</span> <span class="o">=</span> <span class="n">hyperquant</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="nb">index</span><span class="p">)</span>
-</code></pre></div>
-<p>The exact source module remains importable when a consumer wants a narrower boundary:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">hees_ai</span><span class="o">.</span><span class="n">hyperquant</span><span class="o">.</span><span class="nb">index</span> <span class="kn">import</span><span class="w"> </span><span class="nn">HyperquantIndex</span><span class="o">,</span><span class="w"> </span><span class="nn">build_index</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">hees_ai</span><span class="p">::</span><span class="n">hyperquant</span><span class="p">::</span><span class="n">search</span> <span class="kn">import</span><span class="w"> </span><span class="nn">search</span>
-</code></pre></div>
-<p>Dots and <code>::</code> are both accepted after the <code>pub::package</code> root. Formatting uses dots for the nested package path. Direct module imports are also supported:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">hees_ai</span><span class="o">.</span><span class="n">hyperquant</span> <span class="k">as</span> <span class="n">hq</span>
-</code></pre></div>
-<p>Only declarations explicitly marked <code>pub</code> participate in the package namespace. Private declarations and private implementation imports remain unavailable to consumers. An explicit <code>pub from ... import ...</code> inside a source module can publish a facade alias for public callables, types, constants, statics, and traits.</p>
-<p>The directory namespace exposes declarations from its own source unit, when present, and its immediate child source files. Deeper directories remain child namespaces. If separate child files publish the same name, the parent member is ambiguous and the compiler requires the exact child path:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">codecs</span><span class="o">.</span><span class="n">encoding</span><span class="o">.</span><span class="n">base64</span> <span class="kn">import</span><span class="w"> </span><span class="nn">encode</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">codecs</span><span class="o">.</span><span class="n">encoding</span><span class="o">.</span><span class="n">hex</span> <span class="kn">import</span><span class="w"> </span><span class="nn">encode</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">encode_hex</span>
-</code></pre></div>
-<p>This permits sibling APIs to use natural names without making the package unpublishable. Within an automatic directory namespace, a declaration from that directory's own source unit takes precedence over a child namespace with the same name, while the child remains available through its full path. At the package root, an explicit flat export from <code>src/lib.incn</code> and an automatic child namespace with the same name are ambiguous; consumers must select the exact nested path.</p>
-<p>Explicit package-root exports in <code>src/lib.incn</code> remain compatible:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="kn">from</span><span class="w"> </span><span class="nn">hyperquant.index</span><span class="w"> </span><span class="kn">import</span> <span class="nc">HyperquantIndex</span>
-</code></pre></div>
-<p>Consumers can therefore use either the flat facade (<code>from pub::hees_ai import HyperquantIndex</code>) or the preserved module hierarchy. The generated <code>.incnlib</code> checked API is authoritative for public declarations, visibility, compiler resolution, diagnostics, and editor completion; consumers do not inspect or re-typecheck the producer source. Codegraph import records preserve the canonical nested package path written by the consumer. The source-module paths recorded by the checked API and the compiled module set determine the matching generated Rust file and facade layout.</p>
-<h2 id="import-path-rules">Import path rules<a class="headerlink" href="#import-path-rules" title="Permanent link">&para;</a></h2>
-<h3 id="child-directory-imports">Child directory imports<a class="headerlink" href="#child-directory-imports" title="Permanent link">&para;</a></h3>
-<p>You can use dots (Python-style) or <code>::</code> (Rust-style):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Python-style: dots for nested paths</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">db.models</span><span class="w"> </span><span class="kn">import</span> <span class="nc">User</span><span class="p">,</span> <span class="nc">Product</span>
-
-<span class="c1"># Rust-style: :: for nested paths</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">db</span><span class="p">::</span><span class="n">models</span><span class="p">::</span><span class="nc">User</span>
-</code></pre></div>
-<h3 id="parent-directory-imports">Parent directory imports<a class="headerlink" href="#parent-directory-imports" title="Permanent link">&para;</a></h3>
-<p>Navigate to parent directories using <code>..</code> (Python-style) or <code>super</code> (Rust-style):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Python-style: .. for parent</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">..common</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Logger</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">...shared.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">format_date</span>
-
-<span class="c1"># Rust-style: super keyword</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">super</span><span class="p">::</span><span class="n">common</span><span class="p">::</span><span class="nc">Logger</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">super</span><span class="p">::</span><span class="nb">super</span><span class="p">::</span><span class="n">shared</span><span class="p">::</span><span class="n">utils</span><span class="p">::</span><span class="n">format_date</span>
-</code></pre></div>
-<table>
-<thead>
-<tr>
-<th>Prefix</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>..</code> or <code>super::</code></td>
-<td>Parent directory (one level up)</td>
-</tr>
-<tr>
-<td><code>...</code> or <code>super::super::</code></td>
-<td>Grandparent directory (two levels up)</td>
-</tr>
-</tbody>
-</table>
-<h3 id="absolute-imports-project-root">Absolute imports (project root)<a class="headerlink" href="#absolute-imports-project-root" title="Permanent link">&para;</a></h3>
-<p>Import from the project root using <code>crate</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">crate.config</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Settings</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">crate</span><span class="p">::</span><span class="n">lib</span><span class="p">::</span><span class="n">database</span><span class="p">::</span><span class="nc">Connection</span>
-</code></pre></div>
-<p>The compiler finds the project root by looking for <code>Cargo.toml</code> or a <code>src/</code> directory.</p>
-<h2 id="exported-aliases">Exported aliases<a class="headerlink" href="#exported-aliases" title="Permanent link">&para;</a></h2>
-<p>Modules can export an alias for an existing public symbol:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stats.incn</span>
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">avg</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-  <span class="k">return</span> <span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="n">y</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
-
-<span class="k">pub</span> <span class="n">mean</span> <span class="o">=</span> <span class="n">avg</span>
-</code></pre></div>
-<p>Consumers import the alias like any other public symbol:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">stats</span><span class="w"> </span><span class="kn">import</span> <span class="n">mean</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-  <span class="k">return</span> <span class="n">mean</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
-</code></pre></div>
-<p>An import alias is local to the importing module:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">stats</span><span class="w"> </span><span class="kn">import</span> <span class="n">mean</span> <span class="k">as</span> <span class="n">average_value</span>
-</code></pre></div>
-<p>For the full alias contract, including method aliases and rejected forms, see <a href="../symbol_aliases/">Symbol aliases</a>.</p>
-<h3 id="path-summary">Path summary<a class="headerlink" href="#path-summary" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Incan path</th>
-<th>Meaning</th>
-<th>Rust equivalent</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>models</code></td>
-<td>Same directory</td>
-<td><code>models</code></td>
-</tr>
-<tr>
-<td><code>db.models</code></td>
-<td>Child <code>db/models.incn</code></td>
-<td><code>db::models</code></td>
-</tr>
-<tr>
-<td><code>..common</code></td>
-<td>Parent’s <code>common.incn</code></td>
-<td><code>super::common</code></td>
-</tr>
-<tr>
-<td><code>super::utils</code></td>
-<td>Parent’s <code>utils.incn</code></td>
-<td><code>super::utils</code></td>
-</tr>
-<tr>
-<td><code>crate.config</code></td>
-<td>Root’s <code>config.incn</code></td>
-<td><code>crate::config</code></td>
-</tr>
-</tbody>
-</table>
-<h2 id="the-prelude">The prelude<a class="headerlink" href="#the-prelude" title="Permanent link">&para;</a></h2>
-<p>The prelude is a set of types and traits automatically available in every Incan file without explicit imports.</p>
-<h3 id="types-always-available">Types always available<a class="headerlink" href="#types-always-available" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Incan type</th>
-<th>Rust type</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>int</code></td>
-<td><code>i64</code></td>
-<td>64-bit signed integer</td>
-</tr>
-<tr>
-<td><code>float</code></td>
-<td><code>f64</code></td>
-<td>64-bit floating point</td>
-</tr>
-<tr>
-<td><code>bool</code></td>
-<td><code>bool</code></td>
-<td>Boolean</td>
-</tr>
-<tr>
-<td><code>str</code></td>
-<td><code>String</code></td>
-<td>UTF-8 string</td>
-</tr>
-<tr>
-<td><code>bytes</code></td>
-<td><code>Vec&lt;u8&gt;</code></td>
-<td>Byte array</td>
-</tr>
-<tr>
-<td><code>List[T]</code></td>
-<td><code>Vec&lt;T&gt;</code></td>
-<td>Dynamic array</td>
-</tr>
-<tr>
-<td><code>Dict[K, V]</code></td>
-<td><code>HashMap&lt;K, V&gt;</code></td>
-<td>Hash map</td>
-</tr>
-<tr>
-<td><code>Set[T]</code></td>
-<td><code>HashSet&lt;T&gt;</code></td>
-<td>Hash set</td>
-</tr>
-<tr>
-<td><code>Option[T]</code></td>
-<td><code>Option&lt;T&gt;</code></td>
-<td>Optional value (Some/None)</td>
-</tr>
-<tr>
-<td><code>Result[T, E]</code></td>
-<td><code>Result&lt;T, E&gt;</code></td>
-<td>Success or error (Ok/Err)</td>
-</tr>
-</tbody>
-</table>
-<h3 id="type-aliases-and-naming-conventions">Type aliases and naming conventions<a class="headerlink" href="#type-aliases-and-naming-conventions" title="Permanent link">&para;</a></h3>
-<p>Many types have a canonical (generated-reference) name and a lowercase alias used in examples:</p>
+<p>The builtin functions and types are listed in the <a href="../language/#builtin-functions">language reference</a>.</p>
+<h3 id="reserved-name-prefix">Reserved name prefix<a class="headerlink" href="#reserved-name-prefix" title="Permanent link">&para;</a></h3>
+<p>Names that start with <code>__incan_</code> are reserved for the compiler. A name the source declares or binds with that prefix is refused (<code>INCAN-T0111</code>), public or private:</p>
 <ul>
-<li>Canonical: <code>List[T]</code>, <code>Dict[K, V]</code>, <code>Set[T]</code></li>
-<li>Aliases: <code>list[T]</code>, <code>dict[K, V]</code>, <code>set[T]</code></li>
-<li>Rust interop alias: <code>Vec[T]</code> (accepted as <code>List[T]</code>)</li>
+<li>a module-level function, constant, static, type, trait, alias or partial;</li>
+<li>a field, property, method, method alias, method partial, enum variant or variant alias;</li>
+<li>a parameter or type parameter;</li>
+<li>a local, pattern or closure binding;</li>
+<li>an import alias, or an imported name bound without an alias.</li>
 </ul>
-<p>When passing a direct <code>list[T]</code> to an external Rust function or method that expects <code>Vec&lt;U&gt;</code>, Incan emits element-level <code>.into()</code> conversions and leaves Rust to validate the required <code>From&lt;T&gt;</code> implementation.</p>
-<p>The generated language reference shows the canonical name and aliases in one place: <a href="../language/">Language reference (generated)</a>.</p>
-<h3 id="built-in-functions-always-available">Built-in functions (always available)<a class="headerlink" href="#built-in-functions-always-available" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Output</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>      <span class="c1"># Print one line</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>        <span class="c1"># Alias for the same line-oriented output function</span>
+<p>A method named <code>__incan_new</code> is exempt: it is a type's constructor hook.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">helpers</span><span class="w"> </span><span class="kn">import</span> <span class="n">total</span> <span class="k">as</span> <span class="n">__incan_total</span>   <span class="c1"># refused: reserved prefix (INCAN-T0111)</span>
 
-<span class="c1"># Collections</span>
-<span class="nb">len</span><span class="p">(</span><span class="n">collection</span><span class="p">)</span>     <span class="c1"># Get length</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">__incan_original_target</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>     <span class="c1"># refused: reserved prefix (INCAN-T0111)</span>
+    <span class="k">return</span> <span class="mi">2</span>
 
-<span class="c1"># Iteration</span>
-<span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>            <span class="c1"># Iterator 0..n</span>
-<span class="nb">range</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">)</span>   <span class="c1"># Iterator start..end</span>
-<span class="nb">range</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">,</span> <span class="n">step</span><span class="p">)</span>  <span class="c1"># Iterator start..end with a custom step (Python-like)</span>
-<span class="nb">range</span><span class="p">(</span><span class="n">start</span><span class="o">..</span><span class="n">end</span><span class="p">)</span>   <span class="c1"># Iterator start..end (Rust-style range literal)</span>
-<span class="nb">range</span><span class="p">(</span><span class="n">start</span><span class="o">..=</span><span class="n">end</span><span class="p">)</span>  <span class="c1"># Iterator start..=end (inclusive end)</span>
-<span class="nb">enumerate</span><span class="p">(</span><span class="nb">iter</span><span class="p">)</span>     <span class="c1"># Iterator with indices</span>
-<span class="nb">zip</span><span class="p">(</span><span class="n">left</span><span class="p">,</span> <span class="n">right</span><span class="p">)</span>    <span class="c1"># Lazy Iterator of pairs; stops at the shorter input</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Counter</span><span class="p">:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
 
-<span class="c1"># Type conversion (Python-like)</span>
-<span class="nb">dict</span><span class="p">()</span>              <span class="c1"># Empty Dict</span>
-<span class="nb">dict</span><span class="p">(</span><span class="n">mapping</span><span class="p">)</span>       <span class="c1"># Convert to Dict</span>
-<span class="nb">list</span><span class="p">()</span>              <span class="c1"># Empty List</span>
-<span class="nb">list</span><span class="p">(</span><span class="n">iterable</span><span class="p">)</span>      <span class="c1"># Convert to List</span>
-<span class="nb">set</span><span class="p">()</span>               <span class="c1"># Empty Set</span>
-<span class="nb">set</span><span class="p">(</span><span class="n">iterable</span><span class="p">)</span>       <span class="c1"># Convert to Set</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">__incan_new</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>                <span class="c1"># accepted</span>
+        <span class="k">return</span> <span class="nc">Counter</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<p>Every core builtin function is also reachable through <code>std.builtins.&lt;name&gt;</code>. For ordinary fallback builtins, this is an explicit escape path for code that needs the core function when an inner scope or an imported DSL gives the unqualified name a different meaning:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">total</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-  <span class="k">return</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">(</span><span class="nb">values</span><span class="p">)</span>
+<h2 id="exports">Exports<a class="headerlink" href="#exports" title="Permanent link">&para;</a></h2>
+<p>A module exports:</p>
+<ul>
+<li>each module-level declaration marked <code>pub</code>, and each variant and variant alias of a <code>pub</code> enum;</li>
+<li>each name that a <code>from M import ...</code> of the module binds, with or without <code>pub</code>, and each name a <code>from rust::... import ...</code> binds.</li>
+</ul>
+<p><code>from M import X</code>, and <code>import M::X</code> where <code>M::X</code> is not a module, bind <code>X</code> only when <code>M</code> exports it. Refused (<code>INCAN-I0001</code>): a name <code>M</code> does not export, such as a declaration without <code>pub</code>, or a module that <code>M</code> binds with <code>import</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># a.incn</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mi">1</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">hidden</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mi">2</span>
 </code></pre></div>
-<p>Source declarations, imports, local bindings, value parameters, and generic type parameters cannot use the immutable <code>print</code> or <code>println</code> spellings. Fields and methods may still use those names because member selection cannot replace a bare builtin function.</p>
-<p><code>std.builtins</code> is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as <code>int</code>, <code>List[T]</code>, and <code>Result[T, E]</code> remain root prelude types.</p>
-<p><code>print</code> and <code>println</code> are the exception to shadowing: both spellings select the same immutable output builtin and cannot be declared or imported as another binding.</p>
-<h2 id="special-import-import-this">Special import: <code>import this</code><a class="headerlink" href="#special-import-import-this" title="Permanent link">&para;</a></h2>
-<p><code>import this</code> is always available and prints the Incan “Zen” design principles when imported:</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># b.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">a</span><span class="w"> </span><span class="kn">import</span> <span class="n">f</span>
 </code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># main.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">b</span><span class="w"> </span><span class="kn">import</span> <span class="n">f</span>          <span class="c1"># accepted</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">a</span><span class="p">::</span><span class="n">f</span>              <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">a</span><span class="w"> </span><span class="kn">import</span> <span class="n">hidden</span>     <span class="c1"># refused: hidden is not pub (INCAN-I0001)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">a</span><span class="p">::</span><span class="n">hidden</span>         <span class="c1"># refused: hidden is not pub (INCAN-I0001)</span>
+</code></pre></div>
+<h2 id="re-exports">Re-exports<a class="headerlink" href="#re-exports" title="Permanent link">&para;</a></h2>
+<p><code>pub from M import X [as Y]</code> publishes <code>X</code>, as <code>X</code> or <code>Y</code>, from the importing module.</p>
+<ul>
+<li>Accepted in a source file under a directory named <code>src</code>, for any module-level declaration kind: functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, aliases and partial presets.</li>
+<li>A re-export of an alias, or of a dependency's re-export, publishes the declaration it names: a call through each re-exported name calls that declaration.</li>
+</ul>
+<p>Refused (<code>INCAN-P0001</code>): <code>pub from</code> in a file outside a <code>src</code> directory, and <code>pub import</code>.</p>
+<p>In a project that depends on the library <code>calc_lib</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># calc_lib/src/lib.incn</span>
+<span class="k">pub</span> <span class="kn">from</span><span class="w"> </span><span class="nn">helpers</span><span class="w"> </span><span class="kn">import</span> <span class="n">calculate</span> <span class="k">as</span> <span class="n">facade_calculate</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># src/facade.incn</span>
+<span class="k">pub</span> <span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">calc_lib</span> <span class="kn">import</span><span class="w"> </span><span class="nn">facade_calculate</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">b_calculate</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># src/main.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">facade</span><span class="w"> </span><span class="kn">import</span> <span class="n">b_calculate</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">b_calculate</span><span class="p">(</span><span class="mi">41</span><span class="p">))</span>    <span class="c1"># accepted</span>
+</code></pre></div>
+<p><code>incan build --lib</code> refuses (<code>INCAN-C0001</code>) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.</p>
+<h2 id="package-namespaces">Package namespaces<a class="headerlink" href="#package-namespaces" title="Permanent link">&para;</a></h2>
+<p><code>incan build --lib</code> publishes the library's modules under <code>pub::package</code>, following its source files below the source root.</p>
+<ul>
+<li>Each source module path, and each directory prefix of one, is a namespace: <code>src/hyperquant/index.incn</code> gives <code>pub::pkg.hyperquant</code> and <code>pub::pkg.hyperquant.index</code>.</li>
+<li>A namespace exposes the <code>pub</code> declarations of its own module and of its immediate child modules. Deeper modules stay in their own namespaces.</li>
+<li>Only <code>pub</code> declarations are exposed. Private declarations and imports are not.</li>
+<li>A name that two modules of one namespace declare is ambiguous there, and importing or accessing it through that namespace is refused; the exact module path selects one.</li>
+<li>A declared member takes precedence over a child namespace with the same name.</li>
+<li>At the package root, a re-export in <code>src/lib.incn</code> and a child namespace with the same name are ambiguous; the exact path selects one.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">hees_ai</span> <span class="kn">import</span><span class="w"> </span><span class="nn">hyperquant</span>                            <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">hees_ai</span><span class="o">.</span><span class="n">hyperquant</span><span class="o">.</span><span class="nb">index</span> <span class="kn">import</span><span class="w"> </span><span class="nn">build_index</span>          <span class="c1"># accepted</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">hees_ai</span><span class="o">.</span><span class="n">hyperquant</span> <span class="k">as</span> <span class="n">hq</span>                           <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">codecs</span><span class="o">.</span><span class="n">encoding</span><span class="o">.</span><span class="n">base64</span> <span class="kn">import</span><span class="w"> </span><span class="nn">encode</span>                 <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">codecs</span><span class="o">.</span><span class="n">encoding</span> <span class="kn">import</span><span class="w"> </span><span class="nn">encode</span>                        <span class="c1"># refused: base64 and hex both declare encode</span>
+</code></pre></div>
+<h2 id="the-std-root">The <code>std</code> root<a class="headerlink" href="#the-std-root" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>from std import name</code> binds the standard-library module <code>std.name</code>. A name that is not a standard-library module is refused.</li>
+<li><code>import std.fs</code> and every other bare <code>std...</code> path name the Incan standard library; the Rust standard library is <code>rust::std</code>.</li>
+<li><code>std.NAMESPACE.prelude</code> names the module <code>std.NAMESPACE</code>: <code>from std.async.prelude import spawn</code> imports what <code>from std.async import spawn</code> does. <code>std.prelude</code> is a module of its own.</li>
+<li><code>from std.NAMESPACE import name</code> binds the module <code>std.NAMESPACE.name</code> when that is a standard-library module, and otherwise the member <code>name</code> of <code>std.NAMESPACE</code>. <code>std.derives</code> has no members: <code>from std.derives import comparison</code> imports the module <code>std.derives.comparison</code>, and any other name imported from <code>std.derives</code> is refused.</li>
+<li>An unknown <code>std.*</code> module is refused.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std</span><span class="w"> </span><span class="kn">import</span> <span class="n">toml</span>                   <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std</span><span class="w"> </span><span class="kn">import</span> <span class="n">math</span> <span class="k">as</span> <span class="n">arithmetic</span>     <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Debug</span>                  <span class="c1"># refused: Debug is not a standard-library module</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.string</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Debug</span>   <span class="c1"># accepted</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.derives</span><span class="w"> </span><span class="kn">import</span> <span class="n">comparison</span>     <span class="c1"># accepted: the module std.derives.comparison</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.derives</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Eq</span>             <span class="c1"># refused: std.derives has no members</span>
+</code></pre></div>
+<p>The standard-library modules are listed in the <a href="../language/#standard-library-namespaces">language reference</a>.</p>
+<h2 id="soft-keywords">Soft keywords<a class="headerlink" href="#soft-keywords" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>async</code> and <code>await</code> are keywords only after an import whose path begins with <code>std.async</code>, such as <code>import std.async</code> or <code>from std.async.time import sleep</code>, from the next declaration on. <code>from std import async</code> does not activate them. <code>race for</code> requires the same import.</li>
+<li>A library's vocabulary keywords are keywords after an import of its provider namespace.</li>
+</ul>
+<p>Refused (<code>INCAN-P0001</code>): <code>async</code> or <code>await</code> as a keyword before the import.</p>
+<h2 id="rust-crate-imports">Rust crate imports<a class="headerlink" href="#rust-crate-imports" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code>import rust::CRATE [@ &quot;VERSION&quot;] [with [&quot;FEATURE&quot;, ...]]
+from rust::CRATE [@ &quot;VERSION&quot;] [with [&quot;FEATURE&quot;, ...]] import ITEMS
+</code></pre></div>
+<ul>
+<li><code>@ "VERSION"</code> is a Cargo SemVer requirement. <code>with [...]</code> selects crate features, with or without <code>@</code>.</li>
+<li>Without <code>@</code>, a known crate takes its default version; an unknown crate without <code>@</code> is refused.</li>
+<li>Annotations are refused on a crate that <code>loaf.toml</code> configures.</li>
+<li>Across files, one crate's versions match, and its features are unioned.</li>
+<li>Annotations apply to <code>rust::</code> imports only.</li>
+<li>A crate that <code>loaf.toml</code> declares under <code>[dependencies]</code>, the table of Incan library dependencies, and under neither <code>[rust-dependencies]</code> nor <code>[rust-dev-dependencies]</code>, is refused.</li>
+<li>A crate that <code>loaf.toml</code> declares only under <code>[rust-dev-dependencies]</code> is refused outside a test file (see <a href="../../../tooling/reference/project_configuration/#rust-dev-dependencies"><code>[rust-dev-dependencies]</code></a>).</li>
+<li>An empty <code>@ ""</code> version requirement, and one that is not a Cargo SemVer requirement, are refused.</li>
+</ul>
+<p>These refusals are reported when the project builds or locks (<code>INCAN-C0001</code>). <code>rust::core</code> and <code>rust::alloc</code> are refused (<code>INCAN-I0001</code>).</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_crate</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span> <span class="k">with</span> <span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="o">@</span> <span class="s2">&quot;0.7&quot;</span> <span class="k">with</span> <span class="p">[</span><span class="s2">&quot;runtime-tokio&quot;</span><span class="p">,</span> <span class="s2">&quot;postgres&quot;</span><span class="p">]</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Pool</span>
+</code></pre></div>
+<h2 id="import-python"><code>import python</code><a class="headerlink" href="#import-python" title="Permanent link">&para;</a></h2>
+<p><code>import python "PACKAGE" [as NAME]</code> parses and is always refused (<code>INCAN-I0001</code>).</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">python</span> <span class="s2">&quot;requests&quot;</span> <span class="k">as</span> <span class="n">pyreq</span>    <span class="c1"># refused (INCAN-I0001)</span>
+</code></pre></div>
+<h2 id="import-this"><code>import this</code><a class="headerlink" href="#import-this" title="Permanent link">&para;</a></h2>
+<p><code>import this</code> prints the Zen of Incan when the program starts:</p>
 <div class="language-text highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────┐
 │  The Zen of Incan                                                    │
 │  by Danny Meijer (inspired by Tim Peters&#39; &quot;The Zen of Python&quot;)       │
@@ -10634,323 +10408,12 @@
   › One obvious way             ─  conventions beat novelty,
                                    with escape hatches documented
 </code></pre></div>
-<h2 id="incan-standard-library-std">Incan standard library (<code>std.*</code>)<a class="headerlink" href="#incan-standard-library-std" title="Permanent link">&para;</a></h2>
-<!-- TODO: move this to its own section -->
-
-<p>Incan's standard library lives under the <code>std</code> namespace. Import modules and items from it just like any other module. The compiler activates features (e.g. async runtime, web framework) automatically based on which <code>std.*</code> modules you import — no manual feature flags needed.</p>
-<h3 id="available-modules">Available modules<a class="headerlink" href="#available-modules" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Module</th>
-<th>Description</th>
-<th>Activates feature</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>std.web</code></td>
-<td>Web framework (routes, responses, extractors)</td>
-<td><code>web</code> (Axum)</td>
-</tr>
-<tr>
-<td><code>std.testing</code></td>
-<td>Test fixtures and assertions</td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>std.async</code></td>
-<td>Async utilities (activates <code>async</code>/<code>await</code>)</td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>std.serde.json</code></td>
-<td>JSON serialization/deserialization</td>
-<td><code>json</code></td>
-</tr>
-<tr>
-<td><code>std.reflection</code></td>
-<td>Reflection helpers (<code>FieldInfo</code>, etc.)</td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>std.derives.*</code></td>
-<td>Derive helpers (<code>string</code>, <code>comparison</code>, ...)</td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>std.traits.*</code></td>
-<td>Core traits (<code>ops</code>, <code>convert</code>, <code>error</code>, ...)</td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>std.math</code></td>
-<td>Math constants and functions</td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>std.builtins</code></td>
-<td>Explicit core builtin-function escape path</td>
-<td>—</td>
-</tr>
-</tbody>
-</table>
-<h3 id="soft-keywords">Soft keywords<a class="headerlink" href="#soft-keywords" title="Permanent link">&para;</a></h3>
-<p>Some language keywords are <strong>import-activated</strong> (soft keywords). They behave like identifiers by default and only become reserved keywords after importing a particular <code>std.*</code> namespace.</p>
-<p>Currently:</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>async</code> and <code>await</code> are activated by importing <code>std.async</code> (for example <code>import std.async</code> or <code>from std.async.time import sleep</code>).</li>
+<li><a href="../../explanation/imports_and_modules/">Imports and modules (explanation)</a></li>
+<li><a href="../../how-to/imports_and_modules/">Imports and modules (how-to)</a></li>
+<li><a href="../../how-to/rust_interop/">Rust interop (how-to)</a></li>
 </ul>
-<p>If you forget the import, you’ll get a targeted diagnostic telling you what to add.</p>
-<p>Example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
-</code></pre></div>
-<div class="language-text highlight"><pre><span></span><code>error: `async` is only available after importing `std.async`
-
-hint: Add `import std.async` or `from std.async import ...`
-</code></pre></div>
-<h3 id="import-examples">Import examples<a class="headerlink" href="#import-examples" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Import items from the web framework</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="nc">GET</span><span class="p">,</span> <span class="nc">POST</span>
-
-<span class="c1"># Import test fixtures</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
-
-<span class="c1"># Import async time helpers (also activates `async`/`await`)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
-
-<span class="c1"># Import JSON helpers</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nb">json_stringify</span><span class="p">,</span> <span class="n">json_parse</span>
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">do_work</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="reserved-root-namespaces">Reserved root namespaces<a class="headerlink" href="#reserved-root-namespaces" title="Permanent link">&para;</a></h3>
-<p>The names <code>std</code> and <code>rust</code> are reserved at the root level. You cannot shadow them with local modules or aliases:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ERROR: &#39;std&#39; is a reserved root namespace</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">models</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">std</span>
-</code></pre></div>
-<h2 id="stdlib-module-stdmath">Stdlib module: <code>std.math</code><a class="headerlink" href="#stdlib-module-stdmath" title="Permanent link">&para;</a></h2>
-<p>See the stdlib reference page: <a href="../stdlib/math/">Standard library reference: <code>std.math</code></a>.</p>
-<p>You must import <code>std.math</code> before use:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.math</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;pi=</span><span class="si">{</span><span class="n">math</span><span class="o">.</span><span class="nc">PI</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="available-constants">Available constants<a class="headerlink" href="#available-constants" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Constant</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>math.PI</code></td>
-<td>π (3.14159...)</td>
-</tr>
-<tr>
-<td><code>math.E</code></td>
-<td>Euler’s number (2.71828...)</td>
-</tr>
-<tr>
-<td><code>math.TAU</code></td>
-<td>τ = 2π (6.28318...)</td>
-</tr>
-<tr>
-<td><code>math.INFINITY</code></td>
-<td>Positive infinity</td>
-</tr>
-<tr>
-<td><code>math.NAN</code></td>
-<td>Not a Number</td>
-</tr>
-</tbody>
-</table>
-<h3 id="available-functions">Available functions<a class="headerlink" href="#available-functions" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Function</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>math.sqrt(x)</code></td>
-<td>Square root</td>
-</tr>
-<tr>
-<td><code>math.abs(x)</code></td>
-<td>Absolute value</td>
-</tr>
-<tr>
-<td><code>math.floor(x)</code></td>
-<td>Largest integer ≤ x</td>
-</tr>
-<tr>
-<td><code>math.ceil(x)</code></td>
-<td>Smallest integer ≥ x</td>
-</tr>
-<tr>
-<td><code>math.round(x)</code></td>
-<td>Round to nearest integer</td>
-</tr>
-<tr>
-<td><code>math.pow(x, y)</code></td>
-<td>x raised to power y</td>
-</tr>
-<tr>
-<td><code>math.exp(x)</code></td>
-<td>e^x</td>
-</tr>
-<tr>
-<td><code>math.log(x)</code></td>
-<td>Natural logarithm (ln)</td>
-</tr>
-<tr>
-<td><code>math.log10(x)</code></td>
-<td>Base-10 logarithm</td>
-</tr>
-<tr>
-<td><code>math.log2(x)</code></td>
-<td>Base-2 logarithm</td>
-</tr>
-<tr>
-<td><code>math.sin(x)</code>, <code>math.cos(x)</code>, <code>math.tan(x)</code></td>
-<td>Trig (radians)</td>
-</tr>
-<tr>
-<td><code>math.asin(x)</code>, <code>math.acos(x)</code>, <code>math.atan(x)</code></td>
-<td>Inverse trig</td>
-</tr>
-<tr>
-<td><code>math.sinh(x)</code>, <code>math.cosh(x)</code>, <code>math.tanh(x)</code></td>
-<td>Hyperbolic</td>
-</tr>
-<tr>
-<td><code>math.atan2(y, x)</code></td>
-<td>Two-argument arctangent</td>
-</tr>
-<tr>
-<td><code>math.hypot(x, y)</code></td>
-<td>Euclidean distance √(x² + y²)</td>
-</tr>
-</tbody>
-</table>
-<h2 id="stdlib-module-stdasync">Stdlib module: <code>std.async</code><a class="headerlink" href="#stdlib-module-stdasync" title="Permanent link">&para;</a></h2>
-<p>See generated/curated stdlib signatures: <a href="../stdlib/async/">Standard library reference: <code>std.async</code></a>.</p>
-<p><code>std.async</code> includes runtime support for asynchronous programming and activates the <code>async</code>/<code>await</code> soft keywords when imported.</p>
-<p>You can import time helpers directly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span><span class="p">,</span> <span class="nb">timeout</span>
-</code></pre></div>
-<p>Or import a complete surface from the prelude:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.prelude</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
-</code></pre></div>
-<h3 id="time-helpers">Time helpers<a class="headerlink" href="#time-helpers" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Function</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>sleep</code>, <code>sleep_ms</code></td>
-<td>Delay the current task</td>
-</tr>
-<tr>
-<td><code>timeout</code>, <code>timeout_ms</code></td>
-<td>Bound async work with a deadline</td>
-</tr>
-</tbody>
-</table>
-<h3 id="concurrency-helpers">Concurrency helpers<a class="headerlink" href="#concurrency-helpers" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>API</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>spawn</code>, <code>spawn_blocking</code></td>
-<td>Start async or blocking work</td>
-</tr>
-<tr>
-<td><code>channel</code>, <code>unbounded_channel</code>, <code>oneshot</code></td>
-<td>Message passing primitives</td>
-</tr>
-<tr>
-<td><code>race_timeout</code></td>
-<td>Timeout-based race utility</td>
-</tr>
-<tr>
-<td><code>yield_now</code></td>
-<td>Yield to scheduler</td>
-</tr>
-</tbody>
-</table>
-<h2 id="rust-standard-library-access">Rust standard library access<a class="headerlink" href="#rust-standard-library-access" title="Permanent link">&para;</a></h2>
-<p>To import from Rust’s standard library, use the <code>rust::</code> prefix:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">fs</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">env</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">path</span><span class="p">::</span><span class="kt">Path</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span>
-</code></pre></div>
-<div class="admonition warning">
-<p class="admonition-title">The <code>std</code> root is reserved</p>
-<p>Bare <code>import std::fs</code> refers to <strong>Incan’s</strong> standard library, not Rust’s. Always use the <code>rust::std::</code> prefix when you need Rust’s stdlib.</p>
-</div>
-<p>Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (<code>read_file</code>, <code>write_file</code>, etc.) where available.</p>
-<h2 id="rust-crates-vs-incan-modules-important">Rust crates vs Incan modules (important)<a class="headerlink" href="#rust-crates-vs-incan-modules-important" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>External crates</strong>: Prefer <code>rust::...</code> imports (e.g. <code>import rust::serde_json</code>), which also enables automatic dependency management for generated <code>Cargo.toml</code>.</li>
-<li><strong>Incan project modules</strong> (multi-file projects): imports like <code>from db.schema import Database</code> refer to modules in the current crate and are emitted as <code>crate::db::schema::Database</code> in generated Rust so they compile reliably from submodules.</li>
-</ul>
-<h3 id="version-and-feature-annotations-rust-crates-only">Version and feature annotations (Rust crates only)<a class="headerlink" href="#version-and-feature-annotations-rust-crates-only" title="Permanent link">&para;</a></h3>
-<p>Rust crate imports support optional version and feature annotations using <code>@</code> and <code>with</code>:</p>
-<div class="language-text highlight"><pre><span></span><code>import rust::CRATE [@ &quot;VERSION&quot;] [with [&quot;FEATURE&quot;, ...]]
-from rust::CRATE [@ &quot;VERSION&quot;] [with [&quot;FEATURE&quot;, ...]] import ITEMS
-</code></pre></div>
-<p>Examples:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Version only</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_crate</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span>
-
-<span class="c1"># Version with features</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span> <span class="k">with</span> <span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">]</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">sqlx</span> <span class="o">@</span> <span class="s2">&quot;0.7&quot;</span> <span class="k">with</span> <span class="p">[</span><span class="s2">&quot;runtime-tokio&quot;</span><span class="p">,</span> <span class="s2">&quot;postgres&quot;</span><span class="p">]</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Pool</span>
-</code></pre></div>
-<p>Rules:</p>
-<ul>
-<li><code>@ "VERSION"</code> uses <a href="https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html">Cargo SemVer syntax</a>.</li>
-<li><code>with [...]</code> requires <code>@</code> (you cannot specify features without a version).</li>
-<li>If the crate is configured in <code>loaf.toml</code>, inline annotations are <strong>not allowed</strong>.</li>
-<li>When the same crate is imported in multiple files, versions must match and features are unioned.</li>
-</ul>
-<p>These annotations only apply to <code>rust::</code> imports. Incan module imports (<code>from models import User</code>) do not support version or feature annotations.</p>
-<p>See: <a href="../../how-to/rust_interop/">Rust interop</a> for practical guidance and examples.</p>
-<h2 id="current-status-and-limitations">Current status and limitations<a class="headerlink" href="#current-status-and-limitations" title="Permanent link">&para;</a></h2>
-<p>Supported:</p>
-<ul>
-<li>Python-style imports: <code>from module import item1, item2</code></li>
-<li>Rust-style imports: <code>import module::item</code></li>
-<li>Nested paths</li>
-<li>Parent navigation (<code>..</code> / <code>super</code>)</li>
-<li>Root imports (<code>crate</code>)</li>
-<li>Aliases (<code>as</code>)</li>
-<li>Public re-exports in source modules: <code>pub from module import Item</code> (allowed in files under <code>src/</code>)</li>
-</ul>
-<p>Limitations (current):</p>
-<ol>
-<li>No wildcard imports (<code>from module import *</code>)</li>
-<li>No circular imports</li>
-</ol>
 
 
 

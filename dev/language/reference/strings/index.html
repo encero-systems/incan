@@ -1939,6 +1939,8 @@
       
         
       
+        
+      
     
     
     
@@ -2633,6 +2635,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/decorators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decorators and callables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/string_processing/" class="md-nav__link">
         
   
@@ -2881,6 +2911,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2995,6 +3031,34 @@
     
   
     Code style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../assignments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Assignments
   
 
     
@@ -3267,6 +3331,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../frozen_collections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frozen collections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../numeric_semantics/" class="md-nav__link">
         
   
@@ -3275,6 +3367,34 @@
     
   
     Numeric semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../match_patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Match patterns
   
 
     
@@ -3383,10 +3503,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#quick-reference" class="md-nav__link">
+  <a href="#str-and-frozenstr-destinations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Quick reference
+        str and FrozenStr destinations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#literals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Literals
       
     </span>
   </a>
@@ -3405,121 +3536,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#common-string-methods" class="md-nav__link">
+  <a href="#str-methods" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Common string methods
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Common string methods">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#case-conversion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Case conversion
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#whitespace-trimming" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Whitespace trimming
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#splitting-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Splitting strings
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#joining-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Joining strings
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#substring-check" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Substring check
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#string-replacement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        String replacement
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#f-strings-formatted-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        F-strings (formatted strings)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="F-strings (formatted strings)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#debug-formatting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Debug formatting
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#string-literals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        String literals
+        str methods
       
     </span>
   </a>
@@ -3527,44 +3547,55 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bytes-binary-data" class="md-nav__link">
+  <a href="#str-operators" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bytes (binary data)
+        str operators
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Bytes (binary data)">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bytes-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bytes methods
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#f-strings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        F-strings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#display" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Display
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Display">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#byte-string-literals" class="md-nav__link">
+  <a href="#display-bounds" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Byte string literals
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#type-annotation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Type annotation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#when-to-use-bytes-vs-str" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When to use bytes vs str
+        Display bounds
       
     </span>
   </a>
@@ -3728,7 +3759,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_21" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -3750,14 +3781,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_21" id="__nav_3_4_21_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_18">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_21_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_21">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4543,7 +4574,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_22" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -4565,14 +4596,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_22" id="__nav_3_4_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_19">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_22">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4820,10 +4851,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_20" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_23" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_20" id="__nav_3_4_20_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_23" id="__nav_3_4_23_label" tabindex="0">
             
   
   
@@ -4841,8 +4872,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_20_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_20">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_23_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_23">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5101,6 +5132,8 @@
       
         
       
+        
+      
     
     
     
@@ -5270,7 +5303,7 @@
   <span class="md-ellipsis">
     
   
-    Checked catalogues and loaded registries
+    Checked catalogs and loaded registries
   
 
     
@@ -5355,6 +5388,34 @@
     
   
     Control flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/functions_and_calls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Functions and calls
   
 
     
@@ -5872,7 +5933,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_27" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5894,14 +5955,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_27" id="__nav_3_5_27_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_26">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_27_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_27">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8190,6 +8251,8 @@
       
         
       
+        
+      
     
     
     
@@ -8304,6 +8367,34 @@
     
   
     Generated Rust quality
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/rust_source_backend_deprecation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust-source backend deprecation
   
 
     
@@ -8512,6 +8603,8 @@
       
         
       
+        
+      
     
     
     
@@ -8618,6 +8711,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../contributing/reference/test_corpus_inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test corpus inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
         
   
@@ -8681,7 +8802,7 @@
   <span class="md-ellipsis">
     
   
-    Rust-source backend deprecation policy
+    Rust-source backend migration notes and freeze
   
 
     
@@ -9712,10 +9833,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#quick-reference" class="md-nav__link">
+  <a href="#str-and-frozenstr-destinations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Quick reference
+        str and FrozenStr destinations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#literals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Literals
       
     </span>
   </a>
@@ -9734,121 +9866,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#common-string-methods" class="md-nav__link">
+  <a href="#str-methods" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Common string methods
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Common string methods">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#case-conversion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Case conversion
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#whitespace-trimming" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Whitespace trimming
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#splitting-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Splitting strings
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#joining-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Joining strings
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#substring-check" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Substring check
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#string-replacement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        String replacement
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#f-strings-formatted-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        F-strings (formatted strings)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="F-strings (formatted strings)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#debug-formatting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Debug formatting
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#string-literals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        String literals
+        str methods
       
     </span>
   </a>
@@ -9856,44 +9877,55 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bytes-binary-data" class="md-nav__link">
+  <a href="#str-operators" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bytes (binary data)
+        str operators
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Bytes (binary data)">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bytes-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bytes methods
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#f-strings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        F-strings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#display" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Display
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Display">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#byte-string-literals" class="md-nav__link">
+  <a href="#display-bounds" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Byte string literals
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#type-annotation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Type annotation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#when-to-use-bytes-vs-str" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When to use bytes vs str
+        Display bounds
       
     </span>
   </a>
@@ -9937,260 +9969,505 @@
 
 
 <h1 id="strings-and-bytes">Strings and bytes<a class="headerlink" href="#strings-and-bytes" title="Permanent link">&para;</a></h1>
-<p>Incan has two core “string-like” types:</p>
-<ul>
-<li><code>str</code>: text (Unicode). The current backend compiles this to Rust <code>String</code>.</li>
-<li><code>bytes</code>: binary data. The current backend compiles this to Rust <code>Vec&lt;u8&gt;</code>.</li>
-</ul>
-<p><code>str</code> is for user-facing text. <code>bytes</code> is for file/network/crypto data where you want raw bytes.</p>
-<div class="admonition note">
-<p class="admonition-title">Coming from Python?</p>
-<p>Method names are intentionally familiar (<code>upper</code>, <code>lower</code>, <code>strip</code>, <code>split</code>, <code>replace</code>, …), but Incan is statically typed and <code>contains()</code> is a method (rather than Python’s <code>in</code> operator).</p>
-</div>
-<div class="admonition note">
-<p class="admonition-title">Coming from Rust?</p>
-<p>Incan hides most ownership/borrowing details. You write <code>str</code> and the compiler handles Rust interop details in generated code.</p>
-</div>
-<h2 id="quick-reference">Quick reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Incan</th>
-<th>Notes</th>
+<th>Type</th>
+<th>Holds</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>s.upper()</code></td>
-<td>Uppercase string</td>
+<td><code>str</code></td>
+<td>Unicode text</td>
 </tr>
 <tr>
-<td><code>s.lower()</code></td>
-<td>Lowercase string</td>
-</tr>
-<tr>
-<td><code>s.strip()</code></td>
-<td>Trim whitespace on both sides</td>
-</tr>
-<tr>
-<td><code>s.split(",")</code></td>
-<td>Split into <code>list[str]</code></td>
-</tr>
-<tr>
-<td><code>", ".join(xs)</code></td>
-<td>Join <code>list[str]</code> with a separator</td>
-</tr>
-<tr>
-<td><code>s.contains("x")</code></td>
-<td>Substring check (<code>bool</code>)</td>
-</tr>
-<tr>
-<td><code>s.replace("a", "b")</code></td>
-<td>Replace all occurrences</td>
+<td><code>bytes</code></td>
+<td>A sequence of bytes</td>
 </tr>
 </tbody>
 </table>
-<h2 id="indexing-and-slicing">Indexing and slicing<a class="headerlink" href="#indexing-and-slicing" title="Permanent link">&para;</a></h2>
-<p>Incan supports Python-style indexing and slicing for strings and lists.</p>
-<ul>
-<li><strong>Indexing</strong>: <code>s[i]</code><ul>
-<li>Supports <strong>negative indices</strong> (e.g. <code>s[-1]</code> is the last character).</li>
-<li>Indexing is based on <strong>Unicode scalars</strong> (Rust <code>char</code>), not bytes.</li>
-<li>Out-of-range panics with <code>IndexError: string index out of range</code>.</li>
-</ul>
-</li>
-<li><strong>Slicing</strong>: <code>s[start:end:step]</code><ul>
-<li>Each component is optional (e.g. <code>s[:3]</code>, <code>s[1:]</code>, <code>s[::2]</code>, <code>s[::-1]</code>).</li>
-<li><code>step</code> defaults to <code>1</code>.</li>
-<li><code>step == 0</code> panics with <code>ValueError: slice step cannot be zero</code>.</li>
-<li>Negative <code>step</code> is supported (e.g. <code>s[::-1]</code> reverses a string).</li>
-</ul>
-</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">s</span> <span class="o">=</span> <span class="s2">&quot;héllo&quot;</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>     <span class="c1"># &quot;é&quot;</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>    <span class="c1"># &quot;o&quot;</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">4</span><span class="p">])</span>   <span class="c1"># &quot;éll&quot;</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="p">[::</span><span class="mi">2</span><span class="p">])</span>   <span class="c1"># &quot;hlo&quot;</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>  <span class="c1"># &quot;olléh&quot;</span>
-</code></pre></div>
-<p>The same slicing rules apply to <code>list[T]</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">xs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
-    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">xs</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
-</code></pre></div>
-<h2 id="common-string-methods">Common string methods<a class="headerlink" href="#common-string-methods" title="Permanent link">&para;</a></h2>
-<h3 id="case-conversion">Case conversion<a class="headerlink" href="#case-conversion" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;Hello World&quot;</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="nb">upper</span><span class="p">())</span>  <span class="c1"># HELLO WORLD</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="nb">lower</span><span class="p">())</span>  <span class="c1"># hello world</span>
-</code></pre></div>
-<h3 id="whitespace-trimming">Whitespace trimming<a class="headerlink" href="#whitespace-trimming" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">padded</span> <span class="o">=</span> <span class="s2">&quot;  hello  &quot;</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">padded</span><span class="o">.</span><span class="nb">strip</span><span class="p">())</span>  <span class="c1"># &quot;hello&quot;</span>
-</code></pre></div>
-<blockquote>
-<p>Note: Incan currently only has <code>strip()</code> (both sides). Python’s <code>lstrip()</code> / <code>rstrip()</code> are not yet implemented.</p>
-</blockquote>
-<h3 id="splitting-strings">Splitting strings<a class="headerlink" href="#splitting-strings" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">csv</span> <span class="o">=</span> <span class="s2">&quot;alice,bob,carol&quot;</span>
-<span class="n">names</span> <span class="o">=</span> <span class="n">csv</span><span class="o">.</span><span class="nb">split</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)</span>  <span class="c1"># [&quot;alice&quot;, &quot;bob&quot;, &quot;carol&quot;]</span>
+<p>Both have frozen forms for constants, <code>FrozenStr</code> and <code>FrozenBytes</code>. <code>FrozenStr</code> has every <code>str</code> method and also <code>is_empty() -&gt; bool</code>; <code>FrozenBytes</code> has <code>decode</code> and also <code>len() -&gt; int</code> and <code>is_empty() -&gt; bool</code>.</p>
+<h2 id="str-and-frozenstr-destinations"><code>str</code> and <code>FrozenStr</code> destinations<a class="headerlink" href="#str-and-frozenstr-destinations" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Accepted where this is expected</th>
+<th>Value at the destination</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A <code>FrozenStr</code></td>
+<td><code>str</code>, <code>FrozenStr</code></td>
+<td>The same text, as the destination's type.</td>
+</tr>
+<tr>
+<td>A <code>const</code> declared <code>str</code></td>
+<td><code>str</code>, <code>FrozenStr</code></td>
+<td>The same text; the constant is a <code>FrozenStr</code>.</td>
+</tr>
+<tr>
+<td>A string literal (<code>"text"</code>)</td>
+<td><code>str</code>, <code>FrozenStr</code></td>
+<td>The literal's text, as the destination's type.</td>
+</tr>
+<tr>
+<td>Any other <code>str</code> value, such as a parameter</td>
+<td><code>str</code></td>
+<td>Refused at a <code>FrozenStr</code> destination (<code>INCAN-T0001</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>A destination is a return value, an argument, an annotated binding, a field, a collection element, the matching member of a union (<code>FrozenStr | int</code>, <code>str | int</code>), and the payload of <code>Some(...)</code> where an <code>Option</code> of the type is expected. <code>isinstance(value, str)</code> is <code>true</code> for a <code>str</code> and for a <code>FrozenStr</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">const</span> <span class="nc">NAME</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;policy&quot;</span>
+<span class="k">const</span> <span class="nc">LABEL</span><span class="p">:</span> <span class="kt">FrozenStr</span> <span class="o">=</span> <span class="s2">&quot;label&quot;</span>
 
-<span class="n">first</span> <span class="o">=</span> <span class="n">names</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># &quot;alice&quot;</span>
-</code></pre></div>
-<h3 id="joining-strings">Joining strings<a class="headerlink" href="#joining-strings" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="s2">&quot;bob&quot;</span><span class="p">,</span> <span class="s2">&quot;carol&quot;</span><span class="p">]</span>
-<span class="kt">result</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="nb">join</span><span class="p">(</span><span class="n">names</span><span class="p">)</span>  <span class="c1"># &quot;alice, bob, carol&quot;</span>
-</code></pre></div>
-<blockquote>
-<p>Note: The separator is the receiver and the list is the argument: <code>", ".join(names)</code>.</p>
-</blockquote>
-<h3 id="substring-check">Substring check<a class="headerlink" href="#substring-check" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">sentence</span> <span class="o">=</span> <span class="s2">&quot;the quick brown fox&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">frozen_or_int</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">FrozenStr</span> <span class="o">|</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">NAME</span>             <span class="c1"># accepted</span>
 
-<span class="k">if</span> <span class="n">sentence</span><span class="o">.</span><span class="nb">contains</span><span class="p">(</span><span class="s2">&quot;quick&quot;</span><span class="p">):</span>
-    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Found it!&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="string-replacement">String replacement<a class="headerlink" href="#string-replacement" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;hello world&quot;</span>
-<span class="kt">result</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="nb">replace</span><span class="p">(</span><span class="s2">&quot;world&quot;</span><span class="p">,</span> <span class="s2">&quot;incan&quot;</span><span class="p">)</span>  <span class="c1"># &quot;hello incan&quot;</span>
-</code></pre></div>
-<h2 id="f-strings-formatted-strings">F-strings (formatted strings)<a class="headerlink" href="#f-strings-formatted-strings" title="Permanent link">&para;</a></h2>
-<p>Incan supports Python-style f-strings:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;Alice&quot;</span>
-<span class="n">age</span> <span class="o">=</span> <span class="mi">30</span>
-<span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Name: </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">, Age: </span><span class="si">{</span><span class="n">age</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="debug-formatting">Debug formatting<a class="headerlink" href="#debug-formatting" title="Permanent link">&para;</a></h3>
-<p>Use <code>:?</code> for debug output (shows type structure):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Point</span><span class="p">:</span>
-    <span class="n">x</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">y</span><span class="p">:</span> <span class="nb">int</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">maybe_frozen</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">FrozenStr</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nb">Some</span><span class="p">(</span><span class="nc">NAME</span><span class="p">)</span>       <span class="c1"># accepted</span>
 
-<span class="n">p</span> <span class="o">=</span> <span class="nc">Point</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
-<span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Debug: </span><span class="si">{</span><span class="n">p</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># Point { x: 10, y: 20 }</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">maybe_text</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nb">Some</span><span class="p">(</span><span class="nc">LABEL</span><span class="p">)</span>      <span class="c1"># accepted</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">frozen</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">FrozenStr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span>            <span class="c1"># refused: a str parameter is not a FrozenStr (INCAN-T0001)</span>
 </code></pre></div>
-<p>See <a href="../derives/string_representation/">String Representation</a> for details on Debug vs Display formatting.</p>
-<h2 id="string-literals">String literals<a class="headerlink" href="#string-literals" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Single or double quotes</span>
-<span class="n">s1</span> <span class="o">=</span> <span class="s2">&quot;hello&quot;</span>
-<span class="n">s2</span> <span class="o">=</span> <span class="s1">&#39;hello&#39;</span>
-
-<span class="c1"># Multiline strings (triple quotes)</span>
-<span class="n">multi</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
-<span class="s2">This is a</span>
-<span class="s2">multiline string</span>
-<span class="s2">&quot;&quot;&quot;</span>
-
-<span class="c1"># F-strings</span>
-<span class="n">formatted</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Value: </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span>
-</code></pre></div>
-<h2 id="bytes-binary-data">Bytes (binary data)<a class="headerlink" href="#bytes-binary-data" title="Permanent link">&para;</a></h2>
-<p>The <code>bytes</code> type represents binary data as a sequence of bytes (current backend: Rust <code>Vec&lt;u8&gt;</code>).</p>
-<h3 id="byte-string-literals">Byte string literals<a class="headerlink" href="#byte-string-literals" title="Permanent link">&para;</a></h3>
-<p>Use the <code>b"..."</code> prefix for byte strings:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># ASCII byte string</span>
-<span class="n">data</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;Hello&quot;</span>
-
-<span class="c1"># Hex escapes for arbitrary bytes</span>
-<span class="n">binary</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x00\x01\x02\xff</span><span class="s2">&quot;</span>
-
-<span class="c1"># Common escapes</span>
-<span class="n">newline</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
-<span class="n">tab</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\t</span><span class="s2">&quot;</span>
-<span class="n">null</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\0</span><span class="s2">&quot;</span>
-</code></pre></div>
-<p>Supported escape sequences:</p>
+<h2 id="literals">Literals<a class="headerlink" href="#literals" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Literal</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"text"</code>, <code>'text'</code></td>
+<td>A <code>str</code>; the quote style does not change the value. The literal ends on its line.</td>
+</tr>
+<tr>
+<td><code>"""text"""</code>, <code>'''text'''</code></td>
+<td>A <code>str</code> that may span lines; line breaks inside the quotes are part of the value.</td>
+</tr>
+<tr>
+<td><code>f"…{expr}…"</code>, <code>f'…{expr}…'</code></td>
+<td>An f-string: a <code>str</code> with each <code>{expr}</code> replaced by the formatted value of <code>expr</code> (see <a href="#f-strings">F-strings</a>). <code>{{</code> and <code>}}</code> are a literal <code>{</code> and <code>}</code>. The literal ends on its line.</td>
+</tr>
+<tr>
+<td><code>b"…"</code>, <code>b'…'</code></td>
+<td>A <code>bytes</code> literal of ASCII characters and the escapes below. The literal ends on its line.</td>
+</tr>
+</tbody>
+</table>
+<p>Escape sequences:</p>
 <table>
 <thead>
 <tr>
 <th>Escape</th>
-<th>Meaning</th>
+<th>In <code>str</code> literals and f-strings</th>
+<th>In <code>bytes</code> literals</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>\n</code></td>
-<td>Newline</td>
+<td>U+000A</td>
+<td>0x0A</td>
 </tr>
 <tr>
 <td><code>\t</code></td>
-<td>Tab</td>
+<td>U+0009</td>
+<td>0x09</td>
 </tr>
 <tr>
 <td><code>\r</code></td>
-<td>Carriage return</td>
+<td>U+000D</td>
+<td>0x0D</td>
 </tr>
 <tr>
 <td><code>\\</code></td>
-<td>Backslash</td>
+<td><code>\</code></td>
+<td>0x5C</td>
+</tr>
+<tr>
+<td><code>\"</code> or <code>\'</code>, the literal's own quote</td>
+<td>The quote</td>
+<td>The quote's byte</td>
 </tr>
 <tr>
 <td><code>\0</code></td>
-<td>Null byte</td>
+<td>Not an escape</td>
+<td>0x00</td>
 </tr>
 <tr>
 <td><code>\xNN</code></td>
-<td>Hex byte (e.g. <code>\xff</code> = 255)</td>
+<td>Not an escape</td>
+<td>The byte with hexadecimal value <code>NN</code></td>
 </tr>
 </tbody>
 </table>
-<blockquote>
-<p>Note: Byte strings only accept ASCII characters. Non-ASCII characters produce an error.</p>
-</blockquote>
-<h3 id="type-annotation">Type annotation<a class="headerlink" href="#type-annotation" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">process_binary</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">data</span>
-</code></pre></div>
-<div class="admonition note">
-<p class="admonition-title">Coming from Python?</p>
-<p>Python’s <code>bytes</code> is immutable. Incan’s <code>bytes</code> currently lowers to Rust <code>Vec&lt;u8&gt;</code>, which is mutable.</p>
-</div>
-<h3 id="when-to-use-bytes-vs-str">When to use <code>bytes</code> vs <code>str</code><a class="headerlink" href="#when-to-use-bytes-vs-str" title="Permanent link">&para;</a></h3>
+<p>A backslash followed by any other character is not an escape: the value holds the backslash and the character.</p>
+<p>Refused (<code>INCAN-P0001</code>): a line break inside a <code>"…"</code> or <code>'…'</code> string, an f-string or a <code>bytes</code> literal; a literal without its closing quote; a non-ASCII character in a <code>bytes</code> literal; a <code>\x</code> in a <code>bytes</code> literal that is not followed by two hexadecimal digits; a <code>}</code> in an f-string that neither closes an <code>{expr}</code> nor is part of <code>}}</code>.</p>
+<h2 id="indexing-and-slicing">Indexing and slicing<a class="headerlink" href="#indexing-and-slicing" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Use case</th>
-<th>Type</th>
+<th>Form</th>
+<th>Result</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Text, user-facing content</td>
-<td><code>str</code></td>
+<td><code>s[i]</code></td>
+<td>A <code>str</code> holding the Unicode scalar at position <code>i</code>; negative <code>i</code> counts from the end. An index out of range raises <code>IndexError</code>.</td>
 </tr>
 <tr>
-<td>File contents (text)</td>
-<td><code>str</code></td>
-</tr>
-<tr>
-<td>Binary files (images, etc.)</td>
-<td><code>bytes</code></td>
-</tr>
-<tr>
-<td>Network protocols</td>
-<td><code>bytes</code></td>
-</tr>
-<tr>
-<td>Cryptographic operations</td>
-<td><code>bytes</code></td>
-</tr>
-<tr>
-<td>Raw file I/O</td>
-<td><code>bytes</code></td>
+<td><code>s[start:end:step]</code></td>
+<td>A new <code>str</code> of the scalars from <code>start</code> up to but not including <code>end</code>, taking every <code>step</code>-th; a negative index counts from the end, each part is optional, and <code>step</code> defaults to <code>1</code>. A negative <code>step</code> walks backwards (<code>s[::-1]</code> reverses). <code>step == 0</code> fails with <code>ValueError</code>.</td>
 </tr>
 </tbody>
 </table>
+<p>Positions and lengths count Unicode scalars, not bytes. The same forms apply to <code>list[T]</code>, over its elements.</p>
+<p>Refused (<code>INCAN-T0001</code>): an index or slice part that is not an <code>int</code>, and an assignment to <code>s[i]</code>.</p>
+<h2 id="str-methods"><code>str</code> methods<a class="headerlink" href="#str-methods" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Signature</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>upper() -&gt; str</code></td>
+<td>Uppercase copy.</td>
+</tr>
+<tr>
+<td><code>lower() -&gt; str</code></td>
+<td>Lowercase copy.</td>
+</tr>
+<tr>
+<td><code>strip() -&gt; str</code></td>
+<td>Copy without leading and trailing whitespace.</td>
+</tr>
+<tr>
+<td><code>replace(old: str, new: str) -&gt; str</code></td>
+<td>Copy with every occurrence of <code>old</code> replaced by <code>new</code>.</td>
+</tr>
+<tr>
+<td><code>split(separator: str) -&gt; list[str]</code></td>
+<td>Pieces between occurrences of <code>separator</code>, in order.</td>
+</tr>
+<tr>
+<td><code>split() -&gt; list[str]</code></td>
+<td>A one-item list holding the receiver.</td>
+</tr>
+<tr>
+<td><code>split_whitespace() -&gt; list[str]</code></td>
+<td>Pieces separated by runs of Unicode whitespace; no empty pieces.</td>
+</tr>
+<tr>
+<td><code>join(parts: list[str]) -&gt; str</code></td>
+<td><code>parts</code> concatenated with the receiver between each pair: <code>", ".join(names)</code>.</td>
+</tr>
+<tr>
+<td><code>contains(needle: str) -&gt; bool</code></td>
+<td>Whether <code>needle</code> occurs in the receiver.</td>
+</tr>
+<tr>
+<td><code>startswith(prefix: str) -&gt; bool</code>, <code>starts_with(prefix: str) -&gt; bool</code></td>
+<td>Whether the receiver starts with <code>prefix</code>.</td>
+</tr>
+<tr>
+<td><code>endswith(suffix: str) -&gt; bool</code>, <code>ends_with(suffix: str) -&gt; bool</code></td>
+<td>Whether the receiver ends with <code>suffix</code>.</td>
+</tr>
+<tr>
+<td><code>len() -&gt; int</code></td>
+<td>The number of Unicode scalars; <code>len(s)</code> is the same value.</td>
+</tr>
+<tr>
+<td><code>to_string() -&gt; str</code></td>
+<td>The receiver itself.</td>
+</tr>
+<tr>
+<td><code>encode(encoding: str = "utf-8") -&gt; bytes</code></td>
+<td>The text's UTF-8 bytes. <code>encoding</code> accepts <code>"utf-8"</code> and <code>"utf8"</code>, compared case-insensitively with <code>_</code> read as <code>-</code>. A literal label naming any other codec is refused (<code>INCAN-T0001</code>); a run-time label naming another codec raises <code>ValueError</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Each method takes its arguments by position; <code>encoding</code> may also be passed by name: <code>s.encode(encoding="utf-8")</code>. Refused (<code>INCAN-T0001</code>): any other named argument, and an unpacked argument, on a <code>str</code> or <code>FrozenStr</code> receiver.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;a,b&quot;</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="nb">replace</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">))</span>              <span class="c1"># accepted</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="nb">encode</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>         <span class="c1"># accepted</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="nb">replace</span><span class="p">(</span><span class="n">old</span><span class="o">=</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="n">new</span><span class="o">=</span><span class="s2">&quot;b&quot;</span><span class="p">))</span>      <span class="c1"># refused: named argument (INCAN-T0001)</span>
+</code></pre></div>
+<h2 id="str-operators"><code>str</code> operators<a class="headerlink" href="#str-operators" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Operands</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a + b</code></td>
+<td>Two <code>str</code> or <code>FrozenStr</code> values</td>
+<td>A new <code>str</code>: <code>a</code> followed by <code>b</code></td>
+</tr>
+<tr>
+<td><code>a == b</code>, <code>a != b</code>, <code>a &lt; b</code>, <code>a &lt;= b</code>, <code>a &gt; b</code>, <code>a &gt;= b</code></td>
+<td>Two <code>str</code> or <code>FrozenStr</code> values</td>
+<td><code>bool</code>; ordering compares the texts by Unicode scalar value, scalar by scalar</td>
+</tr>
+<tr>
+<td><code>needle in s</code>, <code>needle not in s</code></td>
+<td>A <code>str</code> or <code>FrozenStr</code> needle and receiver</td>
+<td><code>bool</code>: whether <code>needle</code> occurs in <code>s</code>, as <code>s.contains(needle)</code></td>
+</tr>
+<tr>
+<td><code>s += t</code></td>
+<td>A <code>str</code> target and a <code>str</code> or <code>FrozenStr</code> value</td>
+<td>Writes <code>s + t</code> to the target (see <a href="../numeric_semantics/#compound-assignment">Compound assignment</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>Refused (<code>INCAN-T0001</code>): <code>+</code> with one <code>str</code> operand and one of another type, <code>*</code> with a <code>str</code> operand, and <code>in</code> or <code>not in</code> with a <code>str</code> receiver and a needle of another type.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">sentence</span> <span class="o">=</span> <span class="s2">&quot;the quick fox&quot;</span>
+    <span class="n">found</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="s2">&quot;quick&quot;</span> <span class="ow">in</span> <span class="n">sentence</span>       <span class="c1"># accepted</span>
+    <span class="n">missing</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="s2">&quot;slow&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">sentence</span>  <span class="c1"># accepted</span>
+    <span class="k">mut</span> <span class="n">line</span> <span class="o">=</span> <span class="s2">&quot;a&quot;</span>
+    <span class="n">line</span> <span class="o">+=</span> <span class="s2">&quot;b&quot;</span>                             <span class="c1"># accepted</span>
+    <span class="n">first</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">sentence</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>                <span class="c1"># accepted</span>
+    <span class="nb">count</span> <span class="o">=</span> <span class="mi">1</span> <span class="ow">in</span> <span class="n">sentence</span>                   <span class="c1"># refused: the needle is not a str</span>
+    <span class="n">twice</span> <span class="o">=</span> <span class="n">line</span> <span class="o">*</span> <span class="mi">2</span>                        <span class="c1"># refused: no * on str</span>
+</code></pre></div>
+<h2 id="bytes-methods"><code>bytes</code> methods<a class="headerlink" href="#bytes-methods" title="Permanent link">&para;</a></h2>
+<p><code>len(b)</code> is the number of bytes.</p>
+<table>
+<thead>
+<tr>
+<th>Signature</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>decode(encoding: str = "utf-8", errors: str = "strict") -&gt; Result[str, ValidationError]</code></td>
+<td><code>Ok</code> of the bytes read as UTF-8 text. <code>encoding</code> follows the same rule as <code>str.encode</code>, except that a run-time label naming another codec returns <code>Err</code> with <code>code</code> <code>unknown-encoding</code>. <code>errors</code> is <code>"strict"</code>, which returns <code>Err</code> with <code>code</code> <code>invalid-utf8</code> at the first malformed sequence (the message names its byte offset), or <code>"replace"</code>, which substitutes U+FFFD for each malformed sequence and always returns <code>Ok</code>; any other literal policy is refused (<code>INCAN-T0001</code>), and any other run-time policy returns <code>Err</code> with <code>code</code> <code>unknown-errors-policy</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><code>encoding</code> and <code>errors</code> may be passed by position or by name.</p>
+<h2 id="f-strings">F-strings<a class="headerlink" href="#f-strings" title="Permanent link">&para;</a></h2>
+<p>An f-string interpolates any expression between <code>{</code> and <code>}</code>; the value is formatted through <code>Display</code>. The only supported format spec is <code>?</code>, which selects <code>Debug</code>. Any other format spec is refused with <code>INCAN-T0001</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Spec</th>
+<th>Formatting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{value}</code></td>
+<td>The value's display text (see <a href="#display">Display</a>)</td>
+</tr>
+<tr>
+<td><code>{value:?}</code></td>
+<td><code>Debug</code>: the value's structure, for example <code>Point { x: 10, y: 20 }</code></td>
+</tr>
+</tbody>
+</table>
+<p>Refused in a <code>{value:?}</code> part (<code>INCAN-T0103</code>): a <code>Generator</code>, a function, and a value whose type, or a type inside it, implements no <code>Debug</code>, such as a <code>JoinHandle[T]</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">numbers</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="k">yield</span> <span class="mi">1</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">items</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">items</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>         <span class="c1"># accepted</span>
+    <span class="n">gen</span> <span class="o">=</span> <span class="n">numbers</span><span class="p">()</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">gen</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>           <span class="c1"># refused: a generator has no Debug form (INCAN-T0103)</span>
+</code></pre></div>
+<p>See <a href="../derives/string_representation/">String representation</a> for how a type provides <code>Display</code> and <code>Debug</code>.</p>
+<h2 id="display">Display<a class="headerlink" href="#display" title="Permanent link">&para;</a></h2>
+<p><code>print(value)</code>, <code>println(value)</code>, <code>str(value)</code> and an f-string <code>{value}</code> part render the same text for the same value.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Displayed text</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>str</code>, <code>FrozenStr</code></td>
+<td>The text itself, unquoted</td>
+</tr>
+<tr>
+<td><code>int</code> and the exact-width integers</td>
+<td>Decimal digits</td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>true</code> or <code>false</code></td>
+</tr>
+<tr>
+<td><code>float</code> (<code>f64</code>)</td>
+<td>Decimal digits with a decimal point or an exponent, below</td>
+</tr>
+<tr>
+<td><code>f32</code></td>
+<td>The shortest digits that round-trip, below</td>
+</tr>
+<tr>
+<td>A <code>model</code>, <code>class</code>, <code>enum</code> or <code>newtype</code> that defines <code>__str__</code>, inherits it from a class it extends, or takes it from an adopted trait such as <code>Display</code> (<code>with Display</code>)</td>
+<td>What <code>__str__</code> returns</td>
+</tr>
+<tr>
+<td>A <code>model</code>, <code>class</code>, <code>enum</code> or <code>newtype</code> that takes <code>Display</code> from a Rust derive macro named <code>Display</code>, written in <code>@rust.derive(...)</code> or imported from a Rust crate and named in <code>@derive(...)</code></td>
+<td>The text that derive writes</td>
+</tr>
+<tr>
+<td>An enum that declares values</td>
+<td>The variant's value</td>
+</tr>
+<tr>
+<td>A <code>model</code>, <code>class</code>, <code>enum</code> or <code>newtype</code> that derives <code>Display</code></td>
+<td>Its <code>{value:?}</code> structure: <code>Point { x: 1, y: 2 }</code></td>
+</tr>
+<tr>
+<td>A type that adopts <code>Error</code> and has no <code>Display</code> by the rows above</td>
+<td>What <code>message()</code> returns (see <a href="../stdlib_traits/error/#displaying-an-error">Displaying an error</a>)</td>
+</tr>
+<tr>
+<td>A value of a type parameter bounded by <code>Display</code>, by <code>Error</code>, or by a trait that declares <code>__str__</code></td>
+<td>The display text of the type argument's value</td>
+</tr>
+<tr>
+<td>Tuple</td>
+<td><code>(10, 20)</code></td>
+</tr>
+<tr>
+<td><code>list</code></td>
+<td><code>[1, 2, 3]</code></td>
+</tr>
+<tr>
+<td><code>dict</code></td>
+<td><code>{"a": 1}</code></td>
+</tr>
+<tr>
+<td><code>set</code></td>
+<td><code>{1, 2}</code></td>
+</tr>
+<tr>
+<td><code>Option</code></td>
+<td><code>Some(1)</code> or <code>None</code></td>
+</tr>
+<tr>
+<td><code>Result</code></td>
+<td><code>Ok(2)</code> or <code>Err("bad")</code></td>
+</tr>
+<tr>
+<td><code>FrozenList</code>, <code>FrozenSet</code>, <code>FrozenDict</code></td>
+<td>As <code>list</code>, <code>set</code> and <code>dict</code>: <code>[1, 2, 3]</code>, <code>{1, 2}</code>, <code>{"a": 1}</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>Inside a tuple, list, dict, set, frozen collection, <code>Option</code> or <code>Result</code>, every element or payload displays as its <code>{value:?}</code> structure: a <code>str</code> is quoted (<code>["a", "b"]</code>), a <code>float</code> keeps its decimal point and uses an unsigned exponent from <code>1e16</code> up and below <code>1e-4</code> (<code>[100.0, 1e16]</code>), a model or class shows its fields even when its type defines <code>__str__</code> (<code>[Point { x: 1, y: 2 }]</code>), an enum value shows its variant (<code>[Red]</code>), and a union value shows its member's structure. The entry order of a set or a dict is unspecified.</li>
+<li>A <code>float</code> always shows a decimal point or an exponent. An integral value keeps its decimal point (<code>100.0</code>); the shortest digits that round-trip are used (<code>1.5</code>, <code>0.30000000000000004</code>); positional notation holds while the magnitude is at least <code>1e-4</code> and below <code>1e16</code> (<code>10000000000.0</code>), and outside that range the value uses an exponent with an explicit sign and at least two digits (<code>1e+16</code>, <code>1.5e-07</code>); the non-finite values are <code>inf</code>, <code>-inf</code> and <code>nan</code>.</li>
+<li>An <code>f32</code> displays the shortest digits that round-trip in positional notation, with no forced decimal point (<code>100</code>, <code>1.5</code>). An <code>f64</code> is a <code>float</code> and displays as one.</li>
+</ul>
+<p>Refused in every display position (<code>INCAN-T0103</code>):</p>
+<ul>
+<li>a union value (<code>int | str</code>); a member bound by narrowing displays as its own type (see <a href="../union_types/#narrowing">Union types</a>);</li>
+<li>a <code>Generator</code>;</li>
+<li>a function;</li>
+<li><code>bytes</code>, <code>FrozenBytes</code>;</li>
+<li>a value of type <code>None</code>;</li>
+<li>a <code>model</code>, <code>class</code>, <code>enum</code> or <code>newtype</code> value whose type provides no <code>Display</code> by a row above: it has no <code>__str__</code>, takes no <code>Display</code> from a Rust derive macro, is not an enum that declares values, does not derive <code>Display</code>, and does not adopt <code>Error</code>;</li>
+<li>a tuple, list, dict, set, frozen collection, <code>Option</code> or <code>Result</code> that holds a <code>Generator</code>, a function, <code>bytes</code> or <code>FrozenBytes</code> at any depth;</li>
+<li>a value of a type parameter that has no bound on <code>Display</code>, on <code>Error</code>, or on a trait that declares <code>__str__</code>.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Point</span><span class="p">:</span>
+    <span class="n">x</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">y</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="k">enum</span> <span class="nc">Color</span><span class="p">:</span>
+    <span class="nc">Red</span>
+
+<span class="k">enum</span> <span class="nc">Level</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
+    <span class="nc">WARN</span> <span class="o">=</span> <span class="s2">&quot;warn&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>              <span class="c1"># accepted</span>
+    <span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>       <span class="c1"># accepted</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nc">Level</span><span class="o">.</span><span class="nc">WARN</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># accepted</span>
+    <span class="n">point</span> <span class="o">=</span> <span class="nc">Point</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">point</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>     <span class="c1"># accepted</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">point</span><span class="p">)</span>            <span class="c1"># refused: Point defines no __str__ (INCAN-T0103)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="nc">Color</span><span class="o">.</span><span class="nc">Red</span><span class="p">))</span>   <span class="c1"># refused: Color declares no values (INCAN-T0103)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>print(items)</code>, <code>str(items)</code>, <code>f"{items}"</code></td>
+<td><code>[1, 2, 3]</code></td>
+</tr>
+<tr>
+<td><code>f"{Level.WARN}"</code></td>
+<td><code>warn</code></td>
+</tr>
+<tr>
+<td><code>f"{point:?}"</code></td>
+<td><code>Point { x: 1, y: 2 }</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="display-bounds"><code>Display</code> bounds<a class="headerlink" href="#display-bounds" title="Permanent link">&para;</a></h3>
+<p>A type argument for a type parameter bounded by <code>Display</code> (<code>def show[T with Display](value: T)</code>) satisfies the bound when it provides <code>Display</code> by the rule above. <code>int</code>, <code>float</code>, the exact-width numeric types, <code>bool</code>, <code>str</code> and <code>FrozenStr</code> satisfy it.</p>
+<ul>
+<li>Refused (<code>INCAN-T0103</code>): a type argument whose values have no printed form, as listed above.</li>
+<li>Refused (<code>INCAN-T0001</code>): a tuple, list, dict, set, <code>Option</code> or <code>Result</code> type argument. Each displays its structure in a display position but does not provide <code>Display</code>.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Point</span><span class="p">:</span>
+    <span class="n">x</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="k">enum</span> <span class="nc">Level</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
+    <span class="nc">WARN</span> <span class="o">=</span> <span class="s2">&quot;warn&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">show</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Display</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">show</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>               <span class="c1"># accepted</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">show</span><span class="p">(</span><span class="nc">Level</span><span class="o">.</span><span class="nc">WARN</span><span class="p">)</span>      <span class="c1"># accepted</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">show</span><span class="p">(</span><span class="nc">Point</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>      <span class="c1"># refused: Point defines no __str__ (INCAN-T0103)</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">show</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>          <span class="c1"># refused: list does not provide Display (INCAN-T0001)</span>
+</code></pre></div>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../derives/string_representation/">String Representation</a> — Debug and Display formatting</li>
-<li><a href="../../how-to/string_processing/">String processing (How-to)</a> — practical recipes (split/join/cleaning)</li>
-<li><a href="../../tutorials/book/07_strings_and_formatting/">Strings and formatting (Tutorial)</a></li>
-<li><a href="../../how-to/file_io/">File I/O (How-to)</a> — reading text vs bytes</li>
-<li><a href="https://github.com/encero-systems/incan/blob/main/examples/simple/strings.incn">Examples: Strings</a> — string method examples</li>
-<li><a href="https://github.com/encero-systems/incan/blob/main/examples/advanced/bytes_io.incn">Examples: Bytes I/O</a> — binary data examples</li>
+<li><a href="../../how-to/string_processing/">String processing</a> — recipes for splitting, joining, cleaning and encoding text.</li>
+<li><a href="../../how-to/error_messages/#displaying-a-value-with-no-printed-form">Displaying a value with no printed form</a> — what to display instead when a value is refused with <code>INCAN-T0103</code>.</li>
+<li><a href="../../how-to/binary_text_encoding/">Binary-text encoding</a> — moving bytes through text formats and decoding at boundaries.</li>
+<li><a href="../../how-to/rust_types_for_python_devs/">Rust types for Python developers</a></li>
+<li><a href="../../tutorials/book/07_strings_and_formatting/">Strings and formatting (tutorial)</a></li>
 </ul>
 
 

@@ -1,11 +1,11 @@
 (() => {
-  const initialiseHomeMotion = () => {
+  const initializeHomeMotion = () => {
     const hero = document.querySelector(".inc-hero");
-    if (!hero || hero.dataset.motionInitialised === "true") {
+    if (!hero || hero.dataset.motionInitialized === "true") {
       return;
     }
 
-    hero.dataset.motionInitialised = "true";
+    hero.dataset.motionInitialized = "true";
     document.documentElement.classList.add("inc-motion-capable");
 
     // The compiler flow sits below the outcome chooser rather than inside the
@@ -45,10 +45,10 @@
   };
 
   if (typeof document$ !== "undefined") {
-    document$.subscribe(initialiseHomeMotion);
+    document$.subscribe(initializeHomeMotion);
   } else if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initialiseHomeMotion, { once: true });
+    document.addEventListener("DOMContentLoaded", initializeHomeMotion, { once: true });
   } else {
-    initialiseHomeMotion();
+    initializeHomeMotion();
   }
 })();

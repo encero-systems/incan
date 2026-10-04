@@ -14,7 +14,7 @@
         <link rel="prev" href="../imports_and_modules/">
       
       
-        <link rel="next" href="../numeric_semantics/">
+        <link rel="next" href="../frozen_collections/">
       
       
         
@@ -1939,6 +1939,8 @@
       
         
       
+        
+      
     
     
     
@@ -2633,6 +2635,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/decorators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decorators and callables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/string_processing/" class="md-nav__link">
         
   
@@ -2881,6 +2911,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2995,6 +3031,34 @@
     
   
     Code style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../assignments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Assignments
   
 
     
@@ -3310,10 +3374,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Summary
+        Storage
       
     </span>
   </a>
@@ -3321,29 +3385,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Semantics
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Semantics">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#storage-identity" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Storage identity
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#initialization" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3353,172 +3394,12 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#visibility-and-imports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Visibility and imports
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
-  <a href="#allowed-operations" class="md-nav__link">
+  <a href="#operations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Allowed operations
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Allowed operations">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#read-a-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Read a static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#assign-to-a-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Assign to a static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compound-assign-a-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compound-assign a static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mutate-through-a-method-field-index-path" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Mutate through a method / field / index path
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bind-a-direct-alias" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bind a direct alias
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#disallowed-forms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Disallowed forms
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Disallowed forms">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#missing-type-annotation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Missing type annotation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#missing-initializer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Missing initializer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#non-module-placement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Non-module placement
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rebinding-an-imported-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Rebinding an imported static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#using-const-for-runtime-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Using const for runtime state
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#initialization-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Initialization rules
+        Operations
       
     </span>
   </a>
@@ -3526,10 +3407,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#import-behavior" class="md-nav__link">
+  <a href="#aliases" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Import behavior
+        Aliases
       
     </span>
   </a>
@@ -3537,10 +3418,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#errors" class="md-nav__link">
+  <a href="#imports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Errors
+        Imports
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#refusals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refusals
       
     </span>
   </a>
@@ -3574,6 +3466,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../frozen_collections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frozen collections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../numeric_semantics/" class="md-nav__link">
         
   
@@ -3582,6 +3502,34 @@
     
   
     Numeric semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../match_patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Match patterns
   
 
     
@@ -3783,7 +3731,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_21" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -3805,14 +3753,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_21" id="__nav_3_4_21_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_18">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_21_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_21">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4598,7 +4546,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_22" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -4620,14 +4568,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_22" id="__nav_3_4_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_19">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_22">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4875,10 +4823,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_20" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_23" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_20" id="__nav_3_4_20_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_23" id="__nav_3_4_23_label" tabindex="0">
             
   
   
@@ -4896,8 +4844,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_20_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_20">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_23_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_23">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5156,6 +5104,8 @@
       
         
       
+        
+      
     
     
     
@@ -5325,7 +5275,7 @@
   <span class="md-ellipsis">
     
   
-    Checked catalogues and loaded registries
+    Checked catalogs and loaded registries
   
 
     
@@ -5410,6 +5360,34 @@
     
   
     Control flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/functions_and_calls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Functions and calls
   
 
     
@@ -5927,7 +5905,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_27" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -5949,14 +5927,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_27" id="__nav_3_5_27_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_26">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_27_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_27">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8245,6 +8223,8 @@
       
         
       
+        
+      
     
     
     
@@ -8359,6 +8339,34 @@
     
   
     Generated Rust quality
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/rust_source_backend_deprecation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust-source backend deprecation
   
 
     
@@ -8567,6 +8575,8 @@
       
         
       
+        
+      
     
     
     
@@ -8673,6 +8683,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../contributing/reference/test_corpus_inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test corpus inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
         
   
@@ -8736,7 +8774,7 @@
   <span class="md-ellipsis">
     
   
-    Rust-source backend deprecation policy
+    Rust-source backend migration notes and freeze
   
 
     
@@ -9778,10 +9816,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#storage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Summary
+        Storage
       
     </span>
   </a>
@@ -9789,29 +9827,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Semantics
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Semantics">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#storage-identity" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Storage identity
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#initialization" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9821,172 +9836,12 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#visibility-and-imports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Visibility and imports
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
-  <a href="#allowed-operations" class="md-nav__link">
+  <a href="#operations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Allowed operations
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Allowed operations">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#read-a-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Read a static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#assign-to-a-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Assign to a static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compound-assign-a-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compound-assign a static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mutate-through-a-method-field-index-path" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Mutate through a method / field / index path
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bind-a-direct-alias" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bind a direct alias
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#disallowed-forms" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Disallowed forms
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Disallowed forms">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#missing-type-annotation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Missing type annotation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#missing-initializer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Missing initializer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#non-module-placement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Non-module placement
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rebinding-an-imported-static" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Rebinding an imported static
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#using-const-for-runtime-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Using const for runtime state
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#initialization-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Initialization rules
+        Operations
       
     </span>
   </a>
@@ -9994,10 +9849,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#import-behavior" class="md-nav__link">
+  <a href="#aliases" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Import behavior
+        Aliases
       
     </span>
   </a>
@@ -10005,10 +9860,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#errors" class="md-nav__link">
+  <a href="#imports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Errors
+        Imports
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#refusals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refusals
       
     </span>
   </a>
@@ -10047,146 +9913,157 @@
 
 
 <h1 id="static-storage-reference">Static storage (reference)<a class="headerlink" href="#static-storage-reference" title="Permanent link">&para;</a></h1>
-<p>This page is the reference for module <code>static</code> declarations and <code>pub static</code> imports.</p>
-<p>For motivation and mental model, see: <a href="../../explanation/static_storage/">Module static storage</a>. For a practical walkthrough, see: <a href="../../how-to/module_state/">Module state (how-to)</a>.</p>
+<p>This page specifies module <code>static</code> declarations: their syntax, storage, initialization, the operations on a static, aliases of a static, imports of a <code>pub static</code>, and the refusals. Refusals are reported with <code>INCAN-T0001</code>, and syntax errors with <code>INCAN-P0001</code>, unless a rule below names another code.</p>
 <h2 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">name</span><span class="p">:</span> <span class="nc">Type</span> <span class="o">=</span> <span class="n">expr</span>
 <span class="k">pub</span> <span class="n">static</span> <span class="n">name</span><span class="p">:</span> <span class="nc">Type</span> <span class="o">=</span> <span class="n">expr</span>
 </code></pre></div>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>static</code> declares module-owned runtime storage</li>
-<li><code>pub static</code> exports that storage to other modules</li>
-<li>every <code>static</code> requires a type annotation</li>
-<li>every <code>static</code> requires an initializer</li>
-<li><code>static</code> declarations are allowed only at module scope</li>
+<li>A <code>static</code> is declared at module scope, with a type annotation and an initializer.</li>
+<li><code>pub static</code> exports the static from its module.</li>
 </ul>
-<h2 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h2>
-<h3 id="storage-identity">Storage identity<a class="headerlink" href="#storage-identity" title="Permanent link">&para;</a></h3>
-<p>Each <code>static</code> creates one compiler-recognized storage cell for that module declaration.</p>
+<h2 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <ul>
-<li>reads observe the current contents of the cell</li>
-<li>assignments update that same cell</li>
-<li>imported <code>pub static</code> names refer to the same cell, not a copied value</li>
+<li>Each <code>static</code> declaration is one storage cell of its module.</li>
+<li>A read of the static observes the cell's current value.</li>
+<li>An assignment, a compound assignment, a mutating method call, and a field or index assignment through the static change the cell.</li>
+<li>Inside its module, a static is assigned and compound-assigned by its name, without <code>mut</code>. <code>mut</code> is not written on a <code>static</code> declaration.</li>
+<li>An imported <code>pub static</code> names the exporting module's cell.</li>
 </ul>
-<h3 id="initialization">Initialization<a class="headerlink" href="#initialization" title="Permanent link">&para;</a></h3>
-<p>Static initialization is runtime-oriented, not const-eval-oriented.</p>
+<h2 id="initialization">Initialization<a class="headerlink" href="#initialization" title="Permanent link">&para;</a></h2>
 <ul>
-<li>initialization happens once</li>
-<li>earlier declarations may be referenced when valid in declaration order</li>
-<li>later static references are rejected</li>
-<li>dependency cycles are rejected</li>
+<li>The initializer's type is the declared type.</li>
+<li>A static is initialized once, in declaration order.</li>
+<li>An initializer may read a <code>const</code>, an earlier static, and call functions.</li>
+<li>An initializer may not read a later static, directly or through a function it calls, and may not assign to a static through a function it calls.</li>
+<li>Statics may not depend on each other in a cycle.</li>
 </ul>
-<p>The compiler preserves declaration-order initialization semantics.</p>
-<h3 id="visibility-and-imports">Visibility and imports<a class="headerlink" href="#visibility-and-imports" title="Permanent link">&para;</a></h3>
-<p>Private statics are visible only inside their declaring module.</p>
-<p>Public statics may be imported:</p>
-<div class="language-incan highlight"><span class="filename">counters.incn</span><pre><span></span><code><span class="k">pub</span> <span class="n">static</span> <span class="n">hits</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">record_hit</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">hits</span> <span class="o">+=</span> <span class="mi">1</span>
-</code></pre></div>
-<div class="language-incan highlight"><span class="filename">main.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">counters</span><span class="w"> </span><span class="kn">import</span> <span class="n">hits</span><span class="p">,</span> <span class="n">record_hit</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">record_hit</span><span class="p">()</span>
-    <span class="n">record_hit</span><span class="p">()</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">hits</span><span class="p">)</span>
-</code></pre></div>
-<p>The imported name refers to the exported storage cell.</p>
-<h2 id="allowed-operations">Allowed operations<a class="headerlink" href="#allowed-operations" title="Permanent link">&para;</a></h2>
-<h3 id="read-a-static">Read a static<a class="headerlink" href="#read-a-static" title="Permanent link">&para;</a></h3>
+<h2 id="operations">Operations<a class="headerlink" href="#operations" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>get(key)</code> on a static <code>dict[K, V]</code>, or on a <code>dict[K, V]</code> field of a static, returns <code>Option[V]</code>: <code>Some</code> holding a copy of the stored value when the key is present, <code>None</code> otherwise.</li>
+<li>An argument passed to a method on a static is readable after the call.</li>
+</ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">counter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">current</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">counter</span>
-</code></pre></div>
-<h3 id="assign-to-a-static">Assign to a static<a class="headerlink" href="#assign-to-a-static" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">counter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">counter</span> <span class="o">=</span> <span class="mi">0</span>
-</code></pre></div>
-<h3 id="compound-assign-a-static">Compound-assign a static<a class="headerlink" href="#compound-assign-a-static" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">counter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">bump</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">counter</span> <span class="o">+=</span> <span class="mi">1</span>
-</code></pre></div>
-<h3 id="mutate-through-a-method-field-index-path">Mutate through a method / field / index path<a class="headerlink" href="#mutate-through-a-method-field-index-path" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">static</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
 <span class="n">static</span> <span class="n">counts</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 
+<span class="k">def</span><span class="w"> </span><span class="nf">current</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">counter</span>               <span class="c1"># accepted</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">counter</span> <span class="o">=</span> <span class="mi">0</span>                  <span class="c1"># accepted</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bump</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">counter</span> <span class="o">+=</span> <span class="mi">1</span>                 <span class="c1"># accepted</span>
+
 <span class="k">def</span><span class="w"> </span><span class="nf">record</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">items</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>
-    <span class="n">counts</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">items</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>     <span class="c1"># accepted</span>
+    <span class="n">counts</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>   <span class="c1"># accepted</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">lookup</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">counts</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>      <span class="c1"># accepted</span>
 </code></pre></div>
-<h3 id="bind-a-direct-alias">Bind a direct alias<a class="headerlink" href="#bind-a-direct-alias" title="Permanent link">&para;</a></h3>
+<h2 id="aliases">Aliases<a class="headerlink" href="#aliases" title="Permanent link">&para;</a></h2>
+<p>A new local bound directly to a static, <code>x = s</code>, <code>let x = s</code> or <code>mut x = s</code>, is an alias of the static's cell. The same holds when the binding is annotated with the static's type, spelled directly or through a type alias.</p>
+<ul>
+<li>A mutating method call and a field or index assignment through the alias change the static.</li>
+<li>A <code>for</code> loop, a comprehension or a pattern that changes the static's items through a name it binds, over the alias as over the static, is refused (<code>INCAN-T0001</code>; see <a href="../assignments/#refusals">Assignments</a>).</li>
+<li>An assignment to the alias rebinds the local; the static keeps its value.</li>
+<li>A binding annotated with another type that accepts the static's value, such as <code>Option[int]</code> for an <code>int</code> static, holds a copy of the value.</li>
+</ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">add_default</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">add_defaults</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">let</span> <span class="n">live_items</span> <span class="o">=</span> <span class="n">items</span>
-    <span class="n">live_items</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">live_items</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>         <span class="c1"># accepted</span>
+    <span class="n">annotated</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">items</span>
+    <span class="n">annotated</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>          <span class="c1"># accepted</span>
 </code></pre></div>
-<p>Direct aliases from statics preserve live behavior for ordinary mutation paths.</p>
-<h2 id="disallowed-forms">Disallowed forms<a class="headerlink" href="#disallowed-forms" title="Permanent link">&para;</a></h2>
-<h3 id="missing-type-annotation">Missing type annotation<a class="headerlink" href="#missing-type-annotation" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">counter</span> <span class="o">=</span> <span class="mi">0</span>
-</code></pre></div>
-<p><em>Rejected</em>: <code>static</code> requires an explicit type annotation.</p>
-<h3 id="missing-initializer">Missing initializer<a class="headerlink" href="#missing-initializer" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">counter</span><span class="p">:</span> <span class="nb">int</span>
-</code></pre></div>
-<p><em>Rejected</em>: <code>static</code> requires an initializer.</p>
-<h3 id="non-module-placement">Non-module placement<a class="headerlink" href="#non-module-placement" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">static</span> <span class="n">counter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-</code></pre></div>
-<p><em>Rejected</em>: <code>static</code> is module-scope only.</p>
-<h3 id="rebinding-an-imported-static">Rebinding an imported static<a class="headerlink" href="#rebinding-an-imported-static" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">counters</span><span class="w"> </span><span class="kn">import</span> <span class="n">hits</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">hits</span> <span class="o">=</span> <span class="mi">0</span>
-</code></pre></div>
-<p><em>Rejected</em>: the imported name is not a new local storage cell. It still refers to the exporting module’s static storage.</p>
-<p>Mutation of the live value may still be valid when the value’s API allows it. Rebinding the imported name is rejected.</p>
-<h3 id="using-const-for-runtime-state">Using <code>const</code> for runtime state<a class="headerlink" href="#using-const-for-runtime-state" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">const</span> <span class="n">counter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">counter</span> <span class="o">+=</span> <span class="mi">1</span>
-</code></pre></div>
-<p><em>Rejected</em>: <code>const</code> is compile-time data.</p>
-<h2 id="initialization-rules">Initialization rules<a class="headerlink" href="#initialization-rules" title="Permanent link">&para;</a></h2>
-<p>The initializer:</p>
-<ul>
-<li>runs under static runtime-init rules, not const-eval rules</li>
-<li>must be valid for the declared type</li>
-<li>may reference earlier declarations that are valid in init order</li>
-<li>must not participate in a static dependency cycle</li>
-</ul>
-<h2 id="import-behavior">Import behavior<a class="headerlink" href="#import-behavior" title="Permanent link">&para;</a></h2>
-<p><code>pub static</code> participates in module exports alongside other public declarations.</p>
+<h2 id="imports">Imports<a class="headerlink" href="#imports" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">counters</span><span class="w"> </span><span class="kn">import</span> <span class="n">hits</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">counters</span><span class="p">::</span><span class="n">hits</span>
 </code></pre></div>
-<p>Both import styles refer to the same exported storage when the module exports <code>pub static hits</code>.</p>
-<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
-<p>Typical compile-time errors include:</p>
 <ul>
-<li><code>static</code> outside module scope</li>
-<li>missing type annotation</li>
-<li>missing initializer</li>
-<li>initializer references a later static</li>
-<li>static dependency cycle</li>
-<li>assignment to an imported static name</li>
-<li>attempted <code>const</code> reassignment where <code>static</code> was probably intended</li>
+<li>Both forms bind the exported static <code>hits</code> of <code>counters</code>, and name its cell.</li>
+<li>A static declared without <code>pub</code> is not exported: <code>from counters import hits</code> of it is refused (<code>INCAN-I0001</code>; see <a href="../imports_and_modules/#exports">Exports</a>).</li>
+<li>An imported static's name is not reassigned: an assignment or compound assignment to it is refused (<code>INCAN-T0001</code>).</li>
+<li>A mutating method call and a field or index assignment through an imported static change the exporting module's cell.</li>
 </ul>
+<h2 id="refusals">Refusals<a class="headerlink" href="#refusals" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>static counter = 0</code>: no type annotation</td>
+<td><code>INCAN-P0001</code></td>
+</tr>
+<tr>
+<td><code>static counter: int</code>: no initializer</td>
+<td><code>INCAN-P0001</code></td>
+</tr>
+<tr>
+<td><code>static</code> inside a function or other block</td>
+<td><code>INCAN-P0001</code></td>
+</tr>
+<tr>
+<td><code>static mut counter: int = 0</code>: <code>mut</code> on a static</td>
+<td><code>INCAN-P0001</code></td>
+</tr>
+<tr>
+<td>An initializer that reads a later static</td>
+<td><code>INCAN-T0001</code></td>
+</tr>
+<tr>
+<td>Statics that depend on each other in a cycle</td>
+<td><code>INCAN-T0001</code></td>
+</tr>
+<tr>
+<td>An initializer that assigns to a static through a function it calls</td>
+<td><code>INCAN-T0001</code></td>
+</tr>
+<tr>
+<td>An assignment or compound assignment to an imported static's name, <code>hits = 0</code> or <code>hits += 1</code>, including as a target of a tuple or chained assignment</td>
+<td><code>INCAN-T0001</code></td>
+</tr>
+<tr>
+<td>A <code>for</code> loop, comprehension or pattern that changes the items of a static, or of a local bound to one, through a name it binds</td>
+<td><code>INCAN-T0001</code></td>
+</tr>
+<tr>
+<td><code>from counters import hits</code> of a static declared without <code>pub</code></td>
+<td><code>INCAN-I0001</code></td>
+</tr>
+<tr>
+<td>An assignment or compound assignment to a <code>const</code></td>
+<td><code>INCAN-T0001</code></td>
+</tr>
+<tr>
+<td><code>get</code> on a static dict, or on a dict field of a static, whose value type cannot be copied, such as a <code>Generator</code> (see <a href="../language/#kept-and-in-place-dict-lookups">Kept and in-place dict lookups</a>)</td>
+<td><code>INCAN-T0118</code></td>
+</tr>
+</tbody>
+</table>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">counter</span> <span class="o">=</span> <span class="mi">0</span>               <span class="c1"># refused: a static needs a type annotation</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">static</span> <span class="n">local</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>        <span class="c1"># refused: static is declared at module scope</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">counters</span><span class="w"> </span><span class="kn">import</span> <span class="n">hits</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">hits</span> <span class="o">=</span> <span class="mi">0</span>                     <span class="c1"># refused: an imported static cannot be reassigned</span>
+    <span class="n">hits</span> <span class="o">+=</span> <span class="mi">1</span>                    <span class="c1"># refused: an imported static cannot be reassigned</span>
+</code></pre></div>
 <h2 id="related-pages">Related pages<a class="headerlink" href="#related-pages" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../explanation/static_storage/">Module static storage</a></li>
 <li><a href="../../explanation/consts/">Const bindings</a></li>
+<li><a href="../frozen_collections/">Frozen collections</a></li>
 <li><a href="../imports_and_modules/">Imports and modules</a></li>
 <li><a href="../../how-to/module_state/">Module state (how-to)</a></li>
 </ul>

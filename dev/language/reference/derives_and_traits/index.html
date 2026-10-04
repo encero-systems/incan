@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#derives-and-traits" class="md-skip">
+        <a href="#derives-and-traits-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -1939,6 +1939,8 @@
       
         
       
+        
+      
     
     
     
@@ -2633,6 +2635,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/decorators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decorators and callables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/string_processing/" class="md-nav__link">
         
   
@@ -2881,6 +2911,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2995,6 +3031,34 @@
     
   
     Code style guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../assignments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Assignments
   
 
     
@@ -3267,6 +3331,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../frozen_collections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frozen collections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../numeric_semantics/" class="md-nav__link">
         
   
@@ -3275,6 +3367,34 @@
     
   
     Numeric semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../match_patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Match patterns
   
 
     
@@ -3439,17 +3559,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#conflicts-precedence" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Conflicts &amp; precedence
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#automatic-derives" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3461,10 +3570,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#derive-catalog-quick-index" class="md-nav__link">
+  <a href="#derive-catalog" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Derive catalog (quick index)
+        Derive catalog
       
     </span>
   </a>
@@ -3472,52 +3581,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#derive-dependencies-and-requirements" class="md-nav__link">
+  <a href="#derive" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Derive dependencies and requirements
+        @derive(...)
       
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#common-compiler-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Common compiler diagnostics
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Common compiler diagnostics">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unknown-derive" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Unknown derive
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deriving-a-non-trait" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deriving a non-trait
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3555,17 +3625,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#requires" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        @requires(...)
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -3582,6 +3641,28 @@
   
     <nav class="md-nav" aria-label="Generic instance methods">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bounds-of-instantiated-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounds of instantiated types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operations-on-a-type-parameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operations on a type parameter
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#call-site-type-arguments" class="md-nav__link">
@@ -3705,160 +3786,11 @@
   
 </li>
         
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#debug-automatic" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Debug (Automatic)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#display-custom-with-__str__" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Display (Custom with __str__)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#eq-equality" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Eq (Equality)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ord-ordering" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ord (ordering)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#hash" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hash
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#clone" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Clone
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#copy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Copy
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#default" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#serialize" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Serialize
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deserialize" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deserialize
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#validate-models-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validate (Models only)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compiler-errors-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compiler errors (reference)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Compiler errors (reference)">
-      <ul class="md-nav__list">
-        
           <li class="md-nav__item">
-  <a href="#unknown-derive-example" class="md-nav__link">
+  <a href="#mut-parameters-of-trait-methods" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unknown derive (example)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deriving-a-non-trait-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deriving a non-trait (example)
+        mut parameters of trait methods
       
     </span>
   </a>
@@ -3871,21 +3803,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reflection-automatic" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reflection (automatic)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#stdlib-derive-boundaries" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Stdlib derive boundaries
+        See also
       
     </span>
   </a>
@@ -3977,7 +3898,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_21" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -3999,14 +3920,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_21" id="__nav_3_4_21_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_18">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_21_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_21">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4792,7 +4713,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_22" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -4814,14 +4735,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_22" id="__nav_3_4_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_19">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_22">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5069,10 +4990,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_20" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_23" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_20" id="__nav_3_4_20_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_23" id="__nav_3_4_23_label" tabindex="0">
             
   
   
@@ -5090,8 +5011,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_20_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_20">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_23_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_23">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5350,6 +5271,8 @@
       
         
       
+        
+      
     
     
     
@@ -5519,7 +5442,7 @@
   <span class="md-ellipsis">
     
   
-    Checked catalogues and loaded registries
+    Checked catalogs and loaded registries
   
 
     
@@ -5604,6 +5527,34 @@
     
   
     Control flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/functions_and_calls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Functions and calls
   
 
     
@@ -6121,7 +6072,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_26" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_27" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -6143,14 +6094,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_26" id="__nav_3_5_26_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_27" id="__nav_3_5_27_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_26_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_26">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_27_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_27">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -8439,6 +8390,8 @@
       
         
       
+        
+      
     
     
     
@@ -8553,6 +8506,34 @@
     
   
     Generated Rust quality
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/rust_source_backend_deprecation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust-source backend deprecation
   
 
     
@@ -8761,6 +8742,8 @@
       
         
       
+        
+      
     
     
     
@@ -8867,6 +8850,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../contributing/reference/test_corpus_inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test corpus inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
         
   
@@ -8930,7 +8941,7 @@
   <span class="md-ellipsis">
     
   
-    Rust-source backend deprecation policy
+    Rust-source backend migration notes and freeze
   
 
     
@@ -9961,17 +9972,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#conflicts-precedence" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Conflicts &amp; precedence
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#automatic-derives" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9983,10 +9983,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#derive-catalog-quick-index" class="md-nav__link">
+  <a href="#derive-catalog" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Derive catalog (quick index)
+        Derive catalog
       
     </span>
   </a>
@@ -9994,52 +9994,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#derive-dependencies-and-requirements" class="md-nav__link">
+  <a href="#derive" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Derive dependencies and requirements
+        @derive(...)
       
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#common-compiler-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Common compiler diagnostics
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Common compiler diagnostics">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unknown-derive" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Unknown derive
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deriving-a-non-trait" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deriving a non-trait
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -10077,17 +10038,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#requires" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        @requires(...)
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -10104,6 +10054,28 @@
   
     <nav class="md-nav" aria-label="Generic instance methods">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bounds-of-instantiated-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounds of instantiated types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operations-on-a-type-parameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operations on a type parameter
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#call-site-type-arguments" class="md-nav__link">
@@ -10227,160 +10199,11 @@
   
 </li>
         
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#debug-automatic" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Debug (Automatic)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#display-custom-with-__str__" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Display (Custom with __str__)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#eq-equality" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Eq (Equality)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ord-ordering" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ord (ordering)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#hash" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hash
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#clone" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Clone
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#copy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Copy
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#default" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#serialize" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Serialize
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deserialize" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deserialize
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#validate-models-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validate (Models only)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compiler-errors-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compiler errors (reference)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Compiler errors (reference)">
-      <ul class="md-nav__list">
-        
           <li class="md-nav__item">
-  <a href="#unknown-derive-example" class="md-nav__link">
+  <a href="#mut-parameters-of-trait-methods" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unknown derive (example)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deriving-a-non-trait-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deriving a non-trait (example)
+        mut parameters of trait methods
       
     </span>
   </a>
@@ -10393,21 +10216,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reflection-automatic" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reflection (automatic)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#stdlib-derive-boundaries" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Stdlib derive boundaries
+        See also
       
     </span>
   </a>
@@ -10434,219 +10246,229 @@
   
 
 
-<h1 id="derives-and-traits">Derives and Traits<a class="headerlink" href="#derives-and-traits" title="Permanent link">&para;</a></h1>
-<!--
-Link index
-
-Use reference-style links like:
-- [Debug][derive-debug]
-- [Error Handling Guide][guide-error-handling]
-
-So we can change the destination in one place if we move/rename sections.
--->
-
-<!-- Built-in derives (anchors in this page) -->
-<!-- Related sections (anchors in this page) -->
-<!-- Other docs -->
-<p>This page is a <strong>Reference</strong> for Incan derives, dunder overrides, and trait authoring. For guided learning, use:</p>
-<ul>
-<li><a href="../../tutorials/book/11_traits_and_derives/">The Incan Book: Traits and derives</a></li>
-<li><a href="../../explanation/error_handling/">Error Handling Guide</a></li>
-</ul>
-<hr />
-<h2 id="conflicts-precedence">Conflicts &amp; precedence<a class="headerlink" href="#conflicts-precedence" title="Permanent link">&para;</a></h2>
-<p>Rules that resolve “derive vs dunder” (these are intentional and strict):</p>
-<ul>
-<li><strong>Dunder overrides are explicit behavior</strong>: if you write a dunder (<code>__str__</code>, <code>__eq__</code>, <code>__lt__</code>, <code>__hash__</code>), that is the behavior for that capability.</li>
-<li><strong>Conflicts are errors</strong>: you must not combine a dunder with the corresponding <code>@derive(...)</code>.</li>
-<li><strong>Auto-added traits are the exception</strong>: some traits are automatically added to <code>model</code> / <code>class</code> / <code>enum</code> / <code>newtype</code> (see <a href="#automatic-derives">Automatic derives</a>). You don’t need to spell them out.</li>
-</ul>
-<hr />
+<h1 id="derives-and-traits-reference">Derives and traits (reference)<a class="headerlink" href="#derives-and-traits-reference" title="Permanent link">&para;</a></h1>
+<p>This page specifies derives (the automatic derives, the derive catalog and <code>@derive(...)</code>), the method decorators <code>@staticmethod</code> and <code>@classmethod</code>, generic methods, bounds, the operations a generic body applies to a type parameter, call-site type arguments, and trait authoring: adoption, several instantiations of one generic trait, method-level trait targets, <code>@requires(...)</code> and the <code>mut</code> parameters of trait methods. Each derive's own contract is on its derive page, listed in the <a href="#derive-catalog">derive catalog</a>.</p>
 <h2 id="automatic-derives">Automatic derives<a class="headerlink" href="#automatic-derives" title="Permanent link">&para;</a></h2>
-<p>The compiler automatically adds these derives:</p>
+<p>These derives belong to every declaration of the kind, without <code>@derive(...)</code>:</p>
 <table>
 <thead>
 <tr>
 <th>Construct</th>
-<th>Auto-added derives</th>
+<th>Automatic derives</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>model</code></td>
-<td><code>Debug</code>, <code>Display</code>, <code>Clone</code></td>
+<td><code>Debug</code>, <code>Clone</code></td>
 </tr>
 <tr>
 <td><code>class</code></td>
-<td><code>Debug</code>, <code>Display</code>, <code>Clone</code></td>
+<td><code>Debug</code>, <code>Clone</code></td>
 </tr>
 <tr>
 <td><code>enum</code></td>
-<td><code>Debug</code>, <code>Display</code>, <code>Clone</code>, <code>Eq</code></td>
+<td><code>Debug</code>, <code>Clone</code>; <code>PartialEq</code> when every payload type is a number, <code>bool</code>, <code>str</code> or <code>bytes</code>, or a <code>list</code>, <code>set</code>, <code>dict</code>, <code>Option</code>, <code>Result</code> or tuple of those</td>
 </tr>
 <tr>
 <td><code>newtype</code></td>
-<td><code>Debug</code>, <code>Display</code>, <code>Clone</code> (and <code>Copy</code> if underlying is Copy)</td>
+<td><code>Debug</code> when the underlying type implements it; <code>Clone</code> as listed below; <code>Copy</code> as listed under <a href="../derives/copying_default/#copy">Copy</a></td>
 </tr>
 </tbody>
 </table>
-<p>Notes:</p>
 <ul>
-<li><code>Debug</code> and <code>Display</code> are always available for these constructs.</li>
-<li><code>Display</code> has a default representation (like Python’s default <code>__str__</code>) unless you define <code>__str__</code>.</li>
+<li>An automatic derive satisfies a generic bound on the same trait.</li>
+<li>Writing an automatic derive in <code>@derive(...)</code> is accepted and adds nothing.</li>
+<li>A newtype carries <code>Clone</code> when its underlying type implements <code>Clone</code> or is <code>Copy</code>. The newtype's own type parameters count as implementing <code>Clone</code>, and the newtype is then <code>Clone</code> for the type arguments that are. A newtype over a <code>rust::</code> type or a <code>rusttype</code> carries <code>Clone</code> only through <code>@derive(Clone)</code> or <code>@rust.derive(Clone)</code>.</li>
+<li>A <code>model</code> or <code>class</code> field, or an <code>enum</code> payload, whose type does not implement both <code>Clone</code> and <code>Debug</code> is refused at the declaration (<code>INCAN-T0113</code>). <code>JoinHandle[T]</code> and <code>RaceArm[R]</code> implement neither; <code>Receiver[T]</code>, <code>OneshotSender[T]</code> and <code>OneshotReceiver[T]</code> lack <code>Clone</code>; a newtype lacks what its underlying type lacks, and deriving it on the newtype is refused (<code>INCAN-T0001</code>); a <code>list</code>, <code>dict</code>, <code>set</code>, <code>Option</code>, <code>Result</code>, tuple or generic declaration lacks what a type argument lacks.</li>
 </ul>
-<hr />
-<h2 id="derive-catalog-quick-index">Derive catalog (quick index)<a class="headerlink" href="#derive-catalog-quick-index" title="Permanent link">&para;</a></h2>
-<p>Only the items usable in <code>@derive(...)</code> are derives:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="kt">JoinHandle</span>
+
+<span class="nb">type</span> <span class="nc">Handle</span> <span class="o">=</span> <span class="k">newtype</span> <span class="kt">JoinHandle</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>   <span class="c1"># accepted: a newtype carries only the derives its underlying type has</span>
+
+<span class="k">model</span> <span class="nc">Pending</span><span class="p">:</span>
+    <span class="n">handle</span><span class="p">:</span> <span class="kt">JoinHandle</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>   <span class="c1"># refused: JoinHandle[int] implements neither Clone nor Debug (INCAN-T0113)</span>
+
+<span class="k">model</span> <span class="nc">Wrapped</span><span class="p">:</span>
+    <span class="n">handle</span><span class="p">:</span> <span class="nc">Handle</span>            <span class="c1"># refused: Handle carries neither Clone nor Debug (INCAN-T0113)</span>
+</code></pre></div>
+<h2 id="derive-catalog">Derive catalog<a class="headerlink" href="#derive-catalog" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>Derive</th>
-<th>Capability</th>
-<th>Override</th>
-<th>Notes</th>
+<th>Provides</th>
+<th>Dunder</th>
+<th>Reference</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><a href="#debug-automatic">Debug</a></td>
-<td>Debug formatting (<code>{:?}</code>)</td>
+<td><code>Debug</code></td>
+<td><code>{value:?}</code></td>
 <td>—</td>
-<td>Auto-added</td>
+<td><a href="../derives/string_representation/#debug">String representation</a></td>
 </tr>
 <tr>
-<td><a href="#display-custom-with-__str__">Display</a></td>
-<td>Display formatting (<code>{}</code>)</td>
+<td><code>Display</code></td>
+<td><code>{value}</code>, <code>str(value)</code>, <code>print(value)</code>, each showing the value's <code>{value:?}</code> structure; implies <code>Debug</code></td>
 <td><code>__str__</code></td>
-<td>Auto-added</td>
+<td><a href="../derives/string_representation/#display">String representation</a></td>
 </tr>
-<tr>
-<td><a href="#eq-equality">Eq</a></td>
-<td><code>==</code> / <code>!=</code></td>
-<td><code>__eq__</code></td>
-<td>Conflicts are errors</td>
-</tr>
-<tr>
-<td><a href="#ord-ordering">Ord</a></td>
-<td>Ordering + <code>sorted(...)</code></td>
-<td><code>__lt__</code></td>
-<td>Conflicts are errors</td>
-</tr>
-<tr>
-<td><a href="#hash">Hash</a></td>
-<td><code>Set</code> / <code>Dict</code> keys</td>
-<td><code>__hash__</code></td>
-<td>Conflicts are errors</td>
-</tr>
-<tr>
-<td><a href="#clone">Clone</a></td>
-<td><code>.clone()</code></td>
-<td>—</td>
-<td>Auto-added</td>
-</tr>
-<tr>
-<td><a href="#copy">Copy</a></td>
-<td>Implicit copy</td>
-<td>—</td>
-<td>Marker trait</td>
-</tr>
-<tr>
-<td><a href="#default">Default</a></td>
-<td><code>Type.default()</code></td>
-<td>—</td>
-<td>Baseline constructor</td>
-</tr>
-<tr>
-<td><a href="#serialize">json</a></td>
-<td>JSON stringify/parse</td>
-<td>—</td>
-<td><code>std.serde</code> module</td>
-</tr>
-<tr>
-<td><a href="#validate-models-only">Validate</a></td>
-<td>Validated construction</td>
-<td>—</td>
-<td>Models only</td>
-</tr>
-</tbody>
-</table>
-<p>Detailed pages:</p>
-<p><strong>Derives</strong>:</p>
-<ul>
-<li><a href="../derives/string_representation/">String representation</a></li>
-<li><a href="../derives/comparison/">Comparison</a></li>
-<li><a href="../derives/copying_default/">Copying/default</a></li>
-<li><a href="../derives/serialization/">Serialization</a></li>
-<li><a href="../derives/validation/">Validation</a></li>
-<li><a href="../derives/custom_behavior/">Custom behavior</a></li>
-</ul>
-<p><strong>Stdlib traits</strong>:</p>
-<ul>
-<li><a href="../stdlib_traits/">Overview</a></li>
-<li><a href="../stdlib_traits/collection_protocols/">Collection protocols</a></li>
-<li><a href="../stdlib_traits/indexing_and_slicing/">Indexing and slicing</a></li>
-<li><a href="../stdlib_traits/callable/">Callable objects</a></li>
-<li><a href="../stdlib_traits/awaitable/">Awaitable values</a></li>
-<li><a href="../stdlib_traits/operators/">Operator traits</a></li>
-<li><a href="../stdlib_traits/conversions/">Conversion traits</a></li>
-</ul>
-<hr />
-<h2 id="derive-dependencies-and-requirements">Derive dependencies and requirements<a class="headerlink" href="#derive-dependencies-and-requirements" title="Permanent link">&para;</a></h2>
-<p>Some derives imply prerequisite derives (the compiler adds them automatically):</p>
-<table>
-<thead>
-<tr>
-<th>If you request</th>
-<th>Compiler also adds</th>
-</tr>
-</thead>
-<tbody>
 <tr>
 <td><code>Eq</code></td>
+<td><code>==</code>, <code>!=</code>; with <code>Hash</code>, use as a <code>set</code> element or <code>dict</code> key</td>
+<td><code>__eq__</code>, <code>__ne__</code></td>
+<td><a href="../derives/comparison/#eq">Comparison</a></td>
+</tr>
+<tr>
 <td><code>PartialEq</code></td>
+<td><code>==</code>, <code>!=</code></td>
+<td><code>__eq__</code>, <code>__ne__</code></td>
+<td><a href="../derives/comparison/#partialeq">Comparison</a></td>
 </tr>
 <tr>
 <td><code>Ord</code></td>
-<td><code>Eq</code>, <code>PartialEq</code>, <code>PartialOrd</code></td>
+<td><code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>sorted(values)</code></td>
+<td><code>__lt__</code>, <code>__le__</code>, <code>__gt__</code>, <code>__ge__</code></td>
+<td><a href="../derives/comparison/#ord">Comparison</a></td>
+</tr>
+<tr>
+<td><code>PartialOrd</code></td>
+<td><code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code></td>
+<td><code>__lt__</code>, <code>__le__</code>, <code>__gt__</code>, <code>__ge__</code></td>
+<td><a href="../derives/comparison/#partialord">Comparison</a></td>
+</tr>
+<tr>
+<td><code>Hash</code></td>
+<td>with <code>Eq</code>, use as a <code>set</code> element or <code>dict</code> key</td>
+<td>—</td>
+<td><a href="../derives/comparison/#hash">Comparison</a></td>
+</tr>
+<tr>
+<td><code>Clone</code></td>
+<td><code>.clone()</code></td>
+<td>—</td>
+<td><a href="../derives/copying_default/#clone">Copying and Default</a></td>
+</tr>
+<tr>
+<td><code>Copy</code></td>
+<td>copying on assignment and argument passing</td>
+<td>—</td>
+<td><a href="../derives/copying_default/#copy">Copying and Default</a></td>
+</tr>
+<tr>
+<td><code>Default</code></td>
+<td><code>Type.default()</code></td>
+<td>—</td>
+<td><a href="../derives/copying_default/#default">Copying and Default</a></td>
+</tr>
+<tr>
+<td><code>json</code>, <code>Serialize</code>, <code>Deserialize</code></td>
+<td>JSON serialization</td>
+<td>—</td>
+<td><a href="../derives/serialization/">Serialization</a></td>
+</tr>
+<tr>
+<td><code>Validate</code></td>
+<td><code>Type.new(...)</code>, validated construction</td>
+<td>—</td>
+<td><a href="../derives/validation/">Validation</a></td>
+</tr>
+<tr>
+<td><code>Descriptor</code></td>
+<td>registry descriptors</td>
+<td>—</td>
+<td><a href="../stdlib/registry/#descriptor-contract">Registry</a></td>
 </tr>
 </tbody>
 </table>
-<p>Note: you may also request <code>PartialEq</code> and <code>PartialOrd</code> explicitly via <code>@derive(PartialEq)</code> / <code>@derive(PartialOrd)</code>.</p>
-<p>Semantic requirements (not “auto-added”):</p>
+<p><code>Debug</code>, <code>Display</code>, <code>Eq</code>, <code>Ord</code>, <code>Hash</code>, <code>Clone</code>, <code>Copy</code> and <code>Default</code> are also traits under <code>std.derives.*</code> (see <a href="../stdlib/derives/"><code>std.derives</code></a>). A model or class also provides <code>__class_name__()</code> and <code>__fields__()</code> without a derive (see <a href="../reflection/">Reflection</a>).</p>
+<h2 id="derive"><code>@derive(...)</code><a class="headerlink" href="#derive" title="Permanent link">&para;</a></h2>
 <ul>
-<li>If you derive <code>Hash</code>, you almost always also want <code>Eq</code>. Prefer <code>@derive(Eq, Hash)</code>.</li>
-<li>If you provide custom equality via <code>__eq__</code>, your hashing (derived or custom) must remain consistent.</li>
+<li><code>@derive(...)</code> names derives from the catalog. <code>json</code> needs <code>from std.serde import json</code>, and <code>Serialize</code> and <code>Deserialize</code> need their import from <code>std.serde.json</code>.</li>
+<li><code>@derive(...)</code> also names a trait imported by name that its module lists in <code>__derives__</code> (<code>from codec import Encode</code>, then <code>@derive(Encode)</code>), or a module that declares <code>__derives__</code> (<code>import codec</code>, then <code>@derive(codec)</code>, which names each trait in the module's <code>__derives__</code> list). A model or class adopts each such trait as a <code>with</code> clause adopts it: the trait's methods, default methods included, are called on the type (<code>item.tag()</code>), and the type satisfies a bound on the trait.</li>
+<li>An <code>enum</code> or <code>newtype</code> adopts such a trait in the same way.</li>
+<li><code>@derive(...)</code> also names a derive imported from a Rust crate (<code>from rust::serde import Serialize</code>, then <code>@derive(Serialize)</code>); it applies to the type as the same name in <code>@rust.derive(...)</code> does.</li>
+<li>A derive on a generic declaration holds for each instantiation whose type arguments implement it. A field, payload or underlying type that is one of the declaration's type parameters meets the derive's <strong>Requires</strong> entry.</li>
+<li><code>Eq</code> implies <code>PartialEq</code>, <code>Ord</code> implies <code>PartialOrd</code>, <code>Eq</code> and <code>PartialEq</code>, and <code>Display</code> implies <code>Debug</code>.</li>
+<li><code>@rust.derive(...)</code> names Rust derives (see <a href="../language/#decorators">Decorators</a>).</li>
+<li>The dunders that define what a derive provides, and the pairs that conflict, are in <a href="../derives/custom_behavior/">Custom behavior</a>.</li>
 </ul>
-<hr />
-<h2 id="common-compiler-diagnostics">Common compiler diagnostics<a class="headerlink" href="#common-compiler-diagnostics" title="Permanent link">&para;</a></h2>
-<h3 id="unknown-derive">Unknown derive<a class="headerlink" href="#unknown-derive" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Debg</span><span class="p">)</span>  <span class="c1"># Typo</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-</code></pre></div>
-<p>Expected: “unknown derive” with a list of valid derive names.</p>
-<h3 id="deriving-a-non-trait">Deriving a non-trait<a class="headerlink" href="#deriving-a-non-trait" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Eq</span><span class="p">,</span> <span class="kt">Hash</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Key</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nc">T</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="nc">User</span><span class="p">)</span>  <span class="c1"># wrong: User is a model, not a derive/trait</span>
-<span class="k">model</span> <span class="nc">Admin</span><span class="p">:</span>
-    <span class="n">level</span><span class="p">:</span> <span class="nb">int</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">a</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nc">Key</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{</span><span class="nc">Key</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">1</span><span class="p">)}</span>        <span class="c1"># accepted</span>
+    <span class="n">b</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nc">Key</span><span class="p">[</span><span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{</span><span class="nc">Key</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)}</span>    <span class="c1"># refused: float does not implement Eq and Hash (INCAN-T0114)</span>
 </code></pre></div>
-<p>Expected: “cannot derive a model/class” with a hint to use <code>with TraitName</code> for trait implementations.</p>
-<hr />
+<p>Each of these is refused (<code>INCAN-T0001</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Declaration</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@derive(Debg)</code></td>
+<td>The name is not a derive.</td>
+</tr>
+<tr>
+<td><code>@derive(User)</code> where <code>User</code> is a model, class, enum or function</td>
+<td>The name is not a derive.</td>
+</tr>
+<tr>
+<td><code>@derive(module)</code> for a module that declares no <code>__derives__</code></td>
+<td>The module provides no derives.</td>
+</tr>
+<tr>
+<td><code>@derive(Encode)</code> for an imported trait its module's <code>__derives__</code> does not list</td>
+<td>The name is not a derive.</td>
+</tr>
+<tr>
+<td><code>@derive(Eq)</code> on a type that defines <code>__eq__</code></td>
+<td>See <a href="../derives/custom_behavior/">Custom behavior</a>.</td>
+</tr>
+<tr>
+<td><code>@derive(Copy)</code> on a type with a field that is not <code>Copy</code></td>
+<td>See <a href="../derives/copying_default/#copy">Copy</a>.</td>
+</tr>
+<tr>
+<td><code>@derive(Eq)</code>, or any derive, on a type with a field, payload or underlying type that does not meet the derive's <strong>Requires</strong> entry, such as a <code>float</code> field</td>
+<td>See the derive's page in the <a href="#derive-catalog">catalog</a>. A derive's requirements include those of the derives it implies.</td>
+</tr>
+<tr>
+<td><code>@derive(PartialOrd)</code> on a type that provides no <code>PartialEq</code></td>
+<td>See <a href="../derives/comparison/#partialord">PartialOrd</a>.</td>
+</tr>
+<tr>
+<td><code>@derive(Default)</code> on an enum</td>
+<td>See <a href="../derives/copying_default/#default">Default</a>.</td>
+</tr>
+<tr>
+<td><code>@derive(Validate)</code> on a class, enum or newtype</td>
+<td>See <a href="../derives/validation/#validate">Validate</a>.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="decorators-staticmethod-requires">Decorators (<code>@staticmethod</code>, <code>@classmethod</code>, <code>@requires</code>)<a class="headerlink" href="#decorators-staticmethod-requires" title="Permanent link">&para;</a></h2>
-<p>Incan has several built-in decorators with different roles.</p>
-<ul>
-<li><code>@derive(...)</code> is covered <a href="#derive-catalog-quick-index">above</a>.</li>
-<li><code>@rust.extern</code> and <code>@rust.allow(...)</code> belong to Rust interop and are documented in the Rust interop reference.</li>
-<li>This section covers the method and trait decorators you will use when authoring ordinary Incan types and traits.</li>
-<li>User-defined function and method decorators are covered in the <a href="../language/#decorators">language reference</a>.</li>
-</ul>
+<p><code>@derive(...)</code> is specified <a href="#derive">above</a>, and <code>@requires(...)</code> under <a href="#requires-adopter-contract">Traits</a>. <code>@rust.extern</code>, <code>@rust.allow(...)</code> and user-defined decorators are in <a href="../language/#decorators">Decorators</a>.</p>
 <h3 id="staticmethod"><code>@staticmethod</code><a class="headerlink" href="#staticmethod" title="Permanent link">&para;</a></h3>
-<p>A static method belongs to the type rather than an instance — it has no <code>self</code> receiver.</p>
+<ul>
+<li>Applies to methods of <code>class</code>, <code>model</code>, <code>enum</code> and <code>newtype</code> declarations.</li>
+<li>The method has no <code>self</code> or <code>mut self</code> parameter; one is refused (<code>INCAN-T0001</code>).</li>
+<li>Its first declared parameter is an ordinary parameter and may use <code>mut</code>.</li>
+<li>It is called on the type, <code>TypeName.method(...)</code>. A call through an instance is refused (<code>INCAN-T0001</code>).</li>
+<li>A static method and a field may share a name: <code>TimeDelta.days(7)</code> calls the method and <code>delta.days</code> reads the field.</li>
+<li>A generic static method may return <code>Self</code>; <code>Box[int].make(1)</code> fixes the owner's type arguments.</li>
+<li>It combines with <code>@rust.extern</code> for Rust-backed static methods.</li>
+</ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Temperature</span><span class="p">:</span>
-    <span class="n">celsius</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="k">pub</span> <span class="n">celsius</span><span class="p">:</span> <span class="nb">float</span>
 
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_fahrenheit</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Temperature</span><span class="p">:</span>
@@ -10656,140 +10478,135 @@ So we can change the destination in one place if we move/rename sections.
     <span class="n">t</span> <span class="o">=</span> <span class="nc">Temperature</span><span class="o">.</span><span class="n">from_fahrenheit</span><span class="p">(</span><span class="mf">98.6</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">celsius</span><span class="p">)</span>
 </code></pre></div>
-<p>Type-owned methods and instance-owned fields are separate receiver surfaces. A static factory may therefore share a field's spelling without ambiguity: <code>TimeDelta.days(7)</code> selects the factory, while <code>delta.days</code> reads the stored field. Static methods are not callable through an instance; use the declaring type at the call site.</p>
-<p><strong>Applies to</strong>: methods on <code>class</code>, <code>model</code>, <code>enum</code>, and <code>newtype</code> declarations.</p>
-<p>Rules:</p>
-<ul>
-<li>A <code>@staticmethod</code> method <strong>must not</strong> have a <code>self</code> or <code>mut self</code> parameter. The compiler rejects this.</li>
-<li>Call static methods via the type name: <code>TypeName.method_name(...)</code>.</li>
-<li>Generic static factory methods can return <code>Self</code>; call them with explicit type arguments when inference needs the owner type, such as <code>Box[int].make(...)</code>.</li>
-<li><code>@staticmethod</code> can be combined with <code>@rust.extern</code> for Rust-backed static methods on types.</li>
-</ul>
-<p>Use cases:</p>
-<ul>
-<li><strong>Factory methods</strong>: alternative constructors (<code>from_fahrenheit</code>, <code>from_json</code>, <code>parse</code>).</li>
-<li><strong>Utility functions</strong>: logic scoped to a type that doesn't need instance state.</li>
-<li><strong>Rust interop</strong>: <code>@rust.extern</code> on type methods requires <code>@staticmethod</code> (instance delegation is not supported).</li>
-</ul>
-<p>Generic static factories can use the declaring type constructor directly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">]:</span>
-    <span class="n">value</span><span class="p">:</span> <span class="nc">T</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">make</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">Box</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">boxed</span> <span class="o">=</span> <span class="nc">Box</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">boxed</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
-</code></pre></div>
-<p>See also: <a href="../../explanation/models_and_classes/classes/#static-methods-staticmethod">Classes: Static methods</a></p>
 <h3 id="classmethod"><code>@classmethod</code><a class="headerlink" href="#classmethod" title="Permanent link">&para;</a></h3>
-<p>Use <code>@classmethod</code> for methods that are called on the type rather than on an instance, but still conceptually belong to that type.</p>
-<p>This is commonly used for constructor-style APIs:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">UserId</span><span class="p">:</span>
-    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
-
-    <span class="nd">@classmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
-</code></pre></div>
-<p>Unlike an instance method, a class method does not take <code>self</code>. Its first parameter is conventionally named <code>cls</code> and can be called like a constructor for the declaring type. Unlike a static method, it is written as a type-associated constructor-style hook and returns <code>Self</code> naturally.</p>
-<p>For generic types, <code>Self</code> keeps the active type arguments at the call site:</p>
+<ul>
+<li>Applies to methods of <code>class</code>, <code>model</code>, <code>enum</code> and <code>newtype</code> declarations.</li>
+<li>Form: <code>def name(cls, params) -&gt; Return:</code> under <code>@classmethod</code>. The leading <code>cls</code> parameter may be left out.</li>
+<li>It is called on the type, <code>TypeName.method(...)</code>. A call through an instance is refused (<code>INCAN-T0001</code>).</li>
+<li>In a class method of a <code>model</code> or <code>class</code>, <code>cls</code> is the declaring type, and <code>cls(field=value, ...)</code> constructs it. In a class method of an <code>enum</code> or <code>newtype</code>, a use of <code>cls</code> is refused (<code>INCAN-T0001</code>).</li>
+<li><code>Self</code> in its signature, and the type <code>cls(...)</code> constructs, is the declaring type with the call site's type arguments.</li>
+</ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">]:</span>
-    <span class="n">value</span><span class="p">:</span> <span class="nc">T</span>
+    <span class="k">pub</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span>
 
     <span class="nd">@classmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">make</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
         <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">boxed</span> <span class="o">=</span> <span class="nc">Box</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">boxed</span> <span class="o">=</span> <span class="nc">Box</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># accepted: Self is Box[int]</span>
     <span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">boxed</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+    <span class="n">again</span> <span class="o">=</span> <span class="n">boxed</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>      <span class="c1"># refused: a class method is called on the type (INCAN-T0001)</span>
 </code></pre></div>
-<h3 id="requires"><code>@requires(...)</code><a class="headerlink" href="#requires" title="Permanent link">&para;</a></h3>
-<p>Covered below in <a href="#requires-adopter-contract">Traits (authoring)</a>.</p>
-<hr />
 <h2 id="generic-instance-methods">Generic instance methods<a class="headerlink" href="#generic-instance-methods" title="Permanent link">&para;</a></h2>
-<p>Instance methods on <code>class</code>, <code>model</code>, <code>trait</code>, <code>enum</code>, and <code>newtype</code> may declare method-level type parameters using the same syntax as top-level generic functions:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">value</span>
-</code></pre></div>
-<p>This is method-level polymorphism: method type parameters belong to the method, not to the enclosing type.</p>
-<p>This does <strong>not</strong> replace normal method signatures. Non-generic methods still use the standard form:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="o">...</span>
-</code></pre></div>
-<p>Rules to keep in mind:</p>
 <ul>
-<li>Method type parameters appear after the method name: <code>def name[T, U with Trait](...)</code>.</li>
-<li>Method type parameters are scoped to that method only.</li>
-<li>Enclosing type parameters and method type parameters may both be used in the same signature.</li>
-<li>Trait methods may also be generic, whether they are required (<code>...</code>) or provide a default body.</li>
+<li>A method of a <code>class</code>, <code>model</code>, <code>trait</code>, <code>enum</code> or <code>newtype</code> may declare type parameters after its name: <code>def name[T, U with Trait](...)</code>.</li>
+<li>A method's type parameters are scoped to that method. The enclosing type's parameters and the method's own may appear in the same signature.</li>
+<li>A trait method may be generic, whether it is required or has a default body.</li>
 </ul>
-<p>Examples:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Shelf</span><span class="p">[</span><span class="nc">U</span><span class="p">]:</span>
     <span class="n">item</span><span class="p">:</span> <span class="nc">U</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">swap</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">swap</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>   <span class="c1"># accepted: T is scoped to swap</span>
         <span class="k">return</span> <span class="n">value</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Echo</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">value</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Slot</span><span class="p">[</span><span class="nc">U</span><span class="p">]:</span>
-    <span class="nc">Filled</span><span class="p">(</span><span class="nc">U</span><span class="p">)</span>
-    <span class="nc">Empty</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">value</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Wrapper</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">U</span><span class="p">:</span>
+<span class="k">trait</span> <span class="nc">Echo</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">value</span>
 </code></pre></div>
-<p>Method generic syntax is additive and aligned with function generics: <code>def method[T](...)</code> extends, but does not replace, <code>def method(...)</code>.</p>
-<h3 id="call-site-type-arguments">Call-site type arguments<a class="headerlink" href="#call-site-type-arguments" title="Permanent link">&para;</a></h3>
-<p>Generic calls normally infer type parameters from value arguments. You may also provide explicit type arguments at the call site.</p>
-<p>Why this feature exists (design rationale):</p>
+<h3 id="bounds-of-instantiated-types">Bounds of instantiated types<a class="headerlink" href="#bounds-of-instantiated-types" title="Permanent link">&para;</a></h3>
+<p>A bound on a type parameter of a model, class, enum or newtype (<code>model Stream[R with Clone]</code>) applies to every instantiation of that type. A function, method, model, class, enum or newtype that instantiates it with one of its own type parameters (in a parameter, return, field, payload or underlying type, or in the type of an expression in a body) must declare the same bound on that type parameter, or a bound that implies it (<code>Copy</code> implies <code>Clone</code>). Otherwise the declaration is refused with <code>INCAN-T0001</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Stream</span><span class="p">[</span><span class="nc">R</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">]:</span>
+    <span class="n">item</span><span class="p">:</span> <span class="nc">R</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="n">stream</span><span class="p">:</span> <span class="nc">Stream</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>   <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="mi">1</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">consume_any</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">stream</span><span class="p">:</span> <span class="nc">Stream</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>          <span class="c1"># refused: T does not declare Clone (INCAN-T0001)</span>
+    <span class="k">return</span> <span class="mi">1</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">wrap</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>                           <span class="c1"># refused: Stream(item=value) needs T with Clone (INCAN-T0001)</span>
+    <span class="n">stream</span> <span class="o">=</span> <span class="nc">Stream</span><span class="p">(</span><span class="n">item</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">1</span>
+</code></pre></div>
+<h3 id="operations-on-a-type-parameter">Operations on a type parameter<a class="headerlink" href="#operations-on-a-type-parameter" title="Permanent link">&para;</a></h3>
 <ul>
-<li><a href="../../explanation/call_site_type_arguments/">Why call-site type arguments exist</a></li>
+<li>A function or method body applies these to values of its own type parameter <code>T</code> without a declared bound: <code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>+</code>, <code>-</code> and <code>*</code>; <code>{value:?}</code>; <code>.clone()</code>; reading a <code>T</code> out of a <code>list[T]</code> by index or slice, or out of a <code>dict[K, T]</code> by key; using a <code>T</code> as a <code>set</code> element or <code>dict</code> key; and passing a <code>T</code> to a generic function or method that does one of these.</li>
+<li>A call's type argument provides each operation the body applies to its type parameter. A type argument that does not implement <code>Eq</code> and <code>Hash</code>, for a type parameter used as a set element or dict key, is refused (<code>INCAN-T0114</code>, see <a href="../derives/comparison/#set-elements-and-dict-keys">Set elements and dict keys</a>).</li>
+<li>Inside the function, method, model, class, enum or newtype that declares it, a type parameter <code>T</code> is one type the declaration does not choose. Where a <code>T</code> is expected, as a returned, bound, assigned, appended, yielded or passed value, alone or inside a <code>list[T]</code>, <code>dict[K, T]</code>, <code>Option[T]</code> or <code>Result[T, E]</code>, a value of a concrete type (<code>0</code>, <code>"s"</code>) or of another type parameter is refused (<code>INCAN-T0001</code>). A value of <code>T</code> and a <code>&amp;T</code> are accepted. A call binds its callee's own type parameters from its arguments, so <code>ident(0)</code> for <code>def ident[U](x: U) -&gt; U</code> is accepted in such a body.</li>
+<li>In the same declaration, a value of <code>T</code> is not a value of a concrete type. Where an <code>int</code>, a <code>str</code>, a model, a collection of another element type, a function type or a union with no <code>T</code> member is expected, a value of <code>T</code> is refused (<code>INCAN-T0001</code>): <code>return x</code> for an <code>int</code> result of <code>def f[T](x: T)</code>. Where a trait is expected, a value of <code>T</code> is accepted when a bound of <code>T</code> names that trait or a subtrait of it, and refused otherwise (<code>INCAN-T0001</code>). A <code>CallableN</code> bound does not make it a value of a function type.</li>
+<li>A method call on a value of <code>T</code> calls a method that the trait of one of its bounds, or a supertrait of that trait, declares, or <code>.clone()</code>. Any other method call is refused (<code>INCAN-T0001</code>), under a builtin trait's bound too: <code>x.to_string()</code> for <code>T with Display</code>. Under a bound on a Rust trait, a method call is accepted, and the Rust trait decides whether it builds.</li>
+<li>Displaying a value of a type parameter (<code>{value}</code>, <code>str(value)</code>, <code>print(value)</code>) needs a <code>Display</code> bound, an <code>Error</code> bound, or a bound whose trait supplies <code>__str__</code>. Without one it is refused (<code>INCAN-T0103</code>, see <a href="../strings/#display">Display</a>).</li>
+<li><code>/</code>, <code>//</code>, <code>%</code> and <code>**</code> on values of a type parameter are specified in <a href="../numeric_semantics/#operators">Numeric semantics</a>.</li>
+<li>A generic function or method of a compiled library needs of its type arguments the bounds it declares, and <code>Eq</code> and <code>Hash</code> of a type parameter its body uses as a set element or dict key. A caller in another package that passes its own type parameter to it declares on that parameter what the library function's body needs of it: <code>def head[T with Clone](items: list[T]) -&gt; T: return first(items)</code> for a library <code>first</code> that returns <code>items[0]</code>. A type parameter passed where the library function uses it as a set element or dict key, without <code>with (Eq, Hash)</code>, is refused (<code>INCAN-T0114</code>).</li>
 </ul>
-<p>Call-site type arguments go in square brackets immediately after the function or method name and before value arguments.</p>
-<p><strong>Syntax</strong>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">[</span><span class="nc">K</span><span class="p">](</span><span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">K</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">K</span><span class="p">:</span>                   <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="n">items</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">rest</span><span class="p">[</span><span class="nc">K</span><span class="p">](</span><span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">K</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">K</span><span class="p">]:</span>              <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="n">items</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">lookup</span><span class="p">[</span><span class="nc">V</span><span class="p">](</span><span class="n">table</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">V</span><span class="p">],</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">V</span><span class="p">:</span>   <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="n">table</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">head</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>                    <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="n">first</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">same</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">a</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>                     <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">==</span> <span class="n">b</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">unique</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">set</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>             <span class="c1"># accepted</span>
+    <span class="k">return</span> <span class="nb">set</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">show</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span>                                <span class="c1"># refused: T has no Display bound (INCAN-T0103)</span>
+
+<span class="k">model</span> <span class="nc">Plain</span><span class="p">:</span>
+    <span class="n">x</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">kinds</span> <span class="o">=</span> <span class="n">unique</span><span class="p">([</span><span class="nc">Plain</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mi">1</span><span class="p">)])</span>                     <span class="c1"># refused: Plain does not implement Eq and Hash (INCAN-T0114)</span>
+</code></pre></div>
+<h3 id="call-site-type-arguments">Call-site type arguments<a class="headerlink" href="#call-site-type-arguments" title="Permanent link">&para;</a></h3>
+<p>Type arguments may be written at the call site, in square brackets after the function or method name:</p>
 <ul>
 <li>Function: <code>callee[type_args](value_args...)</code></li>
 <li>Method: <code>receiver.method[type_args](value_args...)</code></li>
 </ul>
-<p><code>type_args</code> is comma-separated. Each entry is either a type expression or <code>_</code>. If brackets are present, arity must match the callee's type parameter count, including <code>_</code> slots.</p>
-<p><strong>Single type parameter</strong>:</p>
-<p>You may call with no brackets (fully inferred) or one explicit type argument:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">rows_inferred</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>         <span class="c1"># inferred when context/value args are enough</span>
-<span class="n">rows_typed</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">read_csv</span><span class="p">[</span><span class="nc">Order</span><span class="p">](</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>     <span class="c1"># explicit row type at the API boundary</span>
-</code></pre></div>
-<p><strong>Multiple type parameters</strong>:</p>
-<p>For multi-parameter generics, either infer all slots or provide one bracket entry per slot:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">parsed</span> <span class="o">=</span> <span class="n">decode_rows</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>                                 <span class="c1"># T and E inferred</span>
-<span class="n">parsed_typed</span> <span class="o">=</span> <span class="n">decode_rows</span><span class="p">[</span><span class="nc">Order</span><span class="p">,</span> <span class="nc">CsvDecodeError</span><span class="p">](</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>    <span class="c1"># both explicit</span>
-<span class="n">parsed_partial</span> <span class="o">=</span> <span class="n">decode_rows</span><span class="p">[</span><span class="nc">Order</span><span class="p">,</span> <span class="n">_</span><span class="p">](</span><span class="nb">str</span><span class="p">(</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">))</span>               <span class="c1"># T explicit, E inferred via `_`</span>
-</code></pre></div>
-<p><strong>The <code>_</code> placeholder</strong>:</p>
-<p><code>_</code> means "infer this slot". It still counts toward arity: <code>decode_rows[Order](...)</code> is invalid for a two-parameter generic, while <code>decode_rows[Order, _](...)</code> is valid.</p>
-<p><strong>Type checking order</strong>:</p>
-<p>Explicit slots are applied first. <code>_</code> slots are inferred from value arguments and normal compatibility checks. If a slot remains unresolved, the compiler reports a call-site type error.</p>
-<p><strong>What is not supported</strong>:</p>
-<p>Explicit brackets are supported for direct Incan function and method calls. A type-associated Rust call may also use <code>Type.method[T](...)</code> when the imported Rust receiver declares type parameters only; this emits Rust's <code>Type::&lt;T&gt;::method(...)</code> form. Receiver types containing const parameters are rejected because Incan v0.5 has no const-value call-site argument syntax. Using brackets on other call shapes is an error (not ignored), for example:</p>
+<p>Rules:</p>
 <ul>
-<li>Built-in calls like <code>len[int](...)</code></li>
-<li>Calls to functions imported from Rust (<code>from rust::...</code>)</li>
-<li>Calling a generic function <strong>through a variable</strong> (e.g. <code>read = session.read_csv; read[Order](...)</code>), where the callee is not a direct name or method</li>
+<li><code>type_args</code> is comma-separated. Each entry is a type or <code>_</code>.</li>
+<li>With brackets, the number of entries equals the callee's number of type parameters; <code>_</code> entries count. <code>decode_rows[Order](...)</code> is refused for a two-parameter callee; <code>decode_rows[Order, _](...)</code> is accepted.</li>
+<li>An explicit entry fixes its type parameter. A <code>_</code> entry is inferred from the value arguments. A type parameter that stays unresolved is refused (<code>INCAN-T0001</code>).</li>
+<li>Without brackets, every type parameter is inferred.</li>
+<li>The arguments that bind one type parameter bind it to one type. Arguments of numeric types bind it to the type the others widen to (see <a href="../numeric_semantics/#assignment-between-numeric-types">Assignment between numeric types</a>), in any order, and the narrower values are widened to it: <code>pick(small, wide)</code> for an <code>i8</code> value <code>small</code> and an <code>int</code> value <code>wide</code> binds <code>T</code> to <code>int</code>. Arguments of types that do not widen to one are refused (<code>INCAN-T0001</code>): <code>take(1, "s")</code> for <code>def take[T](x: T, y: T)</code>. The fields of a generic model's or class's constructor follow the same rule.</li>
+<li>A type parameter that an <code>Ok(...)</code> or <code>Err(...)</code> argument leaves open, and no other argument fixes, is settled as for a constructor bound to a local: the enclosing function's <code>Result</code> side, or <code>None</code>. The type parameter's bounds hold of the settled type: <code>first(Err(3))</code> for <code>def first[T with Display](r: Result[T, int])</code> in a function that returns no <code>Result</code> is refused (<code>INCAN-T0103</code>).</li>
+<li>A type parameter with a bound on a source or standard-library trait is fixed by an argument or by the expected type. When the only arguments for parameters that name it are literals that leave it open, or there are none, and the expected type does not name it, the call is refused (<code>INCAN-T0001</code>): <code>show(None)</code> for <code>def show[T with Display](o: Option[T])</code>, and <code>make()</code> for <code>def make[T with Display]() -&gt; list[T]</code> outside an annotated binding. A bound on a Rust capability marker (<code>Send</code>) or a Rust trait does not require it.</li>
+<li>Brackets are accepted on direct calls of Incan functions and methods, and on a type-associated Rust call <code>Type.method[T](...)</code> whose receiver declares only type parameters. They are refused (<code>INCAN-T0001</code>) on builtin calls such as <code>len[int](...)</code>, on functions imported from Rust, on a callee reached through a variable (<code>read = session.read_csv; read[Order](...)</code>), and on a Rust receiver with const parameters.</li>
 </ul>
-<hr />
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pair</span><span class="p">[</span><span class="nc">A</span><span class="p">,</span> <span class="nc">B</span><span class="p">](</span><span class="n">first</span><span class="p">:</span> <span class="nc">A</span><span class="p">,</span> <span class="n">second</span><span class="p">:</span> <span class="nc">B</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nc">A</span><span class="p">,</span> <span class="nc">B</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">second</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">pair</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">)</span>              <span class="c1"># accepted: A and B inferred</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">pair</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">](</span><span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">)</span>    <span class="c1"># accepted</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">pair</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">_</span><span class="p">](</span><span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">)</span>      <span class="c1"># accepted: B inferred</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">pair</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">)</span>         <span class="c1"># refused: pair has two type parameters (INCAN-T0001)</span>
+    <span class="n">e</span> <span class="o">=</span> <span class="nb">len</span><span class="p">[</span><span class="nb">int</span><span class="p">]([</span><span class="mi">1</span><span class="p">])</span>             <span class="c1"># refused: brackets on a builtin call (INCAN-T0001)</span>
+</code></pre></div>
 <h2 id="traits-authoring">Traits (authoring)<a class="headerlink" href="#traits-authoring" title="Permanent link">&para;</a></h2>
-<p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older <code>: ...</code> spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.</p>
-<p>Models, classes, enums, newtypes, rusttypes, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same <code>with</code> syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.</p>
+<ul>
+<li>A trait declares methods. A required method is a signature with no body (<code>def render(self) -&gt; str</code>, or with <code>: ...</code>); a default method has a body.</li>
+<li>A <code>model</code>, <code>class</code>, <code>enum</code>, <code>newtype</code> or <code>rusttype</code> adopts a trait with <code>with TraitName</code>, and declares in its body each required method that no default method supplies. An adopter without one is refused (<code>INCAN-T0001</code>).</li>
+<li>A trait adopts other traits the same way, and adoption is transitive: an adopter of <code>OrderedCollection[T]</code> also adopts <code>Collection[T]</code>.</li>
+<li>A trait is never constructed: <code>TraitName(...)</code> is refused (<code>INCAN-T0001</code>).</li>
+<li>A trait used as a type (<code>values: Collection[int]</code>) accepts any adopter of that trait instantiation.</li>
+<li>A bound <code>T with Trait[...]</code> is satisfied by a type that adopts that trait instantiation, directly or through a supertrait.</li>
+<li>A default method's body resolves the names it uses in the trait's module: a type, an enum variant or a function that the trait's module declares or imports, private functions included, whether or not the adopting module imports it.</li>
+<li>A trait imported through a module that re-exports it (<code>pub from shapes import Measured</code> in <code>geometry</code>, then <code>from geometry import Measured</code>) is the trait its declaring module declares: <code>with Measured</code> adopts <code>shapes.Measured</code>, its default methods included.</li>
+<li>A subtrait may give a compatible default body to a method its supertrait requires. An adopter of the subtrait satisfies the supertrait requirement with that default, and has one method of that name.</li>
+<li>An adopter of a trait that a <code>pub::</code> package declares, in another package, declares each method the trait gives a default body: a package publishes its traits' method signatures, not their default bodies. An adopter without one is refused (<code>INCAN-T0001</code>).</li>
+</ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="s2">&quot;An object&quot;</span>
@@ -10797,23 +10614,7 @@ So we can change the destination in one place if we move/rename sections.
 <span class="k">class</span><span class="w"> </span><span class="nc">Product</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">p</span> <span class="o">=</span> <span class="nc">Product</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Laptop&quot;</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">describe</span><span class="p">())</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Renderable</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
-
-<span class="k">enum</span> <span class="nc">Token</span> <span class="k">with</span> <span class="nc">Renderable</span><span class="p">:</span>
-    <span class="nc">Text</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
-    <span class="nc">Break</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
-            <span class="nc">Token</span><span class="o">.</span><span class="nc">Text</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">value</span>
-            <span class="nc">Token</span><span class="o">.</span><span class="nc">Break</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+<span class="k">trait</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
 
 <span class="k">trait</span> <span class="nc">OrderedCollection</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
@@ -10821,29 +10622,21 @@ So we can change the destination in one place if we move/rename sections.
 
 <span class="k">def</span><span class="w"> </span><span class="nf">first_item</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nc">Collection</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="nb">values</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
-</code></pre></div>
-<p>Rules to keep in mind:</p>
-<ul>
-<li>Traits are abstract and must not be constructed directly with <code>TraitName(...)</code>.</li>
-<li>A value annotated as <code>Collection[int]</code> may be any concrete adopter of that trait instantiation.</li>
-<li>Enum trait adoption uses the same <code>with TraitName</code> clause as model and class adoption.</li>
-<li>For enum adopters, required trait methods must be declared in the enum body.</li>
-<li>Enum adopters should satisfy behavior through methods; <code>@requires(...)</code> field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.</li>
-<li>Newtype and rusttype adopters declare the same <code>with TraitName</code> clause. When multiple adopted traits require the same method name, target each concrete method with <code>for TraitName</code> before the return arrow.</li>
-<li>Supertrait relationships are transitive: if <code>OrderedCollection[T]</code> adopts <code>Collection[T]</code>, adopters of <code>OrderedCollection[T]</code> also satisfy <code>Collection[T]</code>.</li>
-</ul>
-<p>When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">require_ordering</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">OrderedCollection</span><span class="p">[</span><span class="nb">int</span><span class="p">]](</span><span class="nb">values</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">require_ordering</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">OrderedCollection</span><span class="p">[</span><span class="nb">int</span><span class="p">]](</span><span class="nb">values</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
     <span class="k">return</span> <span class="nb">values</span>
 </code></pre></div>
-<p>The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.</p>
 <h3 id="multiple-instantiations-of-one-generic-trait">Multiple instantiations of one generic trait<a class="headerlink" href="#multiple-instantiations-of-one-generic-trait" title="Permanent link">&para;</a></h3>
-<p>Models, classes, enums, newtypes, and rusttypes may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by <code>str</code> and by <code>int</code>, converting into multiple result types, or serializing through a generic format trait.</p>
-<p>The repeated adoptions must be distinct:</p>
+<ul>
+<li>A type may adopt one generic trait several times with different type arguments: <code>with Convert[int], Convert[float]</code>.</li>
+<li>Each method that shares a name satisfies a different instantiation.</li>
+<li>Two identical instantiations are refused (<code>INCAN-T0001</code>).</li>
+<li>Two methods with the same name are refused (<code>INCAN-T0001</code>) unless each satisfies a distinct instantiation of one generic trait, or names its trait with <code>for TraitName</code>.</li>
+</ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Convert</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
 
-<span class="k">model</span> <span class="nc">Reading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>  <span class="c1"># OK</span>
+<span class="k">model</span> <span class="nc">Reading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>   <span class="c1"># accepted</span>
     <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
@@ -10852,9 +10645,8 @@ So we can change the destination in one place if we move/rename sections.
     <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
         <span class="k">return</span> <span class="mf">1.0</span>
 </code></pre></div>
-<p>This is trait dispatch, not general-purpose method overloading. The same method name is allowed here because each <code>convert</code> method satisfies a different <code>Convert[T]</code> adoption on the same type. Two ordinary methods with the same name are still rejected when they are not backed by distinct trait instantiations.</p>
 <h4 id="dispatch-from-argument-types">Dispatch from argument types<a class="headerlink" href="#dispatch-from-argument-types" title="Permanent link">&para;</a></h4>
-<p>When the same trait method takes different value parameter types, the compiler selects the matching instantiation from the call arguments:</p>
+<p>A call selects the instantiation whose method parameter types match the argument types, named arguments included.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Reader</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
 
@@ -10867,35 +10659,22 @@ So we can change the destination in one place if we move/rename sections.
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
 
-<span class="n">source</span> <span class="o">=</span> <span class="nc">Source</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;events&quot;</span><span class="p">)</span>
-<span class="n">by_name</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">&quot;latest&quot;</span><span class="p">)</span>  <span class="c1"># Reader[str]</span>
-<span class="n">by_index</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>        <span class="c1"># Reader[int]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">source</span> <span class="o">=</span> <span class="nc">Source</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;events&quot;</span><span class="p">)</span>
+    <span class="n">by_name</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">&quot;latest&quot;</span><span class="p">)</span>   <span class="c1"># accepted: selects Reader[str]</span>
+    <span class="n">by_index</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>         <span class="c1"># accepted: selects Reader[int]</span>
+    <span class="n">by_key</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>       <span class="c1"># accepted: selects Reader[int]</span>
 </code></pre></div>
-<p>Named arguments participate in the same selection. <code>source.read(key=0)</code> selects the <code>Reader[int]</code> method because the named <code>key</code> argument has type <code>int</code>.</p>
 <h4 id="dispatch-from-an-expected-return-type">Dispatch from an expected return type<a class="headerlink" href="#dispatch-from-an-expected-return-type" title="Permanent link">&para;</a></h4>
-<p>When the value arguments do not distinguish the candidates, the compiler may use an explicit expected return type. A typed binding is the most direct way to provide that context:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Convert</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
-
-<span class="k">model</span> <span class="nc">Reading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
-    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-        <span class="k">return</span> <span class="mf">1.0</span>
-
-<span class="n">reading</span> <span class="o">=</span> <span class="nc">Reading</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-<span class="n">as_float</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>
-<span class="n">as_int</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>
-</code></pre></div>
-<p>Expected return type context can also come from a function argument, an annotated return position, or equivalent explicit type context. If no rule selects exactly one candidate, the call is ambiguous:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">reading</span> <span class="o">=</span> <span class="nc">Reading</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-<span class="n">value</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>  <span class="c1"># error: the expected result type is not known</span>
+<p>When the arguments do not select one instantiation, the expected result type does: an annotated binding, a parameter the result is passed to, or an annotated return. With no expected type, the call is refused as ambiguous (<code>INCAN-T0001</code>).</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">reading</span> <span class="o">=</span> <span class="nc">Reading</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">as_float</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>   <span class="c1"># accepted: selects Convert[float]</span>
+    <span class="n">as_int</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>       <span class="c1"># accepted: selects Convert[int]</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>             <span class="c1"># refused: no expected result type (INCAN-T0001)</span>
 </code></pre></div>
 <h4 id="generic-bounds-with-trait-type-arguments">Generic bounds with trait type arguments<a class="headerlink" href="#generic-bounds-with-trait-type-arguments" title="Permanent link">&para;</a></h4>
-<p>Generic bounds may carry trait type arguments. This lets a generic function say that a receiver type <code>T</code> must support a trait instantiation chosen by another type parameter:</p>
+<p>A bound may carry trait type arguments. <code>T with Serializable[F]</code> requires <code>T</code> to adopt <code>Serializable</code> instantiated with <code>F</code>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">serialize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">format</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>
 
@@ -10911,11 +10690,11 @@ So we can change the destination in one place if we move/rename sections.
 <span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">F</span><span class="p">,</span> <span class="nc">T</span> <span class="k">with</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="nb">format</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">serialize</span><span class="p">(</span><span class="nb">format</span><span class="p">)</span>
 
-<span class="nb">bytes</span> <span class="o">=</span> <span class="n">encode</span><span class="p">[</span><span class="nc">JsonFormat</span><span class="p">,</span> <span class="nc">Event</span><span class="p">](</span><span class="nc">Event</span><span class="p">(</span><span class="n">message</span><span class="o">=</span><span class="s2">&quot;created&quot;</span><span class="p">),</span> <span class="nc">JsonFormat</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">encoded</span> <span class="o">=</span> <span class="nb">encode</span><span class="p">[</span><span class="nc">JsonFormat</span><span class="p">,</span> <span class="nc">Event</span><span class="p">](</span><span class="nc">Event</span><span class="p">(</span><span class="n">message</span><span class="o">=</span><span class="s2">&quot;created&quot;</span><span class="p">),</span> <span class="nc">JsonFormat</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">))</span>   <span class="c1"># accepted</span>
 </code></pre></div>
-<p>The bound <code>T with Serializable[F]</code> is not just a trait-name check. If <code>F</code> is <code>JsonFormat</code>, then <code>T</code> must adopt <code>Serializable[JsonFormat]</code>; adopting <code>Serializable[YamlFormat]</code> alone would not satisfy the bound.</p>
 <h4 id="enum-adopters">Enum adopters<a class="headerlink" href="#enum-adopters" title="Permanent link">&para;</a></h4>
-<p>Enum declarations use the same rules as models and classes. Each repeated generic-trait adoption must use distinct type arguments, and each same-name method must satisfy a distinct adopted trait instantiation:</p>
+<p>An enum adopts generic traits under the same rules as a model or class.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Label</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
 
@@ -10929,12 +10708,13 @@ So we can change the destination in one place if we move/rename sections.
     <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
         <span class="k">return</span> <span class="mi">1</span>
 
-<span class="n">token</span><span class="p">:</span> <span class="nc">Token</span> <span class="o">=</span> <span class="nc">Token</span><span class="o">.</span><span class="nc">Number</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-<span class="n">text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>
-<span class="n">code</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">token</span><span class="p">:</span> <span class="nc">Token</span> <span class="o">=</span> <span class="nc">Token</span><span class="o">.</span><span class="nc">Number</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>   <span class="c1"># accepted</span>
+    <span class="n">code</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>   <span class="c1"># accepted</span>
 </code></pre></div>
 <h4 id="method-level-trait-targets">Method-level trait targets<a class="headerlink" href="#method-level-trait-targets" title="Permanent link">&para;</a></h4>
-<p>When two adopted traits require the same method name, put the target trait after the parameter list and before the return arrow:</p>
+<p><code>def name(params) for TraitName -&gt; Return:</code> declares which adopted trait the method satisfies. The target is not part of the return type.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ToInt</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
 
@@ -10948,290 +10728,91 @@ So we can change the destination in one place if we move/rename sections.
     <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="k">for</span> <span class="nc">ToStr</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="mf">.0</span><span class="p">)</span>
 </code></pre></div>
-<p>The <code>for ToInt</code> qualifier belongs to the method declaration. It means this method body satisfies the adopted <code>ToInt</code> trait. It does not modify the return type.</p>
 <h4 id="rejected-cases">Rejected cases<a class="headerlink" href="#rejected-cases" title="Permanent link">&para;</a></h4>
-<p>The compiler rejects repeated identical trait instantiations:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">BadReading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>  <span class="c1"># error</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">BadReading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>   <span class="c1"># refused: identical instantiations (INCAN-T0001)</span>
     <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
-</code></pre></div>
-<p>The compiler also rejects same-name methods that are not backed by distinct trait instantiations:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Parser</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># error</span>
-</code></pre></div>
-<p>Same-name methods from unrelated trait families are rejected unless the concrete method declarations explicitly target adopted traits with <code>for TraitName</code>. Return-type and argument-type disambiguation only applies within one generic trait family:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ReadsInt</span><span class="p">:</span>
+
+<span class="k">model</span> <span class="nc">Parser</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>              <span class="c1"># refused: same name without distinct instantiations (INCAN-T0001)</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+
+<span class="k">trait</span> <span class="nc">ReadsInt</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
 
 <span class="k">trait</span> <span class="nc">ReadsStr</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
 
 <span class="k">model</span> <span class="nc">Source</span> <span class="k">with</span> <span class="nc">ReadsInt</span><span class="p">,</span> <span class="nc">ReadsStr</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># error: unrelated trait families use the same method name</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>               <span class="c1"># refused: unrelated traits share the name without `for` targets (INCAN-T0001)</span>
+        <span class="k">return</span> <span class="n">value</span>
 </code></pre></div>
-<p>Add method-level targets when both declarations are trait implementations, or use distinct method names when they are ordinary inherent methods. General call-site explicit qualification and aliasing are future language design work.</p>
 <h3 id="requires-adopter-contract"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract" title="Permanent link">&para;</a></h3>
-<p><code>@requires(...)</code> is a decorator you can put on a <code>trait</code> to declare <strong>which adopter fields must exist</strong> (and what types they must have).</p>
-<p>Syntax:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@requires</span><span class="p">(</span><span class="n">field_a</span><span class="p">:</span> <span class="nc">TypeA</span><span class="p">,</span> <span class="n">field_b</span><span class="p">:</span> <span class="nc">TypeB</span><span class="p">)</span>
-<span class="k">trait</span> <span class="nc">MyTrait</span><span class="p">:</span>
-    <span class="o">...</span>
-</code></pre></div>
-<p>What the compiler enforces:</p>
+<p><code>@requires(field_a: TypeA, field_b: TypeB)</code> on a trait names fields that every model or class adopter declares, with compatible types.</p>
 <ul>
-<li>When a <code>class</code>/<code>model</code> adopts a trait (<code>with MyTrait</code>), it must provide <strong>all required fields</strong> with compatible types.</li>
-<li>Trait default methods may access adopter fields like <code>self.field</code> <strong>only if</strong> that field is declared in <code>@requires(...)</code>.</li>
-<li>Mutating adopter fields still requires <code>mut self</code> (same as normal methods).</li>
-<li>Required fields propagate through trait hierarchies: if <code>Sub</code> adopts <code>Base</code>, adopters of <code>Sub</code> must also satisfy <code>Base</code>'s <code>@requires(...)</code> contract.</li>
+<li>An adopter that lacks a required field, or declares it with an incompatible type, is refused (<code>INCAN-T0001</code>).</li>
+<li>An <code>enum</code> or <code>newtype</code> that adopts a trait with <code>@requires(...)</code> is refused (<code>INCAN-T0001</code>).</li>
+<li>A default method of the trait reads <code>self.field</code> only for a field named in <code>@requires(...)</code>; another field is refused (<code>INCAN-T0001</code>). Changing a field needs <code>mut self</code>; a change through <code>self</code> is refused (<code>INCAN-T0102</code>).</li>
+<li>An adopter of a subtrait meets the <code>@requires(...)</code> of every supertrait.</li>
 </ul>
-<p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@requires</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span>
 <span class="k">trait</span> <span class="nc">Loggable</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
-<span class="k">class</span><span class="w"> </span><span class="nc">Service</span> <span class="k">with</span> <span class="nc">Loggable</span><span class="p">:</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Service</span> <span class="k">with</span> <span class="nc">Loggable</span><span class="p">:</span>   <span class="c1"># accepted: declares name: str</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-</code></pre></div>
-<p>Example (mutation):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@requires</span><span class="p">(</span><span class="nb">count</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span>
+
+<span class="nd">@requires</span><span class="p">(</span><span class="nb">count</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span>
 <span class="k">trait</span> <span class="nc">Counter</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">bump</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="nb">count</span> <span class="o">+=</span> <span class="mi">1</span>
 </code></pre></div>
-<p>See also: <a href="#traits-authoring">Traits (authoring)</a>.</p>
-<hr />
-<h2 id="debug-automatic">Debug (Automatic)<a class="headerlink" href="#debug-automatic" title="Permanent link">&para;</a></h2>
-<p><strong>Format</strong>: <code>{value:?}</code> (Debug)</p>
-<p><strong>Override</strong>: not supported (Debug is compiler-generated).</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Point</span><span class="p">:</span>
-    <span class="n">x</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">y</span><span class="p">:</span> <span class="nb">int</span>
+<h3 id="mut-parameters-of-trait-methods"><code>mut</code> parameters of trait methods<a class="headerlink" href="#mut-parameters-of-trait-methods" title="Permanent link">&para;</a></h3>
+<p>A <code>mut</code> parameter of a trait method, required or default, and of each method that implements it, follows the rules of <a href="../functions/#mut-parameters"><code>mut</code> parameters</a>:</p>
+<ul>
+<li>A parameter of type <code>int</code>, <code>float</code> or <code>bool</code>, or an alias of one, is the method's own copy.</li>
+<li>A parameter of any other type, except a Rust type, <code>*args</code> and <code>**kwargs</code>, shows the method's changes to the caller. The body does not rebind it or hold it in another name or value (<code>INCAN-T0001</code>). The argument of a call that changes it is a <code>mut</code> binding or parameter, <code>self</code> in a <code>mut self</code> method, a field of one of those, or a temporary; another argument is refused (<code>INCAN-T0117</code>).</li>
+<li>A method call through a type parameter's bound, on <code>self</code> in a default method, or on a trait-typed value changes such a parameter, whichever method runs.</li>
+</ul>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Grower</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">grow</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="k">mut</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="n">items</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">p</span> <span class="o">=</span> <span class="nc">Point</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">p</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># Point { x: 10, y: 20 }</span>
-</code></pre></div>
-<hr />
-<h2 id="display-custom-with-__str__">Display (Custom with <code>__str__</code>)<a class="headerlink" href="#display-custom-with-__str__" title="Permanent link">&para;</a></h2>
-<p><strong>Format</strong>: <code>{value}</code> (Display)</p>
-<p><strong>Default behavior</strong>: custom types have a default Display representation.</p>
-<p><strong>Custom behavior</strong>: define <code>__str__(self) -&gt; str</code>.</p>
-<blockquote>
-<p>Conflict rule: if you define <code>__str__</code>, you must not also <code>@derive(Display)</code>.</p>
-</blockquote>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">size</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="k">mut</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> &lt;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="si">}</span><span class="s2">&gt;&quot;</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">u</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="n">email</span><span class="o">=</span><span class="s2">&quot;alice@example.com&quot;</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">u</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># Alice &lt;alice@example.com&gt;</span>
-    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">u</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># User { name: &quot;Alice&quot;, email: &quot;alice@example.com&quot; }</span>
-</code></pre></div>
-<hr />
-<h2 id="eq-equality">Eq (Equality)<a class="headerlink" href="#eq-equality" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables <code>==</code> / <code>!=</code>.</p>
-<p><strong>Custom behavior</strong>: define <code>__eq__(self, other: Self) -&gt; bool</code>.</p>
-<blockquote>
-<p>Conflict rule: if you define <code>__eq__</code>, you must not also <code>@derive(Eq)</code>.</p>
-</blockquote>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
+<span class="k">model</span> <span class="nc">Plant</span> <span class="k">with</span> <span class="nc">Grower</span><span class="p">:</span>
     <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">id</span>
-</code></pre></div>
-<hr />
-<h2 id="ord-ordering">Ord (ordering)<a class="headerlink" href="#ord-ordering" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables ordering operators and <code>sorted(...)</code>.</p>
-<p><strong>Custom behavior</strong>: define <code>__lt__(self, other: Self) -&gt; bool</code>.</p>
-<blockquote>
-<p>Conflict rule: if you define <code>__lt__</code>, you must not also <code>@derive(Ord)</code>.</p>
-</blockquote>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Task</span><span class="p">:</span>
-    <span class="n">priority</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__lt__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">priority</span> <span class="o">&lt;</span> <span class="n">other</span><span class="o">.</span><span class="n">priority</span>
-</code></pre></div>
-<hr />
-<h2 id="hash">Hash<a class="headerlink" href="#hash" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables use as <code>Set</code> members and <code>Dict</code> keys.</p>
-<p><strong>Custom behavior</strong>: define <code>__hash__(self) -&gt; int</code>.</p>
-<blockquote>
-<p>Conflict rule: if you define <code>__hash__</code>, you must not also <code>@derive(Hash)</code>.</p>
-<p>Consistency rule: if <code>a == b</code>, then <code>a.__hash__() == b.__hash__()</code>.</p>
-</blockquote>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Eq</span><span class="p">,</span> <span class="kt">Hash</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">UserId</span><span class="p">:</span>
-    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
-</code></pre></div>
-<hr />
-<h2 id="clone">Clone<a class="headerlink" href="#clone" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables <code>.clone()</code> (deep copy).</p>
-<p>Auto-added for <code>model</code>/<code>class</code>/<code>enum</code>/<code>newtype</code>.</p>
-<hr />
-<h2 id="copy">Copy<a class="headerlink" href="#copy" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables implicit copying (marker trait).</p>
-<p>Use only for small value types; all fields must be Copy.</p>
-<hr />
-<h2 id="default">Default<a class="headerlink" href="#default" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: provides <code>Type.default()</code> baseline construction.</p>
-<p><strong>Field defaults vs <code>Default</code></strong>:</p>
-<ul>
-<li>Field defaults (<code>field: T = expr</code>) are used by normal constructors when omitted.</li>
-<li><code>@derive(Default)</code> adds <code>Type.default()</code>; it uses field defaults when present, otherwise type defaults.</li>
-</ul>
-<p>Constructor rule:</p>
-<ul>
-<li>If a field has <strong>no default</strong>, it must be provided when constructing the type.</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Default</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Settings</span><span class="p">:</span>
-    <span class="n">theme</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;dark&quot;</span>
-    <span class="n">font_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">14</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Grower</span><span class="p">](</span><span class="n">grower</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">grower</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>            <span class="c1"># refused: a call through a bound changes the parameter (INCAN-T0117)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">a</span> <span class="o">=</span> <span class="nc">Settings</span><span class="p">()</span>               <span class="c1"># OK: all omitted fields have defaults</span>
-    <span class="n">b</span> <span class="o">=</span> <span class="nc">Settings</span><span class="p">(</span><span class="n">font_size</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>   <span class="c1"># OK</span>
-    <span class="n">c</span> <span class="o">=</span> <span class="nc">Settings</span><span class="o">.</span><span class="n">default</span><span class="p">()</span>       <span class="c1"># OK</span>
+    <span class="n">plant</span> <span class="o">=</span> <span class="nc">Plant</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">mut</span> <span class="n">kept</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">fixed</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">plant</span><span class="o">.</span><span class="n">grow</span><span class="p">(</span><span class="n">kept</span><span class="p">))</span>            <span class="c1"># accepted</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">plant</span><span class="o">.</span><span class="n">grow</span><span class="p">([</span><span class="mi">5</span><span class="p">]))</span>             <span class="c1"># accepted</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">plant</span><span class="o">.</span><span class="n">grow</span><span class="p">(</span><span class="n">fixed</span><span class="p">))</span>           <span class="c1"># refused: fixed is not declared mut (INCAN-T0117)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">plant</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="n">fixed</span><span class="p">))</span>           <span class="c1"># accepted: size does not change the parameter</span>
 </code></pre></div>
-<hr />
-<h2 id="serialize">Serialize<a class="headerlink" href="#serialize" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables JSON serialization.</p>
-<p><strong>API</strong>:</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>json_stringify(value)</code> → <code>str</code></li>
-<li><code>value.to_json()</code> → <code>str</code> when the type imports and adopts <code>std.serde.json.Serialize</code></li>
+<li><a href="../../tutorials/book/11_traits_and_derives/">The Incan Book: Traits and derives</a></li>
+<li><a href="../../explanation/derives_and_traits/">Derives and traits (explanation)</a></li>
+<li><a href="../../explanation/how_derives_work/">How derives work</a></li>
+<li><a href="../../explanation/models_and_classes/classes/#class-methods-classmethod">Classes: Class methods</a></li>
+<li><a href="../../explanation/derives_and_traits/#trait-dispatch-is-not-overloading">Trait dispatch is not overloading</a></li>
+<li><a href="../../explanation/call_site_type_arguments/">Why call-site type arguments exist</a></li>
+<li><a href="../../explanation/error_handling/">Error handling (explanation)</a></li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="nc">Serialize</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">u</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="n">age</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="nb">json_stringify</span><span class="p">(</span><span class="n">u</span><span class="p">))</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span>
-
-<span class="k">model</span> <span class="nc">User</span> <span class="k">with</span> <span class="nc">Serialize</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="n">age</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span>
-</code></pre></div>
-<p>Use the RFC 024 module derive when a model should adopt both JSON traits and expose module-qualified bounds:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
-</code></pre></div>
-<hr />
-<h2 id="deserialize">Deserialize<a class="headerlink" href="#deserialize" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables JSON parsing into a type.</p>
-<p><strong>API</strong>:</p>
-<ul>
-<li><code>T.from_json(input: str)</code> → <code>Result[T, str]</code></li>
-</ul>
-<p>Note: explicit <code>with Deserialize</code> adoption still needs either an imported <code>@derive(Deserialize)</code> or a user-defined <code>from_json(input)</code> implementation.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Deserialize</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="kt">result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nc">User</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="s2">&quot;{</span><span class="se">\&quot;</span><span class="s2">name</span><span class="se">\&quot;</span><span class="s2">:</span><span class="se">\&quot;</span><span class="s2">Alice</span><span class="se">\&quot;</span><span class="s2">,</span><span class="se">\&quot;</span><span class="s2">age</span><span class="se">\&quot;</span><span class="s2">:30}&quot;</span><span class="p">)</span>
-</code></pre></div>
-<hr />
-<h2 id="validate-models-only">Validate (Models only)<a class="headerlink" href="#validate-models-only" title="Permanent link">&para;</a></h2>
-<p><strong>What it does</strong>: enables validated construction for models.</p>
-<p><strong>API</strong>:</p>
-<ul>
-<li><code>TypeName.new(...)</code> → <code>Result[TypeName, E]</code></li>
-</ul>
-<p>Rule:</p>
-<ul>
-<li>If a <code>model</code> derives <code>Validate</code>, you must construct it via <code>TypeName.new(...)</code>. Raw construction via <code>TypeName(...)</code> is a compile-time error.</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Validate</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">EmailUser</span><span class="p">:</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EmailUser</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-        <span class="k">if</span> <span class="s2">&quot;@&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="p">:</span>
-            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;invalid email&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">make_user</span><span class="p">(</span><span class="n">email</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EmailUser</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="nc">EmailUser</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">email</span><span class="o">=</span><span class="n">email</span><span class="p">)</span>
-</code></pre></div>
-<p>See: <a href="../derives/validation/">Derives: Validation</a></p>
-<hr />
-<h2 id="compiler-errors-reference">Compiler errors (reference)<a class="headerlink" href="#compiler-errors-reference" title="Permanent link">&para;</a></h2>
-<h3 id="unknown-derive-example">Unknown derive (example)<a class="headerlink" href="#unknown-derive-example" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Debg</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-</code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span class="nb">type</span><span class="w"> </span>error:<span class="w"> </span>Unknown<span class="w"> </span>derive<span class="w"> </span><span class="s1">&#39;Debg&#39;</span>
-</code></pre></div>
-<h3 id="deriving-a-non-trait-example">Deriving a non-trait (example)<a class="headerlink" href="#deriving-a-non-trait-example" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="nc">User</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">Admin</span><span class="p">:</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
-</code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span class="nb">type</span><span class="w"> </span>error:<span class="w"> </span>Cannot<span class="w"> </span>derive<span class="w"> </span><span class="s1">&#39;User&#39;</span><span class="w"> </span>-<span class="w"> </span>it<span class="w"> </span>is<span class="w"> </span>a<span class="w"> </span>model,<span class="w"> </span>not<span class="w"> </span>a<span class="w"> </span>trait
-</code></pre></div>
-<hr />
-<h2 id="reflection-automatic">Reflection (automatic)<a class="headerlink" href="#reflection-automatic" title="Permanent link">&para;</a></h2>
-<p>Models and classes provide:</p>
-<ul>
-<li><code>__fields__() -&gt; FrozenList[FieldInfo]</code></li>
-<li><code>__class_name__() -&gt; str</code></li>
-</ul>
-<p>Note:</p>
-<ul>
-<li>Field metadata like <code>[alias="..."]</code> and <code>[description="..."]</code> is <strong>model-only</strong>. For <code>class</code>, <code>FieldInfo.alias</code> and <code>FieldInfo.description</code> are always <code>None</code> and <code>FieldInfo.wire_name == FieldInfo.name</code>.</li>
-<li><code>u.__fields__()</code> is typed as <code>FrozenList[FieldInfo]</code> directly by the compiler. Import <code>FieldInfo</code> only when you need to spell that type in an annotation.</li>
-</ul>
-<p>See <a href="../reflection/">Reflection (Reference)</a> for <code>FieldInfo</code> structure details.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">u</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">__class_name__</span><span class="p">())</span>
-    <span class="nb">println</span><span class="p">([</span><span class="n">f</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">u</span><span class="o">.</span><span class="n">__fields__</span><span class="p">()])</span>
-</code></pre></div>
-<h2 id="stdlib-derive-boundaries">Stdlib derive boundaries<a class="headerlink" href="#stdlib-derive-boundaries" title="Permanent link">&para;</a></h2>
-<p>Traits under <code>std.derives.*</code> are source-defined capability contracts.</p>
-<ul>
-<li><code>Clone</code>, <code>Default</code>, <code>Debug</code>, <code>Eq</code>, <code>Ord</code>, and <code>Hash</code> are declared in <code>.incn</code> source.</li>
-<li>Implementations for adopting types come from ordinary Rust <code>#[derive(...)]</code> expansion during codegen.</li>
-<li>These traits are not modeled as runtime helper calls through <code>incan_std_core::derives::*</code>.</li>
-</ul>
-<p>For the curated stdlib-family view, see <a href="../stdlib/derives/">Standard library reference: <code>std.derives.*</code></a>.</p>
 
 
 

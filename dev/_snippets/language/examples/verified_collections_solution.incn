@@ -9,11 +9,11 @@ def main() -> None:
     # 2) Count occurrences.
     mut name_counts: dict[str, int] = {}
     for name in normalized:
-        current_count = name_counts.get(name).copied().unwrap_or(0)
+        current_count = name_counts.get(name).unwrap_or(0)
         name_counts[name] = current_count + 1
 
     # 3) Deduplicate and print counts (set iteration order is not guaranteed).
     unique = set(normalized)
     for name in unique:
-        count = name_counts.get(name).copied().unwrap_or(0)
+        count = name_counts.get(name).unwrap_or(0)
         println(f"{name}: {count}")
