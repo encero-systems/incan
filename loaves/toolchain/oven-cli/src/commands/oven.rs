@@ -6057,6 +6057,29 @@ mod tests {
         assert_eq!(compiler_suite_libtest_threads(64, 4), 2);
     }
 
+    /// No behavior root receives a Cargo authority: its programs run on the sealed stdlib Loaf, and the provider bakes
+    /// of its `*_dependencies` areas are Cargo-guarded, so a bake that needs Cargo fails there. The roots are generated
+    /// one per area, so every `behavior_*_tests.rs` on disk is checked rather than a list that would go stale.
+    #[test]
+    fn no_behavior_root_receives_a_cargo_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../incan-cli/tests");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&tests)? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            if !(name.starts_with("behavior_") && name.ends_with("_tests.rs")) {
+                continue;
+            }
+            let root = format!("loaves/toolchain/incan-cli/tests/{name}");
+            let capabilities = OvenCompilerSuiteTargetCapabilities::for_target("incan-cli", "test", &root);
+            assert!(!capabilities.explicit_bake_cargo, "{root}");
+            assert!(!capabilities.cargo_fixture, "{root}");
+            checked += 1;
+        }
+        assert!(checked > 0, "no behavior root found under {}", tests.display());
+        Ok(())
+    }
+
+    /// The generated-Rust closure environment reaches only the roots that consume it.
     #[test]
     fn compiler_suite_limits_generated_rust_closure_to_its_consumers() {
         assert!(OvenCompilerSuiteTargetCapabilities::for_target("incan", "lib", "src/lib.rs").generated_rust_closure);
@@ -6135,22 +6158,6 @@ mod tests {
             )
             .cargo_fixture
         );
-        // No behavior-fixture root receives a Cargo authority: its programs run on the sealed stdlib Loaf, and the
-        // `cli_dependencies` area's provider bakes are Cargo-guarded, so a bake that needs Cargo fails there.
-        for root in [
-            "loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs",
-            "loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs",
-            "loaves/toolchain/incan-cli/tests/behavior_codegen_tests.rs",
-            "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs",
-            "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs",
-            "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs",
-            "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs",
-        ] {
-            let capabilities = OvenCompilerSuiteTargetCapabilities::for_target("incan-cli", "test", root);
-            assert!(!capabilities.explicit_bake_cargo, "{root}");
-            assert!(!capabilities.cargo_fixture, "{root}");
-        }
-
         let mut environment = BTreeMap::from([
             ("INCAN_OVEN_COMPILER_SUITE_RUSTC".to_string(), "rustc".to_string()),
             (
