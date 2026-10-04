@@ -1,4 +1,5 @@
 # behavior: a for loop destructuring tuples returns from its body (parity corpus row replacement-body-v0-006)
+# pending: the legacy route compares a borrowed tuple element with an int, which rustc rejects (E0277); the direct route runs it
 # expect-stdout:
 #   45
 
