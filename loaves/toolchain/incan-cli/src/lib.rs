@@ -1453,7 +1453,7 @@ fn build_toolchain_binaries_if_declared(
 
 /// Refuse build controls that the stored direct-rustc toolchain-binary path cannot honor.
 fn reject_unsupported_toolchain_build_options(request: &BuildCommandRequest) -> CliResult<()> {
-    incan_driver::build::replacement::reject_normal_cargo_controls(
+    incan_driver::cargo_policy::reject_normal_cargo_controls(
         &request.options.cargo_policy,
         request.options.generated_cargo_target_dir.as_ref(),
     )?;

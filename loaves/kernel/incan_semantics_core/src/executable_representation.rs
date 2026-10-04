@@ -244,8 +244,9 @@ struct AdmittedDeclaration {
 
 /// Build one package's deterministic public representation from its single declaring compilation.
 ///
-/// `public` comes from the finalized manifest, including public members. `unrepresentable` records the current
-/// execution profile's refusals in addition to this layer's portable-reference checks.
+/// `public` comes from the finalized manifest, including public members. `unrepresentable` names the bodies Body IR
+/// could not fully represent ([`crate::body_ir::Body::first_representation_gap`]), in addition to this layer's
+/// portable-reference checks.
 ///
 /// The work is a pipeline and the order is load-bearing, in a way worth stating exactly. Coverage starts
 /// pessimistic, and `Covered` is written once, in the final phase, from whatever is still admitted by then. The

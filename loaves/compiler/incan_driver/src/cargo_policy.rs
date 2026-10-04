@@ -175,8 +175,44 @@ pub fn cargo_command_flags(policy: &CargoPolicy, cargo_features: &CargoFeatureSe
     flags
 }
 
+/// Reject controls that only have meaning for the retired Cargo execution backend.
+///
+/// Lock strictness is deliberately not rejected: it validates compiler-owned `oven.lock` consistency before Oven
+/// selection without launching Cargo. Offline is already satisfied because this normal path starts neither Cargo nor
+/// a networked dependency resolver.
+pub fn reject_normal_cargo_controls(
+    cargo_policy: &CargoPolicy,
+    target_dir: Option<&std::path::PathBuf>,
+) -> CliResult<()> {
+    if !cargo_policy.extra_args.is_empty() || target_dir.is_some() {
+        return Err(CliError::failure(
+            "Oven Alpha normal build and run do not accept Cargo passthrough or target-directory controls; use the supported Oven-native provider/dependency envelope instead",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oven_normal_commands_keep_lock_strictness_but_reject_cargo_backend_controls() {
+        use std::path::PathBuf;
+        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(true, false, false, Vec::new()), None).is_ok());
+        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(false, true, false, Vec::new()), None).is_ok());
+        assert!(reject_normal_cargo_controls(&CargoPolicy::explicit(false, false, true, Vec::new()), None).is_ok());
+        assert!(
+            reject_normal_cargo_controls(
+                &CargoPolicy::explicit(false, false, false, vec!["--timings".to_string()]),
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            reject_normal_cargo_controls(&CargoPolicy::default(), Some(&PathBuf::from("target/generated-cargo")),)
+                .is_err()
+        );
+    }
+
     use super::*;
 
     #[test]
