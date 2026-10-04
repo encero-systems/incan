@@ -518,6 +518,15 @@ pub struct RustBinaryRole {
     /// The binary's root source, relative to the project directory and below the Rust root (`src/main.rs` for the
     /// conventional binary, `<rust.source root>/src/bin/<name>.rs` for a mixed Loaf).
     pub path: String,
+    /// Unit-scoped unstable permissions; an embedded compiler must grant these through its session options.
+    #[serde(default)]
+    pub unstable_features: Vec<String>,
+    /// Toolchain components required before this unit can be compiled.
+    #[serde(default)]
+    pub toolchain_components: Vec<String>,
+    /// Sysroot crate roots that this executable must depend on directly.
+    #[serde(default)]
+    pub sysroot_dependencies: Vec<String>,
 }
 
 /// One RFC 119 declared-fact record: the build facts of this Loaf's Rust unit for one exact selection.
@@ -1698,6 +1707,26 @@ fn validate_rust_binary_roles(
     let mut names = HashSet::new();
     let mut paths = HashSet::new();
     for (index, role) in roles.iter().enumerate() {
+        for (field, values, admitted) in [
+            ("unstable_features", &role.unstable_features, "rustc_private"),
+            ("toolchain_components", &role.toolchain_components, "rustc-dev"),
+            ("sysroot_dependencies", &role.sysroot_dependencies, "rustc_driver"),
+        ] {
+            if values.len() > 1 || values.iter().any(|value| value != admitted) {
+                return Err(invalid(
+                    index,
+                    format!("{field} accepts only the distinct capability `{admitted}`"),
+                ));
+            }
+        }
+        if !role.unstable_features.is_empty()
+            && (role.toolchain_components.is_empty() || role.sysroot_dependencies.is_empty())
+        {
+            return Err(invalid(
+                index,
+                "rustc_private requires rustc-dev and a direct rustc_driver root".to_string(),
+            ));
+        }
         let name = role.name.trim();
         if name.is_empty()
             || name != role.name
@@ -4280,6 +4309,7 @@ toml = "0.9"
         }
     }
 
+    /// Conventional roles carry no unstable permission unless the manifest declares it explicitly.
     #[test]
     fn a_rust_loaf_declares_the_binaries_convention_cannot_name() -> TestResult {
         let content = r#"
@@ -4302,10 +4332,16 @@ path = "src/bin/probe.rs"
                 RustBinaryRole {
                     name: "incan".to_string(),
                     path: "src/main.rs".to_string(),
+                    unstable_features: Vec::new(),
+                    toolchain_components: Vec::new(),
+                    sysroot_dependencies: Vec::new(),
                 },
                 RustBinaryRole {
                     name: "incan-probe".to_string(),
                     path: "src/bin/probe.rs".to_string(),
+                    unstable_features: Vec::new(),
+                    toolchain_components: Vec::new(),
+                    sysroot_dependencies: Vec::new(),
                 },
             ]
         );
@@ -4316,6 +4352,25 @@ path = "src/bin/probe.rs"
         assert_eq!(mixed.rust_binary_roles().len(), 1);
         let conventional = ProjectManifest::from_str("[project]\nname = \"plain\"\n", Path::new("loaf.toml"))?;
         assert!(conventional.rust_binary_roles().is_empty());
+        Ok(())
+    }
+
+    /// rustc-private capabilities are unit-local and require the component and direct executable root together.
+    #[test]
+    fn rustc_private_roles_require_a_complete_distinct_capability_selection() -> TestResult {
+        let base = "[project]\nname = \"native\"\n[[rust.bin]]\nname = \"native\"\npath = \"src/main.rs\"\n";
+        let complete = "unstable_features = [\"rustc_private\"]\ntoolchain_components = [\"rustc-dev\"]\nsysroot_dependencies = [\"rustc_driver\"]\n";
+        let manifest = ProjectManifest::from_str(&format!("{base}{complete}"), Path::new("loaf.toml"))?;
+        assert_eq!(manifest.rust_binary_roles()[0].unstable_features, ["rustc_private"]);
+        for capability in [
+            "unstable_features = [\"rustc_private\"]\n",
+            "unstable_features = [\"rustc_private\", \"rustc_private\"]\n",
+            "unstable_features = [\"untracked\"]\n",
+            "toolchain_components = [\"unknown-component\"]\n",
+            "sysroot_dependencies = [\"unknown-root\"]\n",
+        ] {
+            assert!(ProjectManifest::from_str(&format!("{base}{capability}"), Path::new("loaf.toml")).is_err());
+        }
         Ok(())
     }
 

@@ -574,6 +574,46 @@ fn discover_project_rust_binary_units(manifest: &ProjectManifest) -> CliResult<V
     Ok(units)
 }
 
+/// Collect the Rust source tree used by a split project unit, refusing symlinked source entries.
+///
+/// This conservative closure includes every Rust file below the root's directory. The same complete directory
+/// enters receipt evidence, so moving a caller import into a module cannot hide it from selection or reuse identity.
+fn project_rust_source_text(source: &Path) -> CliResult<String> {
+    let root = source
+        .parent()
+        .ok_or_else(|| CliError::failure("Rust source has no parent directory"))?;
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| CliError::failure(format!("cannot read Rust source directory: {error}")))?
+        {
+            let entry = entry.map_err(|error| CliError::failure(format!("cannot read Rust source entry: {error}")))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| CliError::failure(format!("cannot read Rust source type: {error}")))?;
+            if kind.is_symlink() {
+                return Err(CliError::failure("Rust source tree must not contain symlinks"));
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file() && entry.path().extension().is_some_and(|extension| extension == "rs") {
+                files.push(entry.path());
+            }
+        }
+    }
+    files.sort();
+    let mut text = String::new();
+    for file in files {
+        text.push_str(
+            &fs::read_to_string(&file)
+                .map_err(|error| CliError::failure(format!("cannot read Rust module {}: {error}", file.display())))?,
+        );
+        text.push('\n');
+    }
+    Ok(text)
+}
+
 /// Hash the checked caller surface selected for one library and Rust unit.
 fn caller_facet_digest(library: &str, exports: &BTreeSet<String>) -> String {
     let mut hasher = Sha256::new();
@@ -682,6 +722,12 @@ fn project_rust_unit_receipt(
         Vec::new(),
     )
     .with_generated_source("rust-unit", source)
+    .with_generated_source_tree(
+        "rust-unit-modules",
+        source
+            .parent()
+            .ok_or_else(|| CliError::failure("Rust source has no parent directory"))?,
+    )
     .with_build_unit_input("callee-incan-unit", callee_identity)
     .with_build_unit_input("caller-facet", facet_id);
     let evidence = generated_project_source_evidence(&request).map_err(|error| CliError::failure(error.to_string()))?;
@@ -691,17 +737,30 @@ fn project_rust_unit_receipt(
     Ok((receipt, receipt_path))
 }
 
+/// One checked Rust caller unit, shared unchanged by its debug and release profile bakes.
+struct ProjectRustCallerUnit<'a> {
+    unit_name: &'a str,
+    source: &'a Path,
+    library: &'a str,
+    dependency: &'a oven_model::manifest::LibraryDependencySpec,
+    selection: &'a crate::build::caller_facet::CallerFacetSelection,
+    facet_id: &'a str,
+}
+
 /// Build one profile of one Rust unit against its selected Incan caller artifact.
 fn bake_project_rust_profile(
     context: &ProjectRustBakeContext<'_>,
-    unit_name: &str,
-    source: &Path,
-    library: &str,
-    dependency: &oven_model::manifest::LibraryDependencySpec,
-    selection: &crate::build::caller_facet::CallerFacetSelection,
-    facet_id: &str,
+    unit: &ProjectRustCallerUnit<'_>,
     profile: &str,
 ) -> CliResult<OvenProjectBakeProfileReport> {
+    let ProjectRustCallerUnit {
+        unit_name,
+        source,
+        library,
+        dependency,
+        selection,
+        facet_id,
+    } = *unit;
     let receipt_reference = format!("target/rust/receipts/{unit_name}-{profile}.json");
     let caller = CallerFacetRequest {
         exports: selection.exports.iter().cloned().collect(),
@@ -816,6 +875,19 @@ fn bake_project_rust_units(
     package_features: &FeatureSelection,
     requested_target: Option<&str>,
 ) -> CliResult<OvenProjectBakeReport> {
+    for role in manifest.rust_binary_roles() {
+        if !role.unstable_features.is_empty()
+            || !role.toolchain_components.is_empty()
+            || !role.sysroot_dependencies.is_empty()
+        {
+            return Err(CliError::failure(format!(
+                "Rust unit `{}` requires an identity-bound embedded compiler to grant {:?} through \
+                 `unstable_features`; plain pinned rustc cannot grant session permissions, and no \
+                 seed compiler is selected by this project planner (RUSTC_BOOTSTRAP is forbidden)",
+                role.name, role.unstable_features
+            )));
+        }
+    }
     if manifest.library_dependencies().is_empty() {
         return Err(CliError::failure(
             "a project Rust unit must declare an Incan `loaf` dependency",
@@ -850,8 +922,7 @@ fn bake_project_rust_units(
     let mut generated_sources = BTreeMap::new();
 
     for (unit_name, source) in units {
-        let source_text = fs::read_to_string(source)
-            .map_err(|error| CliError::failure(format!("cannot read Rust unit {}: {error}", source.display())))?;
+        let source_text = project_rust_source_text(source)?;
         let requested_by_library = cached_rust_caller_paths(manifest.project_root(), unit_name, &source_text)?;
         if requested_by_library.is_empty() {
             return Err(CliError::failure(format!(
@@ -871,11 +942,17 @@ fn bake_project_rust_units(
             let checked = checked_library_exports(&library_source)?;
             let selection = select_checked_caller_exports(&library, &requested, &checked).map_err(CliError::failure)?;
             let facet_id = caller_facet_digest(&library, &requested);
+            let unit = ProjectRustCallerUnit {
+                unit_name,
+                source,
+                library: &library,
+                dependency,
+                selection: &selection,
+                facet_id: &facet_id,
+            };
             for profile in explicit_bake_profiles() {
                 generated_sources.insert(format!("rust:{unit_name}"), source.clone());
-                profiles.push(bake_project_rust_profile(
-                    &context, unit_name, source, &library, dependency, &selection, &facet_id, profile,
-                )?);
+                profiles.push(bake_project_rust_profile(&context, &unit, profile)?);
             }
         }
     }

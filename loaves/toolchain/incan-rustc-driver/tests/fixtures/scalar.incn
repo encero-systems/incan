@@ -1,0 +1,9 @@
+def add_scores(a: int, b: int) -> int:
+    # The hand-filled plan uses this addition's source location.
+    return a + b
+
+
+def main() -> None:
+    value = add_scores(20, 22)
+    if value > 0:
+        println(value)

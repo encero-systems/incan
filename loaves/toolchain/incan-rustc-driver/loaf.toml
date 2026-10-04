@@ -1,0 +1,18 @@
+[project]
+name = "incan-rustc-driver"
+version = "0.6.0-dev.7"
+private = true
+
+[dependencies]
+incan_mir_plan = { loaf = "incan_mir_plan", path = "../../compiler/incan_mir_plan" }
+
+[rust-dependencies]
+thiserror = "2"
+sha2 = "0.10.9"
+
+[[rust.bin]]
+name = "incan-rustc-driver"
+path = "src/main.rs"
+unstable_features = ["rustc_private"]
+toolchain_components = ["rustc-dev"]
+sysroot_dependencies = ["rustc_driver"]
