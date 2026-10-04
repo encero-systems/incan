@@ -676,10 +676,12 @@ pub fn prepare_library_project(
     library_manifest.contract_metadata.api = Some(checked_api);
     let public_identities =
         incan_frontend::library_manifest::published_layout::public_executable_identities(&library_manifest);
+    // A published body is unrepresentable when Body IR has a gap in it, not when one consumer cannot execute it: what
+    // a package publishes is a fact about the package, and every consumer reads the same representation.
     let unrepresentable = executable_modules
         .iter()
         .flat_map(|module| module.bodies.iter())
-        .filter(|body| crate::backend::replacement::validate_direct_body_profile(body).is_err())
+        .filter(|body| body.first_representation_gap().is_some())
         .filter_map(|body| body.canonical.clone())
         .collect();
     let executable_surface = incan_semantics_core::executable_representation::build_surface(

@@ -61,8 +61,8 @@ use incan_semantics_core::body_ir::{
     ValueEnumVariantTarget,
 };
 use incan_semantics_core::{
-    AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, HirSourceSpan, IncanPrimitiveType,
-    IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+    AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanPrimitiveType, IncanType,
+    SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
 
 use crate::selection::digest_output;
@@ -651,170 +651,39 @@ fn value_enum_scalar_value(
     }
 }
 
-/// Return whether `id` is one canonical span-derived declaration identity owned by `module`.
-///
-/// The registry is supplied alongside executable Body IR, so membership alone cannot establish source locality: a
-/// malformed module could otherwise carry a coherent-looking foreign record and target. Direct value-enum execution
-/// accepts only the exact `CompilerNodeId::declaration_span` shape emitted for this module by lowering.
+/// Body IR identity well-formedness, as every consumer checks it; see `incan_semantics_core::body_ir_identity`.
 fn is_module_span_declaration_id(module: &BodyIrModule, id: &CompilerNodeId) -> bool {
-    if module.module_id.kind() != CompilerNodeKind::Module || id.kind() != CompilerNodeKind::Declaration {
-        return false;
-    }
-    let prefix = format!("{}#decl.", module.module_id.path());
-    let Some(span) = id.path().strip_prefix(&prefix) else {
-        return false;
-    };
-    let Some((start, end)) = span.split_once("..") else {
-        return false;
-    };
-    matches!(
-        (start.parse::<usize>(), end.parse::<usize>()),
-        (Ok(start), Ok(end)) if start <= end
-    )
+    module.is_own_span_declaration_id(id)
 }
 
-/// Return whether a body retains precisely the source-span identity lowering derives for its own declaration.
-///
-/// A caller's direct identity is not enough to establish a dispatch target: malformed Body IR could copy a valid
-/// same-module identity onto an unrelated body. Direct execution therefore requires both a unique target match and
-/// this body-local canonicality check before it enters the child frame.
+/// See [`BodyIrModule::body_has_canonical_direct_call_id`].
 fn has_canonical_direct_call_id(module: &BodyIrModule, body: &Body) -> bool {
-    body.direct_call_id == CompilerNodeId::declaration_span(module.module_id.path(), body.span.start, body.span.end)
-        && body.canonical.as_ref().is_some_and(|canonical| {
-            canonical.declaration_name == body.name
-                && direct_declaration_id_for_canonical(
-                    module,
-                    canonical,
-                    SymbolNamespace::OrdinaryLexical,
-                    SemanticSourceTargetKind::Function,
-                ) == Some(body.direct_call_id.clone())
-        })
+    module.body_has_canonical_direct_call_id(body)
 }
 
-/// Project one retained source-module identity onto the physical declaration id used by this Body-IR module.
-///
-/// This never mints or completes a semantic identity. It only checks that the already-retained identity belongs to
-/// this module, then derives the local span key needed to address the module's physical declaration records.
+/// See [`BodyIrModule::declaration_id_for_canonical`].
 fn direct_declaration_id_for_canonical(
     module: &BodyIrModule,
     identity: &CanonicalSymbolId,
     expected_namespace: SymbolNamespace,
     expected_kind: SemanticSourceTargetKind,
 ) -> Option<CompilerNodeId> {
-    let owner = incan_semantics_core::canonical_module_identity(identity)?;
-    (identity.namespace == expected_namespace
-        && identity.kind == expected_kind
-        && identity.scope_discriminant.is_none()
-        && owner == module.module_id.path())
-    .then(|| {
-        CompilerNodeId::declaration_span(
-            module.module_id.path(),
-            identity.declaration_span.start,
-            identity.declaration_span.end,
-        )
-    })
+    module.declaration_id_for_canonical(identity, expected_namespace, expected_kind)
 }
 
-/// Validate that a retained plain-model layout is internally consistent with its checked canonical identities.
+/// See [`BodyIrModule::is_well_formed_nominal_declaration`].
 fn valid_local_nominal_declaration(module: &BodyIrModule, declaration: &NominalDeclaration) -> bool {
-    direct_declaration_id_for_canonical(
-        module,
-        &declaration.canonical,
-        SymbolNamespace::OrdinaryLexical,
-        SemanticSourceTargetKind::Model,
-    ) == Some(declaration.direct_declaration_id.clone())
-        && declaration.canonical.declaration_name == declaration.name
-        && declaration.fields.len() == declaration.field_identities.len()
-        && declaration.fields.iter().collect::<BTreeSet<_>>().len() == declaration.fields.len()
-        && declaration.field_identities.iter().collect::<BTreeSet<_>>().len() == declaration.field_identities.len()
-        && declaration
-            .fields
-            .iter()
-            .zip(&declaration.field_identities)
-            .all(|(name, identity)| {
-                identity.namespace == SymbolNamespace::Member
-                    && identity.kind == SemanticSourceTargetKind::Field
-                    && identity.scope_discriminant.is_none()
-                    && identity.origin == declaration.canonical.origin
-                    && identity.declaration_name == *name
-            })
+    module.is_well_formed_nominal_declaration(declaration)
 }
 
-/// Validate one retained enum owner/member registry without recovering any identity from its source spelling.
-fn valid_local_enum_declaration<T>(
-    module: &BodyIrModule,
-    direct_declaration_id: &CompilerNodeId,
-    canonical: &CanonicalSymbolId,
-    name: &str,
-    variants: &[T],
-    variant_facts: impl Fn(&T) -> (&CompilerNodeId, &CanonicalSymbolId, &str),
-) -> bool {
-    direct_declaration_id_for_canonical(
-        module,
-        canonical,
-        SymbolNamespace::OrdinaryLexical,
-        SemanticSourceTargetKind::Enum,
-    ) == Some(direct_declaration_id.clone())
-        && canonical.declaration_name == name
-        && variants
-            .iter()
-            .map(|variant| variant_facts(variant).0)
-            .collect::<BTreeSet<_>>()
-            .len()
-            == variants.len()
-        && variants
-            .iter()
-            .map(|variant| variant_facts(variant).2)
-            .collect::<BTreeSet<_>>()
-            .len()
-            == variants.len()
-        && variants.iter().all(|variant| {
-            let (direct_variant_id, variant_canonical, variant_name) = variant_facts(variant);
-            direct_declaration_id_for_canonical(
-                module,
-                variant_canonical,
-                SymbolNamespace::Member,
-                SemanticSourceTargetKind::Variant,
-            ) == Some(direct_variant_id.clone())
-                && variant_canonical.origin == canonical.origin
-                && variant_canonical.declaration_name == variant_name
-        })
-}
-
-/// Return whether a retained fieldless enum is internally bound to this Body-IR module.
+/// See [`BodyIrModule::is_well_formed_fieldless_enum_declaration`].
 fn valid_local_fieldless_enum_declaration(module: &BodyIrModule, declaration: &FieldlessEnumDeclaration) -> bool {
-    valid_local_enum_declaration(
-        module,
-        &declaration.direct_declaration_id,
-        &declaration.canonical,
-        &declaration.name,
-        &declaration.variants,
-        |variant| {
-            (
-                &variant.direct_declaration_id,
-                &variant.canonical,
-                variant.name.as_str(),
-            )
-        },
-    )
+    module.is_well_formed_fieldless_enum_declaration(declaration)
 }
 
-/// Return whether a retained value enum is internally bound to this Body-IR module.
+/// See [`BodyIrModule::is_well_formed_value_enum_declaration`].
 fn valid_local_value_enum_declaration(module: &BodyIrModule, declaration: &ValueEnumDeclaration) -> bool {
-    valid_local_enum_declaration(
-        module,
-        &declaration.direct_declaration_id,
-        &declaration.canonical,
-        &declaration.name,
-        &declaration.variants,
-        |variant| {
-            (
-                &variant.direct_declaration_id,
-                &variant.canonical,
-                variant.name.as_str(),
-            )
-        },
-    )
+    module.is_well_formed_value_enum_declaration(declaration)
 }
 
 impl ReplacementValue {

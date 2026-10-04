@@ -473,6 +473,88 @@ impl Body {
     }
 }
 
+impl Body {
+    /// The description of the first construct Body IR could not represent in this body, or `None` when it
+    /// represents all of it.
+    ///
+    /// A gap is an `unsupported(..)` statement or a parameter default Body IR could not source, found anywhere in the
+    /// body: nested `if`/`loop`/`race` blocks, `match` arm guards and bodies, closure and generator bodies, and the
+    /// statements of a deferred default computation, including closures' own parameters. This is the fact a consumer
+    /// of Body IR needs before it commits to a body, and it does not depend on what any one consumer can execute.
+    pub fn first_representation_gap(&self) -> Option<&str> {
+        params_representation_gap(&self.params).or_else(|| statements_representation_gap(&self.block.stmts))
+    }
+}
+
+/// The first unrepresentable default among `params`, including inside a sourced default's own statements.
+fn params_representation_gap(params: &[CallableParam]) -> Option<&str> {
+    params.iter().find_map(|param| match &param.default {
+        CallableParamDefault::Unsupported { description, .. } => Some(description.as_str()),
+        CallableParamDefault::Source(computation) => statements_representation_gap(&computation.stmts),
+        CallableParamDefault::Required | CallableParamDefault::PartialPreset { .. } => None,
+    })
+}
+
+/// The first gap in a statement sequence; see [`Body::first_representation_gap`].
+fn statements_representation_gap(stmts: &[Statement]) -> Option<&str> {
+    stmts.iter().find_map(statement_representation_gap)
+}
+
+/// The first gap in one statement, descending into every nested block and rvalue that holds statements.
+fn statement_representation_gap(stmt: &Statement) -> Option<&str> {
+    match &stmt.kind {
+        StatementKind::Unsupported { description } => Some(description.as_str()),
+        StatementKind::Assign { rvalue, .. } => rvalue_representation_gap(rvalue),
+        StatementKind::If {
+            then_block, else_block, ..
+        } => statements_representation_gap(&then_block.stmts).or_else(|| {
+            else_block
+                .as_ref()
+                .and_then(|block| statements_representation_gap(&block.stmts))
+        }),
+        StatementKind::Loop { body } => statements_representation_gap(&body.stmts),
+        StatementKind::Race { arms, .. } => arms
+            .iter()
+            .find_map(|arm| statements_representation_gap(&arm.body.stmts)),
+        // Listed rather than matched by a wildcard: a statement kind that gains a nested block must be walked here.
+        StatementKind::Call { .. }
+        | StatementKind::Drop { .. }
+        | StatementKind::Break { .. }
+        | StatementKind::Continue
+        | StatementKind::Return { .. }
+        | StatementKind::Await { .. }
+        | StatementKind::Yield { .. }
+        | StatementKind::Assert { .. }
+        | StatementKind::Expr { .. }
+        | StatementKind::TryPropagate { .. }
+        | StatementKind::IterNext { .. } => None,
+    }
+}
+
+/// The first gap inside an rvalue: closure and generator bodies and `match` arms carry their own statements.
+fn rvalue_representation_gap(rvalue: &Rvalue) -> Option<&str> {
+    match rvalue {
+        Rvalue::Closure { params, body, .. } => {
+            params_representation_gap(params).or_else(|| statements_representation_gap(&body.stmts))
+        }
+        Rvalue::Generator { body, .. } => statements_representation_gap(&body.stmts),
+        Rvalue::Match { arms, .. } => arms.iter().find_map(|arm| {
+            statements_representation_gap(&arm.guard_stmts).or_else(|| statements_representation_gap(&arm.body_stmts))
+        }),
+        // Listed rather than matched by a wildcard, for the same reason as the statement walk.
+        Rvalue::Use(_)
+        | Rvalue::UnaryOp(..)
+        | Rvalue::BinaryOp(..)
+        | Rvalue::IsInstance { .. }
+        | Rvalue::Aggregate(..)
+        | Rvalue::Dict(_)
+        | Rvalue::ValueEnumVariant(_)
+        | Rvalue::FieldlessEnumVariant(_)
+        | Rvalue::ResultVariant(_)
+        | Rvalue::Format(_) => None,
+    }
+}
+
 /// Whether any statement in `block`, or in a block nested under one of its `If`/`Loop` statements, is a
 /// [`StatementKind::Yield`]. Backs [`Body::is_generator`]; see that method's docs for why this does not recurse
 /// into nested closure bodies.
