@@ -73,11 +73,16 @@ pub(super) fn lower_function_body(
             ty,
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
+            mutable: param.node.is_mut,
         });
     }
 
     let mut stmts = Vec::new();
+    builder
+        .borrowed_parameters
+        .extend(params.iter().filter(|param| param.mutable).map(|param| param.local));
     builder.lower_block_into(&function.body, root_scope, &mut stmts);
+    return_trailing_value(&owner_return_type, &mut stmts);
     builder.insert_scope_drops(&mut stmts, root_scope);
 
     if builder
@@ -175,6 +180,7 @@ pub(super) fn lower_method_body(
             ty: receiver_ty.clone(),
             span: hir_span(decl_span),
             default: bir::CallableParamDefault::Required,
+            mutable,
         });
     }
 
@@ -184,6 +190,13 @@ pub(super) fn lower_method_body(
             .and_then(|b| b.params.get(index))
             .map(|p| semantic_type_from_resolved(&p.ty))
             .unwrap_or(IncanType::Unknown);
+        // In a declared type's own method, a parameter typed `Self` (`other: Self`) is that type, as the checker reads
+        // it; only a trait default keeps `Self` open, and its `receiver_ty` is `Self` already.
+        let ty = if ty == IncanType::SelfType {
+            receiver_ty.clone()
+        } else {
+            ty
+        };
         let local = builder.declare_new_local(
             param.node.name.clone(),
             ty,
@@ -204,11 +217,19 @@ pub(super) fn lower_method_body(
             ty,
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
+            mutable: param.node.is_mut,
         });
     }
 
     let mut stmts = Vec::new();
+    builder.borrowed_parameters.extend(
+        params
+            .iter()
+            .filter(|param| param.mutable && param.name != "self")
+            .map(|param| param.local),
+    );
     builder.lower_block_into(body_stmts, root_scope, &mut stmts);
+    return_trailing_value(&owner_return_type, &mut stmts);
     builder.insert_scope_drops(&mut stmts, root_scope);
 
     if builder
@@ -258,4 +279,57 @@ pub(super) fn owner_self_type(owner_name: &str, owner_type_params: &[ast::TypePa
                 .collect(),
         }
     }
+}
+
+/// Make a value-returning body's trailing expression its `return` (#2025).
+///
+/// The checker accepts a function whose last statement is an expression (`n + 1`, a `match`, or an `if`/`else` whose
+/// branches end in expressions) because that trailing value is the function's result, and the emitted route returns
+/// it. Lowered statement by statement, the tail would be an [`bir::StatementKind::Expr`], which Body IR defines as
+/// discarding its value, so every consumer would have to guess at a trailing-statement convention Body IR otherwise
+/// avoids. This states the result explicitly instead. A unit function keeps its expression statement, a body whose
+/// return type the checker did not resolve is left alone rather than guessed at, and a generator's trailing
+/// expression is not its yield sequence's result.
+fn return_trailing_value(return_type: &IncanType, stmts: &mut [bir::Statement]) {
+    let returns_value = !matches!(
+        return_type,
+        IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit) | IncanType::Never | IncanType::Unknown
+    );
+    if returns_value && !yields(stmts) {
+        return_trailing_value_in(stmts);
+    }
+}
+
+/// Turn the tail of `stmts` into a `return`: an expression statement directly, an `if`/`else` through the tail of
+/// each branch.
+fn return_trailing_value_in(stmts: &mut [bir::Statement]) {
+    let Some(last) = stmts.last_mut() else { return };
+    match &mut last.kind {
+        bir::StatementKind::Expr { value } => {
+            last.kind = bir::StatementKind::Return {
+                value: Some(value.clone()),
+            };
+        }
+        bir::StatementKind::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } => {
+            return_trailing_value_in(&mut then_block.stmts);
+            return_trailing_value_in(&mut else_block.stmts);
+        }
+        _ => {}
+    }
+}
+
+/// Whether `stmts`, or any block nested in them, yields: the body is a generator.
+fn yields(stmts: &[bir::Statement]) -> bool {
+    stmts.iter().any(|stmt| match &stmt.kind {
+        bir::StatementKind::Yield { .. } => true,
+        bir::StatementKind::If {
+            then_block, else_block, ..
+        } => yields(&then_block.stmts) || else_block.as_ref().is_some_and(|block| yields(&block.stmts)),
+        bir::StatementKind::Loop { body } => yields(&body.stmts),
+        _ => false,
+    })
 }

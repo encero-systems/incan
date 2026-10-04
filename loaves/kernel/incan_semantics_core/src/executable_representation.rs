@@ -28,7 +28,7 @@ use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclar
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 4;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 5;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -975,6 +975,7 @@ mod tests {
     fn private_default_dependency_is_not_hidden_by_an_empty_main_block() -> Result<(), Box<dyn std::error::Error>> {
         let mut exported = body("exported", 1);
         exported.params.push(CallableParam {
+            mutable: false,
             local: crate::body_ir::LocalId(0),
             name: "x".into(),
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -1112,6 +1113,7 @@ mod tests {
             IncanType::Named("Second".into()),
         ]);
         exported.params.push(CallableParam {
+            mutable: false,
             local: crate::body_ir::LocalId(0),
             name: "product".into(),
             ty: IncanType::Named("First".into()),

@@ -667,3 +667,78 @@ fn a_value_carrying_break_in_a_statement_loop_is_not_merged_into_an_enclosing_lo
     );
     Ok(())
 }
+
+/// The last statement of `block` that is not a scope drop.
+fn last_non_drop(block: &bir::Block) -> Option<&bir::Statement> {
+    block
+        .stmts
+        .iter()
+        .rev()
+        .find(|stmt| !matches!(stmt.kind, bir::StatementKind::Drop { .. }))
+}
+
+/// Whether `stmt` returns a value, directly or, for an `if`/`else`, from the tail of every branch.
+fn returns_a_value(stmt: &bir::Statement) -> bool {
+    match &stmt.kind {
+        bir::StatementKind::Return { value: Some(_) } => true,
+        bir::StatementKind::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } => {
+            last_non_drop(then_block).is_some_and(returns_a_value)
+                && last_non_drop(else_block).is_some_and(returns_a_value)
+        }
+        _ => false,
+    }
+}
+
+#[test]
+fn a_value_returning_function_returns_its_trailing_expression_issue2025() -> Result<(), Box<dyn std::error::Error>> {
+    // The checker accepts each body because its trailing expression is the function's result, and the emitted route
+    // returns it. Body IR must say so with a `return`, not record a discarded expression statement.
+    let cases = [
+        (
+            "pick",
+            "def pick(n: int) -> str:\n  match n:\n    1 => \"one\"\n    _ => \"other\"\n",
+        ),
+        ("next", "def next(n: int) -> int:\n  n + 1\n"),
+        (
+            "choose",
+            "def choose(n: int) -> str:\n  if n == 1:\n    \"one\"\n  else:\n    \"other\"\n",
+        ),
+    ];
+    for (name, source) in cases {
+        let module = build(source, &["m", "trailing"])?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing body")?;
+        let tail = last_non_drop(&body.block).ok_or("empty body")?;
+        assert!(
+            returns_a_value(tail),
+            "`{name}` must return its trailing value: {}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_unit_function_keeps_its_trailing_expression_statement_issue2025() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def report(n: int) -> None:\n  println(n)\n";
+    let module = build(source, &["m", "trailing_unit"])?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "report")
+        .ok_or("missing body")?;
+    let tail = last_non_drop(&body.block).ok_or("empty body")?;
+    assert!(
+        matches!(tail.kind, bir::StatementKind::Expr { .. }),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}

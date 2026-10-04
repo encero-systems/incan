@@ -5491,6 +5491,15 @@ impl TypeChecker {
             return resolve_on(self, &args[0]);
         }
 
+        // In a declared type's own method, a `Self` value (`other: Self`) is that type, so its fields resolve as they
+        // do on `self`, as its methods already do (#1561); a trait default keeps `Self` open and reads fields through
+        // `@requires`.
+        if matches!(base_ty, ResolvedType::SelfType)
+            && let Some(owner_ty) = self.current_method_owner_type()
+        {
+            return resolve_on(self, &owner_ty);
+        }
+
         resolve_on(self, &base_ty)
     }
 

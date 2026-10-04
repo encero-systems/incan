@@ -6,6 +6,39 @@ use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Rewrite an argument bound to a `mut` parameter (#2022). A `mut` parameter of non-`Copy` type writes through to
+    /// the caller, as the emitted route's `&mut T` does, so the argument is borrowed mutably instead of copied or
+    /// moved: the caller keeps owning it (an operand that had selected a move is un-moved, so the caller still
+    /// drops it) and sees the callee's changes. A `Copy` argument stays a copy, matching the emitted route's
+    /// by-value `mut` scalar, and a compiler temporary keeps its move, since no caller can observe writes to it.
+    fn borrow_for_mut_parameter(&mut self, operand: bir::Operand) -> bir::Operand {
+        let bir::Operand::Place(mut source) = operand else {
+            return operand;
+        };
+        let is_temporary = source
+            .place
+            .local_id()
+            .and_then(|local| self.locals.get(local.index()))
+            .is_some_and(|decl| matches!(decl.origin, bir::LocalOrigin::Temporary));
+        if is_temporary
+            || !matches!(
+                source.fact,
+                bir::OwnershipFact::Move | bir::OwnershipFact::Clone | bir::OwnershipFact::Borrow
+            )
+        {
+            return bir::Operand::Place(source);
+        }
+        if source.fact == bir::OwnershipFact::Move
+            && source.place.projection.is_empty()
+            && let Some(local) = source.place.local_id()
+        {
+            self.moved_out.remove(&local);
+        }
+        source.fact = bir::OwnershipFact::MutBorrow;
+        source.last_use = false;
+        bir::Operand::Place(source)
+    }
+
     /// Lower planned call arguments in written source order, then place them into declaration-slot order.
     ///
     /// Both orders are part of the source contract and they differ whenever a caller writes named arguments out of
@@ -19,10 +52,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Because ownership is decided during that written-order pass, each operand's [`bir::OwnershipFact`] and
     /// last-use marker are sequenced by `written_position` and **not** by operand index -- see
     /// [`bir::ArgumentBinding`]'s own docs, which state the invariant a consumer has to honor.
+    ///
+    /// `mut_slots` marks, by declaration slot, which parameters are declared `mut`; an operand for such a slot goes
+    /// through [`Self::borrow_for_mut_parameter`]. A slot past its end, or an empty slice for a surface with no
+    /// declared parameters, is treated as not `mut`.
     pub(super) fn lower_planned_args(
         &mut self,
         planned: &[(usize, &ast::Spanned<ast::Expr>)],
         slot_count: usize,
+        mut_slots: &[bool],
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::Operand>, bir::ArgumentBinding), String> {
@@ -37,7 +75,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let mut lowered: Vec<Option<(bir::Operand, usize)>> = (0..slot_count).map(|_| None).collect();
         for (written_position, (slot, expr)) in planned.iter().enumerate() {
-            let operand = self.lower_expr_to_operand(expr, scope, out);
+            let mut operand = self.lower_expr_to_operand(expr, scope, out);
+            if mut_slots.get(*slot).copied().unwrap_or(false) {
+                operand = self.borrow_for_mut_parameter(operand);
+            }
             if let Some(entry) = lowered.get_mut(*slot) {
                 *entry = Some((operand, written_position));
             }
@@ -220,7 +261,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .collect();
         let planned = plan_declared_args(callee, &slots, &expanded)?;
         let (operands, binding) = self
-            .lower_planned_args(&planned, slots.len(), scope, out)
+            .lower_planned_args(
+                &planned,
+                slots.len(),
+                &slots.iter().map(|slot| slot.is_mut).collect::<Vec<bool>>(),
+                scope,
+                out,
+            )
             .map_err(|description| format!("{callee}: {description}"))?;
         Ok((fixed_elements(operands), binding))
     }
@@ -317,7 +364,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .copied()
             .zip(written_exprs)
             .collect();
-        let (operands, binding) = match self.lower_planned_args(&planned, field_binding.field_count, scope, out) {
+        let (operands, binding) = match self.lower_planned_args(&planned, field_binding.field_count, &[], scope, out) {
             Ok(bound) => bound,
             Err(description) => {
                 return self.unsupported_operand(
@@ -697,7 +744,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // for a later executor instead of re-deriving it from the local's source spelling.
             let place = bir::Place::from_local(local);
             let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
-            let (operands, binding) = match self.lower_planned_args(&planned, slots.len(), scope, out) {
+            let (operands, binding) = match self.lower_planned_args(
+                &planned,
+                slots.len(),
+                &slots.iter().map(|slot| slot.is_mut).collect::<Vec<bool>>(),
+                scope,
+                out,
+            ) {
                 Ok(bound) => bound,
                 Err(description) => {
                     return self.unsupported_operand(description, scope, hir_span_value, out);

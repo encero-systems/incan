@@ -1002,3 +1002,21 @@ enum Signal:
     );
     Ok(())
 }
+
+#[test]
+fn a_self_typed_parameter_in_a_types_own_method_reads_as_that_type() -> Result<(), Box<dyn std::error::Error>> {
+    // `other: Self` in a model's own method is the model, so its fields have their declared types and a comparison of
+    // them is a primitive operation, as on `self`. Before this the field read was untyped and the comparison refused.
+    let source = "model P:\n  v: int\n\n  def same(self, other: Self) -> bool:\n    return self.v == other.v\n\ndef main() -> None:\n  println(P(v=1).same(P(v=1)))\n";
+    let module = build(source, &["m", "self_param"])?;
+    let same = body_named(&module, "same")?;
+    let rendered = same.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let other = same
+        .params
+        .iter()
+        .find(|param| param.name == "other")
+        .ok_or("`other` must be a parameter")?;
+    assert_eq!(other.ty, IncanType::Named("P".to_string()), "{rendered}");
+    Ok(())
+}

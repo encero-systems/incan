@@ -4965,18 +4965,64 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
         }
         let frame_module = callee_module.unwrap_or_else(|| self.module.clone());
         let local_types_for_frame = self.local_types.clone();
-        self.execute_child_in_module(&frame_module, locals, local_types_for_frame, self.steps, |child| {
-            child.record_body(&body);
-            match child.execute_block(&body.block)? {
-                Flow::Return(Some(value), return_span) => {
-                    coerce_value_to_checked_type(value, &body.return_type, return_span)
+        // A `mut` parameter of non-`Copy` type is the caller's value, borrowed mutably (#2022): its final value in the
+        // callee's frame is written back to the caller's argument place when the call returns, as the emitted route's
+        // `&mut T` parameter makes the callee's changes visible.
+        let mutable_params: Vec<(usize, LocalId)> = body
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| param.mutable)
+            .map(|(slot, param)| (slot, param.local))
+            .collect();
+        let mut written_back: Vec<(usize, ReplacementValue)> = Vec::new();
+        let result =
+            self.execute_child_in_module(&frame_module, locals, local_types_for_frame, self.steps, |child| {
+                child.record_body(&body);
+                let value = match child.execute_block(&body.block)? {
+                    Flow::Return(Some(value), return_span) => {
+                        coerce_value_to_checked_type(value, &body.return_type, return_span)?
+                    }
+                    Flow::Return(None, _) | Flow::Next => ReplacementValue::Unit,
+                    Flow::Break | Flow::Continue => {
+                        return Err(unsupported("loop control outside a nested callable loop", body.span));
+                    }
+                };
+                for (slot, local) in &mutable_params {
+                    if let Some(final_value) = child.locals.get(local) {
+                        written_back.push((*slot, final_value.clone()));
+                    }
                 }
-                Flow::Return(None, _) | Flow::Next => Ok(ReplacementValue::Unit),
-                Flow::Break | Flow::Continue => {
-                    Err(unsupported("loop control outside a nested callable loop", body.span))
-                }
+                Ok(value)
+            })?;
+        self.write_back_mut_arguments(&target.binding, args, written_back, span)?;
+        Ok(result)
+    }
+
+    /// Store each `mut` parameter's final value into the caller's place it borrowed. Only an argument Body IR passed as
+    /// [`OwnershipFact::MutBorrow`] is written back: a `Copy` argument to a `mut` parameter is a copy, as in the
+    /// emitted route, and a temporary has no caller place.
+    fn write_back_mut_arguments(
+        &mut self,
+        binding: &ArgumentBinding,
+        args: &[&Operand],
+        written_back: Vec<(usize, ReplacementValue)>,
+        span: HirSourceSpan,
+    ) -> Result<(), ReplacementExecutionError> {
+        let ArgumentBinding::Resolved { arguments, .. } = binding else {
+            return Ok(());
+        };
+        for (slot, value) in written_back {
+            let Some(index) = arguments.iter().position(|argument| argument.slot == slot) else {
+                continue;
+            };
+            if let Some(Operand::Place(source)) = args.get(index)
+                && source.fact == OwnershipFact::MutBorrow
+            {
+                self.assign_place(&source.place, value, span)?;
             }
-        })
+        }
+        Ok(())
     }
 
     /// Resolve a named call to its declaration, and to the module that owns it when that is not this frame's own.
