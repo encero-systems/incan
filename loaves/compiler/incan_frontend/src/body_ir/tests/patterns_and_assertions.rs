@@ -826,3 +826,17 @@ fn payload_enum_variants_construct_as_enum_variant_aggregates() -> Result<(), Bo
     }
     Ok(())
 }
+
+#[test]
+fn an_enum_variant_where_a_place_is_needed_is_materialized() -> Result<(), Box<dyn std::error::Error>> {
+    // A user `__eq__` and a method call both need the variant as a place; it is a value, not a field of `Suit`.
+    let source = "enum Suit:\n  Hearts\n  Spades\n\n  def __eq__(self, other: Self) -> bool:\n    return true\n\n  def label(self) -> str:\n    return \"suit\"\n\ndef main() -> None:\n  println(Suit.Hearts == Suit.Spades)\n  println(Suit.Hearts.label())\n";
+    let module = build(source, &["m", "variant_places"])?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(
+        !rendered.contains("unsupported("),
+        "a variant in place position must lower: {rendered}"
+    );
+    assert!(rendered.contains("enum_variant(Suit::Hearts "), "{rendered}");
+    Ok(())
+}

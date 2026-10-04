@@ -208,6 +208,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 })
             }
             ast::Expr::Field(base, name) => {
+                // `Color.Red` used where a place is needed (a method receiver, say) is a variant value, not a field of
+                // a value named `Color`: materialize it like any other non-place operand.
+                if self
+                    .local_fieldless_enum_variant_target(base, name, expr.span)
+                    .is_some()
+                    || self.local_value_enum_variant_target(base, name, expr.span).is_some()
+                    || self.checked_enum_variant_target(base, name, expr.span).is_some()
+                {
+                    let ty = self.resolve_ty(expr.span);
+                    let operand = self.lower_expr_to_operand(expr, scope, out);
+                    return self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out);
+                }
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place
                     .projection
