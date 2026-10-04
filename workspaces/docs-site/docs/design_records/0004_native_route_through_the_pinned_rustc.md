@@ -107,12 +107,11 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 - A Rust call's callee and generic arguments come from the checked call plan, resolved by canonical path.
 - They are never recovered from generated names.
 
-**New code is Incan unless Rust is clearly better.**
+**New code is Incan.**
 
-- The direct route's new code is written in Incan by default. That includes the Body IR → MIR lowering, drop and unwind building, and the driver's own orchestration.
-- Rust is used only where it is the better tool. Here that is the narrow layer that holds rustc's internal types, which are bound to rustc's lifetimes and interned values, plus any code where exact lifetimes and borrows matter for performance.
-- Every piece that stays Rust names its reason.
-- Once both languages share one crate graph, splitting a component across them costs nothing at the boundary, so this extends Incan's standing self-hosting rule to the compiler's own internals.
+- The direct route's code is written in Incan. That includes the Body IR → MIR lowering, which fills the plan, drop and unwind building, and the driver's own orchestration.
+- One piece is Rust because it must be: the driver's layer that turns a finished plan into MIR. rustc's internal interface exists only as Rust crates, and only the driver unit may depend on them.
+- Nothing else on the direct route is Rust.
 
 **Ring placement.**
 
