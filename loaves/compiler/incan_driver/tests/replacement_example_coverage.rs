@@ -41,7 +41,11 @@ use incan_frontend::{lexer, parser};
 /// Body-IR refusal; the other thirteen still refuse, and none of the fourteen changes what executes. The ratio
 /// falling while the count rises is expected here: the new examples were written to demonstrate the documented
 /// capability surface, not to be representable in the replacement profile.
-const REPRESENTED_BASELINE: usize = 55;
+///
+/// Moved 55 -> 68 by #1337 stage 1c, which gives static method calls, variants of any enum and functions named as
+/// values a Body IR representation; the resolved type-member references the RFC 120 note above describes are among
+/// them. Nothing more executes: the interpreter does not run the new forms.
+const REPRESENTED_BASELINE: usize = 68;
 
 /// Number of committed example sources included in this fixed corpus.
 ///
