@@ -323,6 +323,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let forwarding_binding = bir::ArgumentBinding::resolved_positional(call_args.len());
         let result = self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
                 name: target_name,
                 direct_call_id,
                 builtin: None,
