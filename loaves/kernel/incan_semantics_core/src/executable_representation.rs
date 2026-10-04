@@ -28,7 +28,7 @@ use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclar
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 7;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 8;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -814,6 +814,7 @@ mod tests {
             kind: StatementKind::Call {
                 destination: None,
                 callee: Callee::Function(CallableTarget::Named(NamedCallableTarget {
+                    receiver_type: None,
                     name: "arbitrary_alias".into(),
                     direct_call_id: None,
                     builtin: None,
