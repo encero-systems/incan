@@ -3,6 +3,8 @@
 #   19.99
 
 
+"""Preserves decimal observation without entering binary float."""
 def main() -> None:
+  """Print `value` after preparing the fixture inputs."""
   value: decimal[5, 2] = 19.99d
   println(value)

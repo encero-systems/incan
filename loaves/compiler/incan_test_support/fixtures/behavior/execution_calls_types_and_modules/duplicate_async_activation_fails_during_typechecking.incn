@@ -1,8 +1,10 @@
 # behavior: duplicate async activation fails during typechecking
 # expect-diagnostic: INCAN-I0001
 
+"""Duplicate async activation fails during typechecking."""
 import std.async
 import std.async
 
 def main() -> int:
+  """Return `42` from the entrypoint."""
   return 42

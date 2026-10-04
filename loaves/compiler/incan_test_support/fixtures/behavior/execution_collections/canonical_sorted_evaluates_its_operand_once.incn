@@ -3,11 +3,14 @@
 #   sorted operand
 #   12
 
+"""Canonical sorted evaluates its operand once."""
 def marked() -> list[int]:
+  """Print the operand marker before returning the operand."""
   println("sorted operand")
   return [2, 1]
 
 def observe() -> int:
+  """Sort a marked operand and encode the ordered values."""
   ordered = sorted(marked())
   mut score = 0
   for value in ordered:
@@ -16,4 +19,5 @@ def observe() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

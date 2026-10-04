@@ -3,7 +3,9 @@
 #   1000 1 1000.5 10.0 3
 
 
+"""Executes checked unary scalar conversions."""
 def program_result() -> str:
+  """Compute and return `f"{str(parsed_int)} {bool_int} {parsed_float} {widened_float} {truncated_float}"`."""
   parsed_int = int("1_000")
   bool_int = int(true)
   parsed_float = float("1_000.50")
@@ -13,4 +15,5 @@ def program_result() -> str:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

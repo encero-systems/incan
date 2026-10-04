@@ -2,12 +2,16 @@
 # expect-stdout:
 #   1
 
+"""Cli refuses typed empty non structural callable default without a receipt, as the legacy route runs it."""
 def keep(items: list[float] = []) -> int:
+  """Return `1` for this fixture."""
   return 1
 
 def program_result() -> int:
+  """Return the fixture expression `keep()`."""
   return keep()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -3,7 +3,9 @@
 #   13
 
 
+"""Executes zip with recursively structural nested lists and tuples."""
 def nested_structural_zip() -> int:
+  """Traverse zipped nested lists and tuples to compute a score."""
   left = [[(1, "one")], [(2, "two")]]
   right = [("first", true), ("second", false)]
   pairs = zip(left, right)
@@ -17,4 +19,5 @@ def nested_structural_zip() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(nested_structural_zip())

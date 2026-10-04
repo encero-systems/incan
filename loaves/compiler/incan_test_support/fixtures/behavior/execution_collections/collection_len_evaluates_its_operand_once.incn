@@ -4,13 +4,17 @@
 #   len element
 #   2
 
+"""Collection len evaluates its operand once."""
 def mark(value: int) -> int:
+  """Print the element marker and return the value."""
   println("len element")
   return value
 
 def observe() -> int:
+  """Return the fixture expression `len({mark(1), mark(2)})`."""
   return len({mark(1), mark(2)})
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

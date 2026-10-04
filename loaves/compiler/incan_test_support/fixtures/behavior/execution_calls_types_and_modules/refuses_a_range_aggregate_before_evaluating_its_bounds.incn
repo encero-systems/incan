@@ -3,14 +3,18 @@
 # expect-exit: 101
 
 
+"""Refuses a range aggregate before evaluating its bounds, as the legacy route runs it."""
 def bound() -> int:
+  """Fail before returning the range bound."""
   assert false
   return 4
 
 def program_result() -> int:
+  """Compute and return `1`."""
   values = 0..bound()
   return 1
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

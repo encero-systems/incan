@@ -2,15 +2,19 @@
 # expect-stdout:
 #   123
 
+"""A generator function that yields in a loop and after it is collected (parity corpus row replacement-body-v0-010)."""
 def counter() -> Generator[int]:
+    """Yield the sequence consumed or retained by this fixture."""
     for value in range(1, 3):
         yield value
     yield 3
 
 def generator_function() -> int:
+    """Encode the collected generator values as decimal digits."""
     values = counter().collect()
     return values[0] * 100 + values[1] * 10 + values[2]
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(generator_function())

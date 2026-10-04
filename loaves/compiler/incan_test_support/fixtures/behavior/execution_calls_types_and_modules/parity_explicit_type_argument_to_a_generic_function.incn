@@ -2,9 +2,12 @@
 # expect-stdout:
 #   42
 
+"""A generic function called with an explicit type argument (parity corpus identity row)."""
 def generic_identity[T](value: T) -> T:
+    """Return `value` for this fixture."""
     return value
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(generic_identity[int](42))

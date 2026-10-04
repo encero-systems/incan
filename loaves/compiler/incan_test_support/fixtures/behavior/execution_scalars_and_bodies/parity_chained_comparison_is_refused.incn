@@ -1,7 +1,9 @@
 # behavior: `a < b < c` is refused rather than read as two comparisons (parity corpus case 2)
 # expect-diagnostic: INCAN-T0001
 
+"""`a < b < c` is refused rather than read as two comparisons (parity corpus case 2)."""
 def main() -> None:
+    """Print `"chained"` after preparing the fixture inputs."""
     a = 1
     b = 2
     c = 3

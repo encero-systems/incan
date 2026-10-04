@@ -2,9 +2,12 @@
 # expect-stdout:
 #   2
 
+"""Missing sorted identity refuses instead of guessing from its name, as the legacy route runs it."""
 def observe() -> int:
+  """Return the fixture expression `len(sorted([2, 1]))`."""
   return len(sorted([2, 1]))
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

@@ -3,12 +3,16 @@
 #   99.0
 
 
+"""Keeps same spelled source scalar callables."""
 def float(value: int) -> float:
+  """Return `99.0` for this fixture."""
   return 99.0
 
 def program_result() -> str:
+  """Return the fixture expression `str(float(42))`."""
   return str(float(42))
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

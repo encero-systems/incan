@@ -4,10 +4,13 @@
 #   1.5
 
 
+"""Preserves float direct arguments and results."""
 def show(value: float) -> str:
+  """Print the call marker and render the float argument."""
   println("argument ran")
   return str(value)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(show(1.5))

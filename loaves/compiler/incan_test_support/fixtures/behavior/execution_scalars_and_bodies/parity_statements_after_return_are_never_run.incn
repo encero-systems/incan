@@ -2,11 +2,14 @@
 # expect-stdout:
 #   1
 
+"""Statements after an unconditional return are warned about and never run (parity corpus case 6)."""
 def f() -> int:
+    """Return before the deliberately unreachable print statement."""
     return 1
     println("dead code")
     return 2
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(f())

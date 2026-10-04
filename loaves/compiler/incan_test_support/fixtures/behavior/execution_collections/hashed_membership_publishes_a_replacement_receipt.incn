@@ -2,11 +2,14 @@
 # expect-stdout:
 #   true
 
+"""Hashed membership publishes a replacement receipt."""
 def program_result() -> bool:
+  """Compute and return `1 in values and 3 not in values and 1 in mapping and 20 not in mapping`."""
   values = {1, 2}
   mapping = {1: 20}
   return 1 in values and 3 not in values and 1 in mapping and 20 not in mapping
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

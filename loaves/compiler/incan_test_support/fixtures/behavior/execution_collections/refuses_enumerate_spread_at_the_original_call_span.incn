@@ -4,7 +4,9 @@
 #   0
 
 
+"""Refuses enumerate spread at the original call span, as the legacy route runs it."""
 def enumerate_spread() -> int:
+  """Attempt spread arguments to enumerate and print any produced index."""
   values = [[1]]
   for pair in enumerate(*values):
     println(pair.0)
@@ -12,4 +14,5 @@ def enumerate_spread() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(enumerate_spread())

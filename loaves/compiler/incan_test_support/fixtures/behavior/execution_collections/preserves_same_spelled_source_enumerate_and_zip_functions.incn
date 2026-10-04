@@ -5,17 +5,22 @@
 #   42
 
 
+"""Preserves same spelled source enumerate and zip functions."""
 def enumerate(values: list[int]) -> int:
+  """Print the source-call marker and return the source-defined result."""
   println("source enumerate")
   return 40
 
 def zip(left: list[int], right: list[int]) -> int:
+  """Print the source-call marker and return the source-defined result."""
   println("source zip")
   return 2
 
 def source_owned_spelling() -> int:
+  """Return the fixture expression `enumerate([1]) + zip([1], [2])`."""
   return enumerate([1]) + zip([1], [2])
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(source_owned_spelling())

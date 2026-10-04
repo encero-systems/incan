@@ -3,7 +3,9 @@
 #   4
 #   2
 
+"""A list literal spreads a list and a dict literal spreads a dict (parity corpus case 12)."""
 def main() -> None:
+    """Print `len(values)` after preparing the fixture inputs."""
     xs = [2, 3]
     values = [1, *xs, 4]
     base = {"a": 1}

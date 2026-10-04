@@ -3,9 +3,12 @@
 #   [1]
 
 
+"""Refuses structural aggregate return values, as the legacy route runs it."""
 def program_result() -> list[int]:
+  """Return the fixture expression `[1]`."""
   return [1]
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

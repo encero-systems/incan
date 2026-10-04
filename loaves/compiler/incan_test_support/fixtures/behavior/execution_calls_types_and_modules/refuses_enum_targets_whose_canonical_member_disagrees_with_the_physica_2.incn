@@ -2,13 +2,17 @@
 # expect-stdout:
 #   404
 
+"""Refuses enum targets whose canonical member disagrees with the physical record, as the legacy route runs it."""
 enum Status(int):
+  """Represent the Ok, Missing alternatives in this fixture."""
   Ok = 200
   Missing = 404
 
 def program_result() -> int:
+  """Return the fixture expression `Status.Missing.value()`."""
   return Status.Missing.value()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -2,7 +2,9 @@
 # expect-stdout:
 #   11
 
+"""A `mut` binding inside a block shadows the outer one only inside it (parity corpus identity row)."""
 def shadow_mut() -> int:
+    """Combine the inner mutable binding with the outer value."""
     mut total = 0
     mut x = 4
     if true:
@@ -12,4 +14,5 @@ def shadow_mut() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(shadow_mut())
