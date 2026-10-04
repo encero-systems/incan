@@ -1,0 +1,17 @@
+# behavior: executes list concatenation and membership
+# expect-stdout:
+#   4
+
+
+def program_result() -> int:
+  xs = [1, 2]
+  ys = [3, 4]
+  joined = xs + ys
+  if 3 in joined:
+    if 9 not in joined:
+      return joined[3]
+  return 0
+
+
+def main() -> None:
+    println(program_result())

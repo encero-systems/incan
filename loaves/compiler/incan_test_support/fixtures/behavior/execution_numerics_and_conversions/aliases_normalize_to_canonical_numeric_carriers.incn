@@ -1,0 +1,14 @@
+# behavior: aliases normalize to canonical numeric carriers
+# expect-stdout:
+#   1.2345679
+
+
+def real_value() -> real:
+  return 1.23456789
+
+def huge_value() -> hugeint:
+  return 170141183460469231731687303715884105727
+
+
+def main() -> None:
+    println(real_value())

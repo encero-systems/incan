@@ -1,0 +1,14 @@
+# behavior: dispatches a lexical json stringify function by declaration identity
+# expect-stdout:
+#   42
+
+
+def json_stringify(value: int) -> int:
+  return value + 1
+
+def program_result() -> int:
+  return json_stringify(41)
+
+
+def main() -> None:
+    println(program_result())

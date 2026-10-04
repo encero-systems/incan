@@ -1,0 +1,10 @@
+# behavior: refuses json stringify outside the scalar domain at the call span, as the legacy route runs it
+# expect-stdout:
+#   [1,2]
+
+def program_result() -> str:
+  return json_stringify([1, 2])
+
+
+def main() -> None:
+    println(program_result())

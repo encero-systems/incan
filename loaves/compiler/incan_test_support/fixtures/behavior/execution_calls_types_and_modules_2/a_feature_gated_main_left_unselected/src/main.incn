@@ -1,0 +1,8 @@
+# behavior: a program whose only main is declared under an unselected feature has no main, so the run fails without output
+# expect-stdout:
+# expect-exit: 1
+
+
+when feature("beta"):
+    def main() -> None:
+        println(42)

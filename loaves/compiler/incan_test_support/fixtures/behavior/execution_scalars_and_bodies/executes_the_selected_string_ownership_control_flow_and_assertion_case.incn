@@ -1,0 +1,11 @@
+# behavior: executes the selected string ownership control flow and assertion cases
+# expect-stdout:
+#   hi Ada
+
+def program_result() -> str:
+  name = "Ada"
+  return "hi " + name
+
+
+def main() -> None:
+    println(program_result())

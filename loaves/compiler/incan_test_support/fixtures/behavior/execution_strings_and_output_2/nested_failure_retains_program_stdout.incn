@@ -1,0 +1,13 @@
+# behavior: nested failure retains program stdout, as the legacy route runs it
+# expect-stdout:
+#   parent
+#   child
+# expect-exit: 101
+
+def child() -> None:
+  println("child")
+  assert false
+
+def main() -> None:
+  println("parent")
+  child()

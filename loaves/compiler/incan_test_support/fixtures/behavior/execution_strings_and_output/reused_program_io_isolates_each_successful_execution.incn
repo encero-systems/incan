@@ -1,0 +1,12 @@
+# behavior: reused program io isolates each successful execution
+# expect-stdout:
+#   success
+#   42
+
+def program_result() -> int:
+  println("success")
+  return 42
+
+
+def main() -> None:
+    println(program_result())

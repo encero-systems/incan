@@ -1,0 +1,18 @@
+# behavior: unsupported typed arithmetic refuses at source span before any output, as the legacy route runs it
+# expect-stdout:
+#   must-not-print
+#   2
+
+
+def add_one(value: u8) -> int:
+  one: u8 = 1
+  return value + one
+
+def program_result() -> int:
+  println("must-not-print")
+  value: u8 = 1
+  return add_one(value)
+
+
+def main() -> None:
+    println(program_result())

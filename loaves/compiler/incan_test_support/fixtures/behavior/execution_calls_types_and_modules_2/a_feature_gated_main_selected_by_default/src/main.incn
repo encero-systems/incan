@@ -1,0 +1,7 @@
+# behavior: a main declared under `when feature("beta"):` is the program when the default feature selects beta
+# expect-stdout:
+#   42
+
+when feature("beta"):
+    def main() -> None:
+        println(42)

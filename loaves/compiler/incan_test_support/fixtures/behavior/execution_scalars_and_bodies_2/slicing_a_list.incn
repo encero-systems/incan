@@ -1,0 +1,11 @@
+# behavior: slicing a list gives a new list
+# expect-stdout:
+#   [40]
+
+def program_result() -> list[int]:
+    values = [40, 2]
+    return values[0:1]
+
+
+def main() -> None:
+    println(program_result())

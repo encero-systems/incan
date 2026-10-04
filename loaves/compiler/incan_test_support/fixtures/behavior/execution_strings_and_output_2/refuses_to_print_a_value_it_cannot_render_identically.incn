@@ -1,0 +1,7 @@
+# behavior: refuses to print a value it cannot render identically, as the legacy route runs it
+# expect-stdout:
+#   [1, 2]
+
+
+def main() -> None:
+  println([1, 2])

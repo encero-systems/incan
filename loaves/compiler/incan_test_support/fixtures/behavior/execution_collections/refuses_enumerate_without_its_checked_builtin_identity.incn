@@ -1,0 +1,15 @@
+# behavior: refuses enumerate without its checked builtin identity, as the legacy route runs it
+# expect-stdout:
+#   1
+
+
+def missing_enumerate_identity() -> int:
+  values = [1]
+  mut total = 0
+  for pair in enumerate(values):
+    total += pair.1
+  return total
+
+
+def main() -> None:
+    println(missing_enumerate_identity())

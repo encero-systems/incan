@@ -1,0 +1,11 @@
+# behavior: empty sorted list remains an original call span refusal, as the legacy route runs it
+# expect-stdout:
+#   0
+
+def observe() -> int:
+  values: list[int] = []
+  return len(sorted(values))
+
+
+def main() -> None:
+    println(observe())

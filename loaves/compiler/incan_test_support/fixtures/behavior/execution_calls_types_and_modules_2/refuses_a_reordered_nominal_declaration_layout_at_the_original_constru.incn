@@ -1,0 +1,16 @@
+# behavior: refuses a reordered nominal declaration layout at the original constructor span, as the legacy route runs it
+# expect-stdout:
+#   40
+
+
+model Pair:
+  left: int
+  right: int
+
+def program_result() -> int:
+  pair = Pair(left=40, right=2)
+  return pair.left
+
+
+def main() -> None:
+    println(program_result())

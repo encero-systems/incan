@@ -1,0 +1,12 @@
+# behavior: abs and sum overflow are always checked, stopping the program
+# expect-stdout:
+#   before abs
+# expect-exit: 101
+
+def abs_min(value: int) -> int:
+    println("before abs")
+    return abs(value)
+
+
+def main() -> None:
+    abs_min(-9223372036854775808)

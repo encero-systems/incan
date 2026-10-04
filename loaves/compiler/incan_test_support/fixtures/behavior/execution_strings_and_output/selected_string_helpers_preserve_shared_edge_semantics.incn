@@ -1,0 +1,10 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   STRASSE
+
+def result() -> str:
+    return "Straße".upper()
+
+
+def main() -> None:
+    println(result())

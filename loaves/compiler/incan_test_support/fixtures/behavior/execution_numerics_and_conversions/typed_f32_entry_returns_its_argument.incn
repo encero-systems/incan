@@ -1,0 +1,11 @@
+# behavior: an f32 parameter returned unchanged prints as the same f32
+# expect-stdout:
+#   1.2345679
+
+def identity(value: f32) -> f32:
+    return value
+
+
+def main() -> None:
+    value: f32 = 1.2345679
+    println(identity(value))

@@ -1,0 +1,14 @@
+# behavior: refuses a foreign named call identity at its original source span, as the legacy route runs it
+# expect-stdout:
+#   42
+
+
+def helper() -> int:
+  return 42
+
+def program_result() -> int:
+  return helper()
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,13 @@
+# behavior: a call into a sibling module that also declares a class returns its result
+# expect-stdout:
+#   42
+
+from helper import bump
+
+
+def program_result() -> int:
+    return bump(41)
+
+
+def main() -> None:
+    println(program_result())

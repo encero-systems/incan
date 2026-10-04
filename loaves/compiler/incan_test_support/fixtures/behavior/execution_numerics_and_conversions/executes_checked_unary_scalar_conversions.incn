@@ -1,0 +1,16 @@
+# behavior: executes checked unary scalar conversions
+# expect-stdout:
+#   1000 1 1000.5 10.0 3
+
+
+def program_result() -> str:
+  parsed_int = int("1_000")
+  bool_int = int(true)
+  parsed_float = float("1_000.50")
+  widened_float = float(10)
+  truncated_float = int(3.9)
+  return f"{str(parsed_int)} {bool_int} {parsed_float} {widened_float} {truncated_float}"
+
+
+def main() -> None:
+    println(program_result())

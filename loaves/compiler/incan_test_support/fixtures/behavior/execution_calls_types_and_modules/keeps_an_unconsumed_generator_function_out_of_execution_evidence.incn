@@ -1,0 +1,15 @@
+# behavior: keeps an unconsumed generator function out of execution evidence
+# expect-stdout:
+#   42
+
+
+def counter() -> Generator[int]:
+  yield 1
+
+def program_result() -> int:
+  unused = counter()
+  return 42
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,10 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   xba
+
+def result() -> str:
+    return "ababa".replace("aba", "x")
+
+
+def main() -> None:
+    println(result())

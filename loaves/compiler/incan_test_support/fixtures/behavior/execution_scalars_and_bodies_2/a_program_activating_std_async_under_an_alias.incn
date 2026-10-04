@@ -1,0 +1,13 @@
+# behavior: a program that activates std.async under an alias runs
+# expect-stdout:
+#   42
+
+import std.async as async_runtime
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

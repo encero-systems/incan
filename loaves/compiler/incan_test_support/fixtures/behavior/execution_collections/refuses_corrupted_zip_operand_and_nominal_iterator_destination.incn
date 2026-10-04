@@ -1,0 +1,20 @@
+# behavior: refuses corrupted zip operand and nominal iterator destination, as the legacy route runs it
+# expect-stdout:
+#   0
+
+
+def typed_zip_target(left: list[list[int]], right: list[int]) -> int:
+  pairs = zip(left, right)
+  mut total = 0
+  for typed_zip_left, typed_zip_right in pairs:
+    total += len(typed_zip_left) + typed_zip_right
+  return total
+
+def typed_zip_entry() -> int:
+  empty_left: list[list[int]] = []
+  empty_right: list[int] = []
+  return typed_zip_target(empty_left, empty_right)
+
+
+def main() -> None:
+    println(typed_zip_entry())

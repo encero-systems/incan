@@ -1,0 +1,9 @@
+# behavior: executes print by recording its output
+# expect-stdout:
+#   hello
+#   count 3 true
+
+
+def main() -> None:
+  println("hello")
+  println("count", 3, true)

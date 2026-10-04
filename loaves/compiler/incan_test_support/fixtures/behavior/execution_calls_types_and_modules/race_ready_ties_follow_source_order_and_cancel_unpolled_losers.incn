@@ -1,0 +1,22 @@
+# behavior: race ready ties follow source order and cancel unpolled losers
+# expect-stdout:
+#   2
+
+
+import std.async
+
+async def first() -> int:
+  return 1
+
+async def second() -> int:
+  return 2
+
+async def program_result() -> int:
+  winner = race for value:
+    await second() => value
+    await first() => value
+  return winner
+
+
+async def main() -> None:
+    println(await program_result())

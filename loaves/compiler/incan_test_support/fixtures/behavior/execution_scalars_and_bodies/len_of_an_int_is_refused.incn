@@ -1,0 +1,6 @@
+# behavior: len() of an int is refused at check time
+# pending: the checker accepts `len(1)` instead of refusing it
+# expect-diagnostic: INCAN-T0001
+
+def observe() -> int:
+  return len(1)

@@ -1,0 +1,14 @@
+# behavior: refuses nonlist enumerate at the original call span, as the legacy route runs it
+# expect-stdout:
+#   0
+
+
+def enumerate_nonlist() -> int:
+  mut total = 0
+  for pair in enumerate("x"):
+    total += pair.0
+  return total
+
+
+def main() -> None:
+    println(enumerate_nonlist())

@@ -1,0 +1,10 @@
+# behavior: `**` between ints is integer exponentiation
+# expect-stdout:
+#   8
+
+def program_result() -> int:
+    return 2 ** 3
+
+
+def main() -> None:
+    println(program_result())

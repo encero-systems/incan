@@ -1,0 +1,16 @@
+# behavior: refuses an unsupported sibling body at its original span, as the legacy route runs it
+# expect-stdout:
+#   42
+
+
+def unsupported_sibling() -> int:
+  unsafe:
+    pass
+  return 42
+
+def program_result() -> int:
+  return unsupported_sibling()
+
+
+def main() -> None:
+    println(program_result())

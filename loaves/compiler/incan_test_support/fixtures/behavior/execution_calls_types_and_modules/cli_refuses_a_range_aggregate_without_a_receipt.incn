@@ -1,0 +1,15 @@
+# behavior: cli refuses a range aggregate without a receipt, as the legacy route runs it
+# expect-stdout:
+# expect-exit: 101
+
+def bound() -> int:
+  assert false
+  return 4
+
+def program_result() -> int:
+  values = 0..bound()
+  return 1
+
+
+def main() -> None:
+    println(program_result())

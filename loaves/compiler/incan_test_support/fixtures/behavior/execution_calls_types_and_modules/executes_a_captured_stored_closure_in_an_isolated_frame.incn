@@ -1,0 +1,13 @@
+# behavior: executes a captured stored closure in an isolated frame
+# expect-stdout:
+#   42
+
+
+def program_result() -> int:
+  offset = 2
+  add: (int) -> int = (value) => value + offset
+  return add(40)
+
+
+def main() -> None:
+    println(program_result())

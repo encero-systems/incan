@@ -1,0 +1,13 @@
+# behavior: executes the selected string ownership control flow and assertion cases
+# expect-stdout:
+#   42
+
+def program_result() -> int:
+  a = 84
+  b = 2
+  assert b != 0
+  return a // b
+
+
+def main() -> None:
+    println(program_result())

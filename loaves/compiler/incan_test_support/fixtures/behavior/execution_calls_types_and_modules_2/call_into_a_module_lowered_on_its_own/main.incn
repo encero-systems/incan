@@ -1,0 +1,13 @@
+# behavior: a call into a provider module returns the provider's result
+# expect-stdout:
+#   7
+
+from cross_module_provider import provide
+
+
+def program_result() -> int:
+    return provide()
+
+
+def main() -> None:
+    println(program_result())

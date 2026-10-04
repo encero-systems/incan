@@ -1,0 +1,11 @@
+# behavior: non scalar hashed key types refuse at construction, as the legacy route runs it
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  values = {(1, 2)}
+  return (1, 2) in values
+
+
+def main() -> None:
+    println(program_result())

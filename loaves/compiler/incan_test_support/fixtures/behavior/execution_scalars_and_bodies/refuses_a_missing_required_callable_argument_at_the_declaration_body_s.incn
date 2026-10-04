@@ -1,0 +1,10 @@
+# behavior: the checker refuses a missing required callable argument at the declaration body s
+# expect-diagnostic: INCAN-T0001
+
+
+def needs(value: int) -> int:
+  return value
+
+
+def main() -> None:
+    println(needs())

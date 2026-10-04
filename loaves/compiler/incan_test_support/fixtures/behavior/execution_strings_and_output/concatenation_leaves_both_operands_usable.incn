@@ -1,0 +1,14 @@
+# behavior: concatenation leaves both operands usable
+# expect-stdout:
+#   61
+
+
+def program_result() -> int:
+  xs = [1, 2]
+  ys = [30]
+  joined = xs + ys
+  return xs[0] + ys[0] + joined[2]
+
+
+def main() -> None:
+    println(program_result())

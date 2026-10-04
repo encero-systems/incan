@@ -1,0 +1,16 @@
+# behavior: cli refuses iteration over an unrepresentable element without a receipt, as the legacy route runs it
+# expect-stdout:
+#   1
+
+model Point:
+  x: int
+
+def program_result() -> int:
+  mut seen = 0
+  for value in [Point(x=1)]:
+    seen += 1
+  return seen
+
+
+def main() -> None:
+    println(program_result())

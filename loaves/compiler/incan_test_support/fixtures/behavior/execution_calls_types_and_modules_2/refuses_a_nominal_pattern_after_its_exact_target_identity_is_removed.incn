@@ -1,0 +1,18 @@
+# behavior: refuses a nominal pattern after its exact target identity is removed, as the legacy route runs it
+# expect-stdout:
+#   42
+
+
+model Point:
+  x: int
+
+def program_result() -> int:
+  point = Point(x=42)
+  match point:
+    case Point(x=value):
+      return value
+  return 0
+
+
+def main() -> None:
+    println(program_result())

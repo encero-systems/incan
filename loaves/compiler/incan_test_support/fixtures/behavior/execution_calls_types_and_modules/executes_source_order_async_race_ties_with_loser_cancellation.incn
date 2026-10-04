@@ -1,0 +1,24 @@
+# behavior: executes source order async race ties with loser cancellation
+# expect-stdout:
+#   1
+
+
+import std.async
+
+async def first() -> int:
+  return 1
+
+async def second() -> int:
+  return 2
+
+async def program_result() -> int:
+  winner = race for value:
+    await first() => value
+    await second() =>
+      assert value == 999
+      value
+  return winner
+
+
+async def main() -> None:
+    println(await program_result())

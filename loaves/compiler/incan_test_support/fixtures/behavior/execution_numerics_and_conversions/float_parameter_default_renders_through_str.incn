@@ -1,0 +1,16 @@
+# behavior: a float parameter default applies when the argument is omitted, and str() renders both the passed and the default value
+# expect-stdout:
+#   1.5
+#   3.14 1.5
+
+def render(value: float = 1.5) -> str:
+    return str(value)
+
+
+def both() -> str:
+    return f"{render(3.14)} {render()}"
+
+
+def main() -> None:
+    println(render())
+    println(both())

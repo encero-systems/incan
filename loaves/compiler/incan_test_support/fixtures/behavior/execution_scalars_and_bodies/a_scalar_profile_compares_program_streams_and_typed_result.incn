@@ -1,0 +1,12 @@
+# behavior: a scalar profile compares program streams and typed result
+# expect-stdout:
+#   normal program stdout
+#   42
+
+def add(x: int, y: int) -> int:
+    println("normal program stdout")
+    return x + y
+
+
+def main() -> None:
+    println(add(40, 2))

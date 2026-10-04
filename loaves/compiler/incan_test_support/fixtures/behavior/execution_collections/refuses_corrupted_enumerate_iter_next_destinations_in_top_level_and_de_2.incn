@@ -1,0 +1,17 @@
+# behavior: refuses corrupted enumerate iter next destinations in top level and deferred frames
+# expect-stdout:
+#   5
+
+
+def generated_enumerate_item() -> Generator[int]:
+  for generated_index, generated_value in enumerate([5]):
+    yield generated_index + generated_value
+
+def generated_enumerate_entry() -> int:
+  generated_values = generated_enumerate_item().collect()
+  generated_first = generated_values[0]
+  return generated_first
+
+
+def main() -> None:
+    println(generated_enumerate_entry())

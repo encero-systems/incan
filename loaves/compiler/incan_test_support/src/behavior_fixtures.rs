@@ -55,6 +55,7 @@ const DIRECTIVES: &[&str] = &[
     EXPECT_STDOUT_CONTAINS,
     "expect-exit",
     "expect-diagnostic",
+    "pending",
 ];
 
 // ============================================================
@@ -98,6 +99,13 @@ pub struct Header {
     pub retires: Vec<String>,
     /// What a run must show.
     pub expectation: Expectation,
+    /// Why the fixture does not hold yet (`# pending:`), when it is known not to.
+    ///
+    /// A pending fixture is run like any other, and a run that does not show what it declares is reported as pending
+    /// rather than failing its area: the fixture is the test written first, red until the change it waits for lands.
+    /// A pending fixture that does show what it declares fails its area, so the change that turns it green removes the
+    /// line in the same commit and the marker never outlives what it described.
+    pub pending: Option<String>,
 }
 
 /// How a fixture is laid out on disk.
@@ -208,6 +216,7 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
     let mut exit_code: Option<(usize, i32)> = None;
     let mut diagnostics: Vec<String> = Vec::new();
     let mut first_diagnostic: Option<usize> = None;
+    let mut pending: Option<String> = None;
     let mut first_run: Option<(usize, &str)> = None;
     // The block directive currently collecting items, with the indentation its first item established.
     let mut open_block: Option<(&'static str, Option<usize>)> = None;
@@ -370,6 +379,17 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                 first_diagnostic.get_or_insert(number);
                 diagnostics.push(value.to_string());
             }
+            "pending" => {
+                if pending.is_some() {
+                    return Err(format!("line {number}: `pending:` is declared twice"));
+                }
+                if value.is_empty() {
+                    return Err(format!(
+                        "line {number}: `pending:` must say what the fixture waits for, such as the change that makes it hold"
+                    ));
+                }
+                pending = Some(value.to_string());
+            }
             other => {
                 return Err(format!(
                     "line {number}: unknown directive `{other}`; the header accepts {}",
@@ -397,6 +417,7 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
             behavior,
             retires,
             expectation: Expectation::Refused { diagnostics },
+            pending,
         });
     }
     if first_run.is_none() {
@@ -417,6 +438,7 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
             stdout,
             exit_code: exit_code.map_or(0, |(_, code)| code),
         },
+        pending,
     })
 }
 
@@ -747,6 +769,9 @@ pub enum Outcome {
     Passed,
     /// At least one observable did not; the failure says which.
     Failed(FixtureFailure),
+    /// A `pending:` fixture did not show what it declares, as its header says it does not yet; the record keeps what it
+    /// showed, so the report still says how far the program is from holding.
+    Pending(FixtureFailure),
 }
 
 /// What running an area produced: every fixture attempted, and every one that failed.
@@ -758,21 +783,36 @@ pub struct AreaReport {
     pub passed: Vec<String>,
     /// Every fixture that did not, in discovery order.
     pub failures: Vec<FixtureFailure>,
+    /// Every `pending:` fixture that does not hold yet, with what it showed; these do not fail the area.
+    pub pending: Vec<FixtureFailure>,
 }
 
 impl AreaReport {
     /// The report as one message: a headline, then each failure with its expected-versus-actual.
     pub fn message(&self) -> String {
         let mut out = format!(
-            "{} of {} behavior fixture(s) failed in {}\n",
+            "{} of {} behavior fixture(s) failed in {}{}\n",
             self.failures.len(),
-            self.passed.len() + self.failures.len(),
-            self.area
+            self.passed.len() + self.failures.len() + self.pending.len(),
+            self.area,
+            if self.pending.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} pending)", self.pending.len())
+            }
         );
         for failure in &self.failures {
             out.push('\n');
             out.push_str(&failure.to_string());
             if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        if !self.pending.is_empty() {
+            out.push_str("\npending:\n");
+            for pending in &self.pending {
+                out.push_str("  ");
+                out.push_str(&pending.path);
                 out.push('\n');
             }
         }
@@ -862,9 +902,14 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
         detail,
     };
 
-    let outcome = |compared: Result<(), String>| match compared {
-        Ok(()) => Outcome::Passed,
-        Err(detail) => Outcome::Failed(failure(detail)),
+    let pending = fixture.header.pending.as_deref();
+    let outcome = |compared: Result<(), String>| match (compared, pending) {
+        (Ok(()), None) => Outcome::Passed,
+        (Err(detail), None) => Outcome::Failed(failure(detail)),
+        (Err(detail), Some(reason)) => Outcome::Pending(failure(format!("pending: {reason}\n{detail}"))),
+        (Ok(()), Some(reason)) => Outcome::Failed(failure(format!(
+            "the fixture now shows what it declares, but its header still says `pending: {reason}`; remove that line"
+        ))),
     };
 
     match &fixture.header.expectation {
@@ -1046,11 +1091,13 @@ pub fn run_area(area: &str) -> Result<AreaReport, Box<dyn Error>> {
         area: checkout_relative(&dir),
         passed: Vec::new(),
         failures: Vec::new(),
+        pending: Vec::new(),
     };
     for fixture in &fixtures {
         match run_fixture(fixture, &scratch)? {
             Outcome::Passed => report.passed.push(fixture.display_path()),
             Outcome::Failed(failure) => report.failures.push(failure),
+            Outcome::Pending(failure) => report.pending.push(failure),
         }
     }
     Ok(report)
@@ -1062,9 +1109,15 @@ pub fn run_area(area: &str) -> Result<AreaReport, Box<dyn Error>> {
 /// back as `Err`; a fixture that ran and did not show what it declared is an assertion failure, so libtest prints
 /// the report as written rather than as one escaped string. A root file holds one `#[test]` per leaf area, each
 /// making this call, so the suite's two-thread root budget can run two areas of one family concurrently.
+///
+/// Pending fixtures do not fail the area; the report lists them on stderr, so a run shows which tests are still red
+/// and why without blocking the suite.
 pub fn assert_area_green(area: &str) -> Result<(), Box<dyn Error>> {
     let report = run_area(area)?;
     assert!(report.failures.is_empty(), "{}", report.message());
+    for pending in &report.pending {
+        eprintln!("pending fixture {}\n{}\n", pending.path, pending.detail);
+    }
     Ok(())
 }
 
@@ -1603,12 +1656,35 @@ mod tests {
                     detail: "exit code: expected 0, got 1\n".to_string(),
                 },
             ],
+            pending: vec![FixtureFailure {
+                path: "loaves/x/behavior/smoke/p.incn".to_string(),
+                behavior: "p".to_string(),
+                detail: "pending: the direct route\nstdout differs\n".to_string(),
+            }],
         };
         let message = report.message();
-        assert!(message.starts_with("2 of 3 behavior fixture(s) failed in loaves/x/behavior/smoke"));
+        assert!(message.starts_with("2 of 4 behavior fixture(s) failed in loaves/x/behavior/smoke (1 pending)"));
         assert!(message.contains("--- loaves/x/behavior/smoke/a.incn\nbehavior: a\nstdout differs"));
         assert!(message.contains("--- loaves/x/behavior/smoke/b.incn\nbehavior: b\nexit code: expected 0, got 1"));
+        assert!(message.contains("pending:\n  loaves/x/behavior/smoke/p.incn"));
         assert!(message.contains("passed:\n  loaves/x/behavior/smoke/ok.incn"));
+    }
+
+    /// `pending:` records why a fixture does not hold yet; it is optional, single, and needs a reason.
+    #[test]
+    fn pending_names_what_the_fixture_waits_for() -> TestResult {
+        let header = parse_header("# behavior: b\n# pending: the direct route runs it\n# expect-stdout:\n#   1\n")?;
+        assert_eq!(header.pending.as_deref(), Some("the direct route runs it"));
+        assert_eq!(parse_header("# behavior: b\n# expect-exit: 0\n")?.pending, None);
+        let empty = parse_header("# behavior: b\n# pending:\n# expect-exit: 0\n")
+            .err()
+            .ok_or("an empty reason must be refused")?;
+        assert!(empty.contains("must say what the fixture waits for"), "{empty}");
+        let twice = parse_header("# behavior: b\n# pending: a\n# pending: b\n# expect-exit: 0\n")
+            .err()
+            .ok_or("a second pending line must be refused")?;
+        assert!(twice.contains("declared twice"), "{twice}");
+        Ok(())
     }
 
     /// Exact stdout is compared line by line; contained lines in any order; the exit code always.

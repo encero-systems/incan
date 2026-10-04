@@ -1,0 +1,15 @@
+# behavior: a model with a float field is constructed beside the value main returns
+# expect-stdout:
+#   42
+
+model FloatBox:
+    value: float
+
+
+def program_result() -> int:
+    boxed = FloatBox(value=1.5)
+    return 42
+
+
+def main() -> None:
+    println(program_result())

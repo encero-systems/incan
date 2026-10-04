@@ -1,0 +1,12 @@
+# behavior: hashed non membership operations remain refused, as the legacy route runs it
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  mut values = {1: 2}
+  values[1] = 3
+  return 1 in values
+
+
+def main() -> None:
+    println(program_result())

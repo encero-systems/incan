@@ -1,0 +1,11 @@
+# behavior: executes the selected string ownership control flow and assertion cases
+# expect-stdout:
+#   owned
+
+def program_result() -> str:
+  value = "owned"
+  return value
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,21 @@
+# behavior: zip alias and original each match native
+# expect-stdout:
+#   3
+#   3
+#   6
+
+def observe() -> int:
+    pairs = zip([1], [2])
+    alias = pairs
+    mut total = 0
+    for left, right in alias:
+        println(left + right)
+        total += left + right
+    for other_left, other_right in pairs:
+        println(other_left + other_right)
+        total += other_left + other_right
+    return total
+
+
+def main() -> None:
+    println(observe())

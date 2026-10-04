@@ -1,0 +1,16 @@
+# behavior: executes let shadowing by local identity
+# expect-stdout:
+#   3
+
+
+def program_result() -> int:
+  mut total = 0
+  x = 1
+  if true:
+    let x = 2
+    total += x
+  return total + x
+
+
+def main() -> None:
+    println(program_result())

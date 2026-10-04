@@ -1,0 +1,10 @@
+# behavior: hashed container equality remains an original span refusal, as the legacy route runs it
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  return {1} == {1}
+
+
+def main() -> None:
+    println(program_result())

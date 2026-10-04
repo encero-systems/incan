@@ -1,0 +1,14 @@
+# behavior: dispatches named calls by canonical target and refuses absent identity
+# expect-stdout:
+#   42
+
+
+def helper() -> int:
+  return 42
+
+def program_result() -> int:
+  return helper()
+
+
+def main() -> None:
+    println(program_result())

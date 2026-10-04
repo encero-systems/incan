@@ -1,0 +1,17 @@
+# behavior: cli executes a source local value enum with a replacement receipt
+# expect-stdout:
+#   404
+
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+def status_code() -> int:
+  return HttpStatus.NotFound.value()
+
+def program_result() -> int:
+  return status_code()
+
+
+def main() -> None:
+    println(program_result())

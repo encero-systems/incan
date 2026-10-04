@@ -1,0 +1,6 @@
+# behavior: the checker rejects a source declaration that redefines immutable print
+# expect-diagnostic: INCAN-T0001
+
+
+def print(value: int) -> int:
+  return value + 1

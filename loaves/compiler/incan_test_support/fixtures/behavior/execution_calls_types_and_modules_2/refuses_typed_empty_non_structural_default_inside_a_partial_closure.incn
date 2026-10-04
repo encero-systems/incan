@@ -1,0 +1,15 @@
+# behavior: refuses typed empty non structural default inside a partial closure, as the legacy route runs it
+# expect-stdout:
+#   1
+
+
+def keep(prefix: int, items: list[float] = []) -> int:
+  return prefix
+
+def program_result() -> int:
+  deferred = partial keep(prefix=1)
+  return deferred()
+
+
+def main() -> None:
+    println(program_result())

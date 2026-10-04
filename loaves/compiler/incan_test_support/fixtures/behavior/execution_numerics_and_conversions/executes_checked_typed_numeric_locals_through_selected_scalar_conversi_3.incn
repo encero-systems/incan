@@ -1,0 +1,12 @@
+# behavior: executes checked typed numeric locals through selected scalar conversions
+# expect-stdout:
+#   10.0
+
+
+def program_result() -> float:
+  value: u128 = 10
+  return float(value)
+
+
+def main() -> None:
+    println(program_result())

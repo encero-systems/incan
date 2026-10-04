@@ -1,0 +1,19 @@
+# behavior: cli executes a source local fieldless enum with a replacement receipt
+# expect-stdout:
+#   42
+
+enum Signal:
+  Ready
+  Stop
+
+def score(left: Signal, right: Signal) -> int:
+  if left == Signal.Ready and right != Signal.Ready:
+    return 42
+  return 0
+
+def program_result() -> int:
+  return score(Signal.Ready, Signal.Stop)
+
+
+def main() -> None:
+    println(program_result())

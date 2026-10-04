@@ -1,0 +1,7 @@
+# behavior: hashed non membership operations remain refused, as the legacy route runs it
+# expect-stdout:
+
+def main() -> None:
+  values = {1, 2}
+  for value in values:
+    pass

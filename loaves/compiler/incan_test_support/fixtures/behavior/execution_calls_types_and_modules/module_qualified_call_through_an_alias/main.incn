@@ -1,0 +1,9 @@
+# behavior: a module-qualified call through `import helper as provider` returns its result
+# expect-stdout:
+#   42
+
+import helper as provider
+
+
+def main() -> None:
+    println(provider.bump(41))

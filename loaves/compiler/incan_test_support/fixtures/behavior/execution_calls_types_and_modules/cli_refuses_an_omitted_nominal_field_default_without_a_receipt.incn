@@ -1,0 +1,15 @@
+# behavior: cli refuses an omitted nominal field default without a receipt, as the legacy route runs it
+# expect-stdout:
+#   40
+
+model Pair:
+  left: int
+  right: int = 2
+
+def program_result() -> int:
+  pair = Pair(left=40)
+  return pair.left
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,12 @@
+# behavior: abs and sum overflow are always checked, as the legacy route runs it
+# expect-stdout:
+#   before abs
+# expect-exit: 101
+
+def abs_min(value: int) -> int:
+    println("before abs")
+    return abs(value)
+
+
+def main() -> None:
+    println(abs_min(-9223372036854775808))

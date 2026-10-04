@@ -1,0 +1,16 @@
+# behavior: executes mut shadowing by local identity
+# expect-stdout:
+#   11
+
+
+def program_result() -> int:
+  mut total = 0
+  mut x = 4
+  if true:
+    mut x = 7
+    total += x
+  return total + x
+
+
+def main() -> None:
+    println(program_result())

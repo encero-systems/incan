@@ -1,0 +1,16 @@
+# behavior: cli refuses async task failure without a receipt, as the legacy route runs it
+# expect-stdout:
+# expect-exit: 101
+
+import std.async
+
+async def child() -> int:
+  assert false
+  return 7
+
+async def program_result() -> int:
+  return await child()
+
+
+async def main() -> None:
+    println(await program_result())

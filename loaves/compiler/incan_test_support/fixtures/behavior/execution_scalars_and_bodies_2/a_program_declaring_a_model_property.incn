@@ -1,0 +1,17 @@
+# behavior: a program that declares a model with a property runs
+# expect-stdout:
+#   42
+
+model Pair:
+    left: int
+
+    property score -> int:
+        return self.left
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

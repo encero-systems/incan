@@ -1,0 +1,10 @@
+# behavior: `not in` between strings is substring non-membership
+# expect-stdout:
+#   false
+
+def program_result() -> bool:
+    return "a" not in "abc"
+
+
+def main() -> None:
+    println(program_result())

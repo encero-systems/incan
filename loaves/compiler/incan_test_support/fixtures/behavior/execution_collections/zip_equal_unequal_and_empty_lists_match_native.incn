@@ -1,0 +1,32 @@
+# behavior: zip equal unequal and empty lists match native
+# expect-stdout:
+#   11
+#   22
+#   33
+#   44
+#   110
+
+
+def observe() -> int:
+  mut total = 0
+  for equal_left, equal_right in zip([1, 2], [10, 20]):
+    println(equal_left + equal_right)
+    total += equal_left + equal_right
+  for short_left, long_right in zip([3], [30, 40]):
+    println(short_left + long_right)
+    total += short_left + long_right
+  for long_left, short_right in zip([4, 5], [40]):
+    println(long_left + short_right)
+    total += long_left + short_right
+  empty: list[int] = []
+  for empty_left, unused_right in zip(empty, [100]):
+    total += empty_left + unused_right
+  for unused_left, empty_right in zip([100], empty):
+    total += unused_left + empty_right
+  for both_empty_left, both_empty_right in zip(empty, empty):
+    total += both_empty_left + both_empty_right
+  return total
+
+
+def main() -> None:
+    println(observe())

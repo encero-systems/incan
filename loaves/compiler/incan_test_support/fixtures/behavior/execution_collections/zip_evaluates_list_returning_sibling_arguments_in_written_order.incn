@@ -1,0 +1,26 @@
+# behavior: zip evaluates list returning sibling arguments in written order
+# expect-stdout:
+#   left
+#   right
+#   pair
+#   10
+
+
+def left_values() -> list[int]:
+  println("left")
+  return [10]
+
+def right_labels() -> list[str]:
+  println("right")
+  return ["ten"]
+
+def zip_written_order() -> int:
+  mut total = 0
+  for value, label in zip(left_values(), right_labels()):
+    println("pair")
+    total += value
+  return total
+
+
+def main() -> None:
+    println(zip_written_order())

@@ -1,0 +1,16 @@
+# behavior: source defined isinstance keeps its direct callable identity
+# expect-stdout:
+#   true
+
+def isinstance(value: int, target: int) -> bool:
+  return value == target
+
+def probe() -> bool:
+  return isinstance(1, 1)
+
+def explicit_probe(value: int | str) -> bool:
+  return std.builtins.isinstance(value, int)
+
+
+def main() -> None:
+    println(probe())

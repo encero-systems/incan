@@ -1,0 +1,17 @@
+# behavior: refuses nominal field assignment at the original source span, as the legacy route runs it
+# expect-stdout:
+#   41
+
+
+model Pair:
+  left: int
+  right: int
+
+def program_result() -> int:
+  mut pair = Pair(left=40, right=2)
+  pair.left = 41
+  return pair.left
+
+
+def main() -> None:
+    println(program_result())

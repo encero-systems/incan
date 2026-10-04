@@ -1,0 +1,12 @@
+# behavior: stdout survives a later runtime failure, stopping the program
+# expect-stdout:
+#   before failure
+# expect-exit: 101
+
+def program_result() -> None:
+    println("before failure")
+    assert false
+
+
+def main() -> None:
+    program_result()

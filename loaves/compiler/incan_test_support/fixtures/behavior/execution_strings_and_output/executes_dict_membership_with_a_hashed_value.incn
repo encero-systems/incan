@@ -1,0 +1,12 @@
+# behavior: executes dict membership with a hashed value
+# expect-stdout:
+#   true
+
+
+def program_result() -> bool:
+  d = {"a": 1}
+  return "a" in d
+
+
+def main() -> None:
+    println(program_result())

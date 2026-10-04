@@ -1,0 +1,16 @@
+# behavior: collection len evaluates its operand once
+# expect-stdout:
+#   len element
+#   len element
+#   2
+
+def mark(value: int) -> int:
+  println("len element")
+  return value
+
+def observe() -> int:
+  return len({mark(1), mark(2)})
+
+
+def main() -> None:
+    println(observe())

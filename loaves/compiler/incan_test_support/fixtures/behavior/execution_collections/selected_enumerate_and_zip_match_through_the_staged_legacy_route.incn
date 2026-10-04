@@ -1,0 +1,28 @@
+# behavior: selected enumerate and zip match through the staged legacy route
+# expect-stdout:
+#   0
+#   10
+#   1
+#   20
+#   10
+#   ten
+#   41
+
+
+def enumerate_zip_profile() -> int:
+  values = [10, 20]
+  labels = ["ten"]
+  mut total = 0
+  for pair in enumerate(values):
+    println(pair.0)
+    println(pair.1)
+    total += pair.0 + pair.1
+  for zipped_pair in zip(values, labels):
+    println(zipped_pair.0)
+    println(zipped_pair.1)
+    total += zipped_pair.0
+  return total
+
+
+def main() -> None:
+    println(enumerate_zip_profile())

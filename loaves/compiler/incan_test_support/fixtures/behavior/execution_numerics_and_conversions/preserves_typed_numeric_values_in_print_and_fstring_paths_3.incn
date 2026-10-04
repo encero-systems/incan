@@ -1,0 +1,14 @@
+# behavior: preserves typed numeric values in print and fstring paths
+# expect-stdout:
+#   1.2345679
+
+
+def identity(value: f32) -> f32:
+  return value
+
+def program_result() -> str:
+  return f"{identity(1.23456789)}"
+
+
+def main() -> None:
+    println(program_result())

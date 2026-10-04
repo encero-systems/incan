@@ -1,0 +1,10 @@
+# behavior: scalar conversions do not admit float negation, as the legacy route runs it
+# expect-stdout:
+#   -3
+
+def program_result() -> int:
+    return int(-3.9)
+
+
+def main() -> None:
+    println(program_result())

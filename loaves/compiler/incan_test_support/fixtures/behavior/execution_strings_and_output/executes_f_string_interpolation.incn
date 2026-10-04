@@ -1,0 +1,14 @@
+# behavior: executes f string interpolation
+# expect-stdout:
+#   3 rows ok=true quoted="rows"
+
+
+def program_result() -> str:
+  count = 3
+  name = "rows"
+  ok = true
+  return f"{count} {name} ok={ok} quoted={name:?}"
+
+
+def main() -> None:
+    println(program_result())

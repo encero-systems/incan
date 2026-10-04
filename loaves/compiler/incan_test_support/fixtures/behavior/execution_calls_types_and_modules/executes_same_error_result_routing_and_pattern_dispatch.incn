@@ -1,0 +1,47 @@
+# behavior: executes same error result routing and pattern dispatch
+# expect-stdout:
+#   2
+
+
+enum Failure:
+  Odd
+
+def half(value: int) -> Result[int, Failure]:
+  if value % 2 != 0:
+    return Err(Failure.Odd)
+  return Ok(value // 2)
+
+def quarter(value: int) -> Result[int, Failure]:
+  half_value = half(value)?
+  return half(half_value)
+
+def program_result() -> int:
+  match quarter(8):
+    case Ok(value):
+      return value
+    case Err(_):
+      return 0
+  return 0
+
+def failed() -> int:
+  match quarter(5):
+    case Ok(value):
+      return value
+    case Err(_):
+      return 0
+  return 0
+
+def pair_result() -> Result[tuple[int, int], Failure]:
+  return Ok((20, 22))
+
+def tuple_payload() -> int:
+  match pair_result():
+    case Ok(_):
+      return 42
+    case Err(_):
+      return 0
+  return 0
+
+
+def main() -> None:
+    println(program_result())

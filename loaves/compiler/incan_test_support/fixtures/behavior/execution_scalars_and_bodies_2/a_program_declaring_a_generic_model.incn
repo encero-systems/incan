@@ -1,0 +1,14 @@
+# behavior: a program that declares a generic model runs
+# expect-stdout:
+#   42
+
+model Box[T]:
+    value: T
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

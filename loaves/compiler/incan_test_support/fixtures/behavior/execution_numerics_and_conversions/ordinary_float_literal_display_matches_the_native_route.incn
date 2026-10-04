@@ -1,0 +1,10 @@
+# behavior: ordinary float literal display matches the native route
+# expect-stdout:
+#   1000.5 125.0
+
+def render() -> str:
+    return f"{str(1_000.50)} {str(1.25e2)}"
+
+
+def main() -> None:
+    println(render())

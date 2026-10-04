@@ -1,0 +1,15 @@
+# behavior: executes the selected string ownership control flow and assertion cases
+# expect-stdout:
+#   10
+
+def program_result() -> int:
+  for value in range(1, 5):
+    if value % 2 == 0:
+      continue
+  while false:
+    return 0
+  return 10
+
+
+def main() -> None:
+    println(program_result())

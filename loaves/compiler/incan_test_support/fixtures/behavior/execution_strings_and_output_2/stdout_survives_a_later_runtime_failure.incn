@@ -1,0 +1,8 @@
+# behavior: stdout survives a later runtime failure, as the legacy route runs it
+# expect-stdout:
+#   before failure
+# expect-exit: 101
+
+def main() -> None:
+    println("before failure")
+    assert false

@@ -1,0 +1,13 @@
+# behavior: a program importing std.io runs
+# expect-stdout:
+#   42
+
+import std.io
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

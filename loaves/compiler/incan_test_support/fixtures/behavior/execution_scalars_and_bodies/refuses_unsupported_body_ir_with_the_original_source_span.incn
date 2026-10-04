@@ -1,0 +1,12 @@
+# behavior: refuses unsupported body ir with the original source span, as the legacy route runs it
+# expect-stdout:
+#   0
+
+
+def program_result() -> int:
+  values = {**{"first": 1}}
+  return 0
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,15 @@
+# behavior: indexing a list field of a model reads its element
+# expect-stdout:
+#   40
+
+model Bucket:
+    values: list[int]
+
+
+def program_result() -> int:
+    bucket = Bucket(values=[40, 2])
+    return bucket.values[0]
+
+
+def main() -> None:
+    println(program_result())

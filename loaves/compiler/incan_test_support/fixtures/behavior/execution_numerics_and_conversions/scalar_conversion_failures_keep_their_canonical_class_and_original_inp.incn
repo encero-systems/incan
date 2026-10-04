@@ -1,0 +1,12 @@
+# behavior: scalar conversion failures keep their canonical class and original input, stopping the program
+# expect-stdout:
+#   before conversion
+# expect-exit: 101
+
+def parse(value: str) -> int:
+    println("before conversion")
+    return int(value)
+
+
+def main() -> None:
+    parse("AssertionError overflow division by zero")

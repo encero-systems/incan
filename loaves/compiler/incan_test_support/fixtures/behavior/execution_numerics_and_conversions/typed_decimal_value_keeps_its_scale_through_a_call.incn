@@ -1,0 +1,13 @@
+# behavior: a decimal[6, 2] value passed through a function keeps its two-digit scale
+# expect-stdout:
+#   19.90
+#   19.90
+
+def identity(value: decimal[6, 2]) -> decimal[6, 2]:
+    println(value)
+    return value
+
+
+def main() -> None:
+    value: decimal[6, 2] = 19.90d
+    println(identity(value))

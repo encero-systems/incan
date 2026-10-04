@@ -1,0 +1,16 @@
+# behavior: refuses a zip alias with a corrupted checked iterator type, as the legacy route runs it
+# expect-stdout:
+#   3
+
+
+def zip_alias_type_mismatch() -> int:
+  pairs = zip([1], [2])
+  alias = pairs
+  mut total = 0
+  for alias_left, alias_right in alias:
+    total += alias_left + alias_right
+  return total
+
+
+def main() -> None:
+    println(zip_alias_type_mismatch())

@@ -1,0 +1,12 @@
+# behavior: abs and sum overflow are always checked, as the legacy route runs it
+# expect-stdout:
+#   before sum
+# expect-exit: 101
+
+def overflowing_sum() -> int:
+    println("before sum")
+    return sum([9223372036854775807, 1])
+
+
+def main() -> None:
+    println(overflowing_sum())

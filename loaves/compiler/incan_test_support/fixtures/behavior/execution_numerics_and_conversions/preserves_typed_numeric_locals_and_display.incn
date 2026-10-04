@@ -1,0 +1,16 @@
+# behavior: preserves typed numeric locals and display
+# expect-stdout:
+#   1.2345679 1.23456789 340282366920938463463374607431768211455 -170141183460469231731687303715884105728 19.90
+
+
+def program_result() -> str:
+  rounded: f32 = 1.23456789
+  explicit: f64 = 1.23456789
+  wide: u128 = 340282366920938463463374607431768211455
+  low: i128 = -170141183460469231731687303715884105728
+  price: decimal[6, 2] = 19.90d
+  return f"{rounded} {str(explicit)} {wide} {low} {price}"
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,15 @@
+# behavior: canonical bool evaluates its operand once
+# expect-stdout:
+#   bool operand
+#   false
+
+def marked() -> str:
+  println("bool operand")
+  return ""
+
+def observe() -> bool:
+  return bool(marked())
+
+
+def main() -> None:
+    println(observe())

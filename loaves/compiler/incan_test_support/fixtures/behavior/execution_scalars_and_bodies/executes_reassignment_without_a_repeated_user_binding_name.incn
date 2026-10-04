@@ -1,0 +1,13 @@
+# behavior: executes reassignment without a repeated user binding name
+# expect-stdout:
+#   2
+
+
+def program_result() -> int:
+  mut x = 1
+  x = 2
+  return x
+
+
+def main() -> None:
+    println(program_result())

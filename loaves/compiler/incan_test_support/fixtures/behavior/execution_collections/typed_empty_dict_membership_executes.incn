@@ -1,0 +1,11 @@
+# behavior: typed empty dict membership executes
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  values: dict[str, int] = {}
+  return "missing" not in values
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,10 @@
+# behavior: scalar set key kinds execute
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  return true in {false, true}
+
+
+def main() -> None:
+    println(program_result())

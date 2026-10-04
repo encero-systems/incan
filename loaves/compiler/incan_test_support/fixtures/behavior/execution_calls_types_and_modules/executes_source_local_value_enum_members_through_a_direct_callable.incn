@@ -1,0 +1,28 @@
+# behavior: executes source local value enum members through a direct callable
+# expect-stdout:
+#   404
+
+
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+enum Environment(str):
+  Development = "development"
+  Production = "production"
+
+def status_code(status: HttpStatus) -> int:
+  return status.value()
+
+def extract_environment(environment: Environment) -> str:
+  return environment.value()
+
+def environment_name() -> str:
+  return extract_environment(Environment.Production)
+
+def program_result() -> int:
+  return status_code(HttpStatus.NotFound)
+
+
+def main() -> None:
+    println(program_result())

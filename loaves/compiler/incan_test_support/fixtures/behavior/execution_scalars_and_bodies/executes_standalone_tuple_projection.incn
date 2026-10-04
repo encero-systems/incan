@@ -1,0 +1,12 @@
+# behavior: executes standalone tuple projection
+# expect-stdout:
+#   1
+
+
+def program_result() -> int:
+  pair = (1, 2)
+  return pair.0
+
+
+def main() -> None:
+    println(program_result())

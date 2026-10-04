@@ -1,0 +1,32 @@
+# behavior: zip lists cover equal unequal and empty inputs
+# expect-stdout:
+#   1
+#   one
+#   2
+#   two
+#   7
+#   seven
+#   10
+
+
+def zip_profile() -> int:
+  mut total = 0
+  for value, label in zip([1, 2], ["one", "two"]):
+    println(value)
+    println(label)
+    total += value
+  for pair in zip([7, 8], ["seven"]):
+    println(pair.0)
+    println(pair.1)
+    total += pair.0
+  empty_values: list[int] = []
+  empty_labels: list[str] = []
+  for empty_value, unused_number in zip(empty_values, [9]):
+    total += empty_value
+  for unused_value, empty_label in zip([4], empty_labels):
+    total += unused_value
+  return total
+
+
+def main() -> None:
+    println(zip_profile())

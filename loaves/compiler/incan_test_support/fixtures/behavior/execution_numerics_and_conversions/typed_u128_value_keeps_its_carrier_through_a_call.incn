@@ -1,0 +1,13 @@
+# behavior: the largest u128 passed through a function prints the same before and after the call
+# expect-stdout:
+#   340282366920938463463374607431768211455
+#   340282366920938463463374607431768211455
+
+def identity(value: u128) -> u128:
+    println(value)
+    return value
+
+
+def main() -> None:
+    value: u128 = 340282366920938463463374607431768211455
+    println(identity(value))

@@ -1,0 +1,12 @@
+# behavior: division failure preserves prior stdout and reports stderr divergence, stopping the program
+# expect-stdout:
+#   before division
+# expect-exit: 101
+
+def divide(a: int, b: int) -> int:
+    println("before division")
+    return a // b
+
+
+def main() -> None:
+    divide(1, 0)

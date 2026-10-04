@@ -1,0 +1,6 @@
+# behavior: both backends render a multi argument print the same way
+# expect-stdout:
+#   count 3 true
+
+def main() -> None:
+  println("count", 3, true)

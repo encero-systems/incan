@@ -1,0 +1,16 @@
+# behavior: cli refuses nonlist enumerate without a successful receipt, as the legacy route runs it
+# expect-stdout:
+#   must not run
+#   0
+
+
+def program_result() -> int:
+  println("must not run")
+  mut total = 0
+  for pair in enumerate("x"):
+    total += pair.0
+  return total
+
+
+def main() -> None:
+    println(program_result())

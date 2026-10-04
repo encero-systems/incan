@@ -1,0 +1,15 @@
+# behavior: refuses enumerate spread at the original call span, as the legacy route runs it
+# expect-stdout:
+#   0
+#   0
+
+
+def enumerate_spread() -> int:
+  values = [[1]]
+  for pair in enumerate(*values):
+    println(pair.0)
+  return 0
+
+
+def main() -> None:
+    println(enumerate_spread())

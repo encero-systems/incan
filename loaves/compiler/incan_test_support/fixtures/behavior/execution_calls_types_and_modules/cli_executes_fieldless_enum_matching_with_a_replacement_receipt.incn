@@ -1,0 +1,21 @@
+# behavior: cli executes fieldless enum matching with a replacement receipt
+# expect-stdout:
+#   42
+
+enum Signal:
+  Ready
+  Stop
+
+def program_result() -> int:
+  return classify(Signal.Ready)
+
+def classify(signal: Signal) -> int:
+  match signal:
+    case Signal.Ready:
+      return 42
+    case Signal.Stop:
+      return 0
+
+
+def main() -> None:
+    println(program_result())

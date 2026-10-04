@@ -1,0 +1,10 @@
+# behavior: method len str executes unicode scalar rows
+# expect-stdout:
+#   1
+
+def length(value: str) -> int:
+    return value.len()
+
+
+def main() -> None:
+    println(length("😀"))
