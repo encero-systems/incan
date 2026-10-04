@@ -380,6 +380,72 @@ fn nested_frames_keep_the_checked_contract_3() -> CaseResult {
     assert_fixture_holds(AREA, "nested_frames_keep_the_checked_contract_3")
 }
 
+/// Runs the fixture `parity_add_two_int_parameters`.
+#[test]
+fn parity_add_two_int_parameters() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_add_two_int_parameters")
+}
+
+/// Runs the fixture `parity_assert_then_floor_divide`.
+#[test]
+fn parity_assert_then_floor_divide() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_assert_then_floor_divide")
+}
+
+/// Runs the fixture `parity_chained_comparison_is_refused`.
+#[test]
+fn parity_chained_comparison_is_refused() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_chained_comparison_is_refused")
+}
+
+/// Runs the fixture `parity_continue_and_a_loop_that_never_runs`.
+#[test]
+fn parity_continue_and_a_loop_that_never_runs() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_continue_and_a_loop_that_never_runs")
+}
+
+/// Runs the fixture `parity_let_shadows_inside_a_block`.
+#[test]
+fn parity_let_shadows_inside_a_block() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_let_shadows_inside_a_block")
+}
+
+/// Runs the fixture `parity_mut_shadows_inside_a_block`.
+#[test]
+fn parity_mut_shadows_inside_a_block() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_mut_shadows_inside_a_block")
+}
+
+/// Runs the fixture `parity_nested_loop_statements_with_break_and_continue`.
+#[test]
+fn parity_nested_loop_statements_with_break_and_continue() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_nested_loop_statements_with_break_and_continue")
+}
+
+/// Runs the fixture `parity_return_from_a_tuple_destructuring_loop`.
+#[test]
+fn parity_return_from_a_tuple_destructuring_loop() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_return_from_a_tuple_destructuring_loop")
+}
+
+/// Runs the fixture `parity_statements_after_return_are_never_run`.
+#[test]
+fn parity_statements_after_return_are_never_run() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_statements_after_return_are_never_run")
+}
+
+/// Runs the fixture `parity_tuple_unpack_of_an_int_is_refused`.
+#[test]
+fn parity_tuple_unpack_of_an_int_is_refused() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_tuple_unpack_of_an_int_is_refused")
+}
+
+/// Runs the fixture `parity_unsafe_region_assigns_a_call_result`.
+#[test]
+fn parity_unsafe_region_assigns_a_call_result() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_unsafe_region_assigns_a_call_result")
+}
+
 /// Runs the fixture `refuses_a_missing_required_callable_argument_at_the_declaration_body_s`.
 #[test]
 fn refuses_a_missing_required_callable_argument_at_the_declaration_body_s() -> CaseResult {

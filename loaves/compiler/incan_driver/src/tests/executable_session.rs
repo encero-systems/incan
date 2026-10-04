@@ -1,14 +1,15 @@
-//! Executable resolution through a compilation session: the resolution test that needs the driver's session.
+//! Module collection through a compilation session: the test that needs the driver's session.
 
 use std::error::Error;
 use std::fs;
 
-use crate::backend::replacement::ReplacementExecutionGraph;
 use incan_frontend::body_ir::build_body_ir_module_v0;
 
-/// Child frames share the complete checked graph, including a canonical backedge into its entry module.
+/// An import cycle back into the entry collects each module once and analyzes them in one session invocation, and
+/// Body IR represents every body of both. The program's run is the behavior fixture
+/// `execution_calls_types_and_modules/an_import_cycle_back_into_the_entry`.
 #[test]
-fn canonical_frames_reenter_the_entry_module_through_a_checked_cycle() -> Result<(), Box<dyn Error>> {
+fn an_import_cycle_back_into_the_entry_is_collected_once() -> Result<(), Box<dyn Error>> {
     use crate::modules::collect_modules_detailed_with_session;
     use crate::session::{CompilationSession, scoped_compilation_session_analysis_invocations};
 
@@ -57,24 +58,16 @@ fn canonical_frames_reenter_the_entry_module_through_a_checked_cycle() -> Result
             Ok(build_body_ir_module_v0(&module.ast, &module.path_segments, info))
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-    let entry_index = modules
-        .iter()
-        .position(|module| module.file_path == entry_path)
-        .ok_or("entry absent")?;
-    let graph = ReplacementExecutionGraph::new(
-        &lowered[entry_index],
-        lowered
-            .iter()
-            .enumerate()
-            .filter_map(|(index, module)| (index != entry_index).then_some(module)),
-    )?;
-    let execution = crate::backend::replacement::prepare_free_function_execution_in_graph(graph, "main", &[], None)?;
-    assert_eq!(
-        crate::backend::replacement::execute_prevalidated_free_function(execution)?
-            .value
-            .observable_text(),
-        "42"
+    assert_eq!(modules.len(), 2, "the cycle must collect each module once");
+    assert!(
+        modules.iter().any(|module| module.file_path == entry_path),
+        "the entry must be collected under the spelling it was given"
     );
+    for module in &lowered {
+        for body in &module.bodies {
+            assert_eq!(body.first_representation_gap(), None, "`{}`", body.name);
+        }
+    }
     assert_eq!(count.invocation_count(), 1);
     Ok(())
 }

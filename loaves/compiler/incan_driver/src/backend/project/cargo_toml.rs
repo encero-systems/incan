@@ -201,9 +201,8 @@ pub(crate) fn toolchain_crate_path(crate_name: &str) -> PathBuf {
 
 /// Rust edition a generated Incan project is compiled under when the manifest does not name one.
 ///
-/// Exposed so any other consumer that has to compile emitted Rust the way a real generated project would — for
-/// example the #1146 shadow comparison's legacy route — reads the edition from here instead of restating it and
-/// drifting when the default moves.
+/// Exposed so any other consumer that has to compile emitted Rust the way a real generated project would reads the
+/// edition from here instead of restating it and drifting when the default moves.
 pub const DEFAULT_GENERATED_RUST_EDITION: &str = "2021";
 
 impl ProjectGenerator {
