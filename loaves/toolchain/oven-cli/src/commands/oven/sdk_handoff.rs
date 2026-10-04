@@ -45,6 +45,15 @@ pub fn oven_sdk_handoff(command: SdkHandoffCommand) -> CliResult<ExitCode> {
 
 /// Execute one parsed handoff command within the I/O error boundary.
 fn run_sdk_handoff(command: SdkHandoffCommand) -> io::Result<()> {
+    run_sdk_handoff_from(&std::env::current_dir()?, command)
+}
+
+/// Execute one handoff command with its path arguments resolved against the invocation directory.
+///
+/// Later CI steps read the published paths from other working directories, so no path is published relative. The
+/// Rust compiler is a command looked up on `PATH` and stays as given.
+fn run_sdk_handoff_from(invocation: &Path, command: SdkHandoffCommand) -> io::Result<()> {
+    let absolute = |path: PathBuf| invocation.join(path).components().collect::<PathBuf>();
     match command {
         SdkHandoffCommand::Stage {
             workspace,
@@ -53,8 +62,9 @@ fn run_sdk_handoff(command: SdkHandoffCommand) -> io::Result<()> {
             artifact,
             store,
         } => {
+            let (workspace, compiler) = (absolute(workspace), absolute(compiler));
             let coordinates = coordinates(&workspace, &compiler, &rustc)?;
-            stage(&store, &artifact, &coordinates)
+            stage(&absolute(store), &absolute(artifact), &coordinates)
         }
         SdkHandoffCommand::Consume {
             workspace,
@@ -64,8 +74,16 @@ fn run_sdk_handoff(command: SdkHandoffCommand) -> io::Result<()> {
             path_file,
             env_file,
         } => {
+            let (workspace, compiler) = (absolute(workspace), absolute(compiler));
             let coordinates = coordinates(&workspace, &compiler, &rustc)?;
-            consume(&workspace, &compiler, &artifact, &path_file, &env_file, &coordinates)
+            consume(
+                &workspace,
+                &compiler,
+                &absolute(artifact),
+                &absolute(path_file),
+                &absolute(env_file),
+                &coordinates,
+            )
         }
     }
 }
@@ -619,6 +637,50 @@ mod tests {
             selected.join("sdk-inventory.json").display()
         )));
         assert!(!store.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_arguments_publish_absolute_consumer_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let (root, store, artifact, _) = fixture()?;
+        let workspace = root.path().join("source checkout");
+        fs::create_dir(&workspace)?;
+        let (compiler, rustc) = command_probes(&workspace)?;
+        stage(&store, &artifact, &coordinates(&workspace, &compiler, &rustc)?)?;
+        let relative = |path: &Path| path.strip_prefix(root.path()).map(Path::to_path_buf);
+        run_sdk_handoff_from(
+            root.path(),
+            SdkHandoffCommand::Consume {
+                workspace: relative(&workspace)?.join("."),
+                compiler: relative(&compiler)?,
+                rustc,
+                artifact: relative(&artifact)?,
+                path_file: PathBuf::from("provider path"),
+                env_file: PathBuf::from("github env"),
+            },
+        )?;
+        let selected = artifact.join(IDENTITY);
+        assert_eq!(
+            fs::read_to_string(root.path().join("provider path"))?,
+            format!("{}\n", selected.display())
+        );
+        let environment = fs::read_to_string(root.path().join("github env"))?;
+        for (name, value) in [
+            ("INCAN_SDK_INVENTORY", selected.join("sdk-inventory.json")),
+            ("INCAN_INTERNAL_SDK_PROVIDER_STORE", artifact.clone()),
+            ("INCAN_TEST_SDK_PROVIDER_STORE", artifact.clone()),
+            (
+                "INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE",
+                root.path().join("provider path"),
+            ),
+            ("INCAN_TEST_SDK_PROVIDER_PATH_FILE", root.path().join("provider path")),
+        ] {
+            assert!(
+                environment.contains(&format!("{name}={}\n", value.display())),
+                "{name} must be published as an absolute path: {environment}"
+            );
+        }
         Ok(())
     }
 

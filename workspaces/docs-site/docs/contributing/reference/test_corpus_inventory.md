@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3557 | 245 | 8 |
 | re-point | 526 | 86 | 1055 |
 | retire | 1504 | 153 | 0 |
-| unaffected | 1647 | 158 | 5 |
+| unaffected | 1648 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7234** | **642** | **1068** |
+| **Total** | **7235** | **642** | **1068** |
 
 - Retire-class tests: 1504, of which twinned 1023, dies 294, open 187 (neither yet).
 - Retire-class files with open rows: 34 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -3044,7 +3044,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1346 tests in 114 files)"
+??? note "Unaffected crates (1347 tests in 114 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3240,7 +3240,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/toolchain/incan-ci-tools/src/manifest_inventory.rs` | 5 | 1429 | 116 | unaffected | - | - | - | #1965 | - | Cargo manifest retirement inventory and reproducibility checks; no compiler semantics. |
     | `loaves/toolchain/incan-ci-tools/src/tool_outputs.rs` | 13 | 1636 | 314 | unaffected | - | - | - | #1965 | - | CI bootstrap input evidence and output transport; no compiler semantics. |
 
-    #### `loaves/toolchain/oven-cli` (124 tests in 12 files: unaffected 124)
+    #### `loaves/toolchain/oven-cli` (125 tests in 12 files: unaffected 125)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3252,7 +3252,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/toolchain/oven-cli/src/commands/oven/inventory.rs` | 4 | 515 | 183 | unaffected | - | - | - | #1561 | - | Oven CLI; validates typed harvest closure evidence, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/loaf_bake.rs` | 8 | 3296 | 436 | unaffected | - | - | - | #1561 | - | Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/partition_reconciliation.rs` | 2 | 354 | 111 | unaffected | - | - | - | #1561 | - | Oven CI evidence reconciliation; no compiler semantics. |
-    | `loaves/toolchain/oven-cli/src/commands/oven/sdk_handoff.rs` | 10 | 663 | 221 | unaffected | - | - | - | #1965 | - | CI transport of one compiler-selected SDK provider; no compiler semantics. |
+    | `loaves/toolchain/oven-cli/src/commands/oven/sdk_handoff.rs` | 11 | 725 | 265 | unaffected | - | - | - | #1965 | - | CI transport of one compiler-selected SDK provider; no compiler semantics. |
     | `loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs` | 2 | 899 | 32 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/suite_retention.rs` | 8 | 680 | 188 | unaffected | - | - | - | #1965 | - | Oven replay evidence retention and cleanup measurements; no compiler semantics. |
     | `loaves/toolchain/oven-cli/src/commands/tools.rs` | 8 | 1869 | 414 | unaffected | - | - | - | #1561 | run 1 | Oven tools command; the build_run hit is a Cargo config hint, not an Incan build. |
