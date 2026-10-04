@@ -725,6 +725,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
+    /// The storage a `module.NAME` member access reads, when its base is a module binding and the checker resolved the
+    /// member to a `const` or `static` (`math.PI`, `helpers.DEFAULT_LABEL`).
+    ///
+    /// A module binding is a namespace, not a value, so the access is not a field of anything: it is the member's own
+    /// canonical global place, the same one a bare imported name would read.
+    fn module_member_place(&self, base: &ast::Spanned<ast::Expr>, access_span: ast::Span) -> Option<bir::Place> {
+        if !self
+            .type_info
+            .resolved_identity(base.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+        {
+            return None;
+        }
+        let identity = self.type_info.resolved_identity(access_span)?.clone();
+        self.global_place(identity, self.resolve_ty(access_span))
+            .map(bir::Place::from_global)
+    }
+
     /// Select a canonical module-storage root when `identity` denotes a `const` or `static`.
     fn global_place(&self, identity: CanonicalSymbolId, ty: IncanType) -> Option<bir::GlobalPlace> {
         let write_policy = match identity.kind {

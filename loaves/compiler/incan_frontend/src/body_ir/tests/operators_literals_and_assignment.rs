@@ -903,3 +903,41 @@ fn plain_multi_target_assignment_reuses_active_body_ir_locals() -> Result<(), Bo
     }
     Ok(())
 }
+
+#[test]
+fn membership_in_a_frozen_constant_uses_the_collection_helper() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const NAMES: FrozenList[str] = [\"alpha\", \"beta\"]\n\ndef main() -> bool:\n  return \"beta\" in NAMES\n",
+        &["m", "frozen_membership"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(rendered.contains("helper:list_contains"), "{rendered}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_assignment_binds_a_new_name_beside_a_place() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> int:\n  mut items = [10, 20, 30]\n  items[0], fresh = (items[2], items[0])\n  return items[0] + fresh\n",
+        &["m", "tuple_assign_binding"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(
+        rendered.contains(" fresh : int [binding]"),
+        "`fresh` must be a declared local: {rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_module_constant_reads_its_global_place() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import std.math\n\ndef main() -> float:\n  return math.PI\n",
+        &["m", "module_constant"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    Ok(())
+}

@@ -45,7 +45,10 @@ use incan_frontend::{lexer, parser};
 /// Moved 55 -> 68 by #1337 stage 1c, which gives static method calls, variants of any enum and functions named as
 /// values a Body IR representation; the resolved type-member references the RFC 120 note above describes are among
 /// them. Nothing more executes: the interpreter does not run the new forms.
-const REPRESENTED_BASELINE: usize = 68;
+///
+/// Moved 68 -> 70 by #1337 stage 1d: stdlib functions and constants reached through a module binding, associated
+/// functions called on a type parameter, and calls through `__call__` gain a Body IR representation.
+const REPRESENTED_BASELINE: usize = 70;
 
 /// Number of committed example sources included in this fixed corpus.
 ///

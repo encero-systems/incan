@@ -112,6 +112,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 }
+                if let Some(place) = self.module_member_place(base, expr.span) {
+                    let ty = self.resolve_ty(expr.span);
+                    let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
+                    return bir::Operand::place(place, fact, last_use);
+                }
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place
                     .projection
@@ -219,6 +224,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     let ty = self.resolve_ty(expr.span);
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     return self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out);
+                }
+                if let Some(place) = self.module_member_place(base, expr.span) {
+                    return place;
                 }
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place
