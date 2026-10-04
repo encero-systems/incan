@@ -3059,7 +3059,7 @@ fn library_dependency_from_entry(
                 path,
                 location,
                 format!(
-                    "library dependency `{name}` names sibling Loaf `{loaf}`; package renaming is outside this bounded caller slice"
+                    "library dependency `{name}` names sibling Loaf `{loaf}`; `loaf` must name the same Loaf as the dependency key, since a `loaf` dependency cannot rename its package"
                 ),
             ));
         }

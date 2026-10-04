@@ -2072,54 +2072,68 @@ impl<'a> IrCodegen<'a> {
     }
 
     /// Attach the selected caller namespace and its top-level infrastructure identity record.
-    fn attach_caller_facet(&self, main_code: String) -> String {
+    ///
+    /// Each selected item is re-exported from `crate::<name>`, its root declaration, so the caller namespace adds no
+    /// second definition. The identity record sits at the top level of `caller`, which projected items never reach.
+    fn attach_caller_facet(&self, main_code: String) -> Result<String, GenerationError> {
         let Some(identity) = self.caller_identity.as_ref() else {
-            return main_code;
+            return Ok(main_code);
         };
-        let reexports = self
+        let names = self
             .caller_facet_exports
             .iter()
-            .map(|name| format!("        pub use crate::{name};"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "{main_code}\n\
-             pub mod caller {{\n\
-                 #[derive(Debug, Clone, Copy)]\n\
-                 pub struct Identity {{\n\
-                     pub package_name: &'static str,\n\
-                     pub package_version: &'static str,\n\
-                     pub caller_facet_id: &'static str,\n\
-                     pub caller_abi_version: &'static str,\n\
-                     pub compiler_version_range: &'static str,\n\
-                     pub manifest_schema_version: u32,\n\
-                     pub target: &'static str,\n\
-                     pub profile: &'static str,\n\
-                     pub receipt_reference: &'static str,\n\
-                 }}\n\
-                 pub const IDENTITY: Identity = Identity {{\n\
-                     package_name: {package_name:?},\n\
-                     package_version: {package_version:?},\n\
-                     caller_facet_id: {caller_facet_id:?},\n\
-                     caller_abi_version: {caller_abi_version:?},\n\
-                     compiler_version_range: {compiler_version_range:?},\n\
-                     manifest_schema_version: {manifest_schema_version},\n\
-                     target: {target:?},\n\
-                     profile: {profile:?},\n\
-                     receipt_reference: {receipt_reference:?},\n\
-                 }};\n\
-                 pub mod incan {{\n{reexports}\n                 }}\n\
-             }}\n",
-            package_name = identity.package_name,
-            package_version = identity.package_version,
-            caller_facet_id = identity.caller_facet_id,
-            caller_abi_version = identity.caller_abi_version,
-            compiler_version_range = identity.compiler_version_range,
-            manifest_schema_version = identity.manifest_schema_version,
-            target = identity.target,
-            profile = identity.profile,
-            receipt_reference = identity.receipt_reference,
-        )
+            .map(|name| {
+                syn::parse_str::<syn::Ident>(name).map_err(|error| {
+                    GenerationError::Emission(EmitError::SynParse(format!(
+                        "caller export `{name}` is not a Rust identifier: {error}"
+                    )))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let CallerIdentity {
+            package_name,
+            package_version,
+            caller_facet_id,
+            caller_abi_version,
+            compiler_version_range,
+            manifest_schema_version,
+            target,
+            profile,
+            receipt_reference,
+        } = identity;
+        let tokens = quote::quote! {
+            pub mod caller {
+                #[derive(Debug, Clone, Copy)]
+                pub struct Identity {
+                    pub package_name: &'static str,
+                    pub package_version: &'static str,
+                    pub caller_facet_id: &'static str,
+                    pub caller_abi_version: &'static str,
+                    pub compiler_version_range: &'static str,
+                    pub manifest_schema_version: u32,
+                    pub target: &'static str,
+                    pub profile: &'static str,
+                    pub receipt_reference: &'static str,
+                }
+                pub const IDENTITY: Identity = Identity {
+                    package_name: #package_name,
+                    package_version: #package_version,
+                    caller_facet_id: #caller_facet_id,
+                    caller_abi_version: #caller_abi_version,
+                    compiler_version_range: #compiler_version_range,
+                    manifest_schema_version: #manifest_schema_version,
+                    target: #target,
+                    profile: #profile,
+                    receipt_reference: #receipt_reference,
+                };
+                pub mod incan {
+                    #(pub use crate::#names;)*
+                }
+            }
+        };
+        let file = syn::parse2::<syn::File>(tokens)
+            .map_err(|error| GenerationError::Emission(EmitError::SynParse(error.to_string())))?;
+        Ok(format!("{main_code}\n{}", prettyplease::unparse(&file)))
     }
 
     /// Accumulate the exact provider and Rust crate roots required by checked public API types and class layouts.
@@ -2256,7 +2270,7 @@ impl<'a> IrCodegen<'a> {
         // Use the IR pipeline: AST → IR → Rust
         let code = self.try_generate_via_ir(program, &HashSet::new())?;
         let code = self.attach_provider_rust_dependency_bridge(code);
-        Ok(self.attach_caller_facet(code))
+        self.attach_caller_facet(code)
     }
 
     /// Generate code via the IR pipeline (fallible version)
@@ -2952,7 +2966,7 @@ impl<'a> IrCodegen<'a> {
         }
 
         let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-        Ok((self.attach_caller_facet(main_code), modules))
+        Ok((self.attach_caller_facet(main_code)?, modules))
     }
 
     /// Generate Rust code for a multi-file project with nested module paths
@@ -3271,7 +3285,7 @@ impl<'a> IrCodegen<'a> {
         }
 
         let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-        Ok((self.attach_caller_facet(main_code), modules))
+        Ok((self.attach_caller_facet(main_code)?, modules))
     }
 }
 
