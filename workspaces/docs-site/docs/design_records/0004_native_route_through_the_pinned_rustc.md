@@ -159,7 +159,7 @@ A layer that owns rustc's types cannot be what the lowering imports. As a `[rust
 - `await x` becomes `IntoFuture::into_future(x)` followed by a loop that polls the pinned future and suspends with `Yield` while it is `Pending`, as rustc's own desugaring does.
 - `race for` polls its arms in source order.
 
-rustc's coroutine transform then builds the state machine: its layout, the locals saved across suspension points and their drops. The lowering never builds a state machine itself, because that would reimplement rustc's transform. Running async bodies synchronously or through runtime callbacks would change what `async`, `race` and cancellation mean. The spike has not yet built a coroutine, so the async behavior fixtures prove this decision when the direct route reaches async.
+rustc's coroutine transform then builds the state machine: its layout, the locals saved across suspension points and their drops. The async behavior fixtures prove this when the direct route reaches async.
 
 ## Non-goals
 
