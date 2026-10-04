@@ -1,0 +1,238 @@
+"""Plain data for scalar native bodies, independent of rustc's internal types.
+
+Local zero is the return place; parameters occupy the next locals in declaration
+order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
+location, including operands and places, so native diagnostics retain provenance.
+"""
+
+pub model SourceSpan:
+    """One-based line and column in an Incan source file."""
+    pub file: str
+    pub line: int
+    pub column: int
+
+pub enum PlanType:
+    """Scalar types and the internal pair produced by checked integer arithmetic."""
+    Int
+    Float
+    Bool
+    Unit
+    CheckedInt
+
+pub model Parameter:
+    """A named function parameter; its local index follows declaration order."""
+    pub name: str
+    pub ty: PlanType
+    pub span: SourceSpan
+
+pub model Local:
+    """A typed body local; parameters and the return place are included."""
+    pub ty: PlanType
+    pub span: SourceSpan
+
+pub enum Projection:
+    """Whole scalar local or one component of a checked arithmetic result."""
+    Whole
+    Value
+    Overflow
+
+pub model Place:
+    """An indexed local, optionally projected into its checked result pair."""
+    pub local: int
+    pub projection: Projection
+    pub span: SourceSpan
+
+pub enum Constant:
+    """A scalar literal with the language's fixed native representation."""
+    Int(int)
+    Float(float)
+    Bool(bool)
+    Unit
+
+pub enum OperandKind:
+    """Explicit copy, move, or constant; ownership intent is never inferred."""
+    Copy(Place)
+    Move(Place)
+    Literal(Constant)
+
+pub model Operand:
+    """A source-located value read by a statement or terminator."""
+    pub kind: OperandKind
+    pub span: SourceSpan
+
+pub enum BinaryOp:
+    """Checked integer arithmetic, scalar comparisons, and floating arithmetic.
+
+    Add, Subtract, and Multiply on int produce CheckedInt. Comparisons produce
+    Bool. The other arithmetic operations require float operands.
+    """
+    Add
+    Subtract
+    Multiply
+    Divide
+    Equal
+    NotEqual
+    Less
+    LessEqual
+    Greater
+    GreaterEqual
+
+pub enum UnaryOp:
+    """Boolean inversion or numeric negation."""
+    Not
+    Negate
+
+pub enum RvalueKind:
+    """Scalar expression whose result is assigned to a place."""
+    Use(Operand)
+    Binary(BinaryOp, Operand, Operand)
+    Unary(UnaryOp, Operand)
+    IntToFloat(Operand)
+
+pub model Rvalue:
+    """A source-located scalar expression."""
+    pub kind: RvalueKind
+    pub span: SourceSpan
+
+pub enum StatementKind:
+    """Assignment and explicit local storage lifetime boundaries."""
+    Assign(Place, Rvalue)
+    StorageLive(int)
+    StorageDead(int)
+
+pub model Statement:
+    """One source-located operation before a block's terminator."""
+    pub kind: StatementKind
+    pub span: SourceSpan
+
+pub enum CalleeKind:
+    """A source-named planned function or a canonical external function path."""
+    Planned(str)
+    External(str)
+
+pub model Callee:
+    """A function reference, resolved by source name or canonical module path."""
+    pub kind: CalleeKind
+    pub span: SourceSpan
+
+pub enum Unwind:
+    """Propagate unwinding, enter cleanup, or abort a second panic during cleanup."""
+    Continue
+    Cleanup(int)
+    Terminate
+
+pub enum TerminatorKind:
+    """Control flow, calls, drops, overflow checks, and unwinding exits.
+
+    SwitchBool records the false and true targets explicitly. AssertOverflow
+    checks a checked arithmetic overflow flag against false and retains both
+    inputs for the native panic message. Call and Drop carry explicit unwinding.
+    """
+    Goto(int)
+    SwitchBool(Operand, int, int)
+    Call(Callee, list[Operand], Place, int, Unwind)
+    Drop(Place, int, Unwind)
+    AssertOverflow(Operand, BinaryOp, Operand, Operand, int, Unwind)
+    Return
+    Unreachable
+    UnwindResume
+
+pub model Terminator:
+    """The source-located exit of a basic block."""
+    pub kind: TerminatorKind
+    pub span: SourceSpan
+
+pub model BasicBlock:
+    """An indexed block; cleanup blocks may only run on the unwind path."""
+    pub statements: list[Statement]
+    pub terminator: Terminator
+    pub cleanup: bool
+    pub span: SourceSpan
+
+pub model Function:
+    """A declaration and its body, with locals zero through parameter count reserved."""
+    pub name: str
+    pub parameters: list[Parameter]
+    pub return_type: PlanType
+    pub locals: list[Local]
+    pub blocks: list[BasicBlock]
+    pub span: SourceSpan
+
+pub model Plan:
+    """A scalar native crate; external functions are admitted by canonical path.
+
+    External declarations give validation a signature before rustc runs. The
+    adapter verifies those signatures against the loaded dependency metadata.
+    """
+    pub functions: list[Function]
+    pub externals: list[ExternalFunction]
+    pub span: SourceSpan
+
+pub model ExternalFunction:
+    """The signature of a canonical dependency function used by this plan."""
+    pub path: str
+    pub parameters: list[PlanType]
+    pub return_type: PlanType
+    pub span: SourceSpan
+
+pub def place(local: int, span: SourceSpan) -> Place:
+    """Name a whole local without exposing projection bookkeeping to builders."""
+    return Place(local=local, projection=Projection.Whole, span=span)
+
+pub def integer(value: int, span: SourceSpan) -> Operand:
+    """Build an int literal, represented natively as a signed 64-bit constant."""
+    return Operand(kind=OperandKind.Literal(Constant.Int(value)), span=span)
+
+pub def copy(local: int, span: SourceSpan) -> Operand:
+    """Read a scalar local while leaving it available to later operations."""
+    return Operand(kind=OperandKind.Copy(place(local, span)), span=span)
+
+pub def assign(destination: Place, value: RvalueKind, span: SourceSpan) -> Statement:
+    """Assign one scalar expression and retain the statement's source location."""
+    return Statement(kind=StatementKind.Assign(destination, Rvalue(kind=value, span=span)), span=span)
+
+pub def block(statements: list[Statement], exit: TerminatorKind, span: SourceSpan) -> BasicBlock:
+    """Build a normal block; cleanup blocks are constructed explicitly."""
+    return BasicBlock(statements=statements, terminator=Terminator(kind=exit, span=span), cleanup=False, span=span)
+
+pub def scalar_example(file: str, output_function: str, overflow: bool, dangling: bool) -> Plan:
+    """Fill a scalar plan by hand for a native driver conformance fixture.
+
+    The output function is a canonical dependency path taking one int and
+    returning unit. Its implementation belongs to the fixture's runtime Loaf.
+    An overflow fixture changes the first input; a refusal fixture changes the
+    first edge. The source fixture's addition is at line 3, column 12.
+    """
+    location = SourceSpan(file=file, line=3, column=12)
+    pair = Place(local=3, projection=Projection.Overflow, span=location)
+    result = Place(local=3, projection=Projection.Value, span=location)
+    addition = Function(
+        name="add_scores",
+        parameters=[Parameter(name="a", ty=PlanType.Int, span=location), Parameter(name="b", ty=PlanType.Int, span=location)],
+        return_type=PlanType.Int,
+        locals=[Local(ty=PlanType.Int, span=location), Local(ty=PlanType.Int, span=location), Local(ty=PlanType.Int, span=location), Local(ty=PlanType.CheckedInt, span=location)],
+        blocks=[
+            block([assign(place(3, location), RvalueKind.Binary(BinaryOp.Add, copy(1, location), copy(2, location)), location)],
+                TerminatorKind.AssertOverflow(Operand(kind=OperandKind.Copy(pair), span=location), BinaryOp.Add, copy(1, location), copy(2, location), 1, Unwind.Continue), location),
+            block([assign(place(0, location), RvalueKind.Use(Operand(kind=OperandKind.Copy(result), span=location)), location)], TerminatorKind.Return, location)
+        ],
+        span=location
+    )
+    mut first = 20
+    if overflow:
+        first = 9223372036854775807
+    mut target = 1
+    if dangling:
+        target = 99
+    entry = Function(
+        name="main", parameters=[], return_type=PlanType.Unit,
+        locals=[Local(ty=PlanType.Unit, span=location), Local(ty=PlanType.Int, span=location), Local(ty=PlanType.Bool, span=location)],
+        blocks=[
+            block([], TerminatorKind.Call(Callee(kind=CalleeKind.Planned("add_scores"), span=location), [integer(first, location), integer(22, location)], place(1, location), target, Unwind.Continue), location),
+            block([assign(place(2, location), RvalueKind.Binary(BinaryOp.Greater, copy(1, location), integer(0, location)), location)], TerminatorKind.SwitchBool(copy(2, location), 3, 2), location),
+            block([], TerminatorKind.Call(Callee(kind=CalleeKind.External(output_function), span=location), [copy(1, location)], place(0, location), 3, Unwind.Continue), location),
+            block([assign(place(0, location), RvalueKind.Use(Operand(kind=OperandKind.Literal(Constant.Unit), span=location)), location)], TerminatorKind.Return, location)
+        ], span=location
+    )
+    output = ExternalFunction(path=output_function, parameters=[PlanType.Int], return_type=PlanType.Unit, span=location)
+    return Plan(functions=[addition, entry], externals=[output], span=location)

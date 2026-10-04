@@ -558,6 +558,14 @@
       "split_target": "",
       "twin": "dies"
     },
+    "loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs": {
+      "disposition": "keep",
+      "notes": "public Incan scalar native-plan contract and fail-closed unseeded-driver capability boundary",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs": {
       "disposition": "keep",
       "notes": "lex/parse/typecheck only.",
