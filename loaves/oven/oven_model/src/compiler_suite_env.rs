@@ -214,10 +214,6 @@ impl OvenCompilerSuiteTargetCapabilities {
                 "test",
                 "loaves/toolchain/incan-cli/tests/package_executable_representation.rs"
             ) | (
-                "incan_driver",
-                "test",
-                "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs"
-            ) | (
                 "incan-cli",
                 "test",
                 "loaves/toolchain/incan-cli/tests/rfc031_boundary_parity_tests.rs"

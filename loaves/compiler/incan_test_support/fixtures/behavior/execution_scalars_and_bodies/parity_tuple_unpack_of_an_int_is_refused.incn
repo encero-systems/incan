@@ -1,0 +1,6 @@
+# behavior: destructuring an int into two names is refused (parity corpus case 7)
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    a, b = 5
+    println(f"{a} {b}")

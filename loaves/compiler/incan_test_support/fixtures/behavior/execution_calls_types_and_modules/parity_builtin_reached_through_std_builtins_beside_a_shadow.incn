@@ -1,0 +1,10 @@
+# behavior: a module `len` shadows the builtin, which stays reachable as `std.builtins.len` (parity corpus identity row)
+# expect-stdout:
+#   8
+
+def len(value: int) -> int:
+    return value + 1
+
+
+def main() -> None:
+    println(len(4) + std.builtins.len([1, 2, 3]))

@@ -1,0 +1,11 @@
+# behavior: a bytes literal is passed to a bytes parameter (parity corpus case 15)
+# expect-stdout:
+#   1
+
+def send(payload: bytes) -> int:
+    return 1
+
+
+def main() -> None:
+    greeting = b"hi"
+    println(send(greeting))

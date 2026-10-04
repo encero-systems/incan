@@ -484,13 +484,14 @@ fn an_undesugared_top_level_vocab_declaration_refuses_every_executable_body() ->
         assert_eq!(statement.span, HirSourceSpan::new(40, 60));
     }
 
-    let error = crate::replacement::prepare_free_function_execution(&module, "main", &[])
-        .err()
-        .ok_or("a raw top-level vocabulary declaration must stop direct-execution preparation")?;
-    let crate::replacement::ReplacementExecutionError::Unsupported { description, span, .. } = error else {
-        return Err(Box::from(format!("unexpected direct-execution result: {error}")));
-    };
-    assert!(description.contains("top-level vocab block"), "{description}");
-    assert_eq!(span, HirSourceSpan::new(40, 60));
+    let main = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("expected a `main` body")?;
+    let gap = main
+        .first_representation_gap()
+        .ok_or("a raw top-level vocabulary declaration must leave a representation gap in `main`")?;
+    assert!(gap.contains("top-level vocab block"), "{gap}");
     Ok(())
 }

@@ -1,6 +1,5 @@
 //! Emission: from the IR the frontend's program lowered to, to Rust source, the conversions and ownership decisions
-//! that make the source compile, the direct-execution replacement backend, and the backend selection every build
-//! records.
+//! that make the source compile, and the backend selection every build records.
 
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
@@ -23,7 +22,6 @@ pub mod emit_service;
 pub mod facade;
 pub mod ownership;
 pub mod reference_shape;
-pub mod replacement;
 pub mod selection;
 #[cfg(any(test, feature = "test_support"))]
 pub mod test_support;

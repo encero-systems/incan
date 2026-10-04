@@ -1,0 +1,15 @@
+# behavior: an async function awaits another and returns its value (parity corpus row replacement-body-v0-018)
+# expect-stdout:
+#   42
+
+import std.async
+
+async def answer() -> int:
+    return 42
+
+async def direct_async_await() -> int:
+    return await answer()
+
+
+async def main() -> None:
+    println(await direct_async_await())

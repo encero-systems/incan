@@ -1,0 +1,5 @@
+from main import step
+
+
+pub def bounce(value: int) -> int:
+    return step(value)

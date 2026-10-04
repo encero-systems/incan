@@ -1,0 +1,10 @@
+# behavior: a function concatenates a literal with its str parameter (parity corpus row replacement-body-v0-002)
+# expect-stdout:
+#   hello, Ada
+
+def greet(name: str) -> str:
+    return "hello, " + name
+
+
+def main() -> None:
+    println(greet("Ada"))

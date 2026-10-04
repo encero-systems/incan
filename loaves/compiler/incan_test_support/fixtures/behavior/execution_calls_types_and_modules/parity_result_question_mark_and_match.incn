@@ -1,0 +1,27 @@
+# behavior: a Result propagated with ? is matched on Ok and Err (parity corpus row replacement-body-v0-017)
+# expect-stdout:
+#   2
+
+enum Failure:
+    Odd
+
+def half(value: int) -> Result[int, Failure]:
+    if value % 2 != 0:
+        return Err(Failure.Odd)
+    return Ok(value // 2)
+
+def quarter(value: int) -> Result[int, Failure]:
+    half_value = half(value)?
+    return half(half_value)
+
+def direct_result_routing() -> int:
+    match quarter(8):
+        case Ok(value):
+            return value
+        case Err(_):
+            return 0
+    return 0
+
+
+def main() -> None:
+    println(direct_result_routing())

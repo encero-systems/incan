@@ -1,0 +1,18 @@
+# behavior: a model built with keyword arguments in another order is passed and its fields read (parity corpus row replacement-body-v0-013)
+# expect-stdout:
+#   42
+
+model Pair:
+    left: int
+    right: int
+
+def score(pair: Pair) -> int:
+    return pair.left + pair.right
+
+def nominal_values() -> int:
+    pair = Pair(right=2, left=40)
+    return score(pair)
+
+
+def main() -> None:
+    println(nominal_values())
