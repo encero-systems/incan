@@ -562,7 +562,7 @@ fn replacement_writes_a_mut_list_parameter_back_to_the_caller_issue2022() -> Res
 fn replacement_returns_a_value_returning_functions_trailing_expression_issue2025()
 -> Result<(), Box<dyn std::error::Error>> {
     // Each helper's result is its trailing expression: a `match`, a bare expression, and an `if`/`else` whose
-    // branches end in expressions. The emitted route returns them; so must the Body IR the replacement executes.
+    // branches end in expressions. The Body IR the replacement executes must return them.
     let module = lower_typed_body_ir(
         "def pick(n: int) -> int:\n  match n:\n    1 => 10\n    _ => 20\n\n\
          def next(n: int) -> int:\n  n + 1\n\n\

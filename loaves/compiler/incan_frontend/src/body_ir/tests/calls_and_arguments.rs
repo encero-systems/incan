@@ -1053,6 +1053,51 @@ fn a_mut_parameter_of_a_model_is_borrowed_mutably_not_copied_issue2022() -> Resu
 }
 
 #[test]
+fn a_borrowed_mut_parameter_is_never_moved_out_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // The caller owns a `mut` collection parameter's storage and the callee only borrows it, so an owned read in the
+    // callee is a clone, never a move: returning it or passing it by value leaves the caller's list in place, and
+    // passing it on to another `mut` parameter reborrows it.
+    let source = "def same(mut xs: List[int]) -> List[int]:\n  return xs\n\n\
+                  def take(ys: List[int]) -> int:\n  return len(ys)\n\n\
+                  def forward(mut xs: List[int]) -> int:\n  return take(xs)\n\n\
+                  def bump(mut xs: List[int]) -> None:\n  xs[0] = 1\n\n\
+                  def relay(mut xs: List[int]) -> None:\n  bump(xs)\n";
+    let module = build(source, &["m", "borrowed_mut"])?;
+    let body = |name: &str| {
+        module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or(format!("missing {name}"))
+    };
+    let returned_fact = body("same")?.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Return {
+            value: Some(bir::Operand::Place(place)),
+        } => Some(place.fact),
+        _ => None,
+    });
+    assert_eq!(
+        returned_fact,
+        Some(bir::OwnershipFact::Clone),
+        "{}",
+        module.render_snapshot()
+    );
+    assert_eq!(
+        first_argument_fact(body("forward")?, "take"),
+        Some(bir::OwnershipFact::Clone),
+        "{}",
+        module.render_snapshot()
+    );
+    assert_eq!(
+        first_argument_fact(body("relay")?, "bump"),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+#[test]
 fn a_mut_scalar_parameter_stays_a_copy_issue2022() -> Result<(), Box<dyn std::error::Error>> {
     // A `mut` scalar is a mutable local copy, as the emitted route's `mut n: i64` is: the caller's value is unchanged.
     let source =
