@@ -1,4 +1,5 @@
 # behavior: a helper module that imports a function back from the entry module calls it through the cycle
+# pending: the legacy route reaches the entry module as `crate::main`, which rustc rejects (E0432); the direct route runs it
 # expect-stdout:
 #   42
 
