@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3563 | 247 | 8 |
+| keep | 3567 | 248 | 8 |
 | re-point | 526 | 86 | 1056 |
 | retire | 1505 | 153 | 0 |
-| unaffected | 1650 | 158 | 5 |
+| unaffected | 1651 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7244** | **644** | **1069** |
+| **Total** | **7249** | **645** | **1069** |
 
 - Retire-class tests: 1505, of which twinned 1023, dies 294, open 188 (neither yet).
 - Retire-class files with open rows: 34 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -122,7 +122,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (771 tests in 109 files: keep 377, re-point 137, retire 103, unaffected 154)
+### `loaves/compiler/incan_driver` (775 tests in 110 files: keep 381, re-point 137, retire 103, unaffected 154)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -140,7 +140,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/backend/shadow/legacy_oven.rs` | 1 | 669 | 59 | re-point | - | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs` | 2 | 82 | 82 | re-point | - | - | - | #1561 | run 2, replacement 2, checker 2 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/src/backend/shadow/tests.rs` | 47 | 1252 | 1252 | re-point | - | - | - | #1561 | run 3, replacement 30 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself. |
-| `loaves/compiler/incan_driver/src/build/bake.rs` | 5 | 1551 | 172 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/bake.rs` | 5 | 1628 | 172 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 4 | 358 | 99 | keep | - | - | - | #1337 | checker 3, parser 3 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
 | `loaves/compiler/incan_driver/src/build/caller_owned.rs` | 7 | 1044 | 315 | unaffected | - | - | - | #1561 | checker 4 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/inline_command.rs` | 5 | 129 | 75 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -191,6 +191,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs` | 4 | 193 | 193 | retire | 0/4 | 4 | - | #1561 | - | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
+| `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 134 | 134 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and fail-closed unseeded-driver capability boundary |
 | `loaves/compiler/incan_driver/tests/parity_corpus_tests/corpus_proofs.rs` | 7 | 456 | 456 | re-point | - | - | - | #1561 | - | split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); corpus validation: the red-state schema proof, the green-state structural and behavioral proofs, the replacement rows' receipt-bound evidence and the CI summary. |
 | `loaves/compiler/incan_driver/tests/parity_corpus_tests/paired_row_proofs.rs` | 15 | 857 | 857 | re-point | - | - | - | #1561 | replacement 6 | split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the paired-comparison rows: these tests assert a green (or explicitly unavailable) legacy-vs-replacement shadow comparison through `shadow_support::compare_source_observable`, the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/tests/parity_corpus_tests/rfc_120_proofs.rs` | 6 | 334 | 334 | re-point | - | - | - | #1561 | - | split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the RFC 120 coverage and evidence proofs. |
@@ -232,7 +233,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/replacement_string_len_execution_tests.rs` | 4 | 96 | 96 | keep | - | - | - | #1561 | replacement 4, checker 4, parser 4 | Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. |
 | `loaves/compiler/incan_driver/tests/replacement_string_len_shadow_tests.rs` | 1 | 50 | 50 | re-point | - | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/tests/replacement_typed_numeric_tests.rs` | 13 | 568 | 568 | keep | - | - | - | #1561 | replacement 13, checker 13, parser 13 | Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. |
-| `loaves/compiler/incan_driver/tests/rust_caller_project_tests.rs` | 2 | 110 | 110 | keep | - | - | - | #1337 | run 2 | receipt-bound direct-rustc Rust caller facet integration, refusal, runtime, and identity coverage |
+| `loaves/compiler/incan_driver/tests/rust_caller_project_tests.rs` | 3 | 151 | 151 | keep | - | - | - | #1337 | run 3 | receipt-bound direct-rustc Rust caller facet integration, refusal, runtime, and identity coverage |
 | `loaves/compiler/incan_driver/tests/shadow_comparison_tests.rs` | 9 | 451 | 451 | re-point | - | - | - | #1561 | run 9, replacement 9 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/tests/stdlib_version_artifact_tests.rs` | 1 | 132 | 132 | retire | 0/1 | 1 | - | #1561 | codegen 1, parser 1 | asserts the stdlib version check inside the generated artifact. |
 
@@ -3046,7 +3047,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1349 tests in 114 files)"
+??? note "Unaffected crates (1350 tests in 114 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3118,14 +3119,14 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_interop/src/lib.rs` | 20 | 4394 | 2720 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
-    #### `loaves/oven/oven_model` (179 tests in 10 files: unaffected 179)
+    #### `loaves/oven/oven_model` (180 tests in 10 files: unaffected 180)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_model/src/digest.rs` | 2 | 836 | 57 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/loaf_registry.rs` | 7 | 840 | 301 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/lock.rs` | 24 | 1894 | 994 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_model/src/manifest.rs` | 72 | 5253 | 1745 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_model/src/manifest.rs` | 73 | 5308 | 1771 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/oven_interop.rs` | 8 | 2098 | 603 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/project_lifecycle/env.rs` | 18 | 860 | 476 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/project_lifecycle/toolchain.rs` | 4 | 295 | 58 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |

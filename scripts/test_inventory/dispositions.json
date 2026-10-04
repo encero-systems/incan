@@ -630,6 +630,14 @@
       "split_target": "",
       "twin": "dies"
     },
+    "loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs": {
+      "disposition": "keep",
+      "notes": "public Incan scalar native-plan contract and fail-closed unseeded-driver capability boundary",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/parity_corpus_tests/corpus_proofs.rs": {
       "disposition": "re-point",
       "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); corpus validation: the red-state schema proof, the green-state structural and behavioral proofs, the replacement rows' receipt-bound evidence and the CI summary.",

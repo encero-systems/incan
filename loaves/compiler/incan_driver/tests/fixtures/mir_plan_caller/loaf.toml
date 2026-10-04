@@ -1,0 +1,10 @@
+[project]
+name = "mir-plan-caller"
+version = "0.1.0"
+
+[dependencies]
+incan_mir_plan = { loaf = "incan_mir_plan", path = "../../../../incan_mir_plan" }
+
+[[rust.bin]]
+name = "mir-plan-caller"
+path = "src/main.rs"
