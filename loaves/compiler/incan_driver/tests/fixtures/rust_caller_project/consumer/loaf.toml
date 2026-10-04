@@ -1,0 +1,10 @@
+[project]
+name = "typed_boundary_consumer"
+version = "0.1.0"
+
+[dependencies]
+typed_boundary = { loaf = "typed_boundary", path = "../library" }
+
+[[rust.bin]]
+name = "typed-boundary-consumer"
+path = "src/main.rs"

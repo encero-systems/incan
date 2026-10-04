@@ -574,6 +574,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/rust_caller_project_tests.rs": {
+      "disposition": "keep",
+      "notes": "receipt-bound direct-rustc Rust caller facet integration, refusal, runtime, and identity coverage",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/stdlib_version_artifact_tests.rs": {
       "dies": "asserts the `incan_std_core::__incan_stdlib_version_check!` invocation the emitter writes into every generated program and links that program with rustc against stdlib contract artifacts at the exact, patch-ahead (accepted) and major-ahead (rejected) versions. The emitted check is generated Rust and dies with #654; how the replacement route pins its stdlib line is slice 7's own contract.",
       "disposition": "retire",

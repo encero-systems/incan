@@ -357,6 +357,15 @@ path = "src/main.rs"
 | `name` | string | Executable name; unique among the Loaf's binary roles and limited to ASCII letters, digits, `-`, and `_`. |
 | `path` | string | Relative `.rs` source path inside the project and inside `[rust.source].root` when that root is declared; unique among the Loaf's binary roles. |
 
+A Rust-only project may consume a sibling Incan library with this dependency form:
+
+```toml
+[dependencies]
+policy = { loaf = "policy", path = "../policy" }
+```
+
+`incan oven bake --project <rust-project>` scans each Rust unit for `policy::caller::incan::<name>` paths, validates those names against the sibling library's checked public exports, emits only that caller projection, and builds both the Incan library and Rust binary through receipted direct `rustc`. The selected caller surface supports scalars, `list`, `Option`, `Result`, public-field models, positional-payload enums, and functions composed from those types. Missing, private, generic, asynchronous, callable-valued, Rust-native, or otherwise unsupported exports are refused by name before Rust compilation.
+
 A project with at least one `[[rust.bin]]` entry and no `[project.scripts].main` uses these roles for a plain `incan build`. A project with a `main` script builds that Incan entrypoint instead.
 
 ## `[rust-dependencies]`
