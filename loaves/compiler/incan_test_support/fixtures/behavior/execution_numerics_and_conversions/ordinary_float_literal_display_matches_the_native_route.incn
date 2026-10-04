@@ -2,9 +2,12 @@
 # expect-stdout:
 #   1000.5 125.0
 
+"""Ordinary float literal display matches the native route."""
 def render() -> str:
+    """Return the fixture expression `f"{str(1_000.50)} {str(1.25e2)}"`."""
     return f"{str(1_000.50)} {str(1.25e2)}"
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(render())

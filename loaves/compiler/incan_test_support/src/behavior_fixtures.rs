@@ -32,9 +32,10 @@ pub const BEHAVIOR_FIXTURES_ROOT: &str = "behavior";
 /// The entrypoint every materialized fixture project runs and checks.
 const ENTRYPOINT: &str = "src/main.incn";
 
-/// The two block directives, whose lines follow them indented.
+/// Block directives whose items follow them indented.
 const EXPECT_STDOUT: &str = "expect-stdout";
 const EXPECT_STDOUT_CONTAINS: &str = "expect-stdout-contains";
+const EXPECT_STDERR_CONTAINS: &str = "expect-stderr-contains";
 
 /// The directives a fixture header may carry, in the order the README documents them.
 const DIRECTIVES: &[&str] = &[
@@ -42,6 +43,7 @@ const DIRECTIVES: &[&str] = &[
     "retires",
     EXPECT_STDOUT,
     EXPECT_STDOUT_CONTAINS,
+    EXPECT_STDERR_CONTAINS,
     "expect-exit",
     "expect-diagnostic",
     "pending",
@@ -54,7 +56,7 @@ const DIRECTIVES: &[&str] = &[
 /// What a run of the fixture's stdout must show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StdoutExpectation {
-    /// The header declared no stdout expectation; only the exit code is checked.
+    /// The header declared no stdout expectation; stderr and exit expectations still apply.
     Unchecked,
     /// Every line of stdout, in order (`# expect-stdout:`).
     Exact(Vec<String>),
@@ -62,13 +64,15 @@ pub enum StdoutExpectation {
     Contains(Vec<String>),
 }
 
-/// The observables a fixture declares: either a run with its stdout and exit code, or a refusal at check time.
+/// The observables a fixture declares: run streams and exit code, or a refusal at check time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expectation {
-    /// The program must build and run; its stdout and exit code are compared.
+    /// The program must build and run; its stream expectations and exit code are compared.
     Run {
         /// The stdout expectation, exact or by contained lines.
         stdout: StdoutExpectation,
+        /// Substrings that must each appear in stderr, in any order.
+        stderr_contains: Vec<String>,
         /// The exit code the run must end with (`# expect-exit:`, default 0).
         exit_code: i32,
     },
@@ -181,7 +185,7 @@ fn checkout_relative(path: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// A stdout block: the line that opened it and the expected lines collected under it.
+/// An observable block: the line that opened it and the expected lines collected under it.
 type Block = (usize, Vec<String>);
 
 /// Parse the leading comment block of a fixture program.
@@ -191,27 +195,16 @@ type Block = (usize, Vec<String>);
 /// key), an item of the block directive above it (`#` followed by two or more spaces, or a bare `#` for an empty
 /// expected line), or a bare `#` between directives, which is ignored. Anything else is refused with the line number,
 /// and so is an unknown directive, a `behavior:` that is missing or repeated, a stdout block beside another stdout
-/// block, an `expect-diagnostic:` beside any run expectation, an `expect-stdout-contains:` block with no line (anything
-/// would satisfy it), a contained line listed twice (one occurrence satisfies both), an expected line that ends with
-/// whitespace (a report cannot show it), an `expect-exit:` outside `0..=255`, and a header that declares no observable
-/// at all: a fixture that proves nothing is not a twin. A directive that appears after the header ended is refused
-/// too, naming the line: it would otherwise be ignored and the fixture would pass on less than it appears to declare.
+/// block, an `expect-diagnostic:` beside any run expectation, a contains block with no item (anything
+/// would satisfy it), an empty stderr substring, a contained item listed twice (one occurrence satisfies both), an
+/// expected item that ends with whitespace (a report cannot show it), an `expect-exit:` outside `0..=255`, and a header
+/// that declares no observable at all: a fixture that proves nothing is not a twin. A directive that appears after the
+/// header ended is refused too, naming the line: it would otherwise be ignored and the fixture would pass on less than
+/// it appears to declare.
 pub fn parse_header(text: &str) -> Result<Header, String> {
-    let mut behavior: Option<String> = None;
-    let mut retires: Vec<String> = Vec::new();
-    // Every expectation remembers the line that introduced it, so a refusal that involves two directives names both.
-    let mut stdout_exact: Option<Block> = None;
-    let mut stdout_contains: Option<Block> = None;
-    let mut exit_code: Option<(usize, i32)> = None;
-    let mut diagnostics: Vec<String> = Vec::new();
-    let mut first_diagnostic: Option<usize> = None;
-    let mut pending: Option<String> = None;
-    let mut first_run: Option<(usize, &str)> = None;
-    // The block directive currently collecting items, with the indentation its first item established.
+    let mut state = HeaderParser::default();
     let mut open_block: Option<(&'static str, Option<usize>)> = None;
-    // Where the header ended: the first line that is not a `#` comment, and whether that line was blank.
     let mut header_end: Option<(usize, bool)> = None;
-
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
 
@@ -237,7 +230,14 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: inside the `{key}:` block, `#` followed only by whitespace is an expected line that ends with whitespace, which a report cannot show; a bare `#` is the empty expected line"
                     ));
                 }
-                push_block_item(key, number, String::new(), &mut stdout_exact, &mut stdout_contains)?;
+                push_block_item(
+                    key,
+                    number,
+                    String::new(),
+                    &mut state.stdout_exact,
+                    &mut state.stdout_contains,
+                    &mut state.stderr_contains,
+                )?;
             }
             continue;
         }
@@ -247,12 +247,19 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
         if indent >= 2 {
             let Some((key, established)) = open_block.as_mut() else {
                 return Err(format!(
-                    "line {number}: indented line outside an `expect-stdout:` / `expect-stdout-contains:` block"
+                    "line {number}: indented line outside an `expect-stdout:` / `expect-stdout-contains:` / `expect-stderr-contains:` block"
                 ));
             };
             let width = *established.get_or_insert(indent);
             let item = rest.get(width.min(indent)..).unwrap_or("").to_string();
-            push_block_item(key, number, item, &mut stdout_exact, &mut stdout_contains)?;
+            push_block_item(
+                key,
+                number,
+                item,
+                &mut state.stdout_exact,
+                &mut state.stdout_contains,
+                &mut state.stderr_contains,
+            )?;
             continue;
         }
 
@@ -276,22 +283,51 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
         }
         let value = raw_value.trim();
         open_block = None;
+        state.directive(number, key, value, &mut open_block)?;
+    }
+    state.finish()
+}
+
+/// Accumulated directives, with their source lines for cross-directive refusals.
+#[derive(Default)]
+struct HeaderParser {
+    behavior: Option<String>,
+    retires: Vec<String>,
+    stdout_exact: Option<Block>,
+    stdout_contains: Option<Block>,
+    stderr_contains: Option<Block>,
+    exit_code: Option<(usize, i32)>,
+    diagnostics: Vec<String>,
+    first_diagnostic: Option<usize>,
+    pending: Option<String>,
+    first_run: Option<(usize, &'static str)>,
+}
+
+impl HeaderParser {
+    /// Admit one directive without mixing run observables with a check-time refusal.
+    fn directive(
+        &mut self,
+        number: usize,
+        key: &str,
+        value: &str,
+        open_block: &mut Option<(&'static str, Option<usize>)>,
+    ) -> Result<(), String> {
         match key {
             "behavior" => {
-                if behavior.is_some() {
+                if self.behavior.is_some() {
                     return Err(format!("line {number}: `behavior:` is declared twice"));
                 }
                 if value.is_empty() {
                     return Err(format!("line {number}: `behavior:` must say what the program proves"));
                 }
-                behavior = Some(value.to_string());
+                self.behavior = Some(value.to_string());
             }
             "retires" => {
                 let test = retires_key(number, value)?;
-                if retires.contains(&test) {
+                if self.retires.contains(&test) {
                     return Err(format!("line {number}: `retires: {value}` is declared twice"));
                 }
-                retires.push(test);
+                self.retires.push(test);
             }
             "expect-stdout" | "expect-stdout-contains" => {
                 if !value.is_empty() {
@@ -299,21 +335,21 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: `{key}:` takes its lines below it, indented by two spaces after `#`"
                     ));
                 }
-                if let Some(line) = first_diagnostic {
+                if let Some(line) = self.first_diagnostic {
                     return Err(run_beside_refusal_reason(number, key, line));
                 }
                 let (block, slot, other, other_key) = if key == EXPECT_STDOUT {
                     (
                         EXPECT_STDOUT,
-                        &mut stdout_exact,
-                        &stdout_contains,
+                        &mut self.stdout_exact,
+                        &self.stdout_contains,
                         EXPECT_STDOUT_CONTAINS,
                     )
                 } else {
                     (
                         EXPECT_STDOUT_CONTAINS,
-                        &mut stdout_contains,
-                        &stdout_exact,
+                        &mut self.stdout_contains,
+                        &self.stdout_exact,
                         EXPECT_STDOUT,
                     )
                 };
@@ -328,11 +364,43 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                     ));
                 }
                 *slot = Some((number, Vec::new()));
-                first_run.get_or_insert((number, key));
-                open_block = Some((block, None));
+                self.first_run.get_or_insert((number, block));
+                *open_block = Some((block, None));
+            }
+            _ => return self.run_directive(number, key, value, open_block),
+        }
+        Ok(())
+    }
+
+    /// Admit stderr, exit, diagnostic, and pending directives with their conflict checks.
+    fn run_directive(
+        &mut self,
+        number: usize,
+        key: &str,
+        value: &str,
+        open_block: &mut Option<(&'static str, Option<usize>)>,
+    ) -> Result<(), String> {
+        match key {
+            "expect-stderr-contains" => {
+                if !value.is_empty() {
+                    return Err(format!(
+                        "line {number}: `{key}:` takes its lines below it, indented by two spaces after `#`"
+                    ));
+                }
+                if let Some(line) = self.first_diagnostic {
+                    return Err(run_beside_refusal_reason(number, key, line));
+                }
+                if let Some((line, _)) = &self.stderr_contains {
+                    return Err(format!(
+                        "line {number}: `{key}:` is declared twice (first on line {line})"
+                    ));
+                }
+                self.stderr_contains = Some((number, Vec::new()));
+                self.first_run.get_or_insert((number, EXPECT_STDERR_CONTAINS));
+                *open_block = Some((EXPECT_STDERR_CONTAINS, None));
             }
             "expect-exit" => {
-                if let Some((line, _)) = exit_code {
+                if let Some((line, _)) = self.exit_code {
                     return Err(format!(
                         "line {number}: `expect-exit:` is declared twice (first on line {line})"
                     ));
@@ -345,11 +413,11 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: `expect-exit:` must be an exit code in 0..=255, got `{value}`"
                     ));
                 }
-                if let Some(line) = first_diagnostic {
+                if let Some(line) = self.first_diagnostic {
                     return Err(run_beside_refusal_reason(number, key, line));
                 }
-                exit_code = Some((number, code));
-                first_run.get_or_insert((number, key));
+                self.exit_code = Some((number, code));
+                self.first_run.get_or_insert((number, "expect-exit"));
             }
             "expect-diagnostic" => {
                 if value.is_empty() || value.contains(char::is_whitespace) {
@@ -357,19 +425,19 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: `expect-diagnostic:` must name one diagnostic code such as `INCAN-T0001`"
                     ));
                 }
-                if let Some((line, run_key)) = first_run {
+                if let Some((line, run_key)) = self.first_run {
                     return Err(format!(
                         "line {number}: `expect-diagnostic:` means the program is refused at check time and never run, but line {line} declares `{run_key}:`, a run expectation; drop one side"
                     ));
                 }
-                if diagnostics.iter().any(|existing| existing == value) {
+                if self.diagnostics.iter().any(|existing| existing == value) {
                     return Err(format!("line {number}: `expect-diagnostic: {value}` is declared twice"));
                 }
-                first_diagnostic.get_or_insert(number);
-                diagnostics.push(value.to_string());
+                self.first_diagnostic.get_or_insert(number);
+                self.diagnostics.push(value.to_string());
             }
             "pending" => {
-                if pending.is_some() {
+                if self.pending.is_some() {
                     return Err(format!("line {number}: `pending:` is declared twice"));
                 }
                 if value.is_empty() {
@@ -377,7 +445,7 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: `pending:` must say what the fixture waits for, such as the change that makes it hold"
                     ));
                 }
-                pending = Some(value.to_string());
+                self.pending = Some(value.to_string());
             }
             other => {
                 return Err(format!(
@@ -390,45 +458,61 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                 ));
             }
         }
+        Ok(())
     }
 
-    // ---- Cross-directive rules ----
-    let behavior = behavior.ok_or_else(|| "the header has no `behavior:` line".to_string())?;
-    if let Some((line, items)) = &stdout_contains
-        && items.is_empty()
-    {
-        return Err(format!(
-            "line {line}: `expect-stdout-contains:` lists no line, so anything would satisfy it; name at least one line, or use an empty `expect-stdout:` for a program that prints nothing"
-        ));
-    }
-    if !diagnostics.is_empty() {
-        return Ok(Header {
-            behavior,
-            retires,
-            expectation: Expectation::Refused { diagnostics },
-            pending,
-        });
-    }
-    if first_run.is_none() {
-        return Err(
-            "the header declares no observable: add `expect-stdout:`, `expect-stdout-contains:`, `expect-exit:` or `expect-diagnostic:`"
+    /// Validate complete blocks and turn admitted directives into the fixture contract.
+    fn finish(self) -> Result<Header, String> {
+        // ---- Cross-directive rules ----
+        let behavior = self
+            .behavior
+            .ok_or_else(|| "the header has no `behavior:` line".to_string())?;
+        if let Some((line, items)) = &self.stdout_contains
+            && items.is_empty()
+        {
+            return Err(format!(
+                "line {line}: `expect-stdout-contains:` lists no line, so anything would satisfy it; name at least one line, or use an empty `expect-stdout:` for a program that prints nothing"
+            ));
+        }
+        if let Some((line, items)) = &self.stderr_contains
+            && (items.is_empty() || items.iter().any(String::is_empty))
+        {
+            return Err(format!(
+                "line {line}: `expect-stderr-contains:` must list at least one nonempty substring; an empty substring checks nothing"
+            ));
+        }
+        if !self.diagnostics.is_empty() {
+            return Ok(Header {
+                behavior,
+                retires: self.retires,
+                expectation: Expectation::Refused {
+                    diagnostics: self.diagnostics,
+                },
+                pending: self.pending,
+            });
+        }
+        if self.first_run.is_none() {
+            return Err(
+            "the header declares no observable: add `expect-stdout:`, `expect-stdout-contains:`, `expect-stderr-contains:`, `expect-exit:` or `expect-diagnostic:`"
                 .to_string(),
         );
+        }
+        let stdout = match (self.stdout_exact, self.stdout_contains) {
+            (Some((_, lines)), _) => StdoutExpectation::Exact(lines),
+            (None, Some((_, lines))) => StdoutExpectation::Contains(lines),
+            (None, None) => StdoutExpectation::Unchecked,
+        };
+        Ok(Header {
+            behavior,
+            retires: self.retires,
+            expectation: Expectation::Run {
+                stdout,
+                stderr_contains: self.stderr_contains.map_or_else(Vec::new, |(_, items)| items),
+                exit_code: self.exit_code.map_or(0, |(_, code)| code),
+            },
+            pending: self.pending,
+        })
     }
-    let stdout = match (stdout_exact, stdout_contains) {
-        (Some((_, lines)), _) => StdoutExpectation::Exact(lines),
-        (None, Some((_, lines))) => StdoutExpectation::Contains(lines),
-        (None, None) => StdoutExpectation::Unchecked,
-    };
-    Ok(Header {
-        behavior,
-        retires,
-        expectation: Expectation::Run {
-            stdout,
-            exit_code: exit_code.map_or(0, |(_, code)| code),
-        },
-        pending,
-    })
 }
 
 /// Validate a `retires:` value as the inventory keys a test: `<path>.rs::<fn>`, no whitespace anywhere, the function
@@ -486,7 +570,7 @@ fn late_directive_reason(number: usize, key: &str, end: usize, blank: bool) -> S
     )
 }
 
-/// Append one expected line to whichever stdout block is open, refusing what the comparison could not report
+/// Append one expected item to the open stdout or stderr block, refusing what the comparison could not report
 /// faithfully: a line that ends with whitespace (invisible in the report, so a mismatch there would be unreadable)
 /// and, in a contains block, a line listed twice (one occurrence of it satisfies both entries).
 fn push_block_item(
@@ -495,20 +579,25 @@ fn push_block_item(
     item: String,
     stdout_exact: &mut Option<Block>,
     stdout_contains: &mut Option<Block>,
+    stderr_contains: &mut Option<Block>,
 ) -> Result<(), String> {
     if item != item.trim_end() {
         return Err(format!(
             "line {number}: the expected line `{item}` ends with whitespace, which a report cannot show; remove it"
         ));
     }
-    let contains = key == EXPECT_STDOUT_CONTAINS;
-    let slot = if contains { stdout_contains } else { stdout_exact };
+    let contains = key != EXPECT_STDOUT;
+    let slot = match key {
+        EXPECT_STDERR_CONTAINS => stderr_contains,
+        EXPECT_STDOUT_CONTAINS => stdout_contains,
+        _ => stdout_exact,
+    };
     let Some((_, lines)) = slot.as_mut() else {
         return Ok(());
     };
     if contains && lines.contains(&item) {
         return Err(format!(
-            "line {number}: `expect-stdout-contains:` lists `{item}` twice; one occurrence of the line satisfies both, so the repeat checks nothing"
+            "line {number}: `{key}:` lists `{item}` twice; one occurrence of the line satisfies both, so the repeat checks nothing"
         ));
     }
     lines.push(item);
@@ -881,7 +970,11 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
             let check = run_incan(project.path(), &["check", ENTRYPOINT, "--format", "json"])?;
             Ok(outcome(compare_refusal(diagnostics, &check)))
         }
-        Expectation::Run { stdout, exit_code } => {
+        Expectation::Run {
+            stdout,
+            stderr_contains,
+            exit_code,
+        } => {
             // ---- Providers first, in dependency order, Cargo-guarded, into the project's own Oven home ----
             let home = standalone_oven_home(project.path());
             for provider in &fixture.providers {
@@ -903,7 +996,7 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
                 }
             }
             let run = run_incan(project.path(), &["run", ENTRYPOINT])?;
-            Ok(outcome(compare_run(stdout, *exit_code, &run)))
+            Ok(outcome(compare_run(stdout, stderr_contains, *exit_code, &run)))
         }
     }
 }
@@ -964,8 +1057,13 @@ fn compare_refusal(expected: &[String], check: &Output) -> Result<(), String> {
     ))
 }
 
-/// Compare a run's stdout and exit code with what a run fixture declares.
-fn compare_run(stdout: &StdoutExpectation, exit_code: i32, run: &Output) -> Result<(), String> {
+/// Compare a run's stdout, stderr substrings, and exit code with what a run fixture declares.
+fn compare_run(
+    stdout: &StdoutExpectation,
+    stderr_contains: &[String],
+    exit_code: i32,
+    run: &Output,
+) -> Result<(), String> {
     let actual_stdout = String::from_utf8_lossy(&run.stdout);
     let actual_lines: Vec<&str> = actual_stdout.lines().collect();
     let mut problems: Vec<String> = Vec::new();
@@ -1004,6 +1102,20 @@ fn compare_run(stdout: &StdoutExpectation, exit_code: i32, run: &Output) -> Resu
         }
     }
 
+    let actual_stderr = String::from_utf8_lossy(&run.stderr);
+    let missing: Vec<&str> = stderr_contains
+        .iter()
+        .map(String::as_str)
+        .filter(|item| !actual_stderr.contains(item))
+        .collect();
+    if !missing.is_empty() {
+        problems.push(format!(
+            "stderr is missing expected substring(s)\nexpected stderr substrings:\n{}missing:\n{}actual stderr:\n{}",
+            indent_lines(stderr_contains.iter().map(String::as_str)),
+            indent_lines(missing.iter().copied()),
+            indent_block(&actual_stderr)
+        ));
+    }
     if problems.is_empty() {
         return Ok(());
     }
@@ -1113,6 +1225,71 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn Error>>;
 
+    /// Stderr assertions are substrings and can be the only run observable.
+    #[test]
+    fn stderr_header_and_conflicts() -> TestResult {
+        let header = parse_header("# behavior: b\n# expect-stderr-contains:\n#   ValueError:\n#   original input\n")?;
+        assert_eq!(
+            header.expectation,
+            Expectation::Run {
+                stdout: StdoutExpectation::Unchecked,
+                stderr_contains: vec!["ValueError:".into(), "original input".into()],
+                exit_code: 0
+            }
+        );
+        for (text, reason) in [
+            ("# expect-stderr-contains: inline\n", "takes its lines below"),
+            ("# expect-stderr-contains:\n", "nonempty substring"),
+            ("# expect-stderr-contains:\n#\n", "nonempty substring"),
+            ("# expect-stderr-contains:\n#   x\n#   x\n", "lists `x` twice"),
+            (
+                "# expect-stderr-contains:\n#   x\n# expect-stderr-contains:\n#   y\n",
+                "declared twice",
+            ),
+            (
+                "# expect-diagnostic: INCAN-T0001\n# expect-stderr-contains:\n#   x\n",
+                "never run",
+            ),
+            (
+                "# expect-stderr-contains:\n#   x\n# expect-diagnostic: INCAN-T0001\n",
+                "never run",
+            ),
+            ("# expect-stderr-contains:\n#   x \n", "ends with whitespace"),
+            (
+                "# expect-exit: 0\n\n# expect-stderr-contains:\n#   x\n",
+                "after the header ended",
+            ),
+        ] {
+            let error = parse_header(&format!("# behavior: b\n{text}"))
+                .err()
+                .ok_or("malformed stderr header accepted")?;
+            assert!(error.contains(reason), "{error}");
+        }
+        Ok(())
+    }
+
+    /// A conversion error must match both class and input even when exit and stdout match.
+    #[cfg(unix)]
+    #[test]
+    fn stderr_comparison_reports_expected_and_actual() -> TestResult {
+        let expected = vec!["ValueError:".into(), "'bad input'".into()];
+        let mut run = Output {
+            status: exit_status(101),
+            stdout: Vec::new(),
+            stderr: b"prefix ValueError: cannot convert 'bad input' to int\n".to_vec(),
+        };
+        assert_eq!(compare_run(&StdoutExpectation::Unchecked, &expected, 101, &run), Ok(()));
+        run.stderr = b"another panic\n".to_vec();
+        let error = compare_run(&StdoutExpectation::Unchecked, &expected, 101, &run)
+            .err()
+            .ok_or("wrong panic accepted")?;
+        assert!(error.contains("expected stderr substrings:"), "{error}");
+        assert!(error.contains("ValueError:"), "{error}");
+        assert!(error.contains("'bad input'"), "{error}");
+        assert!(error.contains("actual stderr:\n  another panic"), "{error}");
+        Ok(())
+    }
+
     /// A run fixture: exact stdout, explicit exit code, two retires.
     #[test]
     fn header_with_exact_stdout_and_exit_code() -> TestResult {
@@ -1138,6 +1315,7 @@ mod tests {
                     String::new(),
                     "  indented line".to_string(),
                 ]),
+                stderr_contains: Vec::new(),
                 exit_code: 3,
             }
         );
@@ -1152,6 +1330,7 @@ mod tests {
             header.expectation,
             Expectation::Run {
                 stdout: StdoutExpectation::Contains(vec!["one".to_string(), "two".to_string()]),
+                stderr_contains: Vec::new(),
                 exit_code: 0,
             }
         );
@@ -1170,6 +1349,7 @@ mod tests {
             header.expectation,
             Expectation::Run {
                 stdout: StdoutExpectation::Unchecked,
+                stderr_contains: Vec::new(),
                 exit_code: 0,
             }
         );
@@ -1184,6 +1364,7 @@ mod tests {
             header.expectation,
             Expectation::Run {
                 stdout: StdoutExpectation::Exact(Vec::new()),
+                stderr_contains: Vec::new(),
                 exit_code: 0,
             }
         );
@@ -1204,147 +1385,149 @@ mod tests {
         Ok(())
     }
 
+    /// Malformed header specimens and the fragments identifying each refusal.
+    const MALFORMED_HEADERS: &[(&str, &[&str])] = &[
+        ("# expect-exit: 0\n", &["no `behavior:`"]),
+        ("# behavior: b\n", &["declares no observable"]),
+        (
+            "# behavior: b\n# behavior: c\n# expect-exit: 0\n",
+            &["line 2", "declared twice"],
+        ),
+        (
+            "# behavior: b\n# expects-stdout:\n#   x\n",
+            &["line 2", "unknown directive"],
+        ),
+        (
+            "# behavior: b\n# just prose\n# expect-exit: 0\n",
+            &["line 2", "neither a directive"],
+        ),
+        (
+            "# behavior: b\n#   stray\n# expect-exit: 0\n",
+            &["line 2", "outside an"],
+        ),
+        (
+            "# behavior: b\n# expect-stdout: inline\n",
+            &["line 2", "takes its lines below"],
+        ),
+        // ---- The two stdout blocks: the second one introduces the conflict ----
+        (
+            "# behavior: b\n# expect-stdout:\n#   a\n# expect-stdout-contains:\n#   a\n",
+            &[
+                "line 4",
+                "`expect-stdout-contains:` cannot be declared beside `expect-stdout:` (line 2)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#   a\n# expect-stdout:\n#   a\n",
+            &[
+                "line 4",
+                "`expect-stdout:` cannot be declared beside `expect-stdout-contains:` (line 2)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-exit: zero\n",
+            &["line 2", "must be an integer"],
+        ),
+        ("# behavior: b\n# expect-exit: 256\n", &["line 2", "0..=255"]),
+        ("# behavior: b\n# expect-exit: -1\n", &["line 2", "0..=255"]),
+        // ---- A refusal beside a run expectation: whichever comes second introduces the conflict ----
+        (
+            "# behavior: b\n# expect-diagnostic: INCAN-T0001\n# expect-exit: 1\n",
+            &[
+                "line 3",
+                "`expect-exit:` is a run expectation, but line 2 declares `expect-diagnostic:`",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-stdout:\n#   a\n# expect-diagnostic: INCAN-T0001\n",
+            &["line 4", "never run, but line 2 declares `expect-stdout:`"],
+        ),
+        (
+            "# behavior: b\n# retires: not-a-test\n# expect-exit: 0\n",
+            &["line 2", "`<path>.rs::<fn>`"],
+        ),
+        (
+            "# behavior: b\n# retires: a b.rs::t\n# expect-exit: 0\n",
+            &["line 2", "no whitespace"],
+        ),
+        (
+            "# behavior: b\n# retires: a.rs::t\n# retires: a.rs::t\n# expect-exit: 0\n",
+            &["line 3", "declared twice"],
+        ),
+        (
+            "# behavior: b\n# expect-diagnostic:\n",
+            &["line 2", "one diagnostic code"],
+        ),
+        // ---- Directive spelling both readers agree on: one space after `#`, none before the colon ----
+        (
+            "# behavior: b\n#\tretires: a.rs::t\n# expect-exit: 0\n",
+            &["line 2", "one space between"],
+        ),
+        (
+            "# behavior: b\n# retires : a.rs::t\n# expect-exit: 0\n",
+            &["line 2", "before the colon"],
+        ),
+        // ---- B1: a directive after the header ended is refused, not dropped ----
+        (
+            "# behavior: b\n# expect-exit: 0\n\n# expect-stdout:\n#   x\n\ndef main() -> None:\n    pass\n",
+            &[
+                "line 4",
+                "`expect-stdout:` after the header ended; a blank line ends the header (line 3)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-exit: 0\ndef main() -> None:\n    pass\n# retires: a.rs::t\n",
+            &[
+                "line 5",
+                "`retires:` after the header ended; the first line that is not a `#` comment ends the header (line 3)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-exit: 0\n\n# expect-stdou:\n",
+            &["line 4", "`expect-stdou:` after the header ended"],
+        ),
+        // ---- B1: a contains block with no line would be satisfied by anything ----
+        (
+            "# behavior: b\n# expect-stdout-contains:\n",
+            &["line 2", "lists no line"],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n# expect-exit: 0\n",
+            &["line 2", "lists no line"],
+        ),
+        // ---- A contained line listed twice checks nothing the first did not ----
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\n#   a\n",
+            &["line 5", "lists `a` twice"],
+        ),
+        // ---- Trailing whitespace on an expected line is invisible in a report ----
+        (
+            "# behavior: b\n# expect-stdout:\n#   a \n",
+            &["line 3", "ends with whitespace"],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\t\n",
+            &["line 4", "ends with whitespace"],
+        ),
+        // ---- `#` and only whitespace inside a block is not the empty expected line ----
+        (
+            "# behavior: b\n# expect-stdout:\n#   a\n#   \n",
+            &[
+                "line 4",
+                "ends with whitespace",
+                "a bare `#` is the empty expected line",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#      \n#   a\n",
+            &["line 3", "ends with whitespace"],
+        ),
+    ];
+
     /// Every malformed header is refused with a reason that names the problem and, where one exists, the line.
     #[test]
     fn malformed_headers_are_refused_with_the_reason() -> TestResult {
-        let cases: &[(&str, &[&str])] = &[
-            ("# expect-exit: 0\n", &["no `behavior:`"]),
-            ("# behavior: b\n", &["declares no observable"]),
-            (
-                "# behavior: b\n# behavior: c\n# expect-exit: 0\n",
-                &["line 2", "declared twice"],
-            ),
-            (
-                "# behavior: b\n# expects-stdout:\n#   x\n",
-                &["line 2", "unknown directive"],
-            ),
-            (
-                "# behavior: b\n# just prose\n# expect-exit: 0\n",
-                &["line 2", "neither a directive"],
-            ),
-            (
-                "# behavior: b\n#   stray\n# expect-exit: 0\n",
-                &["line 2", "outside an"],
-            ),
-            (
-                "# behavior: b\n# expect-stdout: inline\n",
-                &["line 2", "takes its lines below"],
-            ),
-            // ---- The two stdout blocks: the second one introduces the conflict ----
-            (
-                "# behavior: b\n# expect-stdout:\n#   a\n# expect-stdout-contains:\n#   a\n",
-                &[
-                    "line 4",
-                    "`expect-stdout-contains:` cannot be declared beside `expect-stdout:` (line 2)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#   a\n# expect-stdout:\n#   a\n",
-                &[
-                    "line 4",
-                    "`expect-stdout:` cannot be declared beside `expect-stdout-contains:` (line 2)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-exit: zero\n",
-                &["line 2", "must be an integer"],
-            ),
-            ("# behavior: b\n# expect-exit: 256\n", &["line 2", "0..=255"]),
-            ("# behavior: b\n# expect-exit: -1\n", &["line 2", "0..=255"]),
-            // ---- A refusal beside a run expectation: whichever comes second introduces the conflict ----
-            (
-                "# behavior: b\n# expect-diagnostic: INCAN-T0001\n# expect-exit: 1\n",
-                &[
-                    "line 3",
-                    "`expect-exit:` is a run expectation, but line 2 declares `expect-diagnostic:`",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-stdout:\n#   a\n# expect-diagnostic: INCAN-T0001\n",
-                &["line 4", "never run, but line 2 declares `expect-stdout:`"],
-            ),
-            (
-                "# behavior: b\n# retires: not-a-test\n# expect-exit: 0\n",
-                &["line 2", "`<path>.rs::<fn>`"],
-            ),
-            (
-                "# behavior: b\n# retires: a b.rs::t\n# expect-exit: 0\n",
-                &["line 2", "no whitespace"],
-            ),
-            (
-                "# behavior: b\n# retires: a.rs::t\n# retires: a.rs::t\n# expect-exit: 0\n",
-                &["line 3", "declared twice"],
-            ),
-            (
-                "# behavior: b\n# expect-diagnostic:\n",
-                &["line 2", "one diagnostic code"],
-            ),
-            // ---- Directive spelling both readers agree on: one space after `#`, none before the colon ----
-            (
-                "# behavior: b\n#\tretires: a.rs::t\n# expect-exit: 0\n",
-                &["line 2", "one space between"],
-            ),
-            (
-                "# behavior: b\n# retires : a.rs::t\n# expect-exit: 0\n",
-                &["line 2", "before the colon"],
-            ),
-            // ---- B1: a directive after the header ended is refused, not dropped ----
-            (
-                "# behavior: b\n# expect-exit: 0\n\n# expect-stdout:\n#   x\n\ndef main() -> None:\n    pass\n",
-                &[
-                    "line 4",
-                    "`expect-stdout:` after the header ended; a blank line ends the header (line 3)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-exit: 0\ndef main() -> None:\n    pass\n# retires: a.rs::t\n",
-                &[
-                    "line 5",
-                    "`retires:` after the header ended; the first line that is not a `#` comment ends the header (line 3)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-exit: 0\n\n# expect-stdou:\n",
-                &["line 4", "`expect-stdou:` after the header ended"],
-            ),
-            // ---- B1: a contains block with no line would be satisfied by anything ----
-            (
-                "# behavior: b\n# expect-stdout-contains:\n",
-                &["line 2", "lists no line"],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n# expect-exit: 0\n",
-                &["line 2", "lists no line"],
-            ),
-            // ---- A contained line listed twice checks nothing the first did not ----
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\n#   a\n",
-                &["line 5", "lists `a` twice"],
-            ),
-            // ---- Trailing whitespace on an expected line is invisible in a report ----
-            (
-                "# behavior: b\n# expect-stdout:\n#   a \n",
-                &["line 3", "ends with whitespace"],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\t\n",
-                &["line 4", "ends with whitespace"],
-            ),
-            // ---- `#` and only whitespace inside a block is not the empty expected line ----
-            (
-                "# behavior: b\n# expect-stdout:\n#   a\n#   \n",
-                &[
-                    "line 4",
-                    "ends with whitespace",
-                    "a bare `#` is the empty expected line",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#      \n#   a\n",
-                &["line 3", "ends with whitespace"],
-            ),
-        ];
-        for (text, expected) in cases {
+        for (text, expected) in MALFORMED_HEADERS {
             let reason = parse_header(text)
                 .err()
                 .ok_or_else(|| format!("expected `{text}` to be refused"))?;
@@ -1665,18 +1848,22 @@ mod tests {
             stderr: b"trace\n".to_vec(),
         };
         let exact = StdoutExpectation::Exact(vec!["one".to_string(), "two".to_string()]);
-        assert_eq!(compare_run(&exact, 0, &output(0, "one\ntwo\n")), Ok(()));
-        let differs = compare_run(&exact, 0, &output(0, "one\n")).err().unwrap_or_default();
+        assert_eq!(compare_run(&exact, &[], 0, &output(0, "one\ntwo\n")), Ok(()));
+        let differs = compare_run(&exact, &[], 0, &output(0, "one\n"))
+            .err()
+            .unwrap_or_default();
         assert!(differs.contains("expected stdout:\n  one\n  two\n"), "{differs}");
         assert!(differs.contains("actual stdout:\n  one\n"), "{differs}");
         assert!(differs.contains("stderr:\n  trace"), "{differs}");
 
         let contains = StdoutExpectation::Contains(vec!["two".to_string()]);
-        assert_eq!(compare_run(&contains, 0, &output(0, "one\ntwo\n")), Ok(()));
-        let missing = compare_run(&contains, 0, &output(0, "one\n")).err().unwrap_or_default();
+        assert_eq!(compare_run(&contains, &[], 0, &output(0, "one\ntwo\n")), Ok(()));
+        let missing = compare_run(&contains, &[], 0, &output(0, "one\n"))
+            .err()
+            .unwrap_or_default();
         assert!(missing.contains("missing:\n  two\n"), "{missing}");
 
-        let code = compare_run(&StdoutExpectation::Unchecked, 2, &output(1, ""))
+        let code = compare_run(&StdoutExpectation::Unchecked, &[], 2, &output(1, ""))
             .err()
             .unwrap_or_default();
         assert!(code.contains("exit code: expected 2, got 1"), "{code}");

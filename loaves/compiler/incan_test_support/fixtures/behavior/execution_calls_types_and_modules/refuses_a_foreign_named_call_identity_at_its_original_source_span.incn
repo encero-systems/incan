@@ -3,12 +3,16 @@
 #   42
 
 
+"""Refuses a foreign named call identity at its original source span, as the legacy route runs it."""
 def helper() -> int:
+  """Return `42` for this fixture."""
   return 42
 
 def program_result() -> int:
+  """Return the fixture expression `helper()`."""
   return helper()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

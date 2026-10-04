@@ -3,11 +3,14 @@
 #   1.2345679
 
 
+"""Executes checked typed numeric locals through selected scalar conversions."""
 def program_result() -> str:
+  """Compute and return `render()`."""
   value: f32 = 1.23456789
   render: () -> str = () => str(value)
   return render()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

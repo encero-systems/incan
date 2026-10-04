@@ -3,10 +3,13 @@
 #   42
 
 
+"""Refuses a nominal pattern after its exact target identity is removed, as the legacy route runs it."""
 model Point:
+  """Hold x used by this fixture."""
   x: int
 
 def program_result() -> int:
+  """Choose the result by matching `point`."""
   point = Point(x=42)
   match point:
     case Point(x=value):
@@ -15,4 +18,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

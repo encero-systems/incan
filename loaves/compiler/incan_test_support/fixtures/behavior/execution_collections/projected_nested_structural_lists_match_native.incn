@@ -5,7 +5,9 @@
 #   13
 
 
+"""Projected nested structural lists match native."""
 def observe() -> int:
+  """Print labels and score zipped nested structural values."""
   groups = [[(1, "one"), (2, "two")]]
   labels = ([true, false], 0)
   mut total = 0
@@ -18,4 +20,5 @@ def observe() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

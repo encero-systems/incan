@@ -3,14 +3,18 @@
 #   true
 #   true
 
+"""`in` tests list membership and `not in` tests dict key absence (parity corpus case 22)."""
 def has_item(xs: List[int], v: int) -> bool:
+    """Return the fixture expression `v in xs`."""
     return v in xs
 
 
 def lacks_key(d: Dict[str, int], k: str) -> bool:
+    """Return the fixture expression `k not in d`."""
     return k not in d
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(has_item([1, 2], 2))
     println(lacks_key({"a": 1}, "b"))

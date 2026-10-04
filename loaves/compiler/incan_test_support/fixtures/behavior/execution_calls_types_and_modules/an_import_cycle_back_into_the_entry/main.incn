@@ -3,14 +3,17 @@
 # expect-stdout:
 #   42
 
+"""A helper module that imports a function back from the entry module calls it through the cycle."""
 from helper import bounce
 
 
 pub def step(value: int) -> int:
+    """Return the terminal value or recurse through the sibling module."""
     if value == 0:
         return 42
     return bounce(value - 1)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(step(4))

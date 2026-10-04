@@ -3,17 +3,21 @@
 # expect-exit: 101
 
 
+"""Race failure preserves the first arm span and cancels constructed losers, as the legacy route runs it."""
 import std.async
 
 async def first() -> int:
+  """Fail the assertion when this callable is reached."""
   assert false
   return 1
 
 async def loser() -> int:
+  """Fail the assertion when this callable is reached."""
   assert false
   return 2
 
 async def program_result() -> int:
+  """Compute and return `winner`."""
   winner = race for value:
     await first() => value
     await loser() => value
@@ -21,4 +25,5 @@ async def program_result() -> int:
 
 
 async def main() -> None:
+    """Print the fixture values in the expected order."""
     println(await program_result())

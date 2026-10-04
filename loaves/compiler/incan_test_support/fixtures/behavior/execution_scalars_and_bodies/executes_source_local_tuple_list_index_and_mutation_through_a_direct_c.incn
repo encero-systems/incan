@@ -3,15 +3,19 @@
 #   42
 
 
+"""Executes source local tuple list index and mutation through a direct callable."""
 def score(mut values: list[int]) -> int:
+  """Mutate the first list element and score the resulting tuple."""
   values[0] = 40
   pair = (values[0], 2)
   return pair.0 + pair.1
 
 def program_result() -> int:
+  """Compute and return `score(values)`."""
   mut values = [1, 2]
   return score(values)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

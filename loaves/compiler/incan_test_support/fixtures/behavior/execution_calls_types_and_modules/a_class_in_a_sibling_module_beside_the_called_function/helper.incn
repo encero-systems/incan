@@ -1,6 +1,9 @@
+"""Provide the sibling declarations used by the fixture."""
 pub class Holder:
+    """Hold value used by this fixture."""
     value: int
 
 
 pub def bump(value: int) -> int:
+    """Return the fixture expression `value + 1`."""
     return value + 1

@@ -3,18 +3,24 @@
 #   "line\né\t\\\""
 
 
+"""Executes json stringify for the admitted scalar domain."""
 def negative() -> str:
+  """Return the fixture expression `json_stringify(-9223372036854775807)`."""
   return json_stringify(-9223372036854775807)
 
 def truth() -> str:
+  """Return the fixture expression `json_stringify(true)`."""
   return json_stringify(true)
 
 def escaped() -> str:
+  """Return the fixture expression `json_stringify("line\\né\\t\\\\\\"")`."""
   return json_stringify("line\né\t\\\"")
 
 def absent() -> str:
+  """Return the fixture expression `json_stringify(None)`."""
   return json_stringify(None)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(escaped())

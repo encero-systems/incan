@@ -3,15 +3,19 @@
 #   42
 
 
+"""Executes identity selected nominal and fieldless enum match patterns."""
 model Pair:
+  """Hold left and right used by this fixture."""
   left: int
   right: int
 
 enum Signal:
+  """Represent the Ready, Stop alternatives in this fixture."""
   Ready
   Stop
 
 def classify(pair: Pair, signal: Signal) -> int:
+  """Match the fixture alternatives and return the selected result."""
   match pair:
     case Pair(left=40, right=2):
       match signal:
@@ -24,8 +28,10 @@ def classify(pair: Pair, signal: Signal) -> int:
   return 0
 
 def program_result() -> int:
+    """Return the fixture expression `classify(Pair(left=40, right=2), Signal.Ready)`."""
     return classify(Pair(left=40, right=2), Signal.Ready)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

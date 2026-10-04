@@ -3,14 +3,18 @@
 #   42
 
 
+"""Refuses an idless nominal constructor at its original source span, as the legacy route runs it."""
 model Pair:
+  """Hold left and right used by this fixture."""
   left: int
   right: int
 
 def program_result() -> int:
+  """Compute and return `pair.left + pair.right`."""
   pair = Pair(right=2, left=40)
   return pair.left + pair.right
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

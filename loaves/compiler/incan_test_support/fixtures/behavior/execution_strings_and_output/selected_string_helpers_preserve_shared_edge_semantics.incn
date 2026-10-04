@@ -2,9 +2,12 @@
 # expect-stdout:
 #   STRASSE
 
+"""Selected string helpers preserve shared edge semantics."""
 def result() -> str:
+    """Return the fixture expression `"Straße".upper()`."""
     return "Straße".upper()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(result())

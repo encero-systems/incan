@@ -2,7 +2,9 @@
 # expect-stdout:
 #   0 9223372036854775807 -9223372036854775808 9223372036854775807 3 -3
 
+"""Float parser and int cast edges match the native route."""
 def render() -> str:
+    """Render integer casts of finite and nonfinite floats."""
     nan = float("NaN")
     positive_infinity = float("inf")
     negative_infinity = float("-inf")
@@ -12,4 +14,5 @@ def render() -> str:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(render())

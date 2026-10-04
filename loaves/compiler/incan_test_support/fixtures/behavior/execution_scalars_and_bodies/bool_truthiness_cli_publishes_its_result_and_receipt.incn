@@ -32,8 +32,10 @@ def bool_truthiness() -> bool:
 
 
 def program_result() -> bool:
+    """Return the fixture expression `bool_truthiness()`."""
     return bool_truthiness()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

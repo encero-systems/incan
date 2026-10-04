@@ -3,7 +3,9 @@
 #   0
 
 
+"""Refuses corrupted zip operand and nominal iterator destination, as the legacy route runs it."""
 def typed_zip_target(left: list[list[int]], right: list[int]) -> int:
+  """Sum nested-list lengths and their zipped integer partners."""
   pairs = zip(left, right)
   mut total = 0
   for typed_zip_left, typed_zip_right in pairs:
@@ -11,10 +13,12 @@ def typed_zip_target(left: list[list[int]], right: list[int]) -> int:
   return total
 
 def typed_zip_entry() -> int:
+  """Pass typed empty lists to the zip consumer."""
   empty_left: list[list[int]] = []
   empty_right: list[int] = []
   return typed_zip_target(empty_left, empty_right)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(typed_zip_entry())

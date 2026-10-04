@@ -3,13 +3,17 @@
 #   1
 
 
+"""Refuses typed empty non structural default inside a partial closure, as the legacy route runs it."""
 def keep(prefix: int, items: list[float] = []) -> int:
+  """Return `prefix` for this fixture."""
   return prefix
 
 def program_result() -> int:
+  """Compute and return `deferred()`."""
   deferred = partial keep(prefix=1)
   return deferred()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

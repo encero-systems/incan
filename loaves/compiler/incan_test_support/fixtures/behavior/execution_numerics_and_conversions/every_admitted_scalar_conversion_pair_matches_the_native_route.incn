@@ -3,7 +3,9 @@
 #   42 true false text 3.14 1 0 1000 3 10.0 3.14 1000.5
 
 
+"""Every admitted scalar conversion pair matches the native route."""
 def convert() -> str:
+    """Render scalar identity, parsing, truncation, and widening results."""
     integer = int(42)
     true_int = int(true)
     false_int = int(false)
@@ -16,4 +18,5 @@ def convert() -> str:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(convert())

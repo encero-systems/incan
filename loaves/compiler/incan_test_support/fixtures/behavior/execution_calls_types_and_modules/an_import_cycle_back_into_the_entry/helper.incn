@@ -1,5 +1,7 @@
+"""Provide the sibling declarations used by the fixture."""
 from main import step
 
 
 pub def bounce(value: int) -> int:
+    """Return the fixture expression `step(value)`."""
     return step(value)

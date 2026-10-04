@@ -9,7 +9,9 @@
 #   10
 
 
+"""Zip lists cover equal unequal and empty inputs."""
 def zip_profile() -> int:
+  """Print zipped values across equal, unequal, and empty inputs."""
   mut total = 0
   for value, label in zip([1, 2], ["one", "two"]):
     println(value)
@@ -29,4 +31,5 @@ def zip_profile() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(zip_profile())

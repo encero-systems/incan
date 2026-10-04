@@ -2,9 +2,12 @@
 # expect-stdout:
 #   2
 
+"""String sorted list remains an original call span refusal, as the legacy route runs it."""
 def observe() -> int:
+  """Return the fixture expression `len(sorted(["b", "a"]))`."""
   return len(sorted(["b", "a"]))
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

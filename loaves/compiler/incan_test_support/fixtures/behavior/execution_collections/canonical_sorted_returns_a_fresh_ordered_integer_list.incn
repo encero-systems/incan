@@ -21,4 +21,5 @@ def sorted_int_list() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(sorted_int_list())

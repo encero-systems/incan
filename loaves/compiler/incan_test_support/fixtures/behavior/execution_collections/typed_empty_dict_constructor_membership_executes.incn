@@ -2,10 +2,13 @@
 # expect-stdout:
 #   true
 
+"""Typed empty dict constructor membership executes."""
 def program_result() -> bool:
+  """Compute and return `"missing" not in values`."""
   values: dict[str, int] = Dict()
   return "missing" not in values
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -2,10 +2,13 @@
 # expect-stdout:
 #   owned
 
+"""A function returns a str it bound to a local (parity corpus row replacement-body-v0-003)."""
 def return_owned() -> str:
+    """Return the locally bound owned string."""
     value = "owned"
     return value
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(return_owned())

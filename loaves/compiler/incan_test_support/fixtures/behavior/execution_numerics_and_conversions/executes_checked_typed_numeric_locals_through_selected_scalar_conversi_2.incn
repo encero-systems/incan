@@ -3,10 +3,13 @@
 #   1
 
 
+"""Executes checked typed numeric locals through selected scalar conversions."""
 def program_result() -> int:
+  """Compute and return `int(value)`."""
   value: f64 = 1.23456789
   return int(value)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

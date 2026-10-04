@@ -3,12 +3,16 @@
 #   1.25
 
 
+"""Runtime non finite float values flow through f64."""
 def exact(value: str) -> f64:
+  """Return the fixture expression `float(value)`."""
   return float(value)
 
 def ordinary(value: str) -> float:
+  """Return the fixture expression `float(value)`."""
   return float(value)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(exact("1.25"))

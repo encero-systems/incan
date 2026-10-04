@@ -2,10 +2,13 @@
 # expect-stdout:
 #   true
 
+"""Typed empty set membership executes."""
 def program_result() -> bool:
+  """Compute and return `1 not in values`."""
   values: set[int] = Set()
   return 1 not in values
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())
