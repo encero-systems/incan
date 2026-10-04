@@ -152,7 +152,7 @@ The inner loop on real Body IR, with an optimized driver and the front end in-pr
 
 A layer that owns rustc's types cannot be what the lowering imports. As a `[rust-dependencies]` crate it does not bake without the driver-only `rustc_private` permission, so the checker never sees its API. A plain-data plan crate bakes, typechecks and runs like any other Rust dependency (spike probes `rustc_seam_check` and `mir_plan_check`).
 
-**A published Loaf ships its bodies.** A Loaf's executable representation (RFC 123) carries the Body IR of its public declarations, generic ones included. A consumer on the direct route lowers a generic body from there and instantiates it in its own compilation, so a published Loaf does not depend on the rustc that compiled it. The representation's coverage therefore grows to generic public bodies, which it refuses today.
+**A published Loaf ships its governed bodies.** A Loaf's executable representation (RFC 123) carries the checked Body IR of its public declarations under the publisher's canonical identities. The manifest selects it, its digest is verified before anything is decoded, and only a public identity it declares covered is usable. A consumer on the direct route never runs anything else: an uncovered, inconsistent or unverifiable body is refused. This includes public functions with type parameters. The consumer lowers such a function's governed body from the representation and instantiates it at its own types in its own compilation, so a published Loaf does not depend on the rustc that compiled it. The representation's coverage therefore grows to public functions with type parameters, which it refuses today.
 
 **Open, to settle before this record is accepted:**
 
