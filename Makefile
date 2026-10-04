@@ -257,6 +257,10 @@ reference-contract-check:
 us-english-fix:
 	@python3 scripts/check_us_english.py --fix
 
+.PHONY: behavior-roots  ## quality - Regenerate the behavior roots (one libtest case per behavior fixture) from their areas
+behavior-roots:
+	@INCAN_WRITE_BEHAVIOR_ROOTS=1 cargo test -p incan_test_support --lib behavior_roots::tests::behavior_roots_match_their_areas -- --exact --nocapture
+
 .PHONY: test-inventory  ## quality - Regenerate the test corpus inventory page from the tree and dispositions.json
 test-inventory:
 	@python3 scripts/test_inventory/render.py
