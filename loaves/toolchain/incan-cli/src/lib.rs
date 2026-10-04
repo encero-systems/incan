@@ -130,46 +130,6 @@ pub enum ColorMode {
     Never,
 }
 
-/// CLI-facing selector for [`incan_driver::backend::selection::BackendKind`] (`--backend`).
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-#[value(rename_all = "lower")]
-pub enum BackendCliKind {
-    /// The current Rust-source-emission pipeline.
-    Legacy,
-    /// The intentionally partial Body-IR replacement backend.
-    Replacement,
-}
-
-impl From<BackendCliKind> for incan_driver::backend::selection::BackendKind {
-    fn from(kind: BackendCliKind) -> Self {
-        match kind {
-            BackendCliKind::Legacy => incan_driver::backend::selection::BackendKind::Legacy,
-            BackendCliKind::Replacement => incan_driver::backend::selection::BackendKind::Replacement,
-        }
-    }
-}
-
-/// CLI-facing fallback policy for `incan build --backend-fallback`.
-///
-/// The #988 source-only profile exposes only `refuse`: it has no receipt-bound legacy execution path for an
-/// unsupported source profile, so accepting a target backend spelling here would promise a fallback the CLI cannot
-/// truthfully perform. #986 retains `FallbackPolicy::AllowTo` for a future profile that implements both dispatch
-/// and its paired execution receipt.
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-#[value(rename_all = "lower")]
-pub enum BackendFallbackCliKind {
-    /// Refuse an unavailable backend selection instead of substituting another backend.
-    Refuse,
-}
-
-impl From<BackendFallbackCliKind> for incan_driver::backend::selection::FallbackPolicy {
-    fn from(kind: BackendFallbackCliKind) -> Self {
-        match kind {
-            BackendFallbackCliKind::Refuse => incan_driver::backend::selection::FallbackPolicy::Refuse,
-        }
-    }
-}
-
 /// Output encoding for generated-cache inspection and pruning reports.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheOutputFormat {
@@ -242,21 +202,6 @@ pub enum Command {
         /// first-contact command symmetry.
         #[arg(long)]
         release: bool,
-        /// Select the compiler backend for this build. Defaults to the legacy Rust-emission backend, declared
-        /// explicitly even when this flag is omitted. The `replacement` profile is partial: it executes supported
-        /// declarations from Body IR, including methods and declarations resolved from a published package's
-        /// executable representation, and refuses unsupported input visibly.
-        #[arg(long = "backend", value_enum)]
-        backend: Option<BackendCliKind>,
-        /// Request a source-observable shadow comparison against the replacement backend. Recorded explicitly as
-        /// unavailable when the selected profile has no such legacy/replacement comparator; generated Rust is not
-        /// used as semantic proof.
-        #[arg(long = "shadow")]
-        shadow: bool,
-        /// Declare the explicit refusal policy for an unavailable backend. The #988 source-only profile accepts
-        /// only `refuse` until a receipt-bound legacy fallback execution path exists.
-        #[arg(long = "backend-fallback", value_enum)]
-        backend_fallback: Option<BackendFallbackCliKind>,
         /// Emit a machine-readable build report
         #[arg(long = "report", value_enum)]
         report: Option<BuildReportFormat>,
@@ -919,9 +864,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_all_features,
             generated_cargo_target_dir,
             release,
-            backend,
-            shadow,
-            backend_fallback,
             report,
             report_output,
             workspace,
@@ -951,23 +893,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     cargo_no_default_features,
                     cargo_all_features,
                     generated_cargo_target_dir,
-                    backend: incan_driver::build::BackendSelectionOptions {
-                        requested: backend
-                            .map(Into::into)
-                            .unwrap_or(incan_driver::backend::selection::BackendKind::Legacy),
-                        explicit: backend.is_some(),
-                        shadow,
-                        fallback_policy: backend_fallback
-                            .map(Into::into)
-                            .unwrap_or(incan_driver::backend::selection::FallbackPolicy::Refuse),
-                    },
+                    backend: incan_driver::build::BackendSelectionOptions::default(),
                 },
                 report_options: BuildReportOptions {
                     format: report,
                     output_path: report_output,
                 },
                 release,
-                backend_controls_explicit: backend.is_some() || shadow || backend_fallback.is_some(),
                 lock_controls_explicit: offline || no_offline || locked || no_locked || frozen || no_frozen,
             },
             workspace,
@@ -1347,7 +1279,6 @@ struct BuildCommandRequest {
     options: incan_driver::build::BuildCommandOptions,
     report_options: BuildReportOptions,
     release: bool,
-    backend_controls_explicit: bool,
     lock_controls_explicit: bool,
 }
 
@@ -1468,11 +1399,6 @@ fn reject_unsupported_toolchain_build_options(request: &BuildCommandRequest) -> 
     if request.release {
         return Err(CliError::failure(
             "toolchain-Loaf builds do not accept --release; stored [[rust.bin]] plans select their recorded profile",
-        ));
-    }
-    if request.backend_controls_explicit {
-        return Err(CliError::failure(
-            "toolchain-Loaf builds do not accept --backend, --backend-fallback, or --shadow",
         ));
     }
     if request.options.package_features != FeatureSelection::default() {

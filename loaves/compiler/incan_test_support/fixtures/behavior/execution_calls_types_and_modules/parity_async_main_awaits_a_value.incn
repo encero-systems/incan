@@ -1,0 +1,13 @@
+# behavior: an async main awaits an async function's value (parity corpus case 10)
+# expect-stdout:
+#   7
+
+import std.async
+
+async def fetch() -> int:
+    return 7
+
+
+async def main() -> None:
+    value = await fetch()
+    println(value)

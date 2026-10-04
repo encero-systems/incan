@@ -110,7 +110,7 @@ To run the compiler, SDK, verified documentation and generated-reference checks 
 gh workflow run ci.yml --ref <branch> -f heavy=false -f reference=true
 ```
 
-The Linux compiler and SDK handoff job restores the compatible SDK cache or prepares the SDK once, then publishes the selected provider artifact. Documentation and generated-reference jobs consume that artifact independently. Heavy runs also supply it to Linux C ABI, Oven preparation, shadow comparison and release checks. macOS prepares its own platform-specific SDK.
+The Linux compiler and SDK handoff job restores the compatible SDK cache or prepares the SDK once, then publishes the selected provider artifact. Documentation and generated-reference jobs consume that artifact independently. Heavy runs also supply it to Linux C ABI, Oven preparation and release checks. macOS prepares its own platform-specific SDK.
 
 After the run finishes, download its preparation evidence:
 

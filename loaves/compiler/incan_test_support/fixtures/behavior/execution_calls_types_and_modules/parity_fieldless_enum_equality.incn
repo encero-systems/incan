@@ -1,0 +1,19 @@
+# behavior: fieldless enum variants compare with == and != (parity corpus row replacement-body-v0-015)
+# expect-stdout:
+#   42
+
+enum Signal:
+    Ready
+    Stop
+
+def score(left: Signal, right: Signal) -> int:
+    if left == Signal.Ready and right != Signal.Ready:
+        return 42
+    return 0
+
+def fieldless_enum_values() -> int:
+    return score(Signal.Ready, Signal.Stop)
+
+
+def main() -> None:
+    println(fieldless_enum_values())

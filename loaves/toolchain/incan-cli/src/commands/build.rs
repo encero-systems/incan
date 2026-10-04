@@ -11,7 +11,6 @@ use std::{env, fs};
 
 use crate::commands::build_report::{emit_build_report, emit_rust_inspection_report, emit_workspace_build_report};
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::backend::selection::{BackendKind, resolve_execution, select_backend};
 use incan_driver::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
 use incan_driver::build::bake::{bake_oven_library, bake_oven_project, select_default_executable_project_output};
 use incan_driver::build::inline_command::{inline_command_project, wrap_inline_command_source};
@@ -29,7 +28,6 @@ use incan_driver::build::output_materialization::{
 use incan_driver::build::output_paths::{normalized_project_entrypoint, project_root_for_completed_output};
 use incan_driver::build::oven_project::prepare_oven_project;
 use incan_driver::build::plan_authority::explicit_bake_profiles;
-use incan_driver::build::replacement::build_replacement_file_report;
 use incan_driver::build::rust_extern::{RustExternBuildFailureKind, RustExternDeclContext};
 use incan_driver::build::{
     BackendSelectionOptions, BuildCommandOptions, CompletedOutputPolicy, OvenBakeProjectTarget, OvenPreparedProject,
@@ -45,31 +43,6 @@ use incan_frontend::diagnostics;
 use incan_provider::FeatureSelection;
 use incan_provider::requirements::INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV;
 use oven_rustc::rustc::clear_inherited_cargo_environment;
-
-/// Pre-flight refusal check for a declared `--backend` request (#986).
-///
-/// Must run before any "reuse a sealed cache-hit Loaf" shortcut in `build_file`, `build_file_report`, `build_library`,
-/// and `build_library_report`: those shortcuts return success without ever calling
-/// `prepare_oven_project`/`prepare_library_project`, which is where backend selection normally runs, so a refused
-/// request (for example `--backend replacement` with no working fallback) would otherwise be silently masked by reusing
-/// a previously sealed artifact instead of failing visibly.
-///
-/// Refusal depends only on the requested backend and its fallback policy, never on source content, so this uses a
-/// placeholder source identity rather than loading and hashing the project's modules just to decide whether to proceed
-/// — the real, source-identified selection is still built fresh inside `prepare_oven_project`/`prepare_library_project`
-/// whenever a build actually reaches them.
-fn ensure_backend_request_available(backend_options: &BackendSelectionOptions) -> CliResult<()> {
-    let selection = select_backend(
-        backend_options.requested,
-        backend_options.explicit,
-        backend_options.shadow,
-        "",
-        backend_options.fallback_policy,
-    );
-    resolve_execution(&selection, selection.selected_backend.is_implemented())
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    Ok(())
-}
 
 /// Print human build progress to stderr when stdout is reserved for a machine-readable report.
 fn print_build_progress(report_options: &BuildReportOptions, message: impl AsRef<str>) {
@@ -164,13 +137,7 @@ pub fn build_file(
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-    ensure_backend_request_available(&options.backend)?;
     incan_driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
-    if options.backend.requested == BackendKind::Replacement {
-        let report = build_replacement_file_report(file_path, options, &report_options)?;
-        emit_workspace_build_report(&report, &report_options)?;
-        return Ok(ExitCode::SUCCESS);
-    }
     if !report_options.enabled()
         && let Some((project_root, selected, backend_receipt)) =
             select_default_executable_project_output(file_path, output_dir, &options)?
@@ -195,10 +162,6 @@ pub(crate) fn build_file_report(
     report_options: &BuildReportOptions,
 ) -> CliResult<serde_json::Value> {
     reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-    ensure_backend_request_available(&options.backend)?;
-    if options.backend.requested == BackendKind::Replacement {
-        return build_replacement_file_report(file_path, options, report_options);
-    }
     let total_start = Instant::now();
     if let Some((project_root, selected, backend_receipt)) =
         select_default_executable_project_output(file_path, output_dir, &options)?
@@ -267,12 +230,6 @@ pub fn build_library(
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
-    ensure_backend_request_available(&options.backend)?;
-    if options.backend.requested == BackendKind::Replacement {
-        return Err(CliError::failure(
-            "replacement backend #988 supports source-only executable free functions, not libraries or package artifacts",
-        ));
-    }
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
     if !artifact_only {
         // A nested dependency-library build is not the user's project, so it does not repeat the warning for a
@@ -333,12 +290,6 @@ pub(crate) fn build_library_report(
     options: BuildCommandOptions,
     report_options: &BuildReportOptions,
 ) -> CliResult<incan_driver::build_report::BuildReport> {
-    ensure_backend_request_available(&options.backend)?;
-    if options.backend.requested == BackendKind::Replacement {
-        return Err(CliError::failure(
-            "replacement backend #988 supports source-only executable free functions, not libraries or package artifacts",
-        ));
-    }
     let total_start = Instant::now();
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
     if !artifact_only {
@@ -803,32 +754,19 @@ mod tests {
         Ok(())
     }
 
+    /// Only the implicit default selection may reuse a completed output; an explicit one records a new selection.
     #[test]
     fn completed_output_reuse_requires_the_implicit_default_backend_selection() {
         let default = BackendSelectionOptions::default();
         assert!(default.allows_completed_output_reuse());
-        assert!(ensure_backend_request_available(&default).is_ok());
 
-        let replacement_refusal = BackendSelectionOptions {
-            requested: BackendKind::Replacement,
+        let explicit = BackendSelectionOptions {
+            requested: BackendKind::Legacy,
             explicit: true,
             shadow: false,
             fallback_policy: FallbackPolicy::Refuse,
         };
-        assert!(!replacement_refusal.allows_completed_output_reuse());
-        assert!(
-            ensure_backend_request_available(&replacement_refusal).is_ok(),
-            "the capability preflight recognizes the partial executor; source-profile support is resolved later through the source-bound selection"
-        );
-
-        let declared_fallback = BackendSelectionOptions {
-            requested: BackendKind::Replacement,
-            explicit: true,
-            shadow: false,
-            fallback_policy: FallbackPolicy::AllowTo(BackendKind::Legacy),
-        };
-        assert!(!declared_fallback.allows_completed_output_reuse());
-        assert!(ensure_backend_request_available(&declared_fallback).is_ok());
+        assert!(!explicit.allows_completed_output_reuse());
     }
 
     #[test]
@@ -1335,7 +1273,7 @@ pub def normalize(value: str) -> str:
     #[test]
     fn the_contract_step_refuses_a_vocab_declaration_with_the_desugar_pass_own_diagnostic()
     -> Result<(), Box<dyn std::error::Error>> {
-        // The replacement path owes Body IR a desugared program. This is what "owes" means concretely: a vocab
+        // Body IR is owed a desugared program. This is what "owed" means concretely: a vocab
         // declaration whose library is unavailable stops here, with the resolution failure the desugar pass already
         // reports, rather than traveling on to become a lowering refusal at the same span.
         let program = incan_frontend::ast::Program {

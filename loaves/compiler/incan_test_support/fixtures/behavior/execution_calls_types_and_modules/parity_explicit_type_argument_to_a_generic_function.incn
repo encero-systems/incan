@@ -1,0 +1,10 @@
+# behavior: a generic function called with an explicit type argument (parity corpus identity row)
+# expect-stdout:
+#   42
+
+def generic_identity[T](value: T) -> T:
+    return value
+
+
+def main() -> None:
+    println(generic_identity[int](42))

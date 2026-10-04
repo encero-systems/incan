@@ -25,7 +25,6 @@ pub mod prepare_project;
 pub mod provider_compilation;
 pub mod provider_metadata;
 pub mod publication;
-pub mod replacement;
 pub mod reuse;
 pub mod rust_extern;
 pub mod source_authority;

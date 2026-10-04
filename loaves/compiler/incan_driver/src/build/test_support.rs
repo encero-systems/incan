@@ -1,5 +1,4 @@
-//! Fixtures the build tests share: published project outputs, provider authorities, vocab declarations and
-//! replacement options.
+//! Fixtures the build tests share: published project outputs, provider authorities and vocab declarations.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -13,9 +12,9 @@ use crate::build::source_authority::{
     baked_project_lock_dependencies_fingerprint, digest_baked_project_source_authority,
 };
 use crate::build::{
-    BackendSelectionOptions, BuildCommandOptions, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
-    OVEN_PROJECT_OUTPUT_ARTIFACT_PATH, OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest,
-    OvenPackagedLibraryLoafProfile, OvenProjectOutputBakeFile, OvenProjectOutputBakeRequest, OvenProjectOutputPayload,
+    OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH, OvenBakeProjectTarget,
+    OvenPackagedLibraryLoafManifest, OvenPackagedLibraryLoafProfile, OvenProjectOutputBakeFile,
+    OvenProjectOutputBakeRequest, OvenProjectOutputPayload,
 };
 use incan_frontend::ast::{Declaration, Span, Spanned};
 use incan_frontend::diagnostics;
@@ -196,24 +195,11 @@ pub fn packaged_provider_authority_fixture(
     Ok((package, artifact))
 }
 
-/// Build the replacement-backend options a `--backend replacement` build resolves to.
-pub fn replacement_build_options() -> BuildCommandOptions {
-    BuildCommandOptions {
-        backend: BackendSelectionOptions {
-            requested: BackendKind::Replacement,
-            explicit: true,
-            shadow: false,
-            fallback_policy: FallbackPolicy::Refuse,
-        },
-        ..BuildCommandOptions::default()
-    }
-}
-
 /// A raw vocab declaration whose owning library manifest this compilation never loaded.
 ///
-/// The parser only produces one of these when an import activates a library vocabulary, which the replacement
-/// module profile still refuses, so building it by hand is the only way to put the desugar pass in front of a
-/// node it must resolve.
+/// The parser only produces one of these when an import activates a library vocabulary, and the desugar pass
+/// replaces it before any later stage sees it, so building it by hand is the only way to put the desugar pass in
+/// front of a node it must resolve.
 pub fn undesugared_vocab_declaration() -> Spanned<Declaration> {
     Spanned::new(
         Declaration::VocabBlock(incan_frontend::ast::VocabBlockStmt {

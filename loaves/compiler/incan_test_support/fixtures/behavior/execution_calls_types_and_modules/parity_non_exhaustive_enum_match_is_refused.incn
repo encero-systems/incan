@@ -1,0 +1,19 @@
+# behavior: a match over an enum that leaves a variant uncovered is refused (parity corpus case 1)
+# expect-diagnostic: INCAN-T0001
+
+enum Color:
+    Red
+    Green
+    Blue
+
+
+def name(c: Color) -> str:
+    match c:
+        case Color.Red:
+            return "red"
+        case Color.Green:
+            return "green"
+
+
+def main() -> None:
+    println(name(Color.Blue))

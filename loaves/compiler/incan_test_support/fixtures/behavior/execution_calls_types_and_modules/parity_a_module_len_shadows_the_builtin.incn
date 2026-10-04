@@ -1,0 +1,11 @@
+# behavior: a module-level `len` is called instead of the builtin it shadows (parity corpus case 5)
+# expect-stdout:
+#   6
+
+def len(x: int) -> int:
+    return x + 1
+
+
+def main() -> None:
+    y = len(5)
+    println(y)

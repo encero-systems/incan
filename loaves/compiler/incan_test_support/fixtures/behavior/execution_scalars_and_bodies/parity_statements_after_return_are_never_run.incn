@@ -1,0 +1,12 @@
+# behavior: statements after an unconditional return are warned about and never run (parity corpus case 6)
+# expect-stdout:
+#   1
+
+def f() -> int:
+    return 1
+    println("dead code")
+    return 2
+
+
+def main() -> None:
+    println(f())

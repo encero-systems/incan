@@ -1,0 +1,10 @@
+# behavior: `+` between two lists concatenates them (parity corpus case 23)
+# expect-stdout:
+#   [1, 2, 3]
+
+def joined(xs: List[int], ys: List[int]) -> List[int]:
+    return xs + ys
+
+
+def main() -> None:
+    println(joined([1], [2, 3]))

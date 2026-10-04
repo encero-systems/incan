@@ -282,6 +282,30 @@ fn nested_failure_retains_program_stdout() -> CaseResult {
     assert_fixture_holds(AREA, "nested_failure_retains_program_stdout")
 }
 
+/// Runs the fixture `parity_bytes_literal_passed_to_a_bytes_parameter`.
+#[test]
+fn parity_bytes_literal_passed_to_a_bytes_parameter() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_bytes_literal_passed_to_a_bytes_parameter")
+}
+
+/// Runs the fixture `parity_concatenate_a_str_parameter`.
+#[test]
+fn parity_concatenate_a_str_parameter() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_concatenate_a_str_parameter")
+}
+
+/// Runs the fixture `parity_return_an_owned_local_str`.
+#[test]
+fn parity_return_an_owned_local_str() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_return_an_owned_local_str")
+}
+
+/// Runs the fixture `parity_str_membership_in_a_str`.
+#[test]
+fn parity_str_membership_in_a_str() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_str_membership_in_a_str")
+}
+
 /// Runs the fixture `refuses_f_string_interpolation_it_cannot_render_identically`.
 #[test]
 fn refuses_f_string_interpolation_it_cannot_render_identically() -> CaseResult {

@@ -1,0 +1,11 @@
+# behavior: a function declared under an unselected feature is not part of the program (parity corpus case 17)
+# expect-stdout:
+#   1
+
+when feature("beta"):
+    def gated() -> int:
+        return 7
+
+
+def main() -> None:
+    println(1)

@@ -1,0 +1,16 @@
+# behavior: `in` tests list membership and `not in` tests dict key absence (parity corpus case 22)
+# expect-stdout:
+#   true
+#   true
+
+def has_item(xs: List[int], v: int) -> bool:
+    return v in xs
+
+
+def lacks_key(d: Dict[str, int], k: str) -> bool:
+    return k not in d
+
+
+def main() -> None:
+    println(has_item([1, 2], 2))
+    println(lacks_key({"a": 1}, "b"))

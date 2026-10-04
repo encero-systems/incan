@@ -1,0 +1,11 @@
+# behavior: a filtered generator expression collected into a list is indexed (parity corpus row replacement-body-v0-007)
+# expect-stdout:
+#   70
+
+def collect_lazy_values() -> int:
+    values = (value * 10 for value in range(1, 5) if value > 2).collect()
+    return values[0] + values[1]
+
+
+def main() -> None:
+    println(collect_lazy_values())

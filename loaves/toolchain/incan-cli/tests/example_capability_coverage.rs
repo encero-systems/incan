@@ -1,10 +1,9 @@
 //! Tracked coverage of the documented capability surface by the real example corpus.
 //!
-//! [`replacement_example_coverage`] measures what the replacement backend can *run* out of the corpus. It says
-//! nothing about what the corpus *contains*, and that is the other half of the same problem (#1252): a backend could
-//! reach every committed example and still never execute `if let`, generators, iterator adapters, value enums, or
-//! most of the standard library, because no example uses them. A cutover decision resting on a green execution
-//! number would be resting on a denominator nobody had checked.
+//! A route that runs every committed example says nothing about what the corpus *contains*, and that is the other
+//! half of the same problem (#1252): a backend could reach every committed example and still never execute `if let`,
+//! generators, iterator adapters, value enums, or most of the standard library, because no example uses them. A cutover
+//! decision resting on a green execution number would be resting on a denominator nobody had checked.
 //!
 //! The v0.5 capability catalog is the authority for what Incan claims to ship, so the target list is derived from
 //! it rather than invented here. A capability counts as demonstrated when a distinctive fragment of one of its
@@ -18,9 +17,8 @@
 //!   first `(`, `[`, or `=`. That is deliberately generous: this suite answers "is this feature demonstrated anywhere",
 //!   and a false *positive* costs one missing example while a false negative would make the number untrustworthy and
 //!   get the suite ignored.
-//! - **Exact baselines, not floors**, following the sibling suite's reasoning: a floor lets a number sit at its
-//!   starting value forever without anything saying so, which is how the original gap survived. An exact count makes
-//!   movement in either direction a reviewed event.
+//! - **Exact baselines, not floors**: a floor lets a number sit at its starting value forever without anything saying
+//!   so, which is how the original gap survived. An exact count makes movement in either direction a reviewed event.
 //!
 //! When this fails, it prints the capabilities that regressed or newly landed. Record the new number in the same
 //! change.
@@ -127,7 +125,7 @@ impl Capability {
 /// Return the catalog path that owns the documented capability surface.
 fn catalog_path() -> PathBuf {
     support::repo_root()
-        .join("loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn")
+        .join("loaves/compiler/incan_test_support/fixtures/capability_baselines/v0.5.0/capabilities.incn")
 }
 
 /// Collect every committed example source into one searchable buffer.

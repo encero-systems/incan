@@ -1,0 +1,18 @@
+# behavior: typed integer extremes, a decimal and an f32 are printed (parity corpus row replacement-body-v0-029)
+# expect-stdout:
+#   0 255 -170141183460469231731687303715884105728 340282366920938463463374607431768211455 19.90
+#   1.2345679
+
+def typed_numeric_profile() -> f32:
+    unsigned_min: u8 = 0
+    unsigned_max: u8 = 255
+    signed_min: i128 = -170141183460469231731687303715884105728
+    wide_max: u128 = 340282366920938463463374607431768211455
+    rounded: f32 = 1.23456789
+    money: decimal[6, 2] = 19.90d
+    println(f"{unsigned_min} {unsigned_max} {signed_min} {wide_max} {money}")
+    return rounded
+
+
+def main() -> None:
+    println(typed_numeric_profile())

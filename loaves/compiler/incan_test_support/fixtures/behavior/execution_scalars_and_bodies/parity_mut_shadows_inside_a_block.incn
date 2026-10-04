@@ -1,0 +1,15 @@
+# behavior: a `mut` binding inside a block shadows the outer one only inside it (parity corpus identity row)
+# expect-stdout:
+#   11
+
+def shadow_mut() -> int:
+    mut total = 0
+    mut x = 4
+    if true:
+        mut x = 7
+        total += x
+    return total + x
+
+
+def main() -> None:
+    println(shadow_mut())

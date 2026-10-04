@@ -283,8 +283,6 @@ fn a_plain_build_of_a_toolchain_loaf_selects_its_rust_binaries_and_names_the_int
 
     for (arguments, option) in [
         (&["build", "--release"][..], "--release"),
-        (&["build", "--backend", "legacy"][..], "--backend"),
-        (&["build", "--backend-fallback", "refuse"][..], "--backend-fallback"),
         (&["build", "--features", "json"][..], "package-feature"),
         (&["build", "--sdk-profile", "minimal"][..], "--sdk-profile"),
         (&["build", "--locked"][..], "lock-policy"),

@@ -184,6 +184,18 @@ fn ordinary_float_literal_display_matches_the_native_route() -> CaseResult {
     assert_fixture_holds(AREA, "ordinary_float_literal_display_matches_the_native_route")
 }
 
+/// Runs the fixture `parity_scalar_conversions_print_and_return`.
+#[test]
+fn parity_scalar_conversions_print_and_return() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_scalar_conversions_print_and_return")
+}
+
+/// Runs the fixture `parity_typed_numeric_extremes_and_f32_return`.
+#[test]
+fn parity_typed_numeric_extremes_and_f32_return() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_typed_numeric_extremes_and_f32_return")
+}
+
 /// Runs the fixture `preserves_decimal_observation_without_entering_binary_float`.
 #[test]
 fn preserves_decimal_observation_without_entering_binary_float() -> CaseResult {

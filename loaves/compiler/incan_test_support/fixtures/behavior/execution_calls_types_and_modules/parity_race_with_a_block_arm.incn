@@ -1,0 +1,21 @@
+# behavior: a race whose second arm is a block takes the first ready arm in source order (parity corpus case 11)
+# expect-stdout:
+#   1
+
+import std.async
+
+async def fast() -> int:
+    return 1
+
+
+async def slow() -> int:
+    return 2
+
+
+async def main() -> None:
+    winner = race for value:
+        await fast() => value
+        await slow() =>
+            doubled = value * 2
+            doubled
+    println(winner)
