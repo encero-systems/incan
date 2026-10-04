@@ -1,0 +1,31 @@
+# behavior: executes true and false checks for the bounded primitive target set
+# expect-stdout:
+#   false
+
+def is_int(value: int | str) -> bool:
+  if isinstance(value, int):
+    return true
+  return false
+
+def is_str(value: int | str) -> bool:
+  if isinstance(value, str):
+    return true
+  return false
+
+def is_bool(value: bool | str) -> bool:
+  if isinstance(value, bool):
+    return true
+  return false
+
+def float_member() -> float | str:
+  return 1.5
+
+def is_float() -> bool:
+  value = float_member()
+  if isinstance(value, float):
+    return true
+  return false
+
+
+def main() -> None:
+    println(is_int("x"))

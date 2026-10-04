@@ -1,0 +1,12 @@
+# behavior: refuses list membership it cannot compare, as the legacy route runs it
+# expect-stdout:
+#   true
+
+
+def program_result() -> bool:
+  xs = [[1], [2]]
+  return [1] in xs
+
+
+def main() -> None:
+    println(program_result())

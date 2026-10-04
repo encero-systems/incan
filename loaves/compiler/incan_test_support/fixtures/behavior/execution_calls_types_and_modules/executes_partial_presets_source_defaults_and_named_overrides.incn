@@ -1,0 +1,18 @@
+# behavior: executes partial presets source defaults and named overrides
+# expect-stdout:
+#   868
+
+
+def route(method: int, path: int, content_type: int = 3) -> int:
+  return method * 100 + path * 10 + content_type
+
+def program_result() -> int:
+  mut method = 1
+  get = partial route(method=method)
+  normal = get(4)
+  overridden = get(method=7, path=2, content_type=5)
+  return normal + overridden
+
+
+def main() -> None:
+    println(program_result())

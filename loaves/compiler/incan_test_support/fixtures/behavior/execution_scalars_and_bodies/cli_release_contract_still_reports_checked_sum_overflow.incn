@@ -1,0 +1,12 @@
+# behavior: cli release contract still reports checked sum overflow, as the legacy route runs it
+# expect-stdout:
+#   before cli sum
+# expect-exit: 101
+
+def program_result() -> int:
+    println("before cli sum")
+    return sum([9223372036854775807, 1])
+
+
+def main() -> None:
+    println(program_result())

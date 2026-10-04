@@ -1,0 +1,13 @@
+# behavior: cli executes typed empty scalar tuple list with a replacement receipt
+# expect-stdout:
+#   42
+
+def program_result() -> int:
+  values: list[tuple[int, int]] = []
+  for a, b in values:
+    return a + b
+  return 42
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,13 @@
+# behavior: a module that imports through `rust::` can be imported and called
+# expect-stdout:
+#   1
+
+from helpers import helper
+
+
+def program_result() -> int:
+    return helper()
+
+
+def main() -> None:
+    println(program_result())

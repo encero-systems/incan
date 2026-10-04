@@ -1,0 +1,16 @@
+# behavior: json stringify evaluates its operand once
+# expect-stdout:
+#   direct JSON operand
+#   7
+
+
+def observed_operand() -> int:
+  println("direct JSON operand")
+  return 7
+
+def program_result() -> str:
+  return json_stringify(observed_operand())
+
+
+def main() -> None:
+    println(program_result())

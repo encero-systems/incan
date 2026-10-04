@@ -1,0 +1,10 @@
+# behavior: scalar conversions do not admit float binary arithmetic, as the legacy route runs it
+# expect-stdout:
+#   3.0
+
+def program_result() -> float:
+    return float("1") + float("2")
+
+
+def main() -> None:
+    println(program_result())

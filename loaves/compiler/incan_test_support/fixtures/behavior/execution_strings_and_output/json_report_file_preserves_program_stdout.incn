@@ -1,0 +1,12 @@
+# behavior: json report file preserves program stdout
+# expect-stdout:
+#   program output
+#   42
+
+def program_result() -> int:
+    println("program output")
+    return 42
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,14 @@
+# behavior: a program that declares an enum with a payload variant runs
+# expect-stdout:
+#   42
+
+enum Flag:
+    On(int)
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

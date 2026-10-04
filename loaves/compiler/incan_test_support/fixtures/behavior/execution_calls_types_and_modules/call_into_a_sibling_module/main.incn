@@ -1,0 +1,9 @@
+# behavior: a call into a sibling module returns its result
+# expect-stdout:
+#   42
+
+from helper import bump
+
+
+def main() -> None:
+    println(bump(41))

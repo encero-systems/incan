@@ -1,0 +1,16 @@
+# behavior: a type's static method is called with named arguments in any order, and a static method calls another
+# expect-stdout:
+#   34
+
+model Scale:
+    factor: int
+
+    def unit() -> int:
+        return 4
+
+    def times(value: int, by: int) -> int:
+        return value * by + Scale.unit()
+
+
+def main() -> None:
+    println(Scale.times(by=10, value=3))

@@ -1,0 +1,10 @@
+# behavior: a string profile retains its exact typed value
+# expect-stdout:
+#   hello, Ada
+
+def greet(name: str) -> str:
+    return "hello, " + name
+
+
+def main() -> None:
+    println(greet("Ada"))

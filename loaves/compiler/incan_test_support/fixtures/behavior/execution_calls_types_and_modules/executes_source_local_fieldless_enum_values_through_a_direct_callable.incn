@@ -1,0 +1,20 @@
+# behavior: executes source local fieldless enum values through a direct callable
+# expect-stdout:
+#   42
+
+
+enum Signal:
+  Ready
+  Stop
+
+def score(left: Signal, right: Signal) -> int:
+  if left == Signal.Ready and right != Signal.Ready:
+    return 42
+  return 0
+
+def normal_enum_values() -> int:
+  return score(Signal.Ready, Signal.Stop)
+
+
+def main() -> None:
+    println(normal_enum_values())

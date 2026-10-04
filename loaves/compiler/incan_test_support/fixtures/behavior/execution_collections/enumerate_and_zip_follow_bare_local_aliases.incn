@@ -1,0 +1,24 @@
+# behavior: enumerate and zip follow bare local aliases
+# expect-stdout:
+#   16
+
+
+def aliases() -> int:
+  values = [5]
+  labels = [6]
+  values_alias = values
+  labels_alias = labels
+  enumerated = enumerate(values_alias)
+  enumerated_alias = enumerated
+  paired = zip(values_alias, labels_alias)
+  paired_alias = paired
+  mut total = 0
+  for index, value in enumerated_alias:
+    total += index + value
+  for left, right in paired_alias:
+    total += left + right
+  return total
+
+
+def main() -> None:
+    println(aliases())

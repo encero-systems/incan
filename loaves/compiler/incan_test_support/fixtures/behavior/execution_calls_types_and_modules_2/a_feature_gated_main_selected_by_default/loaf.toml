@@ -1,0 +1,10 @@
+[project]
+name = "feature_selected"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["beta"]
+beta = []

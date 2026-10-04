@@ -1,0 +1,20 @@
+# behavior: reports canonical scalar parse failures at original call spans, stopping the program
+# expect-stdout:
+# expect-exit: 101
+
+
+def parse_int() -> int:
+  return int("AssertionError overflow division by zero")
+
+def parse_float() -> float:
+  return float("AssertionError overflow division by zero")
+
+def parse_int_with_invalid_separators() -> int:
+  return int("1__000")
+
+def parse_float_with_invalid_separators() -> float:
+  return float("1_000._50")
+
+
+def main() -> None:
+    parse_float_with_invalid_separators()

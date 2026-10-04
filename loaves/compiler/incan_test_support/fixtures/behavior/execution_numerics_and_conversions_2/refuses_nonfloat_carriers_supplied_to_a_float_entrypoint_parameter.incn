@@ -1,0 +1,10 @@
+# behavior: the checker refuses nonfloat carriers supplied to a float entrypoint parameter
+# expect-diagnostic: INCAN-T0001
+
+def show(value: float) -> str:
+    println("must not run")
+    return str(value)
+
+
+def main() -> None:
+    println(show(1, "1.5"))

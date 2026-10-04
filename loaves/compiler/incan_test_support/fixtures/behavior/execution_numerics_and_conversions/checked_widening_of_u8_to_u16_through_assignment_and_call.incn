@@ -1,0 +1,16 @@
+# behavior: a u8 widened to u16 at an assignment and passed to a u16 parameter keeps its value
+# expect-stdout:
+#   255
+
+def accept_wide(value: u16) -> u16:
+    return value
+
+
+def widen_integer(value: u8) -> u16:
+    widened: u16 = value
+    return accept_wide(widened)
+
+
+def main() -> None:
+    value: u8 = 255
+    println(widen_integer(value))

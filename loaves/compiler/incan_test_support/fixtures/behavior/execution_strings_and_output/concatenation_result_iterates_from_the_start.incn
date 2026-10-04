@@ -1,0 +1,16 @@
+# behavior: concatenation result iterates from the start
+# expect-stdout:
+#   15
+
+
+def program_result() -> int:
+  xs = [(1, 2)]
+  ys = [(4, 8)]
+  mut total = 0
+  for left, right in xs + ys:
+    total += left + right
+  return total
+
+
+def main() -> None:
+    println(program_result())

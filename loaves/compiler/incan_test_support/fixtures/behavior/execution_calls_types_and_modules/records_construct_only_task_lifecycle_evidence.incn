@@ -1,0 +1,18 @@
+# behavior: records construct only task lifecycle evidence
+# expect-stdout:
+#   1
+
+
+import std.async
+
+async def child() -> int:
+  assert false
+  return 7
+
+def program_result() -> int:
+  child()
+  return 1
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,10 @@
+# behavior: split() without a separator keeps a string with surrounding spaces as one part, so joining it gives the string back
+# expect-stdout:
+#   [ a b ]
+
+def result() -> str:
+    return "|".join(" a b ".split())
+
+
+def main() -> None:
+    println(f"[{result()}]")

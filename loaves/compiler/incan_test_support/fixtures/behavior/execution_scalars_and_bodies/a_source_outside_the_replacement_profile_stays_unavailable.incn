@@ -1,0 +1,10 @@
+# behavior: a source outside the replacement profile stays unavailable, as the legacy route runs it
+# expect-stdout:
+#   [(1, 2)]
+
+def pairs() -> list[tuple[int, int]]:
+    return [(1, 2)]
+
+
+def main() -> None:
+    println(pairs())

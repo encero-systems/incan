@@ -1,0 +1,13 @@
+# behavior: source local sorted keeps its declaration identity
+# expect-stdout:
+#   42
+
+def sorted(value: int) -> int:
+  return value + 1
+
+def observe() -> int:
+  return sorted(41)
+
+
+def main() -> None:
+    println(observe())

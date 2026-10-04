@@ -1,0 +1,12 @@
+# behavior: dispatches generator methods by canonical target and refuses absent identity, as the legacy route runs it
+# expect-stdout:
+#   70
+
+
+def program_result() -> int:
+  values = (value * 10 for value in range(1, 5) if value > 2).collect()
+  return values[0] + values[1]
+
+
+def main() -> None:
+    println(program_result())
