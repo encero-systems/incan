@@ -807,3 +807,36 @@ fn missing_checked_isinstance_target_lowers_to_an_explicit_target_span_refusal()
     );
     Ok(())
 }
+
+#[test]
+fn payload_enum_variants_construct_as_enum_variant_aggregates() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "enum Shape:\n  Circle(int)\n  Rect(int, int)\n  Empty\n\ndef area(shape: Shape) -> int:\n  match shape:\n    Shape.Circle(r) => return r * r * 3\n    Shape.Rect(w, h) => return w * h\n    Shape.Empty => return 0\n\ndef main() -> int:\n  return area(Shape.Circle(2)) + area(Shape.Rect(3, 4)) + area(Shape.Empty)\n";
+    let module = build(source, &["m", "payload_enum"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(
+        !rendered.contains("unsupported("),
+        "payload enum variants must lower: {rendered}"
+    );
+    for variant in ["Shape::Circle", "Shape::Rect", "Shape::Empty"] {
+        assert!(
+            rendered.contains(&format!("enum_variant({variant} ")),
+            "`{variant}` must construct as an enum-variant aggregate: {rendered}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_enum_variant_where_a_place_is_needed_is_materialized() -> Result<(), Box<dyn std::error::Error>> {
+    // A user `__eq__` and a method call both need the variant as a place; it is a value, not a field of `Suit`.
+    let source = "enum Suit:\n  Hearts\n  Spades\n\n  def __eq__(self, other: Self) -> bool:\n    return true\n\n  def label(self) -> str:\n    return \"suit\"\n\ndef main() -> None:\n  println(Suit.Hearts == Suit.Spades)\n  println(Suit.Hearts.label())\n";
+    let module = build(source, &["m", "variant_places"])?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(
+        !rendered.contains("unsupported("),
+        "a variant in place position must lower: {rendered}"
+    );
+    assert!(rendered.contains("enum_variant(Suit::Hearts "), "{rendered}");
+    Ok(())
+}
