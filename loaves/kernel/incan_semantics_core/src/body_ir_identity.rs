@@ -90,6 +90,7 @@ impl BodyIrModule {
                         && identity.kind == SemanticSourceTargetKind::Field
                         && identity.scope_discriminant.is_none()
                         && identity.origin == declaration.canonical.origin
+                        && declares_member(&declaration.canonical, identity)
                         && identity.declaration_name == *name
                 })
     }
@@ -163,7 +164,18 @@ impl BodyIrModule {
                     SemanticSourceTargetKind::Variant,
                 ) == Some(direct_variant_id.clone())
                     && variant_canonical.origin == canonical.origin
+                    && declares_member(canonical, variant_canonical)
                     && variant_canonical.declaration_name == variant_name
             })
     }
+}
+
+/// Whether `member` is declared inside `owner`: its declaration site lies within the owner's.
+///
+/// A canonical identity's origin names the module, not the declaration, so two declarations of one module with a
+/// same-named member (`A.value` and `B.value`) give member identities that agree on everything else. The declaration
+/// site is the one fact that tells them apart.
+fn declares_member(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
+    owner.declaration_span.start <= member.declaration_span.start
+        && member.declaration_span.end <= owner.declaration_span.end
 }
