@@ -31,7 +31,7 @@ pub mod test_support;
 mod tests;
 pub mod trait_bound_inference;
 
-pub use codegen::{GenerationError, IrCodegen};
+pub use codegen::{CallerIdentity, GenerationError, IrCodegen};
 pub use emit::{EmitError, IrEmitter};
 pub use emit_service::EmitService;
 pub use facade::CodegenFacade;

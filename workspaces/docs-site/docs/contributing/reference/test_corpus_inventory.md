@@ -12,14 +12,14 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3557 | 245 | 8 |
+| keep | 3560 | 246 | 8 |
 | re-point | 526 | 86 | 1055 |
-| retire | 1504 | 153 | 0 |
-| unaffected | 1649 | 158 | 5 |
+| retire | 1505 | 153 | 0 |
+| unaffected | 1650 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7236** | **642** | **1068** |
+| **Total** | **7241** | **643** | **1068** |
 
-- Retire-class tests: 1504, of which twinned 1023, dies 294, open 187 (neither yet).
+- Retire-class tests: 1505, of which twinned 1023, dies 294, open 188 (neither yet).
 - Retire-class files with open rows: 34 (a file whose retire tests are all twinned or recorded `dies` is done).
 - Files whose test region exceeds the split threshold of 1500 lines: 19, of which 1 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
@@ -122,7 +122,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (765 tests in 107 files: keep 371, re-point 137, retire 103, unaffected 154)
+### `loaves/compiler/incan_driver` (768 tests in 108 files: keep 374, re-point 137, retire 103, unaffected 154)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -141,12 +141,13 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs` | 2 | 82 | 82 | re-point | - | - | - | #1561 | run 2, replacement 2, checker 2 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/src/backend/shadow/tests.rs` | 47 | 1252 | 1252 | re-point | - | - | - | #1561 | run 3, replacement 30 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself. |
 | `loaves/compiler/incan_driver/src/build/bake.rs` | 5 | 1166 | 172 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 3 | 299 | 71 | keep | - | - | - | #1337 | checker 2, parser 2 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
 | `loaves/compiler/incan_driver/src/build/caller_owned.rs` | 7 | 1044 | 315 | unaffected | - | - | - | #1561 | checker 4 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/inline_command.rs` | 5 | 129 | 75 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/library_exports.rs` | 17 | 1718 | 1344 | keep | - | - | - | #1561 | codegen 1, checker 13, parser 14 | library re-export resolution and Rust ABI query paths from checked declarations. |
 | `loaves/compiler/incan_driver/src/build/library_outputs.rs` | 3 | 253 | 59 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/library_publication.rs` | 6 | 609 | 218 | unaffected | - | - | - | #1561 | checker 6 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 944 | 79 | unaffected | - | - | - | #1561 | replacement 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 945 | 79 | unaffected | - | - | - | #1561 | replacement 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_materialization.rs` | 2 | 1273 | 411 | unaffected | - | - | - | #1561 | replacement 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_paths.rs` | 8 | 1528 | 527 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_selection.rs` | 1 | 1091 | 358 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -169,7 +170,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/lock/mod.rs` | 2 | 564 | 159 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/registry_sources.rs` | 4 | 683 | 83 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/resolution.rs` | 3 | 780 | 85 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/lock/rust_inspect.rs` | 2 | 536 | 97 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/lock/rust_inspect.rs` | 2 | 548 | 97 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/test_inputs.rs` | 2 | 200 | 91 | unaffected | - | - | - | #1561 | checker 2, parser 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/workspace.rs` | 2 | 653 | 53 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/modules.rs` | 23 | 2041 | 1166 | keep | - | - | - | #1561 | replacement 1, checker 19, parser 20 | module collection and Rust dependency use discovery through the parser. |
@@ -292,7 +293,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 |---|---|---|---|---|---|
 | `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement | generated-text hit is a diagnostic string |
 
-### `loaves/compiler/incan_emit` (1143 tests in 100 files: keep 100, retire 1041, unaffected 2)
+### `loaves/compiler/incan_emit` (1144 tests in 100 files: keep 100, retire 1042, unaffected 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -303,7 +304,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/checked_program/rust_trait_receiver_codegen.rs` | 2 | 196 | 196 | retire (retire 2) | 0/2 | 0 | - | #1561 | codegen 2, text 1, checker 2, parser 2 | asserts generated Rust text. |
 | `loaves/compiler/incan_emit/src/checked_program/sdk_module_derives.rs` | 5 | 257 | 257 | retire (keep 2, retire 3) | 1/3 | 2 | - | #1561 | codegen 3, checker 5, parser 5 | SDK module derive requirements flowing into codegen; two tests assert the metadata round trip only. |
 | `loaves/compiler/incan_emit/src/checked_program/tests.rs` | 5 | 497 | 497 | keep (keep 4, retire 1) | 1/1 | 0 | - | #1561 | codegen 1, replacement 1, checker 4, parser 4, legacy_ir 1 | checked-program facts (callable shapes, forwarding metadata, vocab refusal); one test drives codegen. |
-| `loaves/compiler/incan_emit/src/codegen.rs` | 147 | 9761 | 6572 | retire (retire 147) | 101/147 | 16 | required | #1561 | codegen 140, text 52, checker 130, parser 95, legacy_ir 133 | IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before. Rows disposed by the `smoke` area and by the codegen fixture areas: behavior fixtures under fixtures/behavior/codegen_*, re-point CLI tests for the rust:: contracts a real crate runs, dies for generated-text mechanics, open rows for rust:: candidates and for programs that pass `incan check` and fail to compile. |
+| `loaves/compiler/incan_emit/src/codegen.rs` | 148 | 9885 | 6601 | retire (retire 148) | 101/148 | 16 | required | #1561 | codegen 141, text 52, checker 131, parser 96, legacy_ir 134 | IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before. Rows disposed by the `smoke` area and by the codegen fixture areas: behavior fixtures under fixtures/behavior/codegen_*, re-point CLI tests for the rust:: contracts a real crate runs, dies for generated-text mechanics, open rows for rust:: candidates and for programs that pass `incan check` and fail to compile. |
 | `loaves/compiler/incan_emit/src/codegen/capability_bridge.rs` | 1 | 190 | 18 | retire (retire 1) | 1/1 | 0 | - | #1561 | parser 1 | codegen capability activation for generated projects. |
 | `loaves/compiler/incan_emit/src/codegen/dependency_metadata.rs` | 8 | 1364 | 201 | retire (retire 8) | 2/8 | 6 | - | #1561 | checker 1, parser 7, legacy_ir 7 | externally-reachable item and generated-module path tables of the generated project; every test dies with it. |
 | `loaves/compiler/incan_emit/src/conversions.rs` | 80 | 2974 | 1645 | retire (retire 80) | 51/80 | 8 | required | #1561 | legacy_ir 75 | Rust conversion policy (to_string/borrow/clone plans) for emission; every test drives `determine_conversion` on synthetic IR. Twinned by the ownership_* behavior fixtures and re-point interop programs per test; `rust::` programs are candidates; the token renderers and the unspellable `Unknown` states die. |
@@ -2692,7 +2693,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/tests/rfc031_checked_c_span_tests.rs` | 12 | 957 | 957 | re-point (keep 6, retire 6) | 0/6 | 6 | - | #1561 | codegen 6, text 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_manifest_diagnostics_tests.rs` | 9 | 547 | 547 | re-point (keep 6, re-point 3) | - | - | - | #1561 | run 1, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_pub_model_tests.rs` | 6 | 1060 | 1060 | re-point | - | - | - | #1561 | run 2, checker 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
-| `loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs` | 6 | 490 | 490 | re-point (re-point 5, retire 1) | 0/1 | 0 | - | #1561 | codegen 2, text 1, run 4, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
+| `loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs` | 6 | 504 | 504 | re-point (re-point 5, retire 1) | 0/1 | 0 | - | #1561 | codegen 2, text 1, run 4, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_stdlib_facade_tests.rs` | 11 | 941 | 941 | re-point | - | - | - | #1561 | run 8, checker 4 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_vocab_desugar_tests.rs` | 8 | 354 | 354 | re-point (keep 4, re-point 2, retire 2) | 1/2 | 0 | - | #1561 | text 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs` | 13 | 823 | 823 | re-point (keep 9, re-point 4) | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
@@ -3044,7 +3045,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1348 tests in 114 files)"
+??? note "Unaffected crates (1349 tests in 114 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3116,14 +3117,14 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_interop/src/lib.rs` | 20 | 4394 | 2720 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
-    #### `loaves/oven/oven_model` (178 tests in 10 files: unaffected 178)
+    #### `loaves/oven/oven_model` (179 tests in 10 files: unaffected 179)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_model/src/digest.rs` | 2 | 836 | 57 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/loaf_registry.rs` | 7 | 840 | 301 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/lock.rs` | 24 | 1894 | 994 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_model/src/manifest.rs` | 71 | 5206 | 1728 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_model/src/manifest.rs` | 72 | 5253 | 1745 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/oven_interop.rs` | 8 | 2098 | 603 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/project_lifecycle/env.rs` | 18 | 860 | 476 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/project_lifecycle/toolchain.rs` | 4 | 295 | 58 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |

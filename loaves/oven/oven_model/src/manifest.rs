@@ -1568,6 +1568,7 @@ enum DependencyEntry {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DependencyEntryTable {
+    loaf: Option<String>,
     version: Option<String>,
     features: Option<Vec<String>>,
     git: Option<String>,
@@ -2749,6 +2750,7 @@ fn toml_value_to_edit_value(value: &toml::Value, manifest_path: &Path) -> Result
 }
 
 const DEPENDENCY_ENTRY_KEYS: &[&str] = &[
+    "loaf",
     "version",
     "features",
     "git",
@@ -2840,7 +2842,7 @@ fn validate_dependency_entry_item(
 
         let location = spans.item_location(value).or_else(|| spans.item_location(entry_item));
         match key {
-            "version" | "git" | "branch" | "tag" | "rev" | "path" | "package" if !value.is_str() => {
+            "loaf" | "version" | "git" | "branch" | "tag" | "rev" | "path" | "package" if !value.is_str() => {
                 return Err(manifest_invalid(
                     path,
                     location,
@@ -3042,6 +3044,25 @@ fn library_dependency_from_entry(
                 "dependency `{name}` in [dependencies] looks like a Rust crate dependency. Move it to [rust-dependencies]."
             ),
         ));
+    }
+
+    if let Some(loaf) = table.loaf.as_deref() {
+        if loaf.trim().is_empty() {
+            return Err(manifest_invalid(
+                path,
+                location,
+                format!("library dependency `{name}` has an empty `loaf`"),
+            ));
+        }
+        if loaf != name {
+            return Err(manifest_invalid(
+                path,
+                location,
+                format!(
+                    "library dependency `{name}` names sibling Loaf `{loaf}`; package renaming is outside this bounded caller slice"
+                ),
+            ));
+        }
     }
 
     if table.path.is_none() {
@@ -3276,6 +3297,15 @@ fn dependency_from_entry(
             None,
         ),
         DependencyEntry::Table(table) => {
+            if table.loaf.is_some() {
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    format!(
+                        "Rust crate dependency `{name}` cannot use `loaf`; declare sibling Loaves in [dependencies]"
+                    ),
+                ));
+            }
             let (source, version) = parse_dependency_source(table, path, location)?;
             let mut optional = table.optional.unwrap_or(false);
             if optional_override {
@@ -3931,6 +3961,23 @@ mylib = { path = "../mylib" }
             "expected path to end with mylib, got {}",
             mylib.path.display()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn parses_rfc_119_sibling_loaf_dependency_spelling() -> TestResult {
+        let manifest = ProjectManifest::from_str(
+            r#"
+[dependencies]
+policy = { loaf = "policy", path = "../policy" }
+"#,
+            Path::new("consumer/loaf.toml"),
+        )?;
+        let policy = manifest
+            .library_dependencies()
+            .get("policy")
+            .ok_or("missing policy sibling Loaf dependency")?;
+        assert!(policy.path.ends_with("policy"));
         Ok(())
     }
 
