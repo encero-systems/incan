@@ -1,0 +1,12 @@
+# behavior: `in` between two strs tests for a substring (parity corpus case 3)
+# expect-stdout:
+#   true
+#   false
+
+def contains(needle: str, haystack: str) -> bool:
+    return needle in haystack
+
+
+def main() -> None:
+    println(contains("a", "abc"))
+    println(contains("xyz", "hello"))

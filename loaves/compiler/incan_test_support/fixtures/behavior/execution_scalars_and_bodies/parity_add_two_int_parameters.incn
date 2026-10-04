@@ -1,0 +1,10 @@
+# behavior: a function adds its two int parameters (parity corpus row replacement-body-v0-001)
+# expect-stdout:
+#   42
+
+def add(x: int, y: int) -> int:
+    return x + y
+
+
+def main() -> None:
+    println(add(40, 2))

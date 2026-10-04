@@ -1,0 +1,10 @@
+# behavior: a range bound to a local is iterated (parity corpus case 16)
+# expect-stdout:
+#   45
+
+def main() -> None:
+    r = 0..10
+    mut total = 0
+    for i in r:
+        total += i
+    println(total)

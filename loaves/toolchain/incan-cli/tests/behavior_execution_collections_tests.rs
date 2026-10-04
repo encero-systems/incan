@@ -222,6 +222,36 @@ fn non_scalar_hashed_key_types_refuse_at_construction_2() -> CaseResult {
     assert_fixture_holds(AREA, "non_scalar_hashed_key_types_refuse_at_construction_2")
 }
 
+/// Runs the fixture `parity_iterate_a_range_bound_to_a_local`.
+#[test]
+fn parity_iterate_a_range_bound_to_a_local() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_iterate_a_range_bound_to_a_local")
+}
+
+/// Runs the fixture `parity_list_and_dict_literal_spreads`.
+#[test]
+fn parity_list_and_dict_literal_spreads() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_list_and_dict_literal_spreads")
+}
+
+/// Runs the fixture `parity_list_and_dict_membership`.
+#[test]
+fn parity_list_and_dict_membership() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_list_and_dict_membership")
+}
+
+/// Runs the fixture `parity_list_concatenation`.
+#[test]
+fn parity_list_concatenation() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_list_concatenation")
+}
+
+/// Runs the fixture `parity_mut_list_parameter_written_then_read_into_a_tuple`.
+#[test]
+fn parity_mut_list_parameter_written_then_read_into_a_tuple() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_mut_list_parameter_written_then_read_into_a_tuple")
+}
+
 /// Runs the fixture `preserves_same_spelled_source_enumerate_and_zip_functions`.
 #[test]
 fn preserves_same_spelled_source_enumerate_and_zip_functions() -> CaseResult {
