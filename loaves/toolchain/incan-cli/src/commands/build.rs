@@ -30,8 +30,8 @@ use incan_driver::build::oven_project::prepare_oven_project;
 use incan_driver::build::plan_authority::explicit_bake_profiles;
 use incan_driver::build::rust_extern::{RustExternBuildFailureKind, RustExternDeclContext};
 use incan_driver::build::{
-    BackendSelectionOptions, BuildCommandOptions, CompletedOutputPolicy, OvenBakeProjectTarget, OvenPreparedProject,
-    OvenProjectPlanMode, elapsed_ms, library_publication,
+    BuildCommandOptions, CompletedOutputPolicy, OvenBakeProjectTarget, OvenPreparedProject, OvenProjectPlanMode,
+    elapsed_ms, library_publication,
 };
 use incan_driver::build_report::{
     BuildReportMode, BuildReportOptions, RustInspectionFormat, artifact_report, rust_inspection_report,
@@ -189,7 +189,6 @@ pub(crate) fn build_file_report(
         "release",
         OvenProjectPlanMode::ConsumeOnly,
         None,
-        &options.backend,
     )?;
     let prepare_ms = elapsed_ms(prepare_start);
 
@@ -253,8 +252,7 @@ pub fn build_library(
         };
         if output_dir.is_none()
             && !report_options.enabled()
-            && let Some(outputs) =
-                select_default_library_project_outputs(file_path, &completed_output_policy, &options.backend)?
+            && let Some(outputs) = select_default_library_project_outputs(file_path, &completed_output_policy)?
         {
             let project_root = resolve_library_project_root(file_path)?;
             warn_for_completed_output_lock_fingerprint_drift(&project_root, outputs.iter())?;
@@ -303,8 +301,7 @@ pub(crate) fn build_library_report(
             cargo_all_features: options.cargo_all_features,
         };
         if output_dir.is_none()
-            && let Some(outputs) =
-                select_default_library_project_outputs(file_path, &completed_output_policy, &options.backend)?
+            && let Some(outputs) = select_default_library_project_outputs(file_path, &completed_output_policy)?
         {
             let project_root = resolve_library_project_root(file_path)?;
             warn_for_completed_output_lock_fingerprint_drift(&project_root, outputs.iter())?;
@@ -344,7 +341,6 @@ pub(crate) fn build_library_report(
             !artifact_only,
             OvenProjectPlanMode::ConsumeOnly,
             None,
-            &options.backend,
         )?;
 
         if artifact_only {
@@ -440,10 +436,7 @@ pub fn inspect_backend_selection(path: &Path, format: BackendSelectionInspectFor
         BackendSelectionInspectFormat::Text => {
             println!("selected backend:   {:?}", receipt.selection.selected_backend);
             println!("executed backend:   {:?}", receipt.executed_backend);
-            println!("selection reason:   {:?}", receipt.selection.selection_reason);
-            println!("fallback policy:    {:?}", receipt.selection.fallback_policy);
-            println!("fallback outcome:   {:?}", receipt.fallback_outcome);
-            println!("shadow comparison:  {:?}", receipt.shadow_comparison);
+            println!("backend revision:   {}", receipt.selection.implementation_revision);
             println!("compiler version:   {}", receipt.compiler_version);
             println!("selection identity: {}", receipt.selection.identity);
             println!("receipt identity:   {}", receipt.identity);
@@ -476,7 +469,6 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
             false,
             OvenProjectPlanMode::ConsumeOnly,
             None,
-            &BackendSelectionOptions::default(),
         )?;
         rust_inspection_report(
             BuildReportMode::Library,
@@ -497,7 +489,6 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
             "release",
             OvenProjectPlanMode::ConsumeOnly,
             None,
-            &BackendSelectionOptions::default(),
         )?;
         rust_inspection_report(
             BuildReportMode::Executable,
@@ -570,7 +561,6 @@ pub fn run_file(
         profile,
         OvenProjectPlanMode::ConsumeOnly,
         None,
-        &BackendSelectionOptions::default(),
     )?;
     run_oven_prepared_project(prepared, profile, &program_args)
 }
@@ -630,7 +620,6 @@ pub fn run_inline_source(
         if release { "release" } else { "debug" },
         OvenProjectPlanMode::ConsumeOnly,
         None,
-        &BackendSelectionOptions::default(),
     )
     .and_then(|prepared| run_oven_prepared_project(prepared, if release { "release" } else { "debug" }, &program_args));
     let _ = fs::remove_file(&source_path);
@@ -661,12 +650,11 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use incan_driver::backend::selection::{BackendKind, FallbackPolicy};
     use incan_driver::build::library_exports::collect_library_rust_abi;
     use incan_driver::build::library_outputs::write_library_manifest_artifacts;
     use incan_driver::build::library_project::prepare_library_project;
     use incan_driver::build::rust_extern::{RustExternBuildFailureKind, RustExternDeclContext};
-    use incan_driver::build::{BackendSelectionOptions, BuildCommandOptions, OvenProjectPlanMode};
+    use incan_driver::build::{BuildCommandOptions, OvenProjectPlanMode};
     use incan_driver::build_report::BuildReportOptions;
     use incan_driver::cargo_policy::CargoPolicy;
     use incan_driver::error::{CliError, ExitCode};
@@ -752,21 +740,6 @@ mod tests {
         );
         assert!(stdout.contains("1 passed"), "the child ran no exact test:\n{stdout}");
         Ok(())
-    }
-
-    /// Only the implicit default selection may reuse a completed output; an explicit one records a new selection.
-    #[test]
-    fn completed_output_reuse_requires_the_implicit_default_backend_selection() {
-        let default = BackendSelectionOptions::default();
-        assert!(default.allows_completed_output_reuse());
-
-        let explicit = BackendSelectionOptions {
-            requested: BackendKind::Legacy,
-            explicit: true,
-            shadow: false,
-            fallback_policy: FallbackPolicy::Refuse,
-        };
-        assert!(!explicit.allows_completed_output_reuse());
     }
 
     #[test]
@@ -1087,7 +1060,6 @@ pub def answer() -> int:
             false,
             OvenProjectPlanMode::ConsumeOnly,
             None,
-            &BackendSelectionOptions::default(),
         )?;
         write_library_manifest_artifacts(&mut prepared)?;
 
