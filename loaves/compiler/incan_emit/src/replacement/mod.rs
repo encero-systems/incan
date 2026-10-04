@@ -691,6 +691,44 @@ fn has_canonical_direct_call_id(module: &BodyIrModule, body: &Body) -> bool {
         })
 }
 
+/// The physical declaration id of a callable a named call may select: a function, or a static method, which has no
+/// receiver and is called exactly like one (`Type.method(..)`).
+fn named_callable_declaration_id(module: &BodyIrModule, canonical: &CanonicalSymbolId) -> Option<CompilerNodeId> {
+    direct_declaration_id_for_canonical(
+        module,
+        canonical,
+        SymbolNamespace::OrdinaryLexical,
+        SemanticSourceTargetKind::Function,
+    )
+    .or_else(|| {
+        direct_declaration_id_for_canonical(
+            module,
+            canonical,
+            SymbolNamespace::Member,
+            SemanticSourceTargetKind::Method,
+        )
+    })
+}
+
+/// [`has_canonical_direct_call_id`] for the target of a named call, which may also be a static method's body.
+///
+/// A method body qualifies only when it has no receiver: a named call passes no `self`, so selecting an instance
+/// method's body this way would bind the call's first argument as the receiver.
+fn has_canonical_named_callable_id(module: &BodyIrModule, body: &Body) -> bool {
+    let has_receiver = body.locals.iter().any(|local| {
+        matches!(
+            local.origin,
+            incan_semantics_core::body_ir::LocalOrigin::Receiver { .. }
+        )
+    });
+    body.direct_call_id == CompilerNodeId::declaration_span(module.module_id.path(), body.span.start, body.span.end)
+        && !has_receiver
+        && body.canonical.as_ref().is_some_and(|canonical| {
+            canonical.declaration_name == body.name
+                && named_callable_declaration_id(module, canonical) == Some(body.direct_call_id.clone())
+        })
+}
+
 /// Project one retained source-module identity onto the physical declaration id used by this Body-IR module.
 ///
 /// This never mints or completes a semantic identity. It only checks that the already-retained identity belongs to
@@ -1503,13 +1541,7 @@ fn named_callable_body<'module>(
             span,
         )
     })?;
-    let canonical_call_id = direct_declaration_id_for_canonical(
-        module,
-        canonical,
-        SymbolNamespace::OrdinaryLexical,
-        SemanticSourceTargetKind::Function,
-    )
-    .ok_or_else(|| {
+    let canonical_call_id = named_callable_declaration_id(module, canonical).ok_or_else(|| {
         unsupported(
             "named callable canonical target is not owned by this Body-IR module",
             span,
@@ -1543,7 +1575,7 @@ fn named_callable_body<'module>(
             span,
         ));
     }
-    if !has_canonical_direct_call_id(module, body) {
+    if !has_canonical_named_callable_id(module, body) {
         return Err(unsupported(
             format!(
                 "named callable `{}` body does not retain its canonical declaration identity",

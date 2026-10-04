@@ -585,3 +585,15 @@ fn replacement_refuses_to_run_a_rust_extern_placeholder_issue2023() -> Result<()
         }
     }
 }
+
+#[test]
+fn replacement_executes_a_static_method_call() -> Result<(), Box<dyn std::error::Error>> {
+    // Named arguments bind by declaration, and a static method may call another one.
+    let module = lower_typed_body_ir(
+        "model Scale:\n  factor: int\n\n  def unit() -> int:\n    return 4\n\n  def times(value: int, by: int) -> int:\n    return value * by + Scale.unit()\n\n\
+         def main() -> int:\n  return Scale.times(by=10, value=3)\n",
+    )?;
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(34));
+    Ok(())
+}

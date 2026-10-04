@@ -1071,3 +1071,35 @@ fn a_mut_scalar_parameter_stays_a_copy_issue2022() -> Result<(), Box<dyn std::er
     );
     Ok(())
 }
+
+#[test]
+fn a_static_method_call_is_a_direct_call_to_the_method_body() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Point:\n  x: int\n\n  def origin() -> Point:\n    return Point(x=0)\n\n  def shifted(by: int) -> Point:\n    return Point(x=by)\n\ndef main() -> int:\n  p = Point.shifted(by=3)\n  q = Point.origin()\n  return p.x + q.x\n";
+    let module = build(source, &["m", "static_calls"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(
+        !rendered.contains("unsupported("),
+        "a static method call must lower: {rendered}"
+    );
+    let origin = body_named(&module, "origin")?;
+    let shifted = body_named(&module, "shifted")?;
+    let targets = named_targets(&module, "main");
+    for (method, body) in [("shifted", shifted), ("origin", origin)] {
+        let target = targets
+            .iter()
+            .find(|target| target.name.ends_with(method))
+            .ok_or_else(|| format!("no named call to `{method}`: {rendered}"))?;
+        assert_eq!(
+            target.direct_call_id.as_ref(),
+            Some(&body.direct_call_id),
+            "{method}: {rendered}"
+        );
+        assert_eq!(
+            target.canonical.as_ref(),
+            body.canonical.as_ref(),
+            "{method}: {rendered}"
+        );
+    }
+    Ok(())
+}

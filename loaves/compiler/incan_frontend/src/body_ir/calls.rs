@@ -1014,12 +1014,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         | SemanticSourceTargetKind::Trait
                 )
         }) {
-            return self.unsupported_operand(
-                format!("static member `{name}` on a type has no Body IR value representation"),
-                scope,
-                hir_span_value,
-                out,
-            );
+            return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,
@@ -1090,6 +1085,87 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 binding,
             }),
             call_args,
+            ty,
+            scope,
+            hir_span_value,
+            false,
+            out,
+        )
+    }
+
+    /// Lower `Type.method(args)`, a call to a type's static method, as a direct call to the method's body.
+    ///
+    /// A static method has no receiver, so it is called exactly like a function: the checker's selected method is
+    /// the canonical identity, and when that method is declared in this module its declaration span is the
+    /// `direct_call_id` the method's own [`bir::Body`] carries. A selection that is not a method (an enum variant
+    /// constructor, say, or a member the checker did not resolve) refuses rather than being called by its spelling.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_static_method_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        let spelling = match &recv.node {
+            ast::Expr::Ident(owner) => format!("{owner}.{name}"),
+            _ => name.to_string(),
+        };
+        let canonical = self
+            .type_info
+            .resolved_identity(span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Method)
+            .cloned();
+        let Some(canonical) = canonical else {
+            return self.unsupported_operand(
+                format!("static member `{spelling}` without a resolved method declaration"),
+                scope,
+                hir_span_value,
+                out,
+            );
+        };
+        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+            Ok(resolved_type_args) => resolved_type_args,
+            Err(_) => {
+                return self.unsupported_operand(
+                    "method call with unresolved explicit type arguments".to_string(),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
+            }
+        };
+        let direct_call_id = self
+            .type_info
+            .declarations
+            .method_bindings_by_span
+            .iter()
+            .find(|(_, binding)| binding.identity.as_ref() == Some(&canonical))
+            .map(|((start, end), _)| CompilerNodeId::declaration_span(self.module_identity, *start, *end));
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let (operands, binding) =
+            match self.bind_declared_args(&format!("static method `{spelling}`"), declared, args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+            };
+        let ty = self.resolve_ty(span);
+        self.push_call_temp(
+            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                name: spelling,
+                direct_call_id,
+                canonical: Some(canonical),
+                builtin: None,
+                type_args: resolved_type_args,
+                binding,
+            })),
+            operands,
             ty,
             scope,
             hir_span_value,
