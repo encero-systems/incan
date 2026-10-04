@@ -161,6 +161,11 @@ fn release_cargo_resolver() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
 }
 
+/// Return the release packager's shared native-toolchain selector.
+fn release_native_toolchain_resolver() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/resolve_release_native_toolchain.sh")
+}
+
 fn release_cargo_selector() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
 }
@@ -206,9 +211,8 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
     }
 
     let selected = Command::new(release_cargo_selector())
-        .env("RUSTUP_TOOLCHAIN", "1.98.0")
         .env("PATH", format!("{}:{}", guard_bin.display(), bin.display()))
-        .arg("")
+        .args(["", "nightly-2026-03-24"])
         .output()?;
     assert!(
         selected.status.success(),
@@ -216,7 +220,10 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
         String::from_utf8_lossy(&selected.stderr)
     );
     assert_eq!(String::from_utf8(selected.stdout)?, format!("{}\n", pinned.display()));
-    assert_eq!(fs::read_to_string(&log)?, "which --toolchain 1.98.0 cargo\n");
+    assert_eq!(
+        fs::read_to_string(&log)?,
+        "which --toolchain nightly-2026-03-24 cargo\n"
+    );
     assert!(!guard_log.exists(), "the repository target guard must never execute");
 
     fs::remove_file(&log)?;
@@ -287,6 +294,32 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
 }
 
 #[test]
+fn release_native_toolchain_selector_preserves_exact_overrides() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let cc = fixture.path().join("clang");
+    let cxx = fixture.path().join("clang++");
+    let sysroot = fixture.path().join("sysroot");
+    fs::write(&cc, "#!/bin/sh\nexit 0\n")?;
+    fs::write(&cxx, "#!/bin/sh\nexit 0\n")?;
+    fs::create_dir(&sysroot)?;
+    for compiler in [&cc, &cxx] {
+        let mut permissions = fs::metadata(compiler)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(compiler, permissions)?;
+    }
+
+    let output = Command::new(release_native_toolchain_resolver())
+        .args([cc.as_os_str(), cxx.as_os_str(), sysroot.as_os_str()])
+        .output()?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        format!("{}\t{}\t{}\n", cc.display(), cxx.display(), sysroot.display())
+    );
+    Ok(())
+}
+
+#[test]
 fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
     let script = fs::read_to_string(toolchain_package_archive_script())?;
     let policy_bake = script
@@ -317,7 +350,12 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="));
     assert!(script.contains("\"$policy_toolchain_root/bin/incan\" oven bake"));
     assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
-    assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\""));
+    assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\" \"$publisher_toolchain\""));
+    assert!(script.contains("publisher_toolchain=\"${INCAN_RELEASE_PUBLISHER_TOOLCHAIN:-nightly-2026-03-24}\""));
+    assert!(script.contains("resolve_release_native_toolchain.sh"));
+    assert!(script.contains("--cc \"$cc_bin\""));
+    assert!(script.contains("--cxx \"$cxx_bin\""));
+    assert!(script.contains("--c-sysroot \"$c_sysroot\""));
     assert!(!script.contains("cargo_bin=\"$(command -v cargo)\""));
     // The explicit-versus-`PATH` decision lives in the resolver the packaging script delegates to.
     let resolver = fs::read_to_string(release_cargo_resolver())?;
@@ -328,6 +366,8 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
     assert!(script.contains("--policy-engine-target \"$target\""));
     assert!(script.contains(".release_store_member.artifact_identity"));
+    assert!(script.contains("jq -er '.loafs | length' \"$loaf_root/envelope.json\""));
+    assert!(!script.contains("find \"$loaf_root\" -name loaf.json"));
     assert!(script.contains("release_policy_publisher_home=\"$(mktemp -d"));
     assert!(script.contains("rm -rf \"$release_policy_publisher_home\""));
     Ok(())

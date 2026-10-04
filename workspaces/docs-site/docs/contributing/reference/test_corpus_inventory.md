@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3557 | 245 | 8 |
 | re-point | 526 | 86 | 1055 |
 | retire | 1504 | 153 | 0 |
-| unaffected | 1641 | 158 | 5 |
+| unaffected | 1643 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7228** | **642** | **1068** |
+| **Total** | **7230** | **642** | **1068** |
 
 - Retire-class tests: 1504, of which twinned 1023, dies 294, open 187 (neither yet).
 - Retire-class files with open rows: 34 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2616,7 +2616,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/toolchain/incan-cli` (668 tests in 80 files: keep 120, re-point 389, retire 34, unaffected 125)
+### `loaves/toolchain/incan-cli` (669 tests in 80 files: keep 120, re-point 389, retire 34, unaffected 126)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2698,7 +2698,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs` | 13 | 823 | 823 | re-point (keep 9, re-point 4) | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/script_target_diagnostics.rs` | 1 | 44 | 44 | re-point | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
 | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` | 1 | 128 | 128 | re-point | - | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs` | 30 | 2729 | 2729 | unaffected | - | - | required | #1561 | run 4 | installer, archive packager and release manifest. |
+| `loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs` | 31 | 2769 | 2769 | unaffected | - | - | required | #1561 | run 4 | installer, archive packager and release manifest. |
 | `loaves/toolchain/incan-cli/tests/vocab_guardrails.rs` | 3 | 575 | 575 | unaffected | - | - | - | #1561 | text 1 | source audits (semantic string audit, stringly vocab checks). |
 
 Per-test overrides in `loaves/toolchain/incan-cli/src/commands/build.rs`:
@@ -3044,7 +3044,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1341 tests in 114 files)"
+??? note "Unaffected crates (1342 tests in 114 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3093,7 +3093,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/kernel/incan_vocab/src/lib.rs` | 6 | 514 | 205 | unaffected | - | - | - | #1561 | checker 6 | vocab registration contract crate. Reviewed at crate level. |
 
-    #### `loaves/oven/oven_cargo_compat` (192 tests in 12 files: unaffected 192)
+    #### `loaves/oven/oven_cargo_compat` (193 tests in 12 files: unaffected 193)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3108,7 +3108,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_cargo_compat/src/registry_sources.rs` | 2 | 728 | 134 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/rustc_trace.rs` | 8 | 726 | 187 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 25 | 5319 | 2472 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 15 | 3158 | 1089 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 16 | 3325 | 1150 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
     #### `loaves/oven/oven_interop` (20 tests in 1 file: unaffected 20)
 
