@@ -238,8 +238,7 @@
     "normal"
    ],
    "sha1": [
-    "dev",
-    "normal"
+    "dev"
    ],
    "sha2": [
     "normal"
@@ -1389,16 +1388,6 @@
       "origin": "registry",
       "workspace_inherited": true,
       "version_req": "1.0",
-      "features": [],
-      "default_features": true,
-      "optional": false
-     },
-     "sha1": {
-      "package": "sha1",
-      "kind": "third-party",
-      "origin": "registry",
-      "workspace_inherited": false,
-      "version_req": "0.10",
       "features": [],
       "default_features": true,
       "optional": false
@@ -3386,17 +3375,6 @@
    "default_features": [],
    "dependencies": {
     "normal": {
-     "incan_frontend": {
-      "package": "incan_frontend",
-      "kind": "workspace-internal",
-      "origin": "path",
-      "workspace_inherited": true,
-      "version_req": null,
-      "features": [],
-      "default_features": false,
-      "optional": false,
-      "path": "loaves/compiler/incan_frontend"
-     },
      "incan_lang": {
       "package": "incan_lang",
       "kind": "workspace-internal",
