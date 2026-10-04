@@ -493,6 +493,72 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
+    /// Return the checked enum variant a `Type.Variant` spelling selects, for any enum the narrower fieldless and
+    /// value-enum targets do not cover.
+    ///
+    /// The base must be an unshadowed type name, and the checker must have resolved `variant_span` to a variant: the
+    /// spelling alone never selects one. `variant_span` is the member access for `Shape.Empty` and the call for
+    /// `Shape.Circle(r)`, which is where the checker records the selection. The returned target binds no payload yet.
+    pub(super) fn checked_enum_variant_target(
+        &self,
+        base: &ast::Spanned<ast::Expr>,
+        variant_name: &str,
+        variant_span: ast::Span,
+    ) -> Option<bir::EnumVariantTarget> {
+        let ast::Expr::Ident(enum_name) = &base.node else {
+            return None;
+        };
+        if self.bindings.contains_key(enum_name)
+            || !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName))
+        {
+            return None;
+        }
+        let variant_canonical = self
+            .type_info
+            .resolved_identity(variant_span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)?
+            .clone();
+        Some(bir::EnumVariantTarget {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.to_string(),
+            enum_canonical: self.type_info.resolved_identity(base.span).cloned(),
+            variant_canonical,
+            binding: bir::ArgumentBinding::resolved_positional(0),
+        })
+    }
+
+    /// Construct `Type.Variant(payload)` as an [`bir::AggregateKind::EnumVariant`], binding the payload against the
+    /// variant's checked parameters when the checker recorded them and positionally otherwise.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_enum_variant_call(
+        &mut self,
+        mut target: bir::EnumVariantTarget,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let what = format!("enum variant `{}.{}`", target.enum_name, target.variant_name);
+        let (operands, binding) = match self.bind_declared_args(&what, declared, args, scope, out) {
+            Ok(bound) => bound,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
+        target.binding = binding;
+        let ty = self.resolve_ty(span);
+        self.push_assign_temp(
+            bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), operands),
+            ty,
+            scope,
+            hir_span_value,
+            out,
+        )
+    }
+
     /// Return the exact retained target for a qualified local RFC 032 value-enum member, if this spelling is safe to
     /// materialize directly.
     ///
@@ -1014,12 +1080,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         | SemanticSourceTargetKind::Trait
                 )
         }) {
-            return self.unsupported_operand(
-                format!("static member `{name}` on a type has no Body IR value representation"),
-                scope,
-                hir_span_value,
-                out,
-            );
+            return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,
@@ -1090,6 +1151,90 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 binding,
             }),
             call_args,
+            ty,
+            scope,
+            hir_span_value,
+            false,
+            out,
+        )
+    }
+
+    /// Lower `Type.method(args)`, a call to a type's static method, as a direct call to the method's body.
+    ///
+    /// A static method has no receiver, so it is called exactly like a function: the checker's selected method is
+    /// the canonical identity, and when that method is declared in this module its declaration span is the
+    /// `direct_call_id` the method's own [`bir::Body`] carries. A selection that is not a method (an enum variant
+    /// constructor, say, or a member the checker did not resolve) refuses rather than being called by its spelling.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_static_method_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
+            return self.lower_enum_variant_call(target, args, span, scope, out);
+        }
+        let spelling = match &recv.node {
+            ast::Expr::Ident(owner) => format!("{owner}.{name}"),
+            _ => name.to_string(),
+        };
+        let canonical = self
+            .type_info
+            .resolved_identity(span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Method)
+            .cloned();
+        let Some(canonical) = canonical else {
+            return self.unsupported_operand(
+                format!("static member `{spelling}` without a resolved method declaration"),
+                scope,
+                hir_span_value,
+                out,
+            );
+        };
+        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+            Ok(resolved_type_args) => resolved_type_args,
+            Err(_) => {
+                return self.unsupported_operand(
+                    "method call with unresolved explicit type arguments".to_string(),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
+            }
+        };
+        let direct_call_id = self
+            .type_info
+            .declarations
+            .method_bindings_by_span
+            .iter()
+            .find(|(_, binding)| binding.identity.as_ref() == Some(&canonical))
+            .map(|((start, end), _)| CompilerNodeId::declaration_span(self.module_identity, *start, *end));
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let (operands, binding) =
+            match self.bind_declared_args(&format!("static method `{spelling}`"), declared, args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+            };
+        let ty = self.resolve_ty(span);
+        self.push_call_temp(
+            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                name: spelling,
+                direct_call_id,
+                canonical: Some(canonical),
+                builtin: None,
+                type_args: resolved_type_args,
+                binding,
+            })),
+            operands,
             ty,
             scope,
             hir_span_value,
