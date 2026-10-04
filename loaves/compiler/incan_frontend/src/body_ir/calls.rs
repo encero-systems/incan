@@ -493,6 +493,72 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
+    /// Return the checked enum variant a `Type.Variant` spelling selects, for any enum the narrower fieldless and
+    /// value-enum targets do not cover.
+    ///
+    /// The base must be an unshadowed type name, and the checker must have resolved `variant_span` to a variant: the
+    /// spelling alone never selects one. `variant_span` is the member access for `Shape.Empty` and the call for
+    /// `Shape.Circle(r)`, which is where the checker records the selection. The returned target binds no payload yet.
+    pub(super) fn checked_enum_variant_target(
+        &self,
+        base: &ast::Spanned<ast::Expr>,
+        variant_name: &str,
+        variant_span: ast::Span,
+    ) -> Option<bir::EnumVariantTarget> {
+        let ast::Expr::Ident(enum_name) = &base.node else {
+            return None;
+        };
+        if self.bindings.contains_key(enum_name)
+            || !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName))
+        {
+            return None;
+        }
+        let variant_canonical = self
+            .type_info
+            .resolved_identity(variant_span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)?
+            .clone();
+        Some(bir::EnumVariantTarget {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.to_string(),
+            enum_canonical: self.type_info.resolved_identity(base.span).cloned(),
+            variant_canonical,
+            binding: bir::ArgumentBinding::resolved_positional(0),
+        })
+    }
+
+    /// Construct `Type.Variant(payload)` as an [`bir::AggregateKind::EnumVariant`], binding the payload against the
+    /// variant's checked parameters when the checker recorded them and positionally otherwise.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_enum_variant_call(
+        &mut self,
+        mut target: bir::EnumVariantTarget,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let what = format!("enum variant `{}.{}`", target.enum_name, target.variant_name);
+        let (operands, binding) = match self.bind_declared_args(&what, declared, args, scope, out) {
+            Ok(bound) => bound,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
+        target.binding = binding;
+        let ty = self.resolve_ty(span);
+        self.push_assign_temp(
+            bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), operands),
+            ty,
+            scope,
+            hir_span_value,
+            out,
+        )
+    }
+
     /// Return the exact retained target for a qualified local RFC 032 value-enum member, if this spelling is safe to
     /// materialize directly.
     ///
@@ -1111,6 +1177,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
+            return self.lower_enum_variant_call(target, args, span, scope, out);
+        }
         let spelling = match &recv.node {
             ast::Expr::Ident(owner) => format!("{owner}.{name}"),
             _ => name.to_string(),

@@ -88,6 +88,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 }
+                if let Some(target) = self.checked_enum_variant_target(base, name, expr.span) {
+                    return self.push_assign_temp(
+                        bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), Vec::new()),
+                        self.resolve_ty(expr.span),
+                        scope,
+                        span,
+                        out,
+                    );
+                }
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place
                     .projection
