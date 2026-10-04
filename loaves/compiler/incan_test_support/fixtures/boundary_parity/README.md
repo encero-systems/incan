@@ -55,6 +55,5 @@ The contract evidence must remain compiler-owned public output. It must not expo
 
 ### Remaining evidence gaps
 
-- The materialized package execution and missing-representation rows above have direct behavior observations. Registering their receipt-aware comparison evidence remains separate work; those rows must remain non-green on that axis until it exists.
-- `loaves/toolchain/incan-cli/tests/package_executable_representation.rs` retains broader native and non-linking package acceptance, including canonical aliases, defaults, public nominal context and source removal. That suite does not imply complete package, metadata or Rust-interop coverage for every row in the packets above.
+- `loaves/toolchain/incan-cli/tests/package_executable_representation.rs` runs source-unavailable packages natively on the legacy route, including canonical aliases, defaults, public nominal context, type facades and unions. It has no non-linking execution and no case for a dependency that lacks an executable representation. It does not imply complete package, metadata or Rust-interop coverage for every row in the packets above, and none of its cases is receipt-aware evidence for the direct route.
 - Signed archive publication and transport remain outside the current materialized-package execution contract, as recorded by [RFC 123](../../../../../workspaces/docs-site/docs/RFCs/123_package_executable_representation.md) and [#1339](https://github.com/encero-systems/incan/issues/1339).

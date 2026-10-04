@@ -13,7 +13,6 @@ path = "src/lib.rs"
 
 [dependencies]
 incan_lang = { workspace = true }
-incan_frontend = { workspace = true }
 incan_semantics_core = { workspace = true }
 oven_model = { workspace = true }
 # Unix process-group cleanup for bounded subprocess tests.

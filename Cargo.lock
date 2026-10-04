@@ -1561,7 +1561,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha1",
  "sha2",
  "syn 2.0.117",
  "tempfile",
@@ -1780,7 +1779,6 @@ dependencies = [
 name = "incan_test_support"
 version = "0.6.0-dev.6"
 dependencies = [
- "incan_frontend",
  "incan_lang",
  "incan_semantics_core",
  "libc",
