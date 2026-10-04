@@ -794,3 +794,45 @@ fn yielded_expression_participates_in_last_use_tracking() -> Result<(), Box<dyn 
     );
     Ok(())
 }
+
+#[test]
+fn a_function_named_as_a_value_is_a_forwarding_closure_to_it() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def square(x: int) -> int:\n  return x * x\n\ndef apply(f: Callable[int, int], v: int) -> int:\n  return f(v)\n\ndef main() -> int:\n  return apply(square, 7)\n";
+    let module = build(source, &["m", "function_values"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(
+        !rendered.contains("unsupported("),
+        "a function named as a value must lower: {rendered}"
+    );
+    let square = body_named(&module, "square")?;
+    let forwards = main.block.stmts.iter().any(|stmt| match &stmt.kind {
+        bir::StatementKind::Assign {
+            rvalue:
+                bir::Rvalue::Closure {
+                    body,
+                    captured_operands,
+                    ..
+                },
+            ..
+        } => {
+            captured_operands.is_empty()
+                && body.stmts.iter().any(|inner| {
+                    matches!(
+                        &inner.kind,
+                        bir::StatementKind::Call {
+                            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                            ..
+                        } if target.direct_call_id.as_ref() == Some(&square.direct_call_id)
+                            && target.canonical == square.canonical
+                    )
+                })
+        }
+        _ => false,
+    });
+    assert!(
+        forwards,
+        "`square` must become a capture-free closure calling `square`: {rendered}"
+    );
+    Ok(())
+}

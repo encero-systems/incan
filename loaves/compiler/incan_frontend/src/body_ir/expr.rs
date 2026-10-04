@@ -39,6 +39,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         match &expr.node {
             ast::Expr::Ident(name) => {
                 let ty = self.resolve_ty(expr.span);
+                // A function named as a value (`apply(square, 7)`) is a partial with no presets: a capture-free closure
+                // that forwards every argument to it, as a local partial is lowered.
+                if !self.bindings.contains_key(name)
+                    && self
+                        .type_info
+                        .resolved_identity(expr.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+                {
+                    let partial = ast::PartialExpr {
+                        target: Box::new(expr.clone()),
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                    };
+                    return self.lower_partial(&partial, expr.span, scope, out);
+                }
                 let Some(place) = self.place_for_name(name, expr.span, &ty) else {
                     return self.unsupported_operand(
                         format!("resolved reference `{name}` has no Body IR value representation"),
@@ -82,6 +97,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 if let Some(target) = self.local_value_enum_variant_target(base, name, expr.span) {
                     return self.push_assign_temp(
                         bir::Rvalue::ValueEnumVariant(target),
+                        self.resolve_ty(expr.span),
+                        scope,
+                        span,
+                        out,
+                    );
+                }
+                if let Some(target) = self.checked_enum_variant_target(base, name, expr.span) {
+                    return self.push_assign_temp(
+                        bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), Vec::new()),
                         self.resolve_ty(expr.span),
                         scope,
                         span,
@@ -184,6 +208,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 })
             }
             ast::Expr::Field(base, name) => {
+                // `Color.Red` used where a place is needed (a method receiver, say) is a variant value, not a field of
+                // a value named `Color`: materialize it like any other non-place operand.
+                if self
+                    .local_fieldless_enum_variant_target(base, name, expr.span)
+                    .is_some()
+                    || self.local_value_enum_variant_target(base, name, expr.span).is_some()
+                    || self.checked_enum_variant_target(base, name, expr.span).is_some()
+                {
+                    let ty = self.resolve_ty(expr.span);
+                    let operand = self.lower_expr_to_operand(expr, scope, out);
+                    return self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out);
+                }
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place
                     .projection

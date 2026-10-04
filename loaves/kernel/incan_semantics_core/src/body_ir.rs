@@ -2146,6 +2146,28 @@ pub enum AggregateKind {
     /// able to read which one it is instead of having to prove where it came from.
     Range,
     Constructor(Box<ConstructorTarget>),
+    /// One variant of a source `enum`, constructed with its payload: `Shape.Circle(r)`, or `Shape.Empty` for a variant
+    /// without one.
+    ///
+    /// Operands are the payload values in declared order, none for a unit variant. This covers the enums the narrower
+    /// [`Rvalue::FieldlessEnumVariant`] and [`Rvalue::ValueEnumVariant`] forms do not. A consumer identifies the
+    /// variant by [`EnumVariantTarget::variant_canonical`], never by its spelling.
+    EnumVariant(Box<EnumVariantTarget>),
+}
+
+/// The enum and variant one [`AggregateKind::EnumVariant`] constructs, as the checker selected them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumVariantTarget {
+    /// The enum's declaration name, retained for diagnostics and malformed-Body-IR cross-checks.
+    pub enum_name: String,
+    /// The variant's declaration name, retained for diagnostics and malformed-Body-IR cross-checks.
+    pub variant_name: String,
+    /// Checker-minted identity of the owning enum, when the reference site retained one.
+    pub enum_canonical: Option<CanonicalSymbolId>,
+    /// Checker-minted identity of the selected variant: the dispatch key.
+    pub variant_canonical: CanonicalSymbolId,
+    /// Resolved binding of the aggregate's operands to the variant's declared payload positions.
+    pub binding: ArgumentBinding,
 }
 
 impl AggregateKind {
@@ -2180,6 +2202,13 @@ impl AggregateKind {
             Self::Set => "set".to_string(),
             Self::Range => "range".to_string(),
             Self::Constructor(target) => format!("constructor({}){}", target.name, target.binding.render_snapshot()),
+            Self::EnumVariant(target) => format!(
+                "enum_variant({}::{} variant_canonical={}){}",
+                target.enum_name,
+                target.variant_name,
+                target.variant_canonical.render_compact(),
+                target.binding.render_snapshot()
+            ),
         }
     }
 }

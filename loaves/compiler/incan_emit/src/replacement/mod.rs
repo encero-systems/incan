@@ -7721,6 +7721,7 @@ fn aggregate_label(kind: &incan_semantics_core::body_ir::AggregateKind) -> &'sta
         incan_semantics_core::body_ir::AggregateKind::Set => "set",
         incan_semantics_core::body_ir::AggregateKind::Range => "range",
         incan_semantics_core::body_ir::AggregateKind::Constructor(_) => "constructor",
+        incan_semantics_core::body_ir::AggregateKind::EnumVariant(_) => "enum variant",
     }
 }
 
