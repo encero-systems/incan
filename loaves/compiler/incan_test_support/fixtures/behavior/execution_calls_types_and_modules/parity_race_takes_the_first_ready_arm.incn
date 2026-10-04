@@ -1,0 +1,21 @@
+# behavior: a race over two awaited calls takes the first arm in source order (parity corpus row replacement-body-v0-019)
+# expect-stdout:
+#   1
+
+import std.async
+
+async def first() -> int:
+    return 1
+
+async def second() -> int:
+    return 2
+
+async def source_order_race() -> int:
+    winner = race for value:
+        await first() => value
+        await second() => value
+    return winner
+
+
+async def main() -> None:
+    println(await source_order_race())

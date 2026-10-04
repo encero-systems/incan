@@ -54,6 +54,12 @@ fn a_shadow_request_does_not_alter_replacement_execution() -> CaseResult {
     assert_fixture_holds(AREA, "a_shadow_request_does_not_alter_replacement_execution")
 }
 
+/// Runs the fixture `an_import_cycle_back_into_the_entry`.
+#[test]
+fn an_import_cycle_back_into_the_entry() -> CaseResult {
+    assert_fixture_holds(AREA, "an_import_cycle_back_into_the_entry")
+}
+
 /// Runs the fixture `call_into_a_module_lowered_on_its_own`.
 #[test]
 fn call_into_a_module_lowered_on_its_own() -> CaseResult {
@@ -457,6 +463,150 @@ fn module_qualified_call_through_an_alias() -> CaseResult {
 #[test]
 fn non_scalar_checked_value_types_refuse_before_effects() -> CaseResult {
     assert_fixture_holds(AREA, "non_scalar_checked_value_types_refuse_before_effects")
+}
+
+/// Runs the fixture `parity_a_module_len_shadows_the_builtin`.
+#[test]
+fn parity_a_module_len_shadows_the_builtin() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_a_module_len_shadows_the_builtin")
+}
+
+/// Runs the fixture `parity_assert_is_some_binds_the_payload`.
+#[test]
+fn parity_assert_is_some_binds_the_payload() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_assert_is_some_binds_the_payload")
+}
+
+/// Runs the fixture `parity_async_main_awaits_a_value`.
+#[test]
+fn parity_async_main_awaits_a_value() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_async_main_awaits_a_value")
+}
+
+/// Runs the fixture `parity_await_an_async_function`.
+#[test]
+fn parity_await_an_async_function() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_await_an_async_function")
+}
+
+/// Runs the fixture `parity_builtin_reached_through_std_builtins_beside_a_shadow`.
+#[test]
+fn parity_builtin_reached_through_std_builtins_beside_a_shadow() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_builtin_reached_through_std_builtins_beside_a_shadow")
+}
+
+/// Runs the fixture `parity_call_a_stored_capturing_closure`.
+#[test]
+fn parity_call_a_stored_capturing_closure() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_call_a_stored_capturing_closure")
+}
+
+/// Runs the fixture `parity_call_spreads_into_rest_parameters`.
+#[test]
+fn parity_call_spreads_into_rest_parameters() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_call_spreads_into_rest_parameters")
+}
+
+/// Runs the fixture `parity_collect_a_filtered_generator_expression`.
+#[test]
+fn parity_collect_a_filtered_generator_expression() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_collect_a_filtered_generator_expression")
+}
+
+/// Runs the fixture `parity_collect_a_generator_function`.
+#[test]
+fn parity_collect_a_generator_function() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_collect_a_generator_function")
+}
+
+/// Runs the fixture `parity_explicit_type_argument_to_a_generic_function`.
+#[test]
+fn parity_explicit_type_argument_to_a_generic_function() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_explicit_type_argument_to_a_generic_function")
+}
+
+/// Runs the fixture `parity_fieldless_enum_equality`.
+#[test]
+fn parity_fieldless_enum_equality() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_fieldless_enum_equality")
+}
+
+/// Runs the fixture `parity_map_and_filter_a_generator_with_stored_closures`.
+#[test]
+fn parity_map_and_filter_a_generator_with_stored_closures() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_map_and_filter_a_generator_with_stored_closures")
+}
+
+/// Runs the fixture `parity_model_built_with_keywords_and_a_default`.
+#[test]
+fn parity_model_built_with_keywords_and_a_default() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_model_built_with_keywords_and_a_default")
+}
+
+/// Runs the fixture `parity_model_built_with_keywords_out_of_order`.
+#[test]
+fn parity_model_built_with_keywords_out_of_order() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_model_built_with_keywords_out_of_order")
+}
+
+/// Runs the fixture `parity_named_call_arguments_and_a_default`.
+#[test]
+fn parity_named_call_arguments_and_a_default() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_named_call_arguments_and_a_default")
+}
+
+/// Runs the fixture `parity_names_reached_locally_imported_aliased_and_reexported`.
+#[test]
+fn parity_names_reached_locally_imported_aliased_and_reexported() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_names_reached_locally_imported_aliased_and_reexported")
+}
+
+/// Runs the fixture `parity_nested_model_and_enum_patterns`.
+#[test]
+fn parity_nested_model_and_enum_patterns() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_nested_model_and_enum_patterns")
+}
+
+/// Runs the fixture `parity_non_exhaustive_enum_match_is_refused`.
+#[test]
+fn parity_non_exhaustive_enum_match_is_refused() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_non_exhaustive_enum_match_is_refused")
+}
+
+/// Runs the fixture `parity_partial_with_keyword_and_default_overrides`.
+#[test]
+fn parity_partial_with_keyword_and_default_overrides() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_partial_with_keyword_and_default_overrides")
+}
+
+/// Runs the fixture `parity_race_takes_the_first_ready_arm`.
+#[test]
+fn parity_race_takes_the_first_ready_arm() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_race_takes_the_first_ready_arm")
+}
+
+/// Runs the fixture `parity_race_with_a_block_arm`.
+#[test]
+fn parity_race_with_a_block_arm() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_race_with_a_block_arm")
+}
+
+/// Runs the fixture `parity_result_question_mark_and_match`.
+#[test]
+fn parity_result_question_mark_and_match() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_result_question_mark_and_match")
+}
+
+/// Runs the fixture `parity_unselected_feature_function_is_absent`.
+#[test]
+fn parity_unselected_feature_function_is_absent() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_unselected_feature_function_is_absent")
+}
+
+/// Runs the fixture `parity_value_enum_variant_value`.
+#[test]
+fn parity_value_enum_variant_value() -> CaseResult {
+    assert_fixture_holds(AREA, "parity_value_enum_variant_value")
 }
 
 /// Runs the fixture `primitive_targets_with_different_runtime_tags_do_not_coerce_probe`.

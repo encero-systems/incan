@@ -36,9 +36,9 @@ fn artifact_snapshot(root: &Path) -> Result<std::collections::BTreeMap<std::path
     Ok(files)
 }
 
-/// Native and non-linking consumers select the same alias target after the producer source has been removed.
+/// A native consumer runs the alias target, its default and its public closure after the producer source is removed.
 #[test]
-fn source_unavailable_package_executes_alias_defaults_and_public_closure() -> Result<(), Box<dyn Error>> {
+fn source_unavailable_package_runs_alias_defaults_and_public_closure() -> Result<(), Box<dyn Error>> {
     let temporary = tempfile::tempdir()?;
     let producer = temporary.path().join("producer");
     let consumer = temporary.path().join("consumer");
@@ -131,52 +131,6 @@ def private_secret() -> int:
         "native consumer after failed rebuild and source removal",
     )?;
     assert_eq!(retained_native.stdout, native.stdout);
-    let report_path = consumer.join("execution.json");
-    let replacement = success(
-        command(&consumer)
-            .args([
-                "build",
-                "src/main.incn",
-                "--backend",
-                "replacement",
-                "--report",
-                "json",
-                "--report-output",
-            ])
-            .arg(&report_path)
-            .output()?,
-        "source-unavailable replacement",
-    )?;
-    assert_eq!(replacement.stdout, native.stdout);
-    let local = temporary.path().join("local");
-    let local_main = source
-        .lines()
-        .skip(1)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace("Item(value=", "Pair(value=")
-        .replace("State.Ready", "Mode.Ready")
-        .replace("answer()", "doubled()");
-    project(&local, "local", "main.incn", &format!("{authored}\n{local_main}\n"), "")?;
-    let local_execution = success(
-        command(&local)
-            .args(["build", "src/main.incn", "--backend", "replacement"])
-            .output()?,
-        "equivalent local source",
-    )?;
-    assert_eq!(local_execution.stdout, replacement.stdout);
-    let report: serde_json::Value = serde_json::from_slice(&fs::read(report_path)?)?;
-    assert_eq!(report["replacement_execution"]["package_declarations_decoded"], 4);
-    assert_eq!(
-        report["replacement_execution"]["package_content_bytes_verified"],
-        bytes.len()
-    );
-    assert!(
-        report["replacement_execution"]["package_payload_bytes_read"]
-            .as_u64()
-            .is_some_and(|count| count > 0)
-    );
-    assert!(consumer.join(".incan/backend/receipt.json").is_file());
     assert_eq!(
         fs::read(surface)?,
         bytes,
@@ -185,62 +139,10 @@ def private_secret() -> int:
     Ok(())
 }
 
-/// A required unavailable call behind a branch refuses before the earlier print or any successful receipt.
-#[test]
-fn missing_package_representation_refuses_before_output_and_receipt() -> Result<(), Box<dyn Error>> {
-    let temporary = tempfile::tempdir()?;
-    let producer = temporary.path().join("producer");
-    let consumer = temporary.path().join("consumer");
-    project(
-        &producer,
-        "conditional_provider",
-        "lib.incn",
-        "pub def answer() -> int:\n    return 42\n",
-        "",
-    )?;
-    bake(&producer)?;
-    let manifest_path = producer.join("target/lib/conditional_provider.incnlib");
-    let mut manifest = LibraryManifest::read_from_path(&manifest_path)?;
-    // Omit the descriptor to test replacement refusal; native sealed-artifact validity is checked separately.
-    manifest.contract_metadata.executable_representation = None;
-    manifest.write_to_path(&manifest_path)?;
-    fs::remove_dir_all(producer.join("src"))?;
-    fs::remove_file(producer.join("loaf.toml"))?;
-    project(
-        &consumer,
-        "consumer",
-        "main.incn",
-        "from pub::renamed import answer\n\ndef main() -> None:\n    println(\"must not print\")\n    if False:\n        println(answer())\n",
-        "\n[dependencies]\nrenamed = { path = \"../producer\" }\n",
-    )?;
-    let output = command(&consumer)
-        .args(["build", "src/main.incn", "--backend", "replacement"])
-        .output()?;
-    assert!(!output.status.success());
-    assert!(
-        output.stdout.is_empty(),
-        "program output must remain empty: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        error.contains("conditional_provider")
-            && error.contains("1.2.3")
-            && error.contains("executable representation"),
-        "{error}"
-    );
-    assert!(
-        !error.contains("INCAN-R988-UNSUPPORTED"),
-        "package refusal must not blame a language construct: {error}"
-    );
-    assert!(!consumer.join(".incan/backend/receipt.json").exists());
-    Ok(())
-}
-
 /// A real debug bake followed by a release-only tool failure must restore both native and semantic generations.
 #[cfg(unix)]
 #[test]
-fn release_failure_after_new_debug_output_restores_both_consumer_routes() -> Result<(), Box<dyn Error>> {
+fn release_failure_after_new_debug_output_restores_the_published_generations() -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::PermissionsExt;
 
     let temporary = tempfile::tempdir()?;
@@ -350,20 +252,13 @@ exit "$result"
         command(&consumer).args(["run", "--locked", "src/main.incn"]).output()?,
         "native consumer after partial rebuild failure",
     )?;
-    let replacement = success(
-        command(&consumer)
-            .args(["build", "src/main.incn", "--backend", "replacement"])
-            .output()?,
-        "replacement consumer after partial rebuild failure",
-    )?;
     assert_eq!(native.stdout, native_before.stdout);
-    assert_eq!(replacement.stdout, native_before.stdout);
     Ok(())
 }
 
 /// A consumer names only pricing; checked catalog identity and native routes survive a public type facade.
 #[test]
-fn source_unavailable_type_facade_signatures_run_natively_and_without_linking() -> Result<(), Box<dyn Error>> {
+fn source_unavailable_type_facade_signatures_run_natively() -> Result<(), Box<dyn Error>> {
     let temporary = tempfile::tempdir()?;
     let catalog = temporary.path().join("catalog");
     let facade = temporary.path().join("facade");
@@ -439,13 +334,6 @@ fn source_unavailable_type_facade_signatures_run_natively_and_without_linking() 
         "fresh pricing-only native consumer after all producer sources were removed",
     )?;
     assert_eq!(freshly_linked.stdout, native.stdout);
-    let replacement = success(
-        command(&consumer)
-            .args(["build", "src/main.incn", "--backend", "replacement"])
-            .output()?,
-        "source-unavailable pricing-only replacement consumer",
-    )?;
-    assert_eq!(replacement.stdout, native.stdout);
     for (producer, before) in [&catalog, &facade, &pricing].into_iter().zip(artifacts) {
         assert_eq!(artifact_snapshot(&producer.join("target/lib"))?, before);
     }

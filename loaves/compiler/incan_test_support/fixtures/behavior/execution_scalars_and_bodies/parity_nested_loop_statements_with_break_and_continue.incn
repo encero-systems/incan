@@ -1,0 +1,24 @@
+# behavior: nested `loop:` statements leave through break and skip through continue (parity corpus case 18)
+# expect-stdout:
+#   6
+
+def grid(rows: int, cols: int) -> int:
+    mut cells = 0
+    mut r = 0
+    loop:
+        if r >= rows:
+            break
+        mut c = 0
+        loop:
+            if c >= cols:
+                break
+            c += 1
+            if c % 2 == 0:
+                continue
+            cells += 1
+        r += 1
+    return cells
+
+
+def main() -> None:
+    println(grid(3, 4))

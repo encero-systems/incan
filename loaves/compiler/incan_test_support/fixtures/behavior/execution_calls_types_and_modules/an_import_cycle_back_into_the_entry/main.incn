@@ -1,0 +1,15 @@
+# behavior: a helper module that imports a function back from the entry module calls it through the cycle
+# expect-stdout:
+#   42
+
+from helper import bounce
+
+
+pub def step(value: int) -> int:
+    if value == 0:
+        return 42
+    return bounce(value - 1)
+
+
+def main() -> None:
+    println(step(4))

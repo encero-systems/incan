@@ -1,0 +1,30 @@
+# behavior: a model pattern with field literals contains a match over an enum (parity corpus row replacement-body-v0-016)
+# expect-stdout:
+#   42
+
+model Pair:
+    left: int
+    right: int
+
+enum Signal:
+    Ready
+    Stop
+
+def classify(pair: Pair, signal: Signal) -> int:
+    match pair:
+        case Pair(left=40, right=2):
+            match signal:
+                case Signal.Ready:
+                    return 42
+                case Signal.Stop:
+                    return 0
+        case _:
+            return 0
+    return 0
+
+def direct_patterns() -> int:
+    return classify(Pair(left=40, right=2), Signal.Ready)
+
+
+def main() -> None:
+    println(direct_patterns())
