@@ -80,6 +80,22 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
         _ => None,
     }
 }
+/// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
+fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
+    let IncanType::Generic { base, args } = ty else {
+        return None;
+    };
+    if args.is_empty() {
+        return None;
+    }
+    match collections::from_str(base)? {
+        CollectionTypeId::FrozenList => Some(CollectionTypeId::List),
+        CollectionTypeId::FrozenSet => Some(CollectionTypeId::Set),
+        CollectionTypeId::FrozenDict => Some(CollectionTypeId::Dict),
+        _ => None,
+    }
+}
+
 /// Map a binary operator over a builtin collection to its compiler-owned helper operation, or `None` when the
 /// operator has no collection meaning.
 ///
@@ -115,7 +131,13 @@ pub(super) fn collection_helper_for_binop(
         ast::BinaryOp::In | ast::BinaryOp::NotIn => rhs_ty,
         _ => lhs_ty,
     };
-    let collection = builtin_collection_id(container_ty)?;
+    // A frozen collection answers membership exactly as its mutable counterpart does (`"beta" in NAMES` for a
+    // `const NAMES: FrozenList[str]`), so membership maps it to the same helper. No other operator does: `+` on a
+    // frozen list is not concatenation.
+    let collection = match (op, frozen_collection_counterpart(container_ty)) {
+        (ast::BinaryOp::In | ast::BinaryOp::NotIn, Some(counterpart)) => counterpart,
+        _ => builtin_collection_id(container_ty)?,
+    };
     match (op, collection) {
         (ast::BinaryOp::In, CollectionTypeId::List) => Some(bir::HelperOp::ListContains),
         (ast::BinaryOp::NotIn, CollectionTypeId::List) => Some(bir::HelperOp::ListNotContains),
