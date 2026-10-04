@@ -1,0 +1,10 @@
+# behavior: float bool remains an original call span refusal, as the legacy route runs it
+# expect-stdout:
+#   true
+
+def observe() -> bool:
+  return bool(0.5)
+
+
+def main() -> None:
+    println(observe())

@@ -1,0 +1,15 @@
+# behavior: executes plain scalar tuple collection loop
+# expect-stdout:
+#   7
+
+
+def program_result() -> int:
+  pairs = [(1, 2), (3, 4)]
+  for pair in pairs:
+    if false:
+      return 0
+  return 7
+
+
+def main() -> None:
+    println(program_result())

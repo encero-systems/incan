@@ -1,0 +1,13 @@
+# behavior: executes plain collection index projection
+# expect-stdout:
+#   1
+
+
+def program_result() -> int:
+  pairs = [(1, 2)]
+  pair = pairs[0]
+  return pair.0
+
+
+def main() -> None:
+    println(program_result())

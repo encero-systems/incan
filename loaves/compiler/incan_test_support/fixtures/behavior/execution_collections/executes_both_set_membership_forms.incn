@@ -1,0 +1,14 @@
+# behavior: executes both set membership forms
+# expect-stdout:
+#   true
+
+
+def program_result() -> bool:
+  xs = {1, 2}
+  if 3 not in xs:
+    return 1 in xs
+  return false
+
+
+def main() -> None:
+    println(program_result())

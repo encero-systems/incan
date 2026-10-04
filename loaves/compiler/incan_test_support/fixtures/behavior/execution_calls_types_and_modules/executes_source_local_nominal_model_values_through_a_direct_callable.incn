@@ -1,0 +1,19 @@
+# behavior: executes source local nominal model values through a direct callable
+# expect-stdout:
+#   42
+
+
+model Pair:
+  left: int
+  right: int = 2
+
+def score(pair: Pair) -> int:
+  return pair.left + pair.right
+
+def program_result() -> int:
+  pair = Pair(right=2, left=40)
+  return score(pair)
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,11 @@
+# behavior: typed empty set membership executes
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  values: set[int] = Set()
+  return 1 not in values
+
+
+def main() -> None:
+    println(program_result())

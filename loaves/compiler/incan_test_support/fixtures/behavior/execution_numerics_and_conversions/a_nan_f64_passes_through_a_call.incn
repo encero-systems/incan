@@ -1,0 +1,14 @@
+# behavior: a NaN f64 passed through a function is still NaN
+# expect-stdout:
+#   nan
+
+import std.math
+
+
+def identity_f64(value: f64) -> f64:
+    return value
+
+
+def main() -> None:
+    value: f64 = math.NAN
+    println(identity_f64(value))

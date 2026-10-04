@@ -1,0 +1,14 @@
+# behavior: checked source float parameters and defaults remain internal values
+# expect-stdout:
+#   3.14 1.5
+
+
+def render(value: float = 1.5) -> str:
+    return str(value)
+
+def program_result() -> str:
+    return f"{render(3.14)} {render()}"
+
+
+def main() -> None:
+    println(program_result())

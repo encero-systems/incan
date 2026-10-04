@@ -1,0 +1,6 @@
+pub class Holder:
+    value: int
+
+
+pub def bump(value: int) -> int:
+    return value + 1

@@ -1,0 +1,11 @@
+# behavior: a range passed where a list[int] parameter is declared is accepted and the call returns its result
+# pending: the checker types `range(..)` as `List[int]` and the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   42
+
+def count(values: list[int]) -> int:
+    return 42
+
+
+def main() -> None:
+    println(count(range(1, 3)))

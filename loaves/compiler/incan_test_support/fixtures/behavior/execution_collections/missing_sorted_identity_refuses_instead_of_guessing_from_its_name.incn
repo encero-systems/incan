@@ -1,0 +1,10 @@
+# behavior: missing sorted identity refuses instead of guessing from its name, as the legacy route runs it
+# expect-stdout:
+#   2
+
+def observe() -> int:
+  return len(sorted([2, 1]))
+
+
+def main() -> None:
+    println(observe())

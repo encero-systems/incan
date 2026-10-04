@@ -1,0 +1,19 @@
+# behavior: canonical sorted evaluates its operand once
+# expect-stdout:
+#   sorted operand
+#   12
+
+def marked() -> list[int]:
+  println("sorted operand")
+  return [2, 1]
+
+def observe() -> int:
+  ordered = sorted(marked())
+  mut score = 0
+  for value in ordered:
+    score = score * 10 + value
+  return score
+
+
+def main() -> None:
+    println(observe())

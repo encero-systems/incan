@@ -1,0 +1,25 @@
+# behavior: nested frames keep the checked contract, as the legacy route runs it
+# expect-stdout:
+#   before task abs
+# expect-exit: 101
+
+import std.async
+
+def generated(value: int) -> Generator[int]:
+    println("before generator abs")
+    yield abs(value)
+
+async def child(value: int) -> int:
+    println("before task abs")
+    return abs(value)
+
+async def through_generator(value: int) -> int:
+    values = generated(value).collect()
+    return values[0]
+
+async def through_task(value: int) -> int:
+    return await child(value)
+
+
+async def main() -> None:
+    println(await through_task(-9223372036854775808))

@@ -1,0 +1,15 @@
+# behavior: float parser and int cast edges match the native route
+# expect-stdout:
+#   0 9223372036854775807 -9223372036854775808 9223372036854775807 3 -3
+
+def render() -> str:
+    nan = float("NaN")
+    positive_infinity = float("inf")
+    negative_infinity = float("-inf")
+    out_of_range = float("1e9999")
+    negative_fraction = float("-3.9")
+    return f"{int(nan)} {int(positive_infinity)} {int(negative_infinity)} {int(out_of_range)} {int(3.9)} {int(negative_fraction)}"
+
+
+def main() -> None:
+    println(render())

@@ -1,0 +1,13 @@
+# behavior: a program that imports a Rust crate runs
+# expect-stdout:
+#   42
+
+import rust::serde_json
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

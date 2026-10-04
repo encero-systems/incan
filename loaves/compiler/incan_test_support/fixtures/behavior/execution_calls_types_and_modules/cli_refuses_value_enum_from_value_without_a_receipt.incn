@@ -1,0 +1,15 @@
+# behavior: cli refuses value enum from value without a receipt, as the legacy route runs it
+# expect-stdout:
+#   42
+
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+def program_result() -> int:
+  parsed = HttpStatus.from_value(404)
+  return 42
+
+
+def main() -> None:
+    println(program_result())

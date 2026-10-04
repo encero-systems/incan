@@ -1,0 +1,19 @@
+# behavior: an f32 widened to f64 or to float takes the exact binary value of the f32, not its decimal spelling
+# expect-stdout:
+#   1.2345678806304932
+#   1.2345678806304932
+
+def widen_explicit_float(value: f32) -> f64:
+    widened: f64 = value
+    return widened
+
+
+def widen_ordinary_float(value: f32) -> float:
+    widened: float = value
+    return widened
+
+
+def main() -> None:
+    value: f32 = 1.2345679
+    println(widen_explicit_float(value))
+    println(widen_ordinary_float(value))

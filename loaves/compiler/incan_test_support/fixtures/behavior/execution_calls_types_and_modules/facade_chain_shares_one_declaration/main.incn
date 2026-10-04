@@ -1,0 +1,10 @@
+# behavior: a function reached directly, re-exported through a facade and through its alias is one declaration with one result
+# expect-stdout:
+#   42
+
+from provider import compute
+from facade import compute as reexported, renamed
+
+
+def main() -> None:
+    println(compute(1) + reexported(10) + renamed(28))

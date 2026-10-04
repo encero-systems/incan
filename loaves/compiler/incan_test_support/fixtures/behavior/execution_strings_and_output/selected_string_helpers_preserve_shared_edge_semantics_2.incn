@@ -1,0 +1,10 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   héllo
+
+def result() -> str:
+    return "HÉLLO".lower()
+
+
+def main() -> None:
+    println(result())

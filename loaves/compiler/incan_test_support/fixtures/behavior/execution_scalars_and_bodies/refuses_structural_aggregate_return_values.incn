@@ -1,0 +1,11 @@
+# behavior: refuses structural aggregate return values, as the legacy route runs it
+# expect-stdout:
+#   [1]
+
+
+def program_result() -> list[int]:
+  return [1]
+
+
+def main() -> None:
+    println(program_result())

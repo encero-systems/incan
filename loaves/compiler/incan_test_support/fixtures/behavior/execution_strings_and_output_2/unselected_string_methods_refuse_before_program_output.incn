@@ -1,0 +1,12 @@
+# behavior: unselected string methods refuse before program output, as the legacy route runs it
+# expect-stdout:
+#   must not run
+#   x
+
+def result(text: str) -> str:
+    println("must not run")
+    return text.to_string()
+
+
+def main() -> None:
+    println(result("x"))

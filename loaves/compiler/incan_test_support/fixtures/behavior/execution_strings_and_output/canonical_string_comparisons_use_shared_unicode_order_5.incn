@@ -1,0 +1,10 @@
+# behavior: canonical string comparisons use shared unicode order
+# expect-stdout:
+#   false
+
+def compare(left: str, right: str) -> bool:
+    return left > right
+
+
+def main() -> None:
+    println(compare("é", "猫"))

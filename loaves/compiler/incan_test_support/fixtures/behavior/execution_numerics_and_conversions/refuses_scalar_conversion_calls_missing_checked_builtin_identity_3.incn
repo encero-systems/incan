@@ -1,0 +1,11 @@
+# behavior: refuses scalar conversion calls missing checked builtin identity, as the legacy route runs it
+# expect-stdout:
+#   42.0
+
+
+def program_result() -> float:
+  return float("42")
+
+
+def main() -> None:
+    println(program_result())

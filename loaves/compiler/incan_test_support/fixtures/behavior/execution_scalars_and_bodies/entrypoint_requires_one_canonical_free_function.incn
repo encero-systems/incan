@@ -1,0 +1,10 @@
+# behavior: entrypoint requires one canonical free function, as the legacy route runs it
+# expect-stdout:
+#   42
+
+def program_result() -> int:
+  return 42
+
+
+def main() -> None:
+    println(program_result())
