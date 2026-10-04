@@ -47,7 +47,17 @@ fn is_local_module_import(import: &incan_frontend::ast::ImportDecl) -> bool {
     let Some(first) = path.segments.first() else {
         return false;
     };
-    first.as_str() != incan_lang::lang::stdlib::STDLIB_ROOT
+    first.as_str() != incan_lang::lang::stdlib::STDLIB_ROOT && !is_this_import(import)
+}
+
+/// Whether one import is `import this`, the standard library's `std::this` (#2032).
+///
+/// Its spelling has no `std` segment, but it names no project module: importing it prints the Zen of Incan before
+/// `main` runs. Matched exactly as the emitted route detects it, a single-segment module import of
+/// [`STDLIB_THIS`](incan_lang::lang::stdlib::STDLIB_THIS), so it is held to the standard-library rule rather than
+/// admitted as a sibling module whose effect would be silently dropped.
+fn is_this_import(import: &incan_frontend::ast::ImportDecl) -> bool {
+    matches!(&import.kind, ImportKind::Module(path) if path.segments == [incan_lang::lang::stdlib::STDLIB_THIS])
 }
 
 /// Describe a Rust-interop import in terms of the boundary it crosses, when it is one.
@@ -228,6 +238,12 @@ mod tests {
 
         // A standard-library import is genuinely a construct this profile has not reached, and must not borrow an
         // interop host it never needed. The pair is what makes the distinction mean anything.
+        // `import this` has no `std` segment but is the standard library's `std::this`; admitting it as a sibling
+        // module dropped its printed Zen (#2032).
+        assert!(
+            refusal("import this\n\ndef main() -> int:\n  return 1\n").contains("import declaration"),
+            "`import this` must be refused, not admitted as a project module"
+        );
         let standard_library = refusal("import std.io\n\ndef main() -> int:\n  return 1\n");
         assert!(standard_library.contains("import declaration"), "{standard_library}");
         assert!(!standard_library.contains("interop host"), "{standard_library}");
