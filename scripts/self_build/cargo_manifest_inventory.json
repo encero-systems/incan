@@ -1773,7 +1773,7 @@
     "rust_version": null,
     "license": "Apache-2.0",
     "publish": true,
-    "description": "Rust emission from the Incan IR, the replacement backend and backend selection",
+    "description": "Rust emission from the Incan IR and backend selection",
     "resolver": null,
     "auto_discovery_off": []
    },
