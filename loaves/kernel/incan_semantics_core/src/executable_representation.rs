@@ -28,7 +28,7 @@ use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclar
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 5;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 6;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -178,7 +178,7 @@ pub enum CoverageReason {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExecutableDeclaration {
     /// Checked executable meaning of one public function or method.
-    Body(Body),
+    Body(Box<Body>),
     /// Checked source field order and canonical members for a public plain model.
     Nominal(NominalDeclaration),
     /// Checked public fieldless enum and canonical variants.
@@ -328,7 +328,7 @@ fn project_declarations(
                     admitted.insert(
                         identity.clone(),
                         AdmittedDeclaration {
-                            declaration: ExecutableDeclaration::Body(projected.body),
+                            declaration: ExecutableDeclaration::Body(Box::new(projected.body)),
                             requirements: projected.requirements,
                         },
                     );
@@ -691,7 +691,7 @@ impl<'bytes> SurfaceReader<'bytes> {
     /// Decode one public body. A type fragment is never treated as a callable.
     pub fn declaration(&self, identity: &CanonicalSymbolId) -> Result<Body, ExecutableRepresentationError> {
         match self.fragment(identity)? {
-            ExecutableDeclaration::Body(body) => Ok(body),
+            ExecutableDeclaration::Body(body) => Ok(*body),
             _ => Err(malformed(
                 "selected declaration is type context, not an executable body",
             )),
@@ -784,6 +784,7 @@ mod tests {
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             is_async: false,
+            extern_delegation: None,
         }
     }
 
@@ -1026,7 +1027,9 @@ mod tests {
         };
         *offset = 0;
         assert!(index.validate(u64::try_from(reader.payload.len())?).is_err());
-        let wrong = postcard::to_allocvec(&ExecutableDeclaration::Body(reader.declaration(&identity("beta", 2))?))?;
+        let wrong = postcard::to_allocvec(&ExecutableDeclaration::Body(Box::new(
+            reader.declaration(&identity("beta", 2))?,
+        )))?;
         assert!(
             reader
                 .index()
