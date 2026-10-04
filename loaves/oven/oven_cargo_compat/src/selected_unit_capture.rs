@@ -13,7 +13,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use oven_model::digest::canonical_json_bytes;
-use oven_rustc::rustc::substitution::RustcUnitRequest;
 use oven_rustc::rustc::{
     OVEN_SELECTED_RUST_FACET_CODEGEN_OPTIONS, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCompilerArgument,
     OvenSelectedRustFacetCompilerPaths, OvenSelectedRustFacetSourceMember, selected_graph_generated_input_digest,
@@ -145,38 +144,45 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             .parent()
             .map(|path| path.to_string_lossy().to_string())
             .ok_or_else(|| OvenLegacyCargoError::Plan("Cargo package manifest has no parent".to_string()))?;
-        let candidates = invocations.iter().enumerate().filter_map(|(index, invocation)| {
-            let identity_matches = invocation.environment.get("CARGO_MANIFEST_DIR") == Some(&expected_manifest)
-                && invocation.environment.get("CARGO_PKG_NAME") == Some(&package.name)
-                && argument_value(&invocation.arguments, "--crate-name")
-                    .is_some_and(|name| name == artifact.target.name.replace('-', "_"))
-                && invocation_source_matches(invocation, &artifact.target.src_path)
-                && artifact.profile.test == invocation.arguments.iter().any(|argument| argument == "--test")
-                && {
-                    artifact.profile.test || {
-                        let mut artifact_crate_types = artifact.target.crate_types.clone();
-                        artifact_crate_types.sort();
-                        artifact_crate_types == observed_crate_types(invocation)
-                    }
+        let expected_crate_name = artifact.target.name.replace('-', "_");
+        let mut near_mismatches = Vec::new();
+        let candidates = invocations
+            .iter()
+            .enumerate()
+            .filter_map(|(index, invocation)| {
+                let comparison = compare_artifact_invocation(
+                    invocation,
+                    artifact,
+                    &expected_manifest,
+                    &package.name,
+                    &expected_crate_name,
+                    rustc_host,
+                );
+                if comparison.same_package_and_crate && !comparison.failures.is_empty() {
+                    near_mismatches.push(format!("invocation {index} failed {}", comparison.failures.join(", ")));
                 }
-                && {
-                    let mut artifact_features = artifact.features.clone();
-                    artifact_features.sort();
-                    artifact_features.dedup();
-                    artifact_features == rustc_feature_cfgs(&invocation.arguments)
-                };
-            if !identity_matches {
-                return None;
-            }
-            let emitted = invocation_artifact_paths(invocation, artifact, rustc_host)?;
-            Some((index, invocation, emitted))
-        });
-        let candidates = candidates.collect::<Vec<_>>();
+                comparison
+                    .failures
+                    .is_empty()
+                    .then_some(comparison.emitted)
+                    .flatten()
+                    .map(|emitted| (index, invocation, emitted))
+            })
+            .collect::<Vec<_>>();
         let [(invocation_index, invocation, emitted)] = candidates.as_slice() else {
             let qualifier = if candidates.is_empty() { "no exact" } else { "ambiguous" };
+            let mismatch_detail = if candidates.is_empty() {
+                if near_mismatches.is_empty() {
+                    "; no rustc invocation named the same package and crate".to_string()
+                } else {
+                    format!("; near rustc invocation mismatches: {}", near_mismatches.join("; "))
+                }
+            } else {
+                String::new()
+            };
             return Err(OvenLegacyCargoError::Plan(format!(
-                "Cargo compiler artifact for `{}` has {qualifier} rustc invocation",
-                artifact.target.name
+                "Cargo compiler artifact for `{}` has {qualifier} rustc invocation{mismatch_detail}",
+                artifact.target.name,
             )));
         };
         if used_invocations[*invocation_index] {
@@ -810,17 +816,98 @@ fn lexically_beneath(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
 }
 
+/// Result of comparing one Cargo artifact with one traced compiler invocation.
+struct ArtifactInvocationComparison {
+    same_package_and_crate: bool,
+    failures: Vec<String>,
+    emitted: Option<Vec<PathBuf>>,
+}
+
+/// Compare every independent identity criterion so a failed exact join retains useful evidence.
+fn compare_artifact_invocation(
+    invocation: &OvenLegacyRustcInvocation,
+    artifact: &CargoCompilerArtifact,
+    expected_manifest: &str,
+    expected_package: &str,
+    expected_crate_name: &str,
+    rustc_host: &str,
+) -> ArtifactInvocationComparison {
+    let package_matches = invocation.environment.get("CARGO_PKG_NAME").map(String::as_str) == Some(expected_package);
+    let crate_matches = argument_value(&invocation.arguments, "--crate-name") == Some(expected_crate_name);
+    let mut failures = Vec::new();
+    if invocation.environment.get("CARGO_MANIFEST_DIR").map(String::as_str) != Some(expected_manifest) {
+        failures.push(format!(
+            "CARGO_MANIFEST_DIR (artifact `{expected_manifest}`, rustc `{:?}`)",
+            invocation.environment.get("CARGO_MANIFEST_DIR")
+        ));
+    }
+    if !package_matches {
+        failures.push(format!(
+            "CARGO_PKG_NAME (artifact `{expected_package}`, rustc `{:?}`)",
+            invocation.environment.get("CARGO_PKG_NAME")
+        ));
+    }
+    if !crate_matches {
+        failures.push(format!(
+            "--crate-name (artifact `{expected_crate_name}`, rustc `{:?}`)",
+            argument_value(&invocation.arguments, "--crate-name")
+        ));
+    }
+    if !invocation_source_matches(invocation, &artifact.target.src_path) {
+        failures.push(format!(
+            "source path (artifact `{}`, rustc `{:?}`)",
+            artifact.target.src_path.display(),
+            invocation_source_path(invocation)
+        ));
+    }
+    if artifact.profile.test != invocation.arguments.iter().any(|argument| argument == "--test") {
+        failures.push("test profile".to_string());
+    }
+    let mut artifact_crate_types = artifact.target.crate_types.clone();
+    artifact_crate_types.sort();
+    if !artifact.profile.test && artifact_crate_types != observed_crate_types(invocation) {
+        failures.push(format!(
+            "crate types (artifact `{:?}`, rustc `{:?}`)",
+            artifact_crate_types,
+            observed_crate_types(invocation)
+        ));
+    }
+    let mut artifact_features = artifact.features.clone();
+    artifact_features.sort();
+    artifact_features.dedup();
+    if artifact_features != rustc_feature_cfgs(&invocation.arguments) {
+        failures.push(format!(
+            "feature cfgs (artifact `{:?}`, rustc `{:?}`)",
+            artifact_features,
+            rustc_feature_cfgs(&invocation.arguments)
+        ));
+    }
+    let emitted = invocation_artifact_paths(invocation, artifact, rustc_host);
+    if emitted.is_none() {
+        failures.push(format!(
+            "artifact output paths (Cargo `{:?}`, rustc out-dir `{:?}`)",
+            artifact.filenames,
+            argument_value(&invocation.arguments, "--out-dir")
+        ));
+    }
+    ArtifactInvocationComparison {
+        same_package_and_crate: package_matches && crate_matches,
+        failures,
+        emitted,
+    }
+}
+
 /// Derive and verify every direct rustc output that backs Cargo's reported artifact aliases.
 fn invocation_artifact_paths(
     invocation: &OvenLegacyRustcInvocation,
     artifact: &CargoCompilerArtifact,
     rustc_host: &str,
 ) -> Option<Vec<PathBuf>> {
-    let Ok(request) = RustcUnitRequest::parse(&invocation.arguments, |name| {
-        invocation.environment.get(name).map(std::ffi::OsString::from)
-    }) else {
-        return None;
-    };
+    let crate_name = argument_value(&invocation.arguments, "--crate-name")?;
+    let out_dir = Path::new(argument_value(&invocation.arguments, "--out-dir")?);
+    // rustc's default is an empty extra filename. Newer Cargo versions rely on that default for unsuffixed
+    // build-script executables instead of spelling `-C extra-filename=` explicitly.
+    let extra_filename = codegen_argument_value(&invocation.arguments, "extra-filename").unwrap_or_default();
     let emits = comma_separated_argument_values(&invocation.arguments, "--emit");
     let emitted_kind = |kind: &str| {
         emits.is_empty()
@@ -828,20 +915,20 @@ fn invocation_artifact_paths(
                 .iter()
                 .any(|emit| emit.split_once('=').map_or(emit.as_str(), |value| value.0) == kind)
     };
-    let target = request.target.as_deref().unwrap_or(rustc_host);
+    let target = argument_value(&invocation.arguments, "--target").unwrap_or(rustc_host);
     let mut emitted = Vec::new();
     for crate_type in observed_crate_types(invocation) {
-        let stem = format!("{}{}", request.crate_name, request.extra_filename);
+        let stem = format!("{crate_name}{extra_filename}");
         match crate_type.as_str() {
             "lib" | "rlib" => {
                 if emitted_kind("link") {
-                    emitted.push(request.out_dir.join(format!("lib{stem}.rlib")));
+                    emitted.push(out_dir.join(format!("lib{stem}.rlib")));
                 }
                 if emitted_kind("metadata") {
-                    emitted.push(request.out_dir.join(format!("lib{stem}.rmeta")));
+                    emitted.push(out_dir.join(format!("lib{stem}.rmeta")));
                 }
             }
-            "bin" if emitted_kind("link") => emitted.push(request.out_dir.join(format!(
+            "bin" if emitted_kind("link") => emitted.push(out_dir.join(format!(
                 "{stem}{}",
                 if target.contains("windows") { ".exe" } else { "" }
             ))),
@@ -853,7 +940,7 @@ fn invocation_artifact_paths(
                 } else {
                     ("lib", ".so")
                 };
-                emitted.push(request.out_dir.join(format!("{prefix}{stem}{suffix}")));
+                emitted.push(out_dir.join(format!("{prefix}{stem}{suffix}")));
             }
             _ => return None,
         }
@@ -885,16 +972,17 @@ fn observed_crate_types(invocation: &OvenLegacyRustcInvocation) -> Vec<String> {
 
 /// Resolve rustc's source argument against its recorded working directory before matching Cargo's absolute source.
 fn invocation_source_matches(invocation: &OvenLegacyRustcInvocation, source: &Path) -> bool {
-    let Ok(request) = RustcUnitRequest::parse(&invocation.arguments, |name| {
-        invocation.environment.get(name).map(std::ffi::OsString::from)
-    }) else {
-        return false;
-    };
+    invocation_source_path(invocation).as_deref() == Some(source)
+}
+
+/// Resolve the traced source argument against the compiler invocation's recorded working directory.
+fn invocation_source_path(invocation: &OvenLegacyRustcInvocation) -> Option<PathBuf> {
+    let source = Path::new(super::rustc_trace::rustc_positional_source(&invocation.arguments)?);
     let working_directory = Path::new(&invocation.working_directory);
-    if request.source.is_absolute() {
-        request.source == source
+    if source.is_absolute() {
+        Some(source.to_path_buf())
     } else {
-        working_directory.join(request.source) == source
+        Some(working_directory.join(source))
     }
 }
 
@@ -941,6 +1029,24 @@ fn argument_value<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
                 .iter()
                 .find_map(|argument| argument.strip_prefix(&format!("{name}=")))
         })
+}
+
+/// Read the final separate or joined value of one rustc code-generation option.
+fn codegen_argument_value<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
+    arguments
+        .iter()
+        .enumerate()
+        .filter_map(|(index, argument)| {
+            let value = if argument == "-C" || argument == "--codegen" {
+                arguments.get(index + 1)?.as_str()
+            } else if let Some(value) = argument.strip_prefix("-C") {
+                value
+            } else {
+                argument.strip_prefix("--codegen=")?
+            };
+            value.strip_prefix(name)?.strip_prefix('=')
+        })
+        .next_back()
 }
 
 /// Read every paired, comma-separated or equals-form value for one repeatable rustc option.
@@ -2696,6 +2802,67 @@ mod tests {
         assert!(invocation_artifact_paths(&invocation, &artifact, "fixture-host").is_some());
         fs::write(&artifact.filenames[0], b"tampered alias bytes")?;
         assert!(invocation_artifact_paths(&invocation, &artifact, "fixture-host").is_none());
+        Ok(())
+    }
+
+    /// Cargo may rely on rustc's empty extra-filename default for an unsuffixed build-script executable.
+    #[test]
+    fn stable_trace_matches_build_script_without_explicit_extra_filename() -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let package_root = scratch.path().join("registry/scripted-1.2.3");
+        let out_dir = scratch.path().join("target/debug/build/scripted-sealed/out");
+        fs::create_dir_all(&package_root)?;
+        fs::create_dir_all(&out_dir)?;
+        fs::write(package_root.join("build.rs"), b"fn main() {}\n")?;
+        let artifact_path = out_dir.join("build_script_build");
+        fs::write(&artifact_path, b"build script executable")?;
+        let artifact = serde_json::from_value::<CargoCompilerArtifact>(serde_json::json!({
+            "reason": "compiler-artifact",
+            "package_id": "registry+https://example.invalid/index#scripted@1.2.3",
+            "target": {
+                "name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"],
+                "src_path": package_root.join("build.rs")
+            },
+            "features": [], "filenames": [artifact_path], "profile": {"test": false}
+        }))?;
+        let invocation = OvenLegacyRustcInvocation {
+            reason: "incan-rustc-invocation".to_string(),
+            rustc: "/verified/rustc".to_string(),
+            working_directory: package_root.to_string_lossy().into_owned(),
+            arguments: vec![
+                "--crate-name".to_string(),
+                "build_script_build".to_string(),
+                "--crate-type".to_string(),
+                "bin".to_string(),
+                "--emit".to_string(),
+                "link".to_string(),
+                "--out-dir".to_string(),
+                out_dir.to_string_lossy().into_owned(),
+                "build.rs".to_string(),
+            ],
+            environment: BTreeMap::from([
+                (
+                    "CARGO_MANIFEST_DIR".to_string(),
+                    package_root.to_string_lossy().into_owned(),
+                ),
+                ("CARGO_PKG_NAME".to_string(), "scripted".to_string()),
+                ("CARGO_PKG_VERSION".to_string(), "1.2.3".to_string()),
+            ]),
+            stdin_digest: None,
+            stdin_probe_output: None,
+        };
+        let expected_manifest = package_root.to_string_lossy();
+        let comparison = compare_artifact_invocation(
+            &invocation,
+            &artifact,
+            &expected_manifest,
+            "scripted",
+            "build_script_build",
+            "fixture-host",
+        );
+        assert!(comparison.same_package_and_crate);
+        assert!(comparison.failures.is_empty(), "{:?}", comparison.failures);
+        assert_eq!(comparison.emitted, Some(vec![artifact_path]));
         Ok(())
     }
 

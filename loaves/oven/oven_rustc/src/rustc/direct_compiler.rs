@@ -1141,7 +1141,8 @@ pub(crate) fn freeze_direct_rustc_environment(
     Some(compile_environment.clone())
 }
 
-#[cfg(all(test, unix))]
+// These fixtures execute a publisher, which only a host with the confinement primitive can do.
+#[cfg(all(test, target_os = "macos"))]
 mod publisher_link_tests {
     use std::error::Error;
     use std::fs;
