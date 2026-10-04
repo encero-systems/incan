@@ -152,9 +152,10 @@ The inner loop on real Body IR, with an optimized driver and the front end in-pr
 
 A layer that owns rustc's types cannot be what the lowering imports. As a `[rust-dependencies]` crate it does not bake without the driver-only `rustc_private` permission, so the checker never sees its API. A plain-data plan crate bakes, typechecks and runs like any other Rust dependency (spike probes `rustc_seam_check` and `mir_plan_check`).
 
+**A published Loaf ships its bodies.** A Loaf's executable representation (RFC 123) carries the Body IR of its public declarations, generic ones included. A consumer on the direct route lowers a generic body from there and instantiates it in its own compilation, so a published Loaf does not depend on the rustc that compiled it. The representation's coverage therefore grows to generic public bodies, which it refuses today.
+
 **Open, to settle before this record is accepted:**
 
-- **Generic bodies of published Loaves.** How do they reach a consumer on the direct route: through the rustc metadata of the Loaf's compiled unit, through RFC 123's executable representation, or both?
 - **Async.** How do Incan `async` bodies lower: as MIR coroutines the front end builds, or by another route?
 
 ## Non-goals
