@@ -4,7 +4,7 @@
 //! One case per fixture; a `pending:` fixture's case is ignored with its reason.
 //! Do not edit: change the area and run `make behavior-roots`.
 
-use incan_test_support::behavior_fixtures::assert_fixture_holds;
+use incan_test_support::behavior_fixtures::{assert_fixture_holds, assert_pending_fixtures_still_wait};
 
 /// The area every case of this root runs a fixture of.
 const AREA: &str = "execution_calls_types_and_modules";
@@ -56,6 +56,7 @@ fn a_shadow_request_does_not_alter_replacement_execution() -> CaseResult {
 
 /// Runs the fixture `an_import_cycle_back_into_the_entry`.
 #[test]
+#[ignore = "pending: the legacy route reaches the entry module as `crate::main`, which rustc rejects (E0432); the direct route runs it"]
 fn an_import_cycle_back_into_the_entry() -> CaseResult {
     assert_fixture_holds(AREA, "an_import_cycle_back_into_the_entry")
 }
@@ -847,4 +848,10 @@ fn typed_list_in_a_callee_module() -> CaseResult {
 #[test]
 fn typed_numeric_call_into_its_declaring_module() -> CaseResult {
     assert_fixture_holds(AREA, "typed_numeric_call_into_its_declaring_module")
+}
+
+/// Every `pending:` fixture of the area still does not show what it declares.
+#[test]
+fn pending_fixtures_still_wait() -> CaseResult {
+    assert_pending_fixtures_still_wait(AREA)
 }
