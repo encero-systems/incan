@@ -116,6 +116,14 @@ cargo test -p incan_test_support --lib behavior_fixtures                        
 
 A standalone run outside `make` needs the runtime environment `make test` exports (`INCAN_INTERNAL_SDK_PROVIDER_STORE`, `INCAN_GENERATED_CARGO_TARGET_DIR`, `INCAN_SDK_INVENTORY`, `INCAN_STDLIB`; see `TEST_RUNTIME_ENV` in the `Makefile`), or its first `incan check` compiles a cold SDK provider store under the checkout's `target/`. That is how every CLI root behaves, not something the fixtures add. The `cli_dependencies/` area needs one thing more standalone: `cargo test` hands the test binary the active toolchain's Cargo in `CARGO`, and the standalone bake of a consumer project with dependencies then fails with "Cargo compiler artifact ... has no exact rustc invocation" unless `CARGO` names the pinned publisher toolchain (`INCAN_TEST_PUBLISHER_TOOLCHAIN` in the `Makefile`). Run that root's test binary with `CARGO` pointed at that toolchain's cargo, or run the root through `make test-one`, where no project bake happens.
 
+### Running on another route
+
+`INCAN_BEHAVIOR_ROUTE` selects the route a run fixture executes on. Unset or `legacy` runs `incan run`; `replacement` runs `incan build src/main.incn --backend replacement`, which executes `main` from Body IR and needs no project bake. Any other value is an error rather than a silent fallback to legacy. On the replacement route an `INCAN-R…` refusal on stderr is a failure of the fixture even when the exit code matches, because a refused program exits 1 like a `main` that returns `Err`. Refused-program fixtures go through `incan check` on every route.
+
+```bash
+INCAN_BEHAVIOR_ROUTE=replacement cargo test -p incan-cli --test behavior_cli_tests --no-fail-fast
+```
+
 ## Adding a fixture
 
 Fixtures are read as examples of the language, so they follow the style guide (`workspaces/docs-site/docs/language/reference/code_style.md`): 4-space indentation, compound assignment (`total += item`, not `total = total + item`), f-strings rather than string concatenation. A fixture keeps a longhand form only where that form is its subject, and its `# behavior:` line says so.

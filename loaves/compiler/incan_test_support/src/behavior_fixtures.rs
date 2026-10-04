@@ -846,11 +846,11 @@ pub fn materialize(fixture: &BehaviorFixture, project_root: &Path) -> Result<(),
 /// package Loaf), with no Cargo authority: outside the compiler suite the bake publishes into the fixture project's
 /// own standalone Oven home (a provider baked into its own home would be invisible to the consumer's run), and under
 /// the suite any Cargo the bake reaches for is the scheduler's guard, so a provider that needs Cargo fails its
-/// fixture loudly. The project itself is then baked outside the suite only (a fresh project has no Loaf authority
-/// until then; under the suite the sealed standard-library Loaf serves), and run through `incan run`, which is the
-/// legacy route today and whatever slice 7 makes it tomorrow. A bake that fails is a failure of the fixture, with
-/// the bake's output, like any other mismatch. The scratch project is deleted when this returns, pass or fail, so
-/// the stderr the report carries is all a failure leaves behind.
+/// fixture loudly. On the legacy route the project itself is then baked outside the suite only (a fresh project has
+/// no Loaf authority until then; under the suite the sealed standard-library Loaf serves), and run through `incan
+/// run`. The replacement route executes `main` from Body IR and needs no project bake; see [`Route`]. A bake that fails
+/// is a failure of the fixture, with the bake's output, like any other mismatch. The scratch project is deleted when
+/// this returns, pass or fail, so the stderr the report carries is all a failure leaves behind.
 pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Outcome, Box<dyn Error>> {
     let project = tempfile::Builder::new()
         .prefix(&format!("behavior-{}-", fixture.name))
@@ -886,16 +886,80 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
                     return Ok(outcome(Err(detail)));
                 }
             }
-            // ---- The project itself, outside the suite only ----
-            if !crate::oven_compiler_suite_is_active() {
+            // ---- The project itself, outside the suite and on the legacy route only ----
+            let route = Route::selected()?;
+            if route == Route::Legacy && !crate::oven_compiler_suite_is_active() {
                 let bake = run_explicit_oven_bake(project.path())?;
                 if let Err(detail) = bake_result("the project", &bake) {
                     return Ok(outcome(Err(detail)));
                 }
             }
-            let run = run_incan(project.path(), &["run", ENTRYPOINT])?;
+            let run = run_incan(project.path(), route.run_args())?;
+            if let Some(refusal) = route.refusal(&run) {
+                return Ok(outcome(Err(refusal)));
+            }
             Ok(outcome(compare_run(stdout, *exit_code, &run)))
         }
+    }
+}
+
+/// The variable that selects which route a run fixture is executed on; unset or `legacy` keeps `incan run`.
+pub const ROUTE_ENV: &str = "INCAN_BEHAVIOR_ROUTE";
+
+/// The route a run fixture is executed on.
+///
+/// The fixtures name no route, so the same header is the acceptance bar for every route that runs Incan programs.
+/// The legacy route is the default and what the compiler suite runs. `INCAN_BEHAVIOR_ROUTE=replacement` runs the same
+/// fixtures through the replacement backend (`incan build --backend replacement`, which executes `main` from Body IR),
+/// which is how the slice-7 cutover measures parity with legacy before the default flips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// `incan run`: generated Rust, built and run.
+    Legacy,
+    /// `incan build --backend replacement`: `main` executed from Body IR.
+    Replacement,
+}
+
+impl Route {
+    /// The route [`ROUTE_ENV`] selects; an unrecognized value is an error rather than a silent fallback to legacy,
+    /// because a parity run that quietly measured legacy would report parity it never checked.
+    pub fn selected() -> Result<Route, Box<dyn Error>> {
+        Self::from_env_value(std::env::var(ROUTE_ENV).ok().as_deref())
+    }
+
+    /// [`Route::selected`] over an already-read value (`None` or empty = unset).
+    fn from_env_value(value: Option<&str>) -> Result<Route, Box<dyn Error>> {
+        match value.unwrap_or("") {
+            "" | "legacy" => Ok(Route::Legacy),
+            "replacement" => Ok(Route::Replacement),
+            other => Err(format!("{ROUTE_ENV} names `{other}`; expected `legacy` or `replacement`").into()),
+        }
+    }
+
+    /// The `incan` arguments that run the fixture's entrypoint on this route.
+    fn run_args(self) -> &'static [&'static str] {
+        match self {
+            Route::Legacy => &["run", ENTRYPOINT],
+            Route::Replacement => &["build", ENTRYPOINT, "--backend", "replacement"],
+        }
+    }
+
+    /// A route refusal in the run's stderr, laid out for the failure report.
+    ///
+    /// The replacement backend refuses input it cannot execute with an `INCAN-R…` diagnostic and a non-zero exit, after
+    /// printing whatever `main` printed before the refused construct. Compared as an ordinary run, a refusal with exit
+    /// 1 would pass a fixture that expects a failing `main`, so a refusal is always a failure of the fixture on
+    /// this route.
+    fn refusal(self, run: &Output) -> Option<String> {
+        if self == Route::Legacy {
+            return None;
+        }
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        let refusal = stderr.lines().find(|line| line.starts_with("INCAN-R"))?;
+        Some(format!(
+            "the {self:?} route refused the program: {refusal}\nstdout:\n{}",
+            indent_block(&String::from_utf8_lossy(&run.stdout))
+        ))
     }
 }
 
@@ -1357,6 +1421,43 @@ mod tests {
 
     /// An explicit scratch root that does not exist is refused rather than created; an unset or empty one falls
     /// back to the process temporary directory.
+    #[test]
+    fn route_selection_defaults_to_legacy_and_refuses_an_unknown_route() -> TestResult {
+        assert_eq!(Route::from_env_value(None)?, Route::Legacy);
+        assert_eq!(Route::from_env_value(Some(""))?, Route::Legacy);
+        assert_eq!(Route::from_env_value(Some("legacy"))?, Route::Legacy);
+        assert_eq!(Route::from_env_value(Some("replacement"))?, Route::Replacement);
+        let refused = Route::from_env_value(Some("native"))
+            .err()
+            .ok_or("an unknown route must be refused")?;
+        assert!(refused.to_string().contains("`native`"), "{refused}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_replacement_refusal_fails_the_fixture_even_when_the_exit_code_matches() -> TestResult {
+        let refused = Output {
+            status: exit_status(1),
+            stdout: b"before failure\n".to_vec(),
+            stderr: b"INCAN-R988-UNSUPPORTED: replacement backend does not support import declaration\n".to_vec(),
+        };
+        let detail = Route::Replacement
+            .refusal(&refused)
+            .ok_or("an `INCAN-R` line must be read as a refusal")?;
+        assert!(detail.contains("import declaration"), "{detail}");
+        assert!(
+            Route::Legacy.refusal(&refused).is_none(),
+            "legacy reports no route refusals"
+        );
+        let failed_main = Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: b"Error: failed on purpose\n".to_vec(),
+        };
+        assert!(Route::Replacement.refusal(&failed_main).is_none());
+        Ok(())
+    }
+
     #[test]
     fn scratch_root_requires_an_explicit_root_to_exist() -> TestResult {
         let tmp = tempfile::tempdir()?;
