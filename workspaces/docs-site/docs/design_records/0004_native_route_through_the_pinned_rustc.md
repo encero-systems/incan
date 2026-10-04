@@ -154,9 +154,12 @@ A layer that owns rustc's types cannot be what the lowering imports. As a `[rust
 
 **A published Loaf ships its governed bodies.** A Loaf's executable representation (RFC 123) carries the checked Body IR of its public declarations under the publisher's canonical identities. The manifest selects it, its digest is verified before anything is decoded, and only a public identity it declares covered is usable. A consumer on the direct route never runs anything else: an uncovered, inconsistent or unverifiable body is refused. This includes public functions with type parameters. The consumer lowers such a function's governed body from the representation and instantiates it at its own types in its own compilation, so a published Loaf does not depend on the rustc that compiled it. The representation's coverage therefore grows to public functions with type parameters, which it refuses today.
 
-**Open, to settle before this record is accepted:**
+**Async lowers to MIR coroutines that rustc transforms.** An `async def` enters rustc as an `async fn` declaration, so rustc gives it a coroutine `DefId` and kind the way a closure skeleton gets its own. The lowering writes the coroutine body as MIR:
 
-- **Async.** How do Incan `async` bodies lower: as MIR coroutines the front end builds, or by another route?
+- `await x` becomes `IntoFuture::into_future(x)` followed by a loop that polls the pinned future and suspends with `Yield` while it is `Pending`, as rustc's own desugaring does.
+- `race for` polls its arms in source order.
+
+rustc's coroutine transform then builds the state machine: its layout, the locals saved across suspension points and their drops. The lowering never builds a state machine itself, because that would reimplement rustc's transform. Running async bodies synchronously or through runtime callbacks would change what `async`, `race` and cancellation mean. The spike has not yet built a coroutine, so the async behavior fixtures prove this decision when the direct route reaches async.
 
 ## Non-goals
 
