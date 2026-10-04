@@ -107,3 +107,44 @@ fn bake_refuses_missing_and_nonrepresentable_caller_exports_by_name() -> Result<
     }
     Ok(())
 }
+
+/// A caller import and a source change inside a module both participate in selection and source receipt identity.
+#[test]
+fn caller_modules_are_selected_and_bound_into_the_source_receipt() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let fixture = support::repo_root().join("loaves/compiler/incan_driver/tests/fixtures/rust_caller_project");
+    let project = temporary.path().join("project");
+    copy_tree(&fixture, &project)?;
+    let consumer = project.join("consumer");
+    fs::write(
+        consumer.join("src/main.rs"),
+        "mod boundary;\nfn main() { println!(\"{}\", boundary::label()); }\n",
+    )?;
+    let module = consumer.join("src/boundary.rs");
+    fs::write(
+        &module,
+        "use typed_boundary::caller::incan::make_plan;\npub fn label() -> String { make_plan().label }\n",
+    )?;
+    let home = temporary.path().join("home");
+    assert_success(&bake(&consumer, &home)?, "split caller bake");
+    let receipt_path = consumer.join("target/rust/receipts/typed-boundary-consumer-debug.json");
+    let first = read_receipt(&receipt_path)?;
+    let binary = consumer.join("target/rust/debug/typed-boundary-consumer");
+    assert_eq!(
+        String::from_utf8(Command::new(&binary).output()?.stdout)?,
+        "bootstrap\n"
+    );
+    fs::write(
+        &module,
+        "use typed_boundary::caller::incan::make_plan;\npub fn label() -> String { format!(\"module: {}\", make_plan().label) }\n",
+    )?;
+    assert_success(&bake(&consumer, &home)?, "changed caller module bake");
+    let second = read_receipt(&receipt_path)?;
+    assert_eq!(first.build_unit_identity, second.build_unit_identity);
+    assert_ne!(first.identity, second.identity);
+    assert_eq!(
+        String::from_utf8(Command::new(&binary).output()?.stdout)?,
+        "module: bootstrap\n"
+    );
+    Ok(())
+}
