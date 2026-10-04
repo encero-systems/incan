@@ -1,0 +1,10 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   hi
+
+def result() -> str:
+    return " hi ".strip()
+
+
+def main() -> None:
+    println(result())

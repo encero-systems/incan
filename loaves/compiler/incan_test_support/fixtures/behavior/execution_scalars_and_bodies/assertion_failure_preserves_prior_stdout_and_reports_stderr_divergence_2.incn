@@ -1,0 +1,13 @@
+# behavior: assertion failure preserves prior stdout and reports stderr divergence, as the legacy route runs it
+# expect-stdout:
+#   before assertion
+# expect-exit: 101
+
+def guarded(a: int) -> int:
+    println("before assertion")
+    assert a > 0
+    return a
+
+
+def main() -> None:
+    println(guarded(0))

@@ -1,0 +1,8 @@
+# behavior: success keeps program streams separate from metadata
+# pending: the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   program output
+
+def main() -> int:
+  println("program output")
+  return 42

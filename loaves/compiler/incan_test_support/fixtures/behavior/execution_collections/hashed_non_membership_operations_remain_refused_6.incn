@@ -1,0 +1,6 @@
+# behavior: hashed non membership operations remain refused, as the legacy route runs it
+# expect-stdout:
+#   {1: 2}
+
+def main() -> None:
+  println({1: 2})

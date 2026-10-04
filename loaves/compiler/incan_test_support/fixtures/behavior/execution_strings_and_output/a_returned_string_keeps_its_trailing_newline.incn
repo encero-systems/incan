@@ -1,0 +1,11 @@
+# behavior: a str returned unchanged keeps its trailing newline
+# expect-stdout:
+#   [line
+#   ]
+
+def echo(text: str) -> str:
+    return text
+
+
+def main() -> None:
+    println(f"[{echo("line\n")}]")

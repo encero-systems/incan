@@ -1,0 +1,15 @@
+# behavior: malformed isinstance in a reachable callee refuses before entrypoint effects, as the legacy route runs it
+# expect-stdout:
+#   must not run
+#   true
+
+def broken(value: int | str) -> bool:
+  return isinstance(value, int)
+
+def probe() -> bool:
+  println("must not run")
+  return broken(1)
+
+
+def main() -> None:
+    println(probe())

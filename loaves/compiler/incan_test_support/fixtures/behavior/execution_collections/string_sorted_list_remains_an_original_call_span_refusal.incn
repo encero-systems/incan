@@ -1,0 +1,10 @@
+# behavior: string sorted list remains an original call span refusal, as the legacy route runs it
+# expect-stdout:
+#   2
+
+def observe() -> int:
+  return len(sorted(["b", "a"]))
+
+
+def main() -> None:
+    println(observe())

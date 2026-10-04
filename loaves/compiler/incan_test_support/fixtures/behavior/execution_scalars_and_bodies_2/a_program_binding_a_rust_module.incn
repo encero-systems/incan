@@ -1,0 +1,13 @@
+# behavior: a program that binds a rust.module runs
+# expect-stdout:
+#   42
+
+rust.module("incan_std_testing")
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

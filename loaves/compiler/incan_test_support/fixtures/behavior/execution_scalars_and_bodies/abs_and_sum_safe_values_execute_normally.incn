@@ -1,0 +1,10 @@
+# behavior: abs and sum safe values execute normally
+# expect-stdout:
+#   15
+
+def observe(value: int) -> int:
+    return abs(value) + sum([1, 2, 3])
+
+
+def main() -> None:
+    println(observe(-9))

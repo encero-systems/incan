@@ -1,0 +1,17 @@
+# behavior: executes source local tuple list index and mutation through a direct callable
+# expect-stdout:
+#   42
+
+
+def score(mut values: list[int]) -> int:
+  values[0] = 40
+  pair = (values[0], 2)
+  return pair.0 + pair.1
+
+def program_result() -> int:
+  mut values = [1, 2]
+  return score(values)
+
+
+def main() -> None:
+    println(program_result())

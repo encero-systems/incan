@@ -1,0 +1,12 @@
+# behavior: keeps an unconsumed generator expression deferred
+# expect-stdout:
+#   7
+
+
+def program_result() -> int:
+  unused = (value // 0 for value in range(1, 2))
+  return 7
+
+
+def main() -> None:
+    println(program_result())

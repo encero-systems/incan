@@ -1,0 +1,14 @@
+# behavior: keeps same spelled source scalar callables
+# expect-stdout:
+#   99.0
+
+
+def float(value: int) -> float:
+  return 99.0
+
+def program_result() -> str:
+  return str(float(42))
+
+
+def main() -> None:
+    println(program_result())

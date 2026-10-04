@@ -1,0 +1,10 @@
+# behavior: missing bool identity refuses instead of guessing from its name, as the legacy route runs it
+# expect-stdout:
+#   true
+
+def observe() -> bool:
+  return bool(1)
+
+
+def main() -> None:
+    println(observe())

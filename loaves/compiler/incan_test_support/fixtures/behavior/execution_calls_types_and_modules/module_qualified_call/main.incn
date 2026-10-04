@@ -1,0 +1,9 @@
+# behavior: a module-qualified call through `import helper` returns its result
+# expect-stdout:
+#   42
+
+import helper
+
+
+def main() -> None:
+    println(helper.bump(41))

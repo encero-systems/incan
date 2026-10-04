@@ -1,0 +1,14 @@
+# behavior: a named function passed to a Callable parameter is called through it
+# expect-stdout:
+#   49
+
+def square(x: int) -> int:
+    return x * x
+
+
+def apply(f: Callable[int, int], v: int) -> int:
+    return f(v)
+
+
+def main() -> None:
+    println(apply(square, 7))

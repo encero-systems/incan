@@ -1,0 +1,12 @@
+# behavior: cli json report projects canonical execution evidence
+# expect-stdout:
+#   answer follows
+#   42
+
+def program_result() -> int:
+  println("answer follows")
+  return 42
+
+
+def main() -> None:
+    println(program_result())

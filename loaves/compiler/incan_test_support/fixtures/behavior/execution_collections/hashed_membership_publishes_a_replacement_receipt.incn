@@ -1,0 +1,12 @@
+# behavior: hashed membership publishes a replacement receipt
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  values = {1, 2}
+  mapping = {1: 20}
+  return 1 in values and 3 not in values and 1 in mapping and 20 not in mapping
+
+
+def main() -> None:
+    println(program_result())

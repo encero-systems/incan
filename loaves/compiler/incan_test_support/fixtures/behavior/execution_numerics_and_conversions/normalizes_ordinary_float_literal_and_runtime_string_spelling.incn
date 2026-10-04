@@ -1,0 +1,11 @@
+# behavior: normalizes ordinary float literal and runtime string spelling
+# expect-stdout:
+#   1000.5 125.0 1000.5 12500000000.0
+
+
+def program_result() -> str:
+  return f"{str(1_000.50)} {str(1.25e2)} {float('1_000.50')} {float('1.25e1_0')}"
+
+
+def main() -> None:
+    println(program_result())

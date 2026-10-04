@@ -1,0 +1,12 @@
+# behavior: string len output is delivered exactly once
+# expect-stdout:
+#   é
+#   1
+
+def length(value: str) -> int:
+    println(value)
+    return len(value)
+
+
+def main() -> None:
+    println(length("é"))

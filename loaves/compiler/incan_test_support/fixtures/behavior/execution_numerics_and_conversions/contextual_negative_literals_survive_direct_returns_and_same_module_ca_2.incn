@@ -1,0 +1,26 @@
+# behavior: contextual negative literals survive direct returns and same module calls
+# expect-stdout:
+#   -170141183460469231731687303715884105728
+
+
+def accept_i128(value: i128) -> i128:
+  return value
+
+def direct_minimum() -> i128:
+  return -170141183460469231731687303715884105728
+
+def called_minimum() -> i128:
+  return accept_i128(-170141183460469231731687303715884105728)
+
+def direct_f32() -> f32:
+  return -1
+
+def accept_f64(value: f64) -> f64:
+  return value
+
+def called_f64() -> f64:
+  return accept_f64(-2)
+
+
+def main() -> None:
+    println(called_minimum())

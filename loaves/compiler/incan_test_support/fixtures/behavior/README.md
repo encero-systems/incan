@@ -76,6 +76,7 @@ def main() -> None:
 | `# expect-stdout-contains:` | Lines that must each appear as a whole line of stdout, in any order. At least one line; each line once. Cannot be combined with `expect-stdout`. |
 | `# expect-exit: <n>` | The exit code the run must end with, `0` to `255`. Default `0`. |
 | `# expect-diagnostic: <CODE>` | The program must be refused at check time with this diagnostic code (`INCAN-T0001`); it is never run. Repeatable, each code once. Cannot be combined with any run expectation. |
+| `# pending: <reason>` | The fixture does not hold yet, and why: the change it waits for. Optional, at most once, with a reason. A pending fixture is run like any other; a run that does not show what it declares is reported as pending and does not fail its area, and a run that does show it fails the area until the line is removed. |
 
 A directive is `#`, one space, the key, a colon: `#retires:` is accepted, `#  retires:` (two spaces) is a block item, `#\tretires:` and `# retires :` are refused. The `retires:` value is the inventory's key with no whitespace anywhere: `<path>.rs::<fn>`, the function part module-qualified (`tests::inner::name`) only when the bare name repeats in the file. The inventory collector reads the same line with the same rule, so what one reader accepts the other does too.
 

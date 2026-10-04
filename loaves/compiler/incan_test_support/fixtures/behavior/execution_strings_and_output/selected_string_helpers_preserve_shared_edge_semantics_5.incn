@@ -1,0 +1,10 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   -é-
+
+def result() -> str:
+    return "é".replace("", "-")
+
+
+def main() -> None:
+    println(result())

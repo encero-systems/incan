@@ -1,0 +1,10 @@
+# behavior: canonical string membership uses the selected contains helper
+# expect-stdout:
+#   false
+
+def membership(needle: str, haystack: str) -> bool:
+    return needle in haystack
+
+
+def main() -> None:
+    println(membership("héllo", "éll"))

@@ -1,0 +1,13 @@
+# behavior: cli reports scalar json without legacy artifacts
+# expect-stdout:
+#   9223372036854775807|"line\né\t\\\""|null
+
+def program_result() -> str:
+  maximum = json_stringify(9223372036854775807)
+  escaped = json_stringify("line\né\t\\\"")
+  absent = json_stringify(None)
+  return f"{maximum}|{escaped}|{absent}"
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,13 @@
+# behavior: the checker refuses malformed enumerate arity without a successful execution
+# expect-diagnostic: INCAN-T0001
+
+
+def malformed_enumerate_arity() -> int:
+  values = [1]
+  for pair in enumerate(values, 10):
+    println(pair.0)
+  return 0
+
+
+def main() -> None:
+    println(malformed_enumerate_arity())

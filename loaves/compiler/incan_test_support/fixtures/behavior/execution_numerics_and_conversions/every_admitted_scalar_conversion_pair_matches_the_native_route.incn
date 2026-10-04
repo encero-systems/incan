@@ -1,0 +1,19 @@
+# behavior: every admitted scalar conversion pair matches the native route
+# expect-stdout:
+#   42 true false text 3.14 1 0 1000 3 10.0 3.14 1000.5
+
+
+def convert() -> str:
+    integer = int(42)
+    true_int = int(true)
+    false_int = int(false)
+    parsed = int("1_000")
+    truncated = int(3.9)
+    widened = float(10)
+    float_identity = float(3.14)
+    float_parsed = float("1_000.50")
+    return f"{str(integer)} {str(true)} {str(false)} {str('text')} {str(float_identity)} {true_int} {false_int} {parsed} {truncated} {widened} {float_identity} {float_parsed}"
+
+
+def main() -> None:
+    println(convert())
