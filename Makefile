@@ -659,8 +659,8 @@ test-oven-focused:
 
 .PHONY: test-oven-report-retention
 test-oven-report-retention:
-	@python3 scripts/test_oven_transcript_retention.py
-	@$(TOOLS)/cargo_narrow.sh $(CURDIR) test -p oven-cli --lib partition_reconciliation
+	@CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked -p oven-cli --lib -- \
+		commands::oven::suite_retention commands::oven::partition_reconciliation
 
 .PHONY: test-oven-pr-regressions
 test-oven-pr-regressions: test-oven-report-retention
