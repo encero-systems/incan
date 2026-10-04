@@ -90,6 +90,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ty,
                 span: hir_span(param.span),
                 default: self.lower_callable_default(param.node.default.as_ref(), closure_scope),
+                mutable: param.node.is_mut,
             });
         }
 
@@ -297,6 +298,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ty,
                 span: source_param.map_or(hir_span_value, |param| hir_span(param.param_span)),
                 default,
+                // A partial's residual parameters forward to its target; the target declaration owns the `mut` marker.
+                mutable: false,
             });
             call_arg_locals.push(local);
             saved_bindings.push((param_name.clone(), previous));

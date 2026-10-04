@@ -73,10 +73,14 @@ pub(super) fn lower_function_body(
             ty,
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
+            mutable: param.node.is_mut,
         });
     }
 
     let mut stmts = Vec::new();
+    builder
+        .borrowed_parameters
+        .extend(params.iter().filter(|param| param.mutable).map(|param| param.local));
     builder.lower_block_into(&function.body, root_scope, &mut stmts);
     builder.insert_scope_drops(&mut stmts, root_scope);
 
@@ -175,6 +179,7 @@ pub(super) fn lower_method_body(
             ty: receiver_ty.clone(),
             span: hir_span(decl_span),
             default: bir::CallableParamDefault::Required,
+            mutable,
         });
     }
 
@@ -204,10 +209,17 @@ pub(super) fn lower_method_body(
             ty,
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
+            mutable: param.node.is_mut,
         });
     }
 
     let mut stmts = Vec::new();
+    builder.borrowed_parameters.extend(
+        params
+            .iter()
+            .filter(|param| param.mutable && param.name != "self")
+            .map(|param| param.local),
+    );
     builder.lower_block_into(body_stmts, root_scope, &mut stmts);
     builder.insert_scope_drops(&mut stmts, root_scope);
 
