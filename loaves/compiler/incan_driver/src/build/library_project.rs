@@ -11,7 +11,7 @@ use sha2::Sha256;
 
 use crate::backend::selection::digest_output;
 use crate::backend::{IrCodegen, ProjectGenerator};
-use crate::build::backend_selection::{finalize_backend_receipt, select_and_resolve_backend};
+use crate::build::backend_selection::{finalize_backend_receipt, select_build_backend};
 use crate::build::caller_owned::{append_oven_interop_execution_build_inputs, oven_caller_owned_libraries};
 use crate::build::library_exports::{
     LibraryReexportResolver, collect_library_rust_abi, collect_library_rust_abi_query_paths, module_key,
@@ -39,10 +39,9 @@ use crate::build::provider_metadata::{
 };
 use crate::build::rust_extern::{collect_rust_extern_contexts, multi_file_output_identity, rust_extern_report_paths};
 use crate::build::{
-    BackendSelectionOptions, CompiledProviderMetadataInputs, OvenDirectRustcPlanPreparation, OvenPreparedLibrary,
-    OvenPreparedLibraryProfile, OvenProjectBakeAuthorityContext, OvenProjectDependencySurface, OvenProjectPlanMode,
-    OvenToolchainMaterialization, PreparedLibraryProject, manifest_project_report, packaged_provider_candidates,
-    record_timing, source_file_report,
+    CompiledProviderMetadataInputs, OvenDirectRustcPlanPreparation, OvenPreparedLibrary, OvenPreparedLibraryProfile,
+    OvenProjectBakeAuthorityContext, OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization,
+    PreparedLibraryProject, manifest_project_report, packaged_provider_candidates, record_timing, source_file_report,
 };
 use crate::build_report::{
     BuildOvenReport, BuildReportDraft, BuildReportMode, cargo_report, dependencies_report, generated_project_report,
@@ -136,7 +135,6 @@ pub fn prepare_library_project(
     include_interop_execution: bool,
     oven_plan_mode: OvenProjectPlanMode,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
-    backend_options: &BackendSelectionOptions,
 ) -> CliResult<PreparedLibraryProject> {
     let prepare_start = Instant::now();
     let mut timings_ms = BTreeMap::new();
@@ -733,7 +731,7 @@ pub fn prepare_library_project(
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
     // ---- Backend selection (#986) — declared before codegen, refused visibly if unavailable ----
-    let (backend_selection, backend_executed) = select_and_resolve_backend(backend_options, &modules)?;
+    let backend_selection = select_build_backend(&modules);
 
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(true);
@@ -945,7 +943,7 @@ pub fn prepare_library_project(
                 "failed to publish inferred implementation requirements: {error}"
             ))
         })?;
-    let backend_receipt = finalize_backend_receipt(&backend_selection, backend_executed, backend_output_identity)?;
+    let backend_receipt = finalize_backend_receipt(&backend_selection, backend_output_identity)?;
     // Not persisted here — see the matching comment in `prepare_oven_project`: this function also runs for
     // internal/dependency callers, and real compilation still follows below. The receipt is published once by
     // `build_library_report` after the whole build succeeds (#986).

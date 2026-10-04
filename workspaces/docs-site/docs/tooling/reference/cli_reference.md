@@ -88,7 +88,7 @@ An `oven.lock` whose only stale part is its dependency fingerprint is reported w
 | Diagnostics | `incan check --format json` | `2` |
 | Diagnostic explanation | `incan explain --format json` | `2` |
 | Build report | `incan build --report json` | `2` |
-| Backend-selection receipt | `incan inspect backend-selection --format json` | `2` |
+| Backend-selection receipt | `incan inspect backend-selection --format json` | `3` |
 | Generated Rust | `incan inspect rust --format json` | `2` |
 | Codegraph | `incan inspect codegraph --format jsonl` | `8`, on the header record |
 | SDK components and providers | `incan inspect providers --format json` | `1` |
@@ -389,7 +389,7 @@ The gate makes Cargo, Protocol Buffer generators, cmake, archivers, C++ compiler
 incan inspect backend-selection --receipt PATH [--format text|json]
 ```
 
-Verifies and prints a backend-selection execution receipt, such as the `.incan/backend/receipt.json` a successful build writes. A receipt whose recorded content identity or embedded selection identity does not match its content is refused. `--format text` (the default) prints the selected and executed backend, the selection reason, the fallback policy and outcome, the shadow-comparison state, the compiler version and both identities; `--format json` prints the receipt. See [Backend selection & execution receipts](../explanation/backend_selection_receipts.md).
+Verifies and prints a backend-selection execution receipt, such as the `.incan/backend/receipt.json` a successful build writes. A receipt with another schema version, a recorded content identity or embedded selection identity that does not match its content, or a backend revision other than this compiler's is refused. `--format text` (the default) prints the selected and executed backend, the backend revision, the compiler version and both identities; `--format json` prints the receipt. See [Backend selection & execution receipts](../explanation/backend_selection_receipts.md).
 
 ### `incan inspect oven`
 

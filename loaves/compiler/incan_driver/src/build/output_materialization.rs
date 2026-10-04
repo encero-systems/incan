@@ -7,9 +7,7 @@ use std::{fs, io};
 
 use sha2::Sha256;
 
-use crate::backend::selection::{
-    BackendExecutionReceipt, BackendKind, FallbackOutcome, FallbackPolicy, ShadowComparisonState,
-};
+use crate::backend::selection::BackendExecutionReceipt;
 use crate::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
 use crate::build::library_exports::{resolve_library_project_root, validate_library_entrypoint};
 use crate::build::library_outputs::library_publication_receipts;
@@ -26,10 +24,9 @@ use crate::build::source_authority::{
     baked_project_lock_dependencies_fingerprint, digest_baked_project_source_authority,
 };
 use crate::build::{
-    BackendSelectionOptions, CompletedOutputPolicy, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH,
-    OVEN_PROJECT_OUTPUT_PROJECTION_SCHEMA_VERSION, OVEN_PROJECT_OUTPUT_REPORT_SCHEMA_VERSION, OvenBakeProjectTarget,
-    OvenProjectOutputProjection, OvenProjectOutputProjectionFile, OvenStoredProjectOutput, elapsed_ms,
-    library_publication, manifest_project_report,
+    CompletedOutputPolicy, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH, OVEN_PROJECT_OUTPUT_PROJECTION_SCHEMA_VERSION,
+    OVEN_PROJECT_OUTPUT_REPORT_SCHEMA_VERSION, OvenBakeProjectTarget, OvenProjectOutputProjection,
+    OvenProjectOutputProjectionFile, OvenStoredProjectOutput, elapsed_ms, library_publication, manifest_project_report,
 };
 use crate::build_report::{
     BUILD_REPORT_SCHEMA_VERSION, BuildOvenReport, BuildReportDraft, BuildReportMode, artifact_report,
@@ -52,22 +49,13 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Return the verified implicit-default backend receipt sealed into one completed project output.
 ///
-/// A completed output is reusable only when its own immutable payload proves that an explicit bake selected and
-/// executed the ordinary legacy default. Older, malformed, or differently selected outputs deliberately return
-/// `None` so the caller takes the normal source-aware path rather than treating cached provenance as current.
+/// A completed output is reusable only when its own immutable payload carries a receipt that verifies under this
+/// compiler: the current schema, a consistent identity and the backend revision this compiler runs. An older,
+/// malformed or differently produced output deliberately returns `None` so the caller takes the normal source-aware
+/// path rather than treating cached provenance as current.
 pub fn completed_output_default_backend_receipt(output: &OvenStoredProjectOutput) -> Option<BackendExecutionReceipt> {
     let receipt = &output.payload.backend_receipt;
-    if receipt.verify_identity().is_err()
-        || receipt.selection.selected_backend != BackendKind::Legacy
-        || receipt.selection.selection_reason != crate::backend::selection::SelectionReason::Default
-        || receipt.selection.fallback_policy != FallbackPolicy::Refuse
-        || receipt.selection.shadow_requested
-        || receipt.executed_backend != BackendKind::Legacy
-        || receipt.fallback_outcome != FallbackOutcome::NotNeeded
-        || receipt.shadow_comparison != ShadowComparisonState::NotRequested
-    {
-        return None;
-    }
+    receipt.verify_identity().ok()?;
     Some(receipt.clone())
 }
 
@@ -592,13 +580,9 @@ pub fn warn_for_completed_output_lock_fingerprint_drift<'a>(
 pub fn select_default_library_project_outputs(
     file_path: Option<&str>,
     policy: &CompletedOutputPolicy<'_>,
-    backend_options: &BackendSelectionOptions,
 ) -> CliResult<Option<Vec<OvenStoredProjectOutput>>> {
     policy.reject_cargo_feature_controls("library builds")?;
-    if policy.package_features != &FeatureSelection::default()
-        || policy.sdk_profile.is_some()
-        || !backend_options.allows_completed_output_reuse()
-    {
+    if policy.package_features != &FeatureSelection::default() || policy.sdk_profile.is_some() {
         return Ok(None);
     }
     let project_root = resolve_library_project_root(file_path)?;
@@ -867,9 +851,7 @@ mod tests {
     use std::path::Path;
     use std::time::Instant;
 
-    use crate::backend::selection::{
-        BackendExecutionReceipt, BackendKind, FallbackPolicy, ShadowComparisonState, finalize_receipt, select_backend,
-    };
+    use crate::backend::selection::{BackendExecutionReceipt, BackendKind, finalize_receipt, select_backend};
     use crate::build::backend_selection::default_backend_receipt_path;
     use crate::build::output_selection::{
         baked_project_owner_identity, make_project_output_report_portable, restore_project_output_report_paths,
@@ -1142,16 +1124,8 @@ mod tests {
             }],
             package_loaf_store_relative_path: Some("target/lib/oven/loafs".to_string()),
             backend_receipt: finalize_receipt(
-                &select_backend(
-                    BackendKind::Legacy,
-                    false,
-                    false,
-                    "sha256:fixture-library-source",
-                    FallbackPolicy::Refuse,
-                ),
-                BackendKind::Legacy,
+                &select_backend(BackendKind::Legacy, "sha256:fixture-library-source"),
                 "sha256:fixture-library-output",
-                ShadowComparisonState::NotRequested,
                 diagnostics::DIAGNOSTIC_SCHEMA_VERSION,
             )?,
             build_report: None,

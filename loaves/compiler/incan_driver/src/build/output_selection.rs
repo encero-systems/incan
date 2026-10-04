@@ -735,9 +735,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    use crate::backend::selection::{
-        BackendKind, FallbackPolicy, ShadowComparisonState, finalize_receipt, select_backend,
-    };
+    use crate::backend::selection::{BackendKind, finalize_receipt, select_backend};
     use crate::build::output_materialization::{
         materialize_project_output, select_current_sealed_project_output, verify_stored_project_output_native,
     };
@@ -829,16 +827,8 @@ mod tests {
             required_project_loafs: Vec::new(),
             package_loaf_store_relative_path: None,
             backend_receipt: finalize_receipt(
-                &select_backend(
-                    BackendKind::Legacy,
-                    false,
-                    false,
-                    "sha256:fixture-source",
-                    FallbackPolicy::Refuse,
-                ),
-                BackendKind::Legacy,
+                &select_backend(BackendKind::Legacy, "sha256:fixture-source"),
                 "sha256:fixture-output",
-                ShadowComparisonState::NotRequested,
                 diagnostics::DIAGNOSTIC_SCHEMA_VERSION,
             )?,
             build_report: None,

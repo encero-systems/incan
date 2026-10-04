@@ -43,7 +43,7 @@ use crate::build::source_authority::{
     baked_project_lock_dependencies_fingerprint, canonical_baked_project_lock_path, project_bake_receipt_path,
 };
 use crate::build::{
-    BackendSelectionOptions, BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent,
+    BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent,
     OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest,
     OvenPackagedLibraryLoafProfile, OvenPreparedLibrary, OvenPreparedProject, OvenProjectBakeAuthorityContext,
     OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenProjectOutputBakeRequest,
@@ -354,7 +354,7 @@ pub fn select_default_executable_project_output(
     output_dir: Option<&String>,
     options: &BuildCommandOptions,
 ) -> CliResult<Option<(PathBuf, OvenStoredProjectOutput, BackendExecutionReceipt)>> {
-    if output_dir.is_some() || !options.backend.allows_completed_output_reuse() {
+    if output_dir.is_some() {
         return Ok(None);
     }
     let completed_output_policy = CompletedOutputPolicy {
@@ -621,7 +621,6 @@ pub fn bake_oven_project_targets(
                         false,
                         OvenProjectPlanMode::ExplicitBake,
                         Some(&mut authority_context),
-                        &BackendSelectionOptions::default(),
                     )?;
                     #[cfg(feature = "rust_inspect")]
                     if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {
@@ -839,7 +838,6 @@ pub fn bake_oven_project_targets(
                             profile,
                             OvenProjectPlanMode::ExplicitBake,
                             Some(&mut authority_context),
-                            &BackendSelectionOptions::default(),
                         )?;
                         #[cfg(feature = "rust_inspect")]
                         if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {

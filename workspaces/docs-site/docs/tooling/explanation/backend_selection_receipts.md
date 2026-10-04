@@ -8,17 +8,17 @@ This is a different axis from Oven's own receipt, described in [Oven Alpha](oven
 
 ## The two records
 
-**`BackendSelection`** is a versioned, content-identified record of what was decided *before* execution: the selected backend, its implementation revision, the compatibility profile it declares, a content identity of the source being compiled, and why that backend was selected. It is built by `select_backend` before code generation starts.
+**`BackendSelection`** is a versioned, content-identified record of what was decided *before* execution: the selected backend, its implementation revision, and a content identity of the source being compiled. It is built by `select_backend` before code generation starts.
 
-**`BackendExecutionReceipt`** is a versioned, content-identified record of what happened *after* execution: the backend that ran, the diagnostic-contract version in force, and a content identity of the produced output. It embeds the `BackendSelection` it is bound to.
+**`BackendExecutionReceipt`** is a versioned, content-identified record of what happened *after* execution: the backend that ran, the diagnostic-contract version in force, and a content identity of the produced output. It embeds the `BackendSelection` it is bound to, and the backend that ran is always the one selected: there is no other route to fall back to.
 
 Both are plain data with no I/O, and both carry a content-derived `sha256:` identity checked by `verify_identity()`, the same pattern Oven's receipt uses: a later stage that holds only a serialized copy does not have to re-derive trust from the fields.
 
-The receipt schema still has fields for a fallback outcome and a shadow comparison. With one route there is nothing to fall back to and nothing to compare against, so every build records `fallback_outcome: "not_needed"` and `shadow_comparison: "not_requested"`. Those fields leave the schema when the receipt is collapsed to name only the route that built the output.
+The schema is version 3. Version 2 also recorded a selection reason, a compatibility profile, a fallback policy and outcome and a shadow-comparison state; those existed only while a second, partial backend could be requested, and they left with it.
 
 ## Why every build records a selection
 
-Selecting the default backend with no flags still produces an explicit `selection_reason: "default"` record rather than an implicit choice. A completed-output reuse is eligible only when its immutable Loaf already carries and verifies that same default receipt; the build republishes the verified receipt after materialization instead of inventing a new execution record. A reader of `.incan/backend/receipt.json` can therefore always tell which backend produced the output beside it, including after a cache hit.
+A build never asks for a backend, yet it still writes the record rather than leaving the choice implicit. A completed-output reuse is eligible only when its immutable Loaf carries a receipt that verifies under the running compiler: the current schema, a consistent identity and the backend revision this compiler runs. The build then republishes that receipt after materialization instead of inventing a new execution record. An output whose receipt does not verify, such as one sealed under schema 2, is rebuilt. A reader of `.incan/backend/receipt.json` can therefore always tell which backend produced the output beside it, including after a cache hit.
 
 ## Reading a receipt
 

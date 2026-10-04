@@ -9,7 +9,7 @@ use std::{env, fs};
 
 use crate::backend::selection::digest_output;
 use crate::backend::{IrCodegen, ProjectGenerator};
-use crate::build::backend_selection::{finalize_backend_receipt, select_and_resolve_backend};
+use crate::build::backend_selection::{finalize_backend_receipt, select_build_backend};
 use crate::build::bake::discover_oven_bake_project_targets;
 use crate::build::caller_owned::{append_oven_interop_execution_build_inputs, oven_caller_owned_libraries};
 use crate::build::library_exports::resolve_library_project_root;
@@ -30,10 +30,9 @@ use crate::build::provider_compilation::{
 use crate::build::rust_extern::multi_file_output_identity;
 use crate::build::source_authority::{interop_bootstrap_receipt_path, prepared_oven_receipt_path};
 use crate::build::{
-    BackendSelectionOptions, OvenBakeProjectTarget, OvenDirectRustcPlanPreparation, OvenPreparedProject,
-    OvenProjectBakeAuthorityContext, OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization,
-    manifest_project_report, oven_executable_entrypoint_evidence_key, packaged_provider_candidates, record_timing,
-    source_file_report,
+    OvenBakeProjectTarget, OvenDirectRustcPlanPreparation, OvenPreparedProject, OvenProjectBakeAuthorityContext,
+    OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization, manifest_project_report,
+    oven_executable_entrypoint_evidence_key, packaged_provider_candidates, record_timing, source_file_report,
 };
 use crate::build_report::{
     BuildOvenReport, BuildReportDraft, BuildReportMode, dependencies_report, incan_dependencies_report, interop_report,
@@ -127,7 +126,6 @@ pub fn prepare_oven_project(
     profile: &str,
     oven_plan_mode: OvenProjectPlanMode,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
-    backend_options: &BackendSelectionOptions,
 ) -> CliResult<OvenPreparedProject> {
     if cargo_no_default_features || cargo_all_features || !cargo_features.is_empty() {
         return Err(CliError::failure(
@@ -161,7 +159,7 @@ pub fn prepare_oven_project(
     record_timing(&mut prepare_timings, "prepare_session_and_modules", lap);
     lap = Instant::now();
     // ---- Backend selection (#986) — declared before codegen, refused visibly if unavailable ----
-    let (backend_selection, backend_executed) = select_and_resolve_backend(backend_options, &modules)?;
+    let backend_selection = select_build_backend(&modules);
     let dep_modules = &modules[..modules.len() - 1];
     let project_root = manifest
         .as_ref()
@@ -522,9 +520,9 @@ pub fn prepare_oven_project(
     };
     record_timing(&mut prepare_timings, "prepare_codegen_and_generate", lap);
     lap = Instant::now();
-    let backend_receipt = finalize_backend_receipt(&backend_selection, backend_executed, backend_output_identity)?;
+    let backend_receipt = finalize_backend_receipt(&backend_selection, backend_output_identity)?;
     // Not persisted here: `prepare_oven_project` runs for internal/dependency callers too (see
-    // `BackendSelectionOptions::default()` call sites), and real compilation (the Oven plan selection and rustc bake
+    // `prepare_oven_project` call sites), and real compilation (the Oven plan selection and rustc bake
     // below) can still fail after this point. The receipt is instead published by the top-level
     // `build_file_report`/`build_library_report` entry points, once and only once the whole build has actually
     // succeeded (#986).
@@ -850,7 +848,6 @@ pub fn prepare_oven_interop_bootstrap(
         "debug",
         OvenProjectPlanMode::InteropBootstrap,
         None,
-        &BackendSelectionOptions::default(),
     )?;
     if prepared.receipt.intent.target != target {
         return Err(CliError::failure(format!(
