@@ -42,20 +42,20 @@
       <td>Manifest-declared package needs; no build-script execution.</td>
       <td>Every dependency in the corpus bakes from its manifest alone, byte-equivalent to its Cargo build.</td>
     </tr>
-    <tr data-v06-slice-target="slice-07-oven-cli-delivery">
-      <td><button type="button" class="inc-v06-slice-toggle">7. Oven CLI delivery</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">1 complete</span><span class="inc-v06-status inc-v06-status--open">19 open</span></div></td>
+    <tr data-v06-slice-target="slice-07-replacement-route-parity-cutover">
+      <td><button type="button" class="inc-v06-slice-toggle">7. Replacement-route parity and cutover</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">9 complete</span><span class="inc-v06-status inc-v06-status--open">17 open</span></div></td>
+      <td>Incan as a second front end to the pinned rustc at HIR, driven by Oven.</td>
+      <td>Every parity corpus case is green on the native lane against the emitted-Rust route, or explicitly migrated.</td>
+    </tr>
+    <tr data-v06-slice-target="slice-08-oven-cli-delivery">
+      <td><button type="button" class="inc-v06-slice-toggle">8. Oven CLI delivery</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">1 complete</span><span class="inc-v06-status inc-v06-status--open">19 open</span></div></td>
       <td>Shared Oven planning for build and bake.</td>
       <td>One plan and receipt model; neither CLI gains a competing planner.</td>
     </tr>
-    <tr data-v06-slice-target="slice-08-first-class-inspectability">
-      <td><button type="button" class="inc-v06-slice-toggle">8. First-class inspectability</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">1 complete</span><span class="inc-v06-status inc-v06-status--open">12 open</span></div></td>
+    <tr data-v06-slice-target="slice-09-first-class-inspectability">
+      <td><button type="button" class="inc-v06-slice-toggle">9. First-class inspectability</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">1 complete</span><span class="inc-v06-status inc-v06-status--open">12 open</span></div></td>
       <td>Shared compiler, package, artifact, and Rust/Oven inspection facts.</td>
       <td>CLI, LSP, Architect, MCP, and Rust inspection agree on identity and provenance.</td>
-    </tr>
-    <tr data-v06-slice-target="slice-09-canonical-source-meaning">
-      <td><button type="button" class="inc-v06-slice-toggle">9. Canonical source meaning</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">8 complete</span><span class="inc-v06-status inc-v06-status--open">0 open</span></div></td>
-      <td>One source identity across compiler, tools, and backend facts.</td>
-      <td>Aliases, imports, locals, members, and binders resolve consistently.</td>
     </tr>
     <tr data-v06-slice-target="slice-10-native-windows">
       <td><button type="button" class="inc-v06-slice-toggle">10. Native Windows support</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">11 complete</span><span class="inc-v06-status inc-v06-status--open">11 open</span></div></td>
@@ -724,8 +724,105 @@ flowchart LR
 
 </details>
 
-<details id="slice-07-oven-cli-delivery" class="inc-v06-slice" markdown="1">
-<summary>7. Oven CLI delivery</summary>
+<details id="slice-07-replacement-route-parity-cutover" class="inc-v06-slice" markdown="1">
+<summary>7. Replacement-route parity and cutover</summary>
+
+**Exit evidence:** no Rust source is produced at any point in building a program or the toolchain; Oven builds both and Cargo is invoked nowhere on a developer machine; every parity corpus case is green on the native lane against the emitted-Rust route, or explicitly migrated, with receipts.
+
+```mermaid
+flowchart LR
+  i225["#225<br/>adopt session-owned semantic facts on b…"]
+  i429["#429<br/>Oven-managed pinned Rust host toolchain…"]
+  i654["#654<br/>remove Rust-source backend and generate…"]
+  i655["#655<br/>v0.6 backend compatibility report and m…"]
+  i975["#975<br/>Oven: Cargo-free Incan/Rust toolchain a…"]
+  i1008["#1008<br/>adopt the loaf.toml envelope for Oven i…"]
+  i1012["#1012<br/>RFC 119: Oven-native Rust build facets …"]
+  i1035["#1035<br/>RFC 119 typed proc-macro providers unde…"]
+  i1037["#1037<br/>RFC 119 native Rust facets and direct-r…"]
+  i1040["#1040<br/>RFC 119 Rust roles, IDE projection, Car…"]
+  i1224["#1224<br/>replace nominal Rust interop fallbacks …"]
+  i1297["#1297<br/>freeze CLI-to-compiler coupling with a …"]
+  i1332["#1332<br/>widen the source-observable comparison …"]
+  i1337["#1337<br/>Incan compiles natively at HIR through …"]
+  i1631["#1631<br/>retire dormant Cargo executor and lock …"]
+  s1675["Slice 7<br/>#1675"]
+  i1698["#1698<br/>incan builds incan: the toolchain works…"]
+  i1978["#1978<br/>bug - Rust interop types a concrete gen…"]
+  i2022["#2022<br/>bug - Body IR copies an argument passed…"]
+  i2023["#2023<br/>bug - Body IR runs a @rust.extern funct…"]
+  i2025["#2025<br/>bug - Body IR records a function's trai…"]
+  i2032["#2032<br/>bug - the replacement backend drops the…"]
+  i2035["#2035<br/>bug - Body IR refuses every call to a t…"]
+  i2037["#2037<br/>bug - Body IR cannot construct a varian…"]
+  i2039["#2039<br/>bug - Body IR cannot represent a functi…"]
+  i2042["#2042<br/>bug - a field read through a Self-typed…"]
+  s1675 -- owns --> i225
+  i975 -- owns --> i429
+  s1675 -- owns --> i654
+  s1675 -- owns --> i655
+  s1675 -- owns --> i975
+  i975 -- owns --> i1008
+  i975 -- owns --> i1012
+  i1012 -- owns --> i1035
+  i1012 -- owns --> i1037
+  i1012 -- owns --> i1040
+  s1675 -- owns --> i1224
+  s1675 -- owns --> i1297
+  s1675 -- owns --> i1332
+  s1675 -- owns --> i1337
+  s1675 -- owns --> i1631
+  s1675 -- owns --> i1698
+  s1675 -- owns --> i1978
+  i1337 -- owns --> i2022
+  i1337 -- owns --> i2023
+  i1337 -- owns --> i2025
+  s1675 -- owns --> i2032
+  i1337 -- owns --> i2035
+  i1337 -- owns --> i2037
+  i1337 -- owns --> i2039
+  i1337 -- owns --> i2042
+  i655 -. blocks .-> i654
+  i1332 -. blocks .-> i654
+  i1337 -. blocks .-> i654
+  i975 -. blocks .-> i654
+  i1037 -. blocks .-> i654
+  i654 -. blocks .-> i1698
+  classDef incv06complete fill:#0b2724,stroke:#66d9a3,color:#e4ebf2,stroke-width:1.7px
+  class i429,i2022,i2023,i2025,i2032,i2035,i2037,i2039,i2042 incv06complete
+  click i225 href "https://github.com/encero-systems/incan/issues/225" "Open #225 on GitHub"
+  click i429 href "https://github.com/encero-systems/incan/issues/429" "Open #429 on GitHub"
+  click i654 href "https://github.com/encero-systems/incan/issues/654" "Open #654 on GitHub"
+  click i655 href "https://github.com/encero-systems/incan/issues/655" "Open #655 on GitHub"
+  click i975 href "https://github.com/encero-systems/incan/issues/975" "Open #975 on GitHub"
+  click i1008 href "https://github.com/encero-systems/incan/issues/1008" "Open #1008 on GitHub"
+  click i1012 href "https://github.com/encero-systems/incan/issues/1012" "Open #1012 on GitHub"
+  click i1035 href "https://github.com/encero-systems/incan/issues/1035" "Open #1035 on GitHub"
+  click i1037 href "https://github.com/encero-systems/incan/issues/1037" "Open #1037 on GitHub"
+  click i1040 href "https://github.com/encero-systems/incan/issues/1040" "Open #1040 on GitHub"
+  click i1224 href "https://github.com/encero-systems/incan/issues/1224" "Open #1224 on GitHub"
+  click i1297 href "https://github.com/encero-systems/incan/issues/1297" "Open #1297 on GitHub"
+  click i1332 href "https://github.com/encero-systems/incan/issues/1332" "Open #1332 on GitHub"
+  click i1337 href "https://github.com/encero-systems/incan/issues/1337" "Open #1337 on GitHub"
+  click i1631 href "https://github.com/encero-systems/incan/issues/1631" "Open #1631 on GitHub"
+  click s1675 href "https://github.com/encero-systems/incan/issues/1675" "Open #1675 on GitHub"
+  click i1698 href "https://github.com/encero-systems/incan/issues/1698" "Open #1698 on GitHub"
+  click i1978 href "https://github.com/encero-systems/incan/issues/1978" "Open #1978 on GitHub"
+  click i2022 href "https://github.com/encero-systems/incan/issues/2022" "Open #2022 on GitHub"
+  click i2023 href "https://github.com/encero-systems/incan/issues/2023" "Open #2023 on GitHub"
+  click i2025 href "https://github.com/encero-systems/incan/issues/2025" "Open #2025 on GitHub"
+  click i2032 href "https://github.com/encero-systems/incan/issues/2032" "Open #2032 on GitHub"
+  click i2035 href "https://github.com/encero-systems/incan/issues/2035" "Open #2035 on GitHub"
+  click i2037 href "https://github.com/encero-systems/incan/issues/2037" "Open #2037 on GitHub"
+  click i2039 href "https://github.com/encero-systems/incan/issues/2039" "Open #2039 on GitHub"
+  click i2042 href "https://github.com/encero-systems/incan/issues/2042" "Open #2042 on GitHub"
+```
+[Open Slice 7 in GitHub](https://github.com/encero-systems/incan/issues/1675)
+
+</details>
+
+<details id="slice-08-oven-cli-delivery" class="inc-v06-slice" markdown="1">
+<summary>8. Oven CLI delivery</summary>
 
 **Exit evidence:** one installation, two non-competing CLIs, one Loaf authority, and one plan/receipt model.
 
@@ -742,7 +839,7 @@ flowchart LR
   i1031["#1031<br/>package-derived vocab helper resolution…"]
   i1032["#1032<br/>package-derived vocab contracts, InQL m…"]
   i1033["#1033<br/>RFC 107 complete Type[T] semantics and …"]
-  s1142["Slice 7<br/>#1142"]
+  s1142["Slice 8<br/>#1142"]
   i1243["#1243<br/>revisit the single-arm `if let` restric…"]
   i1291["#1291<br/>complete the residual direct language/r…"]
   i1371["#1371<br/>let comparison operators return their d…"]
@@ -794,12 +891,12 @@ flowchart LR
   click i1969 href "https://github.com/encero-systems/incan/issues/1969" "Open #1969 on GitHub"
   click i1972 href "https://github.com/encero-systems/incan/issues/1972" "Open #1972 on GitHub"
 ```
-[Open Slice 7 in GitHub](https://github.com/encero-systems/incan/issues/1142)
+[Open Slice 8 in GitHub](https://github.com/encero-systems/incan/issues/1142)
 
 </details>
 
-<details id="slice-08-first-class-inspectability" class="inc-v06-slice" markdown="1">
-<summary>8. First-class inspectability</summary>
+<details id="slice-09-first-class-inspectability" class="inc-v06-slice" markdown="1">
+<summary>9. First-class inspectability</summary>
 
 **Exit evidence:** CLI, LSP, Architect, MCP, and Rust inspection agree on identity, range, provenance, and stale-state semantics.
 
@@ -813,7 +910,7 @@ flowchart LR
   i777["#777<br/>RFC 106 Rust/Incan build and interop gr…"]
   i1019["#1019<br/>RFC 106 full graph/context conformance …"]
   i1100["#1100<br/>unify CLI and LSP Rust inspection sourc…"]
-  s1143["Slice 8<br/>#1143"]
+  s1143["Slice 9<br/>#1143"]
   i1201["#1201<br/>vocab-surface diagnostics and completio…"]
   i1346["#1346<br/>persist, log, and index the semantic la…"]
   i1416["#1416<br/>bug - inspect_codegraph identity test i…"]
@@ -851,47 +948,7 @@ flowchart LR
   click i1416 href "https://github.com/encero-systems/incan/issues/1416" "Open #1416 on GitHub"
   click i1500 href "https://github.com/encero-systems/incan/issues/1500" "Open #1500 on GitHub"
 ```
-[Open Slice 8 in GitHub](https://github.com/encero-systems/incan/issues/1143)
-
-</details>
-
-<details id="slice-09-canonical-source-meaning" class="inc-v06-slice" markdown="1">
-<summary>9. Canonical source meaning</summary>
-
-**Exit evidence:** aliases, imports, re-exports, locals, members, and generic binders resolve to one identity across compiler, LSP, graph, and backend facts.
-
-```mermaid
-flowchart LR
-  i1042["#1042<br/>RFC 120: canonical source symbol identity"]
-  i1072["#1072<br/>bug - plain assignment inside a nested …"]
-  i1116["#1116<br/>bug - builtin function name shadowing i…"]
-  i1117["#1117<br/>bug - dead code after an unconditional …"]
-  i1132["#1132<br/>bug - statement-level tuple unpack of a…"]
-  s1139["Slice 9<br/>#1139"]
-  i1168["#1168<br/>bump generated projects to Rust edition…"]
-  i1174["#1174<br/>tighten RFC 120 so the emitted-name pro…"]
-  i1210["#1210<br/>establish canonical callable-target fac…"]
-  s1139 -- owns --> i1042
-  s1139 -- owns --> i1072
-  s1139 -- owns --> i1116
-  s1139 -- owns --> i1117
-  s1139 -- owns --> i1132
-  s1139 -- owns --> i1174
-  i1042 -- owns --> i1210
-  i1168 -. blocks .-> i1174
-  classDef incv06complete fill:#0b2724,stroke:#66d9a3,color:#e4ebf2,stroke-width:1.7px
-  class i1042,i1072,i1116,i1117,i1132,s1139,i1174,i1210 incv06complete
-  click i1042 href "https://github.com/encero-systems/incan/issues/1042" "Open #1042 on GitHub"
-  click i1072 href "https://github.com/encero-systems/incan/issues/1072" "Open #1072 on GitHub"
-  click i1116 href "https://github.com/encero-systems/incan/issues/1116" "Open #1116 on GitHub"
-  click i1117 href "https://github.com/encero-systems/incan/issues/1117" "Open #1117 on GitHub"
-  click i1132 href "https://github.com/encero-systems/incan/issues/1132" "Open #1132 on GitHub"
-  click s1139 href "https://github.com/encero-systems/incan/issues/1139" "Open #1139 on GitHub"
-  click i1168 href "https://github.com/encero-systems/incan/issues/1168" "Open #1168 on GitHub"
-  click i1174 href "https://github.com/encero-systems/incan/issues/1174" "Open #1174 on GitHub"
-  click i1210 href "https://github.com/encero-systems/incan/issues/1210" "Open #1210 on GitHub"
-```
-[Open Slice 9 in GitHub](https://github.com/encero-systems/incan/issues/1139)
+[Open Slice 9 in GitHub](https://github.com/encero-systems/incan/issues/1143)
 
 </details>
 
