@@ -2,10 +2,13 @@
 # expect-stdout:
 #   hi Ada
 
+"""Executes the selected string ownership control flow and assertion cases."""
 def program_result() -> str:
+  """Compute and return `"hi " + name`."""
   name = "Ada"
   return "hi " + name
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

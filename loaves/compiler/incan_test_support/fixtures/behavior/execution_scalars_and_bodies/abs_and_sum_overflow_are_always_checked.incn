@@ -3,10 +3,13 @@
 #   before abs
 # expect-exit: 101
 
+"""Abs and sum overflow are always checked, stopping the program."""
 def abs_min(value: int) -> int:
+    """Print the marker before taking the absolute value."""
     println("before abs")
     return abs(value)
 
 
 def main() -> None:
+    """Call `abs_min(-9223372036854775808)` with the fixture inputs."""
     abs_min(-9223372036854775808)

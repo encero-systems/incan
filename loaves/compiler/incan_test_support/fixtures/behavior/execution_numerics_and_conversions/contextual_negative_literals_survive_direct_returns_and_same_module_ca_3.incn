@@ -4,24 +4,32 @@
 #   -1.0
 
 
+"""Contextual negative literals survive direct returns and same module calls."""
 def accept_i128(value: i128) -> i128:
+  """Return `value` for this fixture."""
   return value
 
 def direct_minimum() -> i128:
+  """Return the fixture expression `-170141183460469231731687303715884105728`."""
   return -170141183460469231731687303715884105728
 
 def called_minimum() -> i128:
+  """Return the fixture expression `accept_i128(-170141183460469231731687303715884105728)`."""
   return accept_i128(-170141183460469231731687303715884105728)
 
 def direct_f32() -> f32:
+  """Return the fixture expression `-1`."""
   return -1
 
 def accept_f64(value: f64) -> f64:
+  """Return `value` for this fixture."""
   return value
 
 def called_f64() -> f64:
+  """Return the fixture expression `accept_f64(-2)`."""
   return accept_f64(-2)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(direct_f32())

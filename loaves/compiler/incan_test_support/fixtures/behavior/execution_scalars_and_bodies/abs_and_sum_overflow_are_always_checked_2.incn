@@ -3,10 +3,13 @@
 #   before sum
 # expect-exit: 101
 
+"""Abs and sum overflow are always checked, stopping the program."""
 def overflowing_sum() -> int:
+    """Print the marker before summing values that overflow."""
     println("before sum")
     return sum([9223372036854775807, 1])
 
 
 def main() -> None:
+    """Call `overflowing_sum()` with the fixture inputs."""
     overflowing_sum()

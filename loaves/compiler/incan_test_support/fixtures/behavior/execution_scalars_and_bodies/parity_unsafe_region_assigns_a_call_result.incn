@@ -2,11 +2,14 @@
 # expect-stdout:
 #   5
 
+"""An `unsafe:` region assigns a call's result to an outer local (parity corpus case 19)."""
 def probe(x: int) -> int:
+    """Return `x` for this fixture."""
     return x
 
 
 def touch(value: int) -> int:
+    """Assign a call result inside an unsafe region."""
     mut total = 0
     unsafe:
         total = probe(value)
@@ -14,4 +17,5 @@ def touch(value: int) -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(touch(5))

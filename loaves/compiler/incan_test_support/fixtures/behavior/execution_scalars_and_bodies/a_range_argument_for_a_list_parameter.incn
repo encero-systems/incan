@@ -3,9 +3,12 @@
 # expect-stdout:
 #   42
 
+"""A range passed where a list[int] parameter is declared is accepted and the call returns its result."""
 def count(values: list[int]) -> int:
+    """Return `42` for this fixture."""
     return 42
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(count(range(1, 3)))

@@ -3,10 +3,13 @@
 #   0
 
 
+"""Refuses zip without its checked builtin identity, as the legacy route runs it."""
 def missing_zip_identity() -> int:
+  """Call the zip spelling under test before returning zero."""
   zip([1], [2])
   return 0
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(missing_zip_identity())

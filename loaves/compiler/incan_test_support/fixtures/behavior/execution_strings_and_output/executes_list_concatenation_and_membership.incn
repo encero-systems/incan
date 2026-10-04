@@ -3,7 +3,9 @@
 #   4
 
 
+"""Executes list concatenation and membership."""
 def program_result() -> int:
+  """Return the fourth joined list item when membership checks hold, or zero."""
   xs = [1, 2]
   ys = [3, 4]
   joined = xs + ys
@@ -14,4 +16,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -3,13 +3,17 @@
 #   42
 
 
+"""Keeps an unconsumed generator function out of execution evidence."""
 def counter() -> Generator[int]:
+  """Yield the sequence consumed or retained by this fixture."""
   yield 1
 
 def program_result() -> int:
+  """Compute and return `42`."""
   unused = counter()
   return 42
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -2,7 +2,9 @@
 # expect-stdout:
 #   42
 
+"""Cli executes typed body ir and persists a replacement receipt."""
 def program_result() -> int:
+  """Return the sum when left is larger; otherwise return right."""
   left = 40
   right = 2
   if left > right:
@@ -11,4 +13,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -3,7 +3,9 @@
 #   16
 
 
+"""Enumerate and zip follow bare local aliases."""
 def aliases() -> int:
+  """Traverse enumerate and zip values through local aliases."""
   values = [5]
   labels = [6]
   values_alias = values
@@ -21,4 +23,5 @@ def aliases() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(aliases())

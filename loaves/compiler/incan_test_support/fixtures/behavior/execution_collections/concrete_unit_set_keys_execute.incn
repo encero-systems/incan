@@ -2,13 +2,17 @@
 # expect-stdout:
 #   true
 
+"""Concrete unit set keys execute."""
 def unit_value() -> None:
+  """Return the unit value used as a set key."""
   pass
 
 def program_result() -> bool:
+  """Compute and return `unit_value() in values`."""
   values = {unit_value()}
   return unit_value() in values
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -8,15 +8,19 @@
 #   58
 
 
+"""List argument order and iterator aliases match native."""
 def left_values() -> list[int]:
+  """Print the argument-order marker and return the list."""
   println("left")
   return [4, 5]
 
 def right_values() -> list[int]:
+  """Print the argument-order marker and return the list."""
   println("right")
   return [10, 20]
 
 def observe() -> int:
+  """Traverse stored enumeration and zip aliases while scoring values."""
   mut total = 0
   values = left_values()
   for prior_value in values:
@@ -34,4 +38,5 @@ def observe() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

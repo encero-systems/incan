@@ -3,9 +3,12 @@
 #   42.0
 
 
+"""Refuses scalar conversion calls missing checked builtin identity, as the legacy route runs it."""
 def program_result() -> float:
+  """Return the fixture expression `float("42")`."""
   return float("42")
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

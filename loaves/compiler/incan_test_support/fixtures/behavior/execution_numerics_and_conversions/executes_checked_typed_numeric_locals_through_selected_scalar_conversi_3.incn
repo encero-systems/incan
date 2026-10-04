@@ -3,10 +3,13 @@
 #   10.0
 
 
+"""Executes checked typed numeric locals through selected scalar conversions."""
 def program_result() -> float:
+  """Compute and return `float(value)`."""
   value: u128 = 10
   return float(value)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

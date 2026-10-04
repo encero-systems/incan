@@ -3,7 +3,9 @@
 #   1
 
 
+"""Refuses corrupted enumerate iter next destinations in top level and deferred frames."""
 def top_level_enumerate_item() -> int:
+  """Sum indices and values from a stored enumeration."""
   pairs = enumerate([1])
   mut total = 0
   for top_level_index, top_level_value in pairs:
@@ -12,4 +14,5 @@ def top_level_enumerate_item() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(top_level_enumerate_item())

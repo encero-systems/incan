@@ -4,7 +4,9 @@
 #   6
 
 
+"""Executes later generator clauses over captured enumerate and zip."""
 def later_clause_generator_capture() -> int:
+  """Collect a generator whose later clauses traverse captured iterators."""
   captured_enumeration = enumerate([1])
   captured_zip = zip([2], [3])
   generated_values = (outer_value + later_index + later_value + later_left + later_right for outer_value in [0] for later_index, later_value in captured_enumeration for later_left, later_right in captured_zip).collect()
@@ -13,4 +15,5 @@ def later_clause_generator_capture() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(later_clause_generator_capture())

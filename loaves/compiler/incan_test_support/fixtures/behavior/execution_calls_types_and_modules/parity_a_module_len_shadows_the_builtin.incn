@@ -2,10 +2,13 @@
 # expect-stdout:
 #   6
 
+"""A module-level `len` is called instead of the builtin it shadows (parity corpus case 5)."""
 def len(x: int) -> int:
+    """Return the fixture expression `x + 1`."""
     return x + 1
 
 
 def main() -> None:
+    """Print `y` after preparing the fixture inputs."""
     y = len(5)
     println(y)

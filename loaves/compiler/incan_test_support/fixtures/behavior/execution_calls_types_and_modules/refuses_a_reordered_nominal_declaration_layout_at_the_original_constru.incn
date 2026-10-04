@@ -3,14 +3,18 @@
 #   40
 
 
+"""Refuses a reordered nominal declaration layout at the original constructor span, as the legacy route runs it."""
 model Pair:
+  """Hold left and right used by this fixture."""
   left: int
   right: int
 
 def program_result() -> int:
+  """Compute and return `pair.left`."""
   pair = Pair(left=40, right=2)
   return pair.left
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

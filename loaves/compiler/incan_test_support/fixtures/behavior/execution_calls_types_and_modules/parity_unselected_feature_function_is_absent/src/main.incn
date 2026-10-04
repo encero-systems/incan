@@ -2,10 +2,13 @@
 # expect-stdout:
 #   1
 
+"""A function declared under an unselected feature is not part of the program (parity corpus case 17)."""
 when feature("beta"):
     def gated() -> int:
+        """Return `7` for this fixture."""
         return 7
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(1)

@@ -3,11 +3,14 @@
 #   340282366920938463463374607431768211455
 #   340282366920938463463374607431768211455
 
+"""The largest u128 passed through a function prints the same before and after the call."""
 def identity(value: u128) -> u128:
+    """Print the typed argument and return it unchanged."""
     println(value)
     return value
 
 
 def main() -> None:
+    """Print `identity(value)` after preparing the fixture inputs."""
     value: u128 = 340282366920938463463374607431768211455
     println(identity(value))

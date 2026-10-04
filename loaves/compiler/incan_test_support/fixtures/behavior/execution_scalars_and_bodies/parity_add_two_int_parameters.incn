@@ -2,9 +2,12 @@
 # expect-stdout:
 #   42
 
+"""A function adds its two int parameters (parity corpus row replacement-body-v0-001)."""
 def add(x: int, y: int) -> int:
+    """Return the fixture expression `x + y`."""
     return x + y
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(add(40, 2))

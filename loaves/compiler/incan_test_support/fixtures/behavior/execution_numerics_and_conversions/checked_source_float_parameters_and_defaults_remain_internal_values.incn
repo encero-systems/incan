@@ -3,12 +3,16 @@
 #   3.14 1.5
 
 
+"""Checked source float parameters and defaults remain internal values."""
 def render(value: float = 1.5) -> str:
+    """Return the fixture expression `str(value)`."""
     return str(value)
 
 def program_result() -> str:
+    """Return the fixture expression `f"{render(3.14)} {render()}"`."""
     return f"{render(3.14)} {render()}"
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

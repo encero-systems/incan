@@ -2,9 +2,12 @@
 # expect-stdout:
 #   hi
 
+"""Selected string helpers preserve shared edge semantics."""
 def result() -> str:
+    """Return the fixture expression `" hi ".strip()`."""
     return " hi ".strip()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(result())

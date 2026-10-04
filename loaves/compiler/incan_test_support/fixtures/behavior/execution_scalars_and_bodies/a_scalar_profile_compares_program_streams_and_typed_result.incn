@@ -3,10 +3,13 @@
 #   normal program stdout
 #   42
 
+"""A scalar profile compares program streams and typed result."""
 def add(x: int, y: int) -> int:
+    """Print the stdout marker before returning the sum."""
     println("normal program stdout")
     return x + y
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(add(40, 2))

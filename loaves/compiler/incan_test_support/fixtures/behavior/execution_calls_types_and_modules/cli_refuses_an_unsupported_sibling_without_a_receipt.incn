@@ -2,14 +2,18 @@
 # expect-stdout:
 #   42
 
+"""Cli refuses an unsupported sibling without a receipt, as the legacy route runs it."""
 def unsupported_sibling() -> int:
+  """Enter an unsafe region before returning the fixture value."""
   unsafe:
     pass
   return 42
 
 def program_result() -> int:
+  """Return the fixture expression `unsupported_sibling()`."""
   return unsupported_sibling()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

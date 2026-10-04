@@ -2,10 +2,13 @@
 # expect-diagnostic: INCAN-T0001
 
 
+"""The checker refuses zip shape boundaries at the original source span 2."""
 def zip_arity_boundary() -> int:
+  """Attempt a zip call with only one argument."""
   pairs = zip([1])
   return 0
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(zip_arity_boundary())

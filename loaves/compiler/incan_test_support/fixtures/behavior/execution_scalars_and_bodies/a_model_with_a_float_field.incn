@@ -2,14 +2,18 @@
 # expect-stdout:
 #   42
 
+"""A model with a float field is constructed beside the value main returns."""
 model FloatBox:
+    """Hold value used by this fixture."""
     value: float
 
 
 def program_result() -> int:
+    """Compute and return `42`."""
     boxed = FloatBox(value=1.5)
     return 42
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

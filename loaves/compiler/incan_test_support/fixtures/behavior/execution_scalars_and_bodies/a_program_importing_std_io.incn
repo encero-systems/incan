@@ -2,12 +2,15 @@
 # expect-stdout:
 #   42
 
+"""A program importing std.io runs."""
 import std.io
 
 
 def program_result() -> int:
+    """Return `42` for this fixture."""
     return 42
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

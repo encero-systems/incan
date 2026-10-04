@@ -4,7 +4,9 @@
 #   3
 #   6
 
+"""Zip alias and original each match native."""
 def observe() -> int:
+    """Traverse the zip value and its alias, accumulating their pair sums."""
     pairs = zip([1], [2])
     alias = pairs
     mut total = 0
@@ -18,4 +20,5 @@ def observe() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

@@ -3,7 +3,9 @@
 #   0
 
 
+"""Refuses nonlist enumerate at the original call span, as the legacy route runs it."""
 def enumerate_nonlist() -> int:
+  """Attempt enumeration of a string and sum any indices."""
   mut total = 0
   for pair in enumerate("x"):
     total += pair.0
@@ -11,4 +13,5 @@ def enumerate_nonlist() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(enumerate_nonlist())

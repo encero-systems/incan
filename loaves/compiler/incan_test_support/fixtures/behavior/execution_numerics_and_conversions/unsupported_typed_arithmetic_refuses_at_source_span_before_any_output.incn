@@ -4,15 +4,19 @@
 #   2
 
 
+"""Unsupported typed arithmetic refuses at source span before any output, as the legacy route runs it."""
 def add_one(value: u8) -> int:
+  """Add a typed u8 operand to the supplied value."""
   one: u8 = 1
   return value + one
 
 def program_result() -> int:
+  """Compute and return `add_one(value)`."""
   println("must-not-print")
   value: u8 = 1
   return add_one(value)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

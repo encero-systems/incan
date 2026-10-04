@@ -1,2 +1,4 @@
+"""Provide the sibling declarations used by the fixture."""
 pub def compute(value: int) -> int:
+    """Return the fixture expression `value + 1`."""
     return value + 1

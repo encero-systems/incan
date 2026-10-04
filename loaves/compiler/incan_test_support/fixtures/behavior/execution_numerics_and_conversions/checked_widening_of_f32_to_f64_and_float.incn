@@ -3,17 +3,21 @@
 #   1.2345678806304932
 #   1.2345678806304932
 
+"""An f32 widened to f64 or to float takes the exact binary value of the f32, not its decimal spelling."""
 def widen_explicit_float(value: f32) -> f64:
+    """Widen an f32 value to f64 through a typed local."""
     widened: f64 = value
     return widened
 
 
 def widen_ordinary_float(value: f32) -> float:
+    """Widen an f32 value to the ordinary float type."""
     widened: float = value
     return widened
 
 
 def main() -> None:
+    """Print `widen_explicit_float(value)` after preparing the fixture inputs."""
     value: f32 = 1.2345679
     println(widen_explicit_float(value))
     println(widen_ordinary_float(value))

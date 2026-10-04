@@ -2,10 +2,13 @@
 # expect-stdout:
 #   true
 
+"""Non scalar hashed key types refuse at construction, as the legacy route runs it."""
 def program_result() -> bool:
+  """Compute and return `(1, 2) not in values`."""
   values: dict[tuple[int, int], int] = {}
   return (1, 2) not in values
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

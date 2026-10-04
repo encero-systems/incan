@@ -1,5 +1,7 @@
+"""Provide the sibling declarations used by the fixture."""
 from rust::incan_std_core::text import normalize
 
 
 pub def helper() -> int:
+    """Return `1` for this fixture."""
     return 1

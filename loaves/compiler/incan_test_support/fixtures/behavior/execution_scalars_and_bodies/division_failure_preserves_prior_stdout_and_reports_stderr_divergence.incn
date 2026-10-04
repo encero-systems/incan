@@ -3,10 +3,13 @@
 #   before division
 # expect-exit: 101
 
+"""Division failure preserves prior stdout and reports stderr divergence, stopping the program."""
 def divide(a: int, b: int) -> int:
+    """Print the division marker before floor division."""
     println("before division")
     return a // b
 
 
 def main() -> None:
+    """Call `divide(1, 0)` with the fixture inputs."""
     divide(1, 0)

@@ -2,9 +2,12 @@
 # expect-stdout:
 #   -3
 
+"""Scalar conversions do not admit float negation, as the legacy route runs it."""
 def program_result() -> int:
+    """Return the fixture expression `int(-3.9)`."""
     return int(-3.9)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

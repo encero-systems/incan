@@ -2,6 +2,8 @@
 # expect-stdout:
 #   42
 
+"""A main declared under `when feature("beta"):` is the program when the default feature selects beta."""
 when feature("beta"):
     def main() -> None:
+        """Print the fixture values in the expected order."""
         println(42)

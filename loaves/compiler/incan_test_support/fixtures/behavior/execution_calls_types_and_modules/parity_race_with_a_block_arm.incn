@@ -2,17 +2,21 @@
 # expect-stdout:
 #   1
 
+"""A race whose second arm is a block takes the first ready arm in source order (parity corpus case 11)."""
 import std.async
 
 async def fast() -> int:
+    """Return `1` for this fixture."""
     return 1
 
 
 async def slow() -> int:
+    """Return `2` for this fixture."""
     return 2
 
 
 async def main() -> None:
+    """Print `winner` after preparing the fixture inputs."""
     winner = race for value:
         await fast() => value
         await slow() =>

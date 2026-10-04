@@ -3,7 +3,9 @@
 #   0 255 -170141183460469231731687303715884105728 340282366920938463463374607431768211455 19.90
 #   1.2345679
 
+"""Typed integer extremes, a decimal and an f32 are printed (parity corpus row replacement-body-v0-029)."""
 def typed_numeric_profile() -> f32:
+    """Print typed numeric extremes and return the rounded f32 value."""
     unsigned_min: u8 = 0
     unsigned_max: u8 = 255
     signed_min: i128 = -170141183460469231731687303715884105728
@@ -15,4 +17,5 @@ def typed_numeric_profile() -> f32:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(typed_numeric_profile())

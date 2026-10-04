@@ -3,10 +3,13 @@
 #   true
 
 
+"""Refuses list membership it cannot compare, as the legacy route runs it."""
 def program_result() -> bool:
+  """Compute and return `[1] in xs`."""
   xs = [[1], [2]]
   return [1] in xs
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

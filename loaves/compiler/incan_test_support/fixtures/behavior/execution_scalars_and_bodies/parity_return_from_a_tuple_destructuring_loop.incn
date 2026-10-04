@@ -3,7 +3,9 @@
 # expect-stdout:
 #   45
 
+"""A for loop destructuring tuples returns from its body (parity corpus row replacement-body-v0-006)."""
 def select_second_pair() -> int:
+    """Return the encoded pair selected during tuple iteration."""
     pairs = [(1, 2), (4, 5)]
     for a, b in pairs:
         if a == 4:
@@ -12,4 +14,5 @@ def select_second_pair() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(select_second_pair())

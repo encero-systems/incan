@@ -2,9 +2,12 @@
 # expect-stdout:
 #   true
 
+"""Primitive targets with different runtime tags do not coerce."""
 def probe(value: int | bool) -> bool:
+  """Return the fixture expression `isinstance(value, int)`."""
   return isinstance(value, int)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(probe(1))

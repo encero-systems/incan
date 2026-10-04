@@ -2,7 +2,9 @@
 # expect-stdout:
 #   10
 
+"""A for loop with continue and a while loop whose condition is false fall through to the final return (parity corpus row replacement-body-v0-004)."""
 def control_flow() -> int:
+    """Exercise continue and an unentered while loop."""
     for value in range(1, 5):
         if value % 2 == 0:
             continue
@@ -12,4 +14,5 @@ def control_flow() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(control_flow())

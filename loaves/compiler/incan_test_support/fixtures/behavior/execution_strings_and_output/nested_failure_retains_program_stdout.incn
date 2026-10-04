@@ -4,10 +4,13 @@
 #   child
 # expect-exit: 101
 
+"""Nested failure retains program stdout, as the legacy route runs it."""
 def child() -> None:
+  """Fail the assertion when this callable is reached."""
   println("child")
   assert false
 
 def main() -> None:
+  """Print `"parent"` after preparing the fixture inputs."""
   println("parent")
   child()

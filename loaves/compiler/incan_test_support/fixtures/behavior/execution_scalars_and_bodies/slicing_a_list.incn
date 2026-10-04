@@ -2,10 +2,13 @@
 # expect-stdout:
 #   [40]
 
+"""Slicing a list gives a new list."""
 def program_result() -> list[int]:
+    """Compute and return `values[0:1]`."""
     values = [40, 2]
     return values[0:1]
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

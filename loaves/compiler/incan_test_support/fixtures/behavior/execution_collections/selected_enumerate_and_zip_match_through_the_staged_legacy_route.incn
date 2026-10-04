@@ -9,7 +9,9 @@
 #   41
 
 
+"""Selected enumerate and zip match through the staged legacy route."""
 def enumerate_zip_profile() -> int:
+  """Print and sum values from enumeration and zipped lists."""
   values = [10, 20]
   labels = ["ten"]
   mut total = 0
@@ -25,4 +27,5 @@ def enumerate_zip_profile() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(enumerate_zip_profile())

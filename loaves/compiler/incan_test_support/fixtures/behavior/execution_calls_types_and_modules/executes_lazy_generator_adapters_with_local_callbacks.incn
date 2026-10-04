@@ -3,7 +3,9 @@
 #   34
 
 
+"""Executes lazy generator adapters with local callbacks."""
 def program_result() -> int:
+  """Compute and return `values[0] * 10 + values[1]`."""
   increment: (int) -> int = (value) => value + 1
   accepted: (int) -> bool = (value) => value > 2
   values = (value for value in range(1, 5)).map(increment).filter(accepted).collect()
@@ -11,4 +13,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

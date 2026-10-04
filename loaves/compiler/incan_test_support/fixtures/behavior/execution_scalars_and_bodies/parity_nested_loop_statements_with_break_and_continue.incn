@@ -2,7 +2,9 @@
 # expect-stdout:
 #   6
 
+"""Nested `loop:` statements leave through break and skip through continue (parity corpus case 18)."""
 def grid(rows: int, cols: int) -> int:
+    """Count cells with nested loops and explicit control flow."""
     mut cells = 0
     mut r = 0
     loop:
@@ -21,4 +23,5 @@ def grid(rows: int, cols: int) -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(grid(3, 4))

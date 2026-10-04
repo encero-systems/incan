@@ -2,9 +2,12 @@
 # expect-stdout:
 #   true
 
+"""Hashed container equality remains an original span refusal, as the legacy route runs it."""
 def program_result() -> bool:
+  """Return the fixture expression `{1: 2} == {1: 2}`."""
   return {1: 2} == {1: 2}
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

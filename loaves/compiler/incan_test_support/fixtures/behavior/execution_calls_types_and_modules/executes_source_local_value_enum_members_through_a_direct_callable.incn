@@ -3,26 +3,34 @@
 #   404
 
 
+"""Executes source local value enum members through a direct callable."""
 enum HttpStatus(int):
+  """Represent the Ok, NotFound alternatives in this fixture."""
   Ok = 200
   NotFound = 404
 
 enum Environment(str):
+  """Represent the Development, Production alternatives in this fixture."""
   Development = "development"
   Production = "production"
 
 def status_code(status: HttpStatus) -> int:
+  """Return the fixture expression `status.value()`."""
   return status.value()
 
 def extract_environment(environment: Environment) -> str:
+  """Return the fixture expression `environment.value()`."""
   return environment.value()
 
 def environment_name() -> str:
+  """Return the fixture expression `extract_environment(Environment.Production)`."""
   return extract_environment(Environment.Production)
 
 def program_result() -> int:
+  """Return the fixture expression `status_code(HttpStatus.NotFound)`."""
   return status_code(HttpStatus.NotFound)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

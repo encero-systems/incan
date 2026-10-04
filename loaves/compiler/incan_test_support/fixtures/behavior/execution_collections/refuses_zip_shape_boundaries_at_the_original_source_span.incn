@@ -2,6 +2,8 @@
 # expect-diagnostic: INCAN-T0001
 
 
+"""The checker refuses zip shape boundaries at the original source span."""
 def zip_nonlist_boundary() -> int:
+  """Attempt to zip a string with a list."""
   pairs = zip("not a list", [1])
   return 0

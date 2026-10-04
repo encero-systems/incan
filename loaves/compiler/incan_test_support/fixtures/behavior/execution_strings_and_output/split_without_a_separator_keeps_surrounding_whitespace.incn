@@ -2,9 +2,12 @@
 # expect-stdout:
 #   [ a b ]
 
+"""Split() without a separator keeps a string with surrounding spaces as one part, so joining it gives the string back."""
 def result() -> str:
+    """Return the fixture expression `"|".join(" a b ".split())`."""
     return "|".join(" a b ".split())
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(f"[{result()}]")

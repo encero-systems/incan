@@ -2,5 +2,7 @@
 # expect-stdout:
 #   count 3 true
 
+"""Both backends render a multi argument print the same way."""
 def main() -> None:
+  """Print the fixture values in the expected order."""
   println("count", 3, true)

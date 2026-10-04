@@ -3,11 +3,14 @@
 #   19.90
 #   19.90
 
+"""A decimal[6, 2] value passed through a function keeps its two-digit scale."""
 def identity(value: decimal[6, 2]) -> decimal[6, 2]:
+    """Print the typed argument and return it unchanged."""
     println(value)
     return value
 
 
 def main() -> None:
+    """Print `identity(value)` after preparing the fixture inputs."""
     value: decimal[6, 2] = 19.90d
     println(identity(value))

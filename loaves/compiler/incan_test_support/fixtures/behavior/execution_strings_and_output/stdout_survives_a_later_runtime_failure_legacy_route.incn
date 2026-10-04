@@ -3,6 +3,8 @@
 #   before failure
 # expect-exit: 101
 
+"""Stdout survives a later runtime failure, as the legacy route runs it."""
 def main() -> None:
+    """Run the fixture checks and emit its observable output."""
     println("before failure")
     assert false

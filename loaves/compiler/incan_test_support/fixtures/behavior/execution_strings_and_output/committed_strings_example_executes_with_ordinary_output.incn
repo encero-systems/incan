@@ -30,6 +30,7 @@ upper_text = text.upper()
 """
 
 def main() -> None:
+    """Print `f"Original: {text}"` after preparing the fixture inputs."""
     text = "hello, world"
     upper_text = text.upper()
     lower_text = text.lower()

@@ -3,10 +3,13 @@
 #   true
 #   false
 
+"""`in` between two strs tests for a substring (parity corpus case 3)."""
 def contains(needle: str, haystack: str) -> bool:
+    """Return the fixture expression `needle in haystack`."""
     return needle in haystack
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(contains("a", "abc"))
     println(contains("xyz", "hello"))

@@ -2,14 +2,18 @@
 # expect-stdout:
 #   42
 
+"""An async function awaits another and returns its value (parity corpus row replacement-body-v0-018)."""
 import std.async
 
 async def answer() -> int:
+    """Return `42` for this fixture."""
     return 42
 
 async def direct_async_await() -> int:
+    """Return the fixture expression `await answer()`."""
     return await answer()
 
 
 async def main() -> None:
+    """Print the fixture values in the expected order."""
     println(await direct_async_await())

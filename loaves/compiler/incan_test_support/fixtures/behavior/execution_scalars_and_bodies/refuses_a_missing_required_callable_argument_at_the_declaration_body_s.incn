@@ -2,9 +2,12 @@
 # expect-diagnostic: INCAN-T0001
 
 
+"""The checker refuses a missing required callable argument at the declaration body s."""
 def needs(value: int) -> int:
+  """Return `value` for this fixture."""
   return value
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(needs())

@@ -40,4 +40,5 @@ def string_helpers() -> bool:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(string_helpers())

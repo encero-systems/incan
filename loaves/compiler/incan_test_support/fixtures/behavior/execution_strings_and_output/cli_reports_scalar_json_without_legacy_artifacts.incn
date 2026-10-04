@@ -2,7 +2,9 @@
 # expect-stdout:
 #   9223372036854775807|"line\né\t\\\""|null
 
+"""Cli reports scalar json without legacy artifacts."""
 def program_result() -> str:
+  """Compute and return `f"{maximum}|{escaped}|{absent}"`."""
   maximum = json_stringify(9223372036854775807)
   escaped = json_stringify("line\né\t\\\"")
   absent = json_stringify(None)
@@ -10,4 +12,5 @@ def program_result() -> str:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

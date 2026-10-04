@@ -2,7 +2,9 @@
 # expect-diagnostic: INCAN-T0001
 
 
+"""The checker refuses malformed enumerate arity without a successful execution."""
 def malformed_enumerate_arity() -> int:
+  """Call enumerate with a start argument and print any produced index."""
   values = [1]
   for pair in enumerate(values, 10):
     println(pair.0)

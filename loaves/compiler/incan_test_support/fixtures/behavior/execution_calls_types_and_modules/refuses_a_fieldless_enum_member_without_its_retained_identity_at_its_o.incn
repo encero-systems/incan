@@ -3,13 +3,17 @@
 #   false
 
 
+"""Refuses a fieldless enum member without its retained identity at its original source span, as the legacy route runs it."""
 enum Signal:
+  """Represent the Ready, Stop alternatives in this fixture."""
   Ready
   Stop
 
 def program_result() -> bool:
+  """Return the fixture expression `Signal.Ready == Signal.Stop`."""
   return Signal.Ready == Signal.Stop
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

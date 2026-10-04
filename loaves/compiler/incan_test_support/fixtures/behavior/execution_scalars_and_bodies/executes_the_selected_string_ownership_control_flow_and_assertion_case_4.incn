@@ -2,7 +2,9 @@
 # expect-stdout:
 #   42
 
+"""Executes the selected string ownership control flow and assertion cases."""
 def program_result() -> int:
+  """Compute and return `a // b`."""
   a = 84
   b = 2
   assert b != 0
@@ -10,4 +12,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -4,14 +4,18 @@
 #   21
 
 
+"""Executes deferred enumerate and zip frames with distinct bindings."""
 def defaulted_enumeration(values: list[int] = (default_pair.1 for default_pair in enumerate([7])).collect()) -> int:
+  """Return the fixture expression `values[0]`."""
   return values[0]
 
 def generated_zip_values() -> Generator[int]:
+  """Yield the fixture values for lazy iteration."""
   for generator_left, generator_right in zip([4], [5]):
     yield generator_left + generator_right
 
 def deferred_enumerate_zip() -> int:
+  """Combine enumeration defaults, closure capture, and a collected generator."""
   closure_values: () -> list[int] = () => (closure_left + closure_right for closure_left, closure_right in zip([2], [3])).collect()
   closure_result = closure_values()
   generated_values = generated_zip_values().collect()
@@ -20,4 +24,5 @@ def deferred_enumerate_zip() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(deferred_enumerate_zip())

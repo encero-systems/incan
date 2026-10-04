@@ -2,7 +2,9 @@
 # expect-stdout:
 #   45
 
+"""A range bound to a local is iterated (parity corpus case 16)."""
 def main() -> None:
+    """Print `total` after preparing the fixture inputs."""
     r = 0..10
     mut total = 0
     for i in r:

@@ -5,11 +5,14 @@
 #   c 2
 #   42
 
+"""Short writes preserve output and identity."""
 def program_result() -> int:
+  """Compute and return `42`."""
   println("a\nb")
   println("c", 2)
   return 42
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

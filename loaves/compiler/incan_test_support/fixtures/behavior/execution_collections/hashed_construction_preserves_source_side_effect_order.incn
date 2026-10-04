@@ -9,15 +9,19 @@
 #   needle
 #   true
 
+"""Hashed construction preserves source side effect order."""
 def mark(label: str, value: int) -> int:
+  """Print the supplied label and return the value."""
   println(label)
   return value
 
 def program_result() -> bool:
+  """Compute and return `mark("needle", 1) in values and 1 in mapping`."""
   values = {mark("set first", 1), mark("set second", 2)}
   mapping = {mark("key first", 1): mark("value first", 10), mark("key duplicate", 1): mark("value duplicate", 20)}
   return mark("needle", 1) in values and 1 in mapping
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

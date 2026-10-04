@@ -17,4 +17,5 @@ def collection_len() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(collection_len())

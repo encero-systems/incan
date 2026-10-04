@@ -2,11 +2,14 @@
 # expect-stdout:
 #   true
 
+"""Hashed non membership operations remain refused, as the legacy route runs it."""
 def program_result() -> bool:
+  """Compute and return `1 in values`."""
   mut values = {1: 2}
   values[1] = 3
   return 1 in values
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

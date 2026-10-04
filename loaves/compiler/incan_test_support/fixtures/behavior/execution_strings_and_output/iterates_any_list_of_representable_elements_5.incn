@@ -2,7 +2,9 @@
 # expect-stdout:
 #   3
 
+"""Iterates any list of representable elements."""
 def program_result() -> int:
+  """Traverse `for left, right in [(1, 2)]` and return `total`."""
   mut total = 0
   for left, right in [(1, 2)]:
     total += left + right
@@ -10,4 +12,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

@@ -74,6 +74,7 @@ def main() -> None:
 | `# retires: <path>.rs::<fn>` | A retire-class test this fixture is the twin of, spelled exactly as the inventory keys it (`scripts/test_inventory/dispositions.json`: the file path and the test's key, module-qualified only when the bare name repeats in the file). Repeatable; each test once. |
 | `# expect-stdout:` | The program's whole stdout, one line per indented line below. Exact: every line, in order, nothing else. An empty block means the program prints nothing. |
 | `# expect-stdout-contains:` | Lines that must each appear as a whole line of stdout, in any order. At least one line; each line once. Cannot be combined with `expect-stdout`. |
+| `# expect-stderr-contains:` | Substrings that must each appear anywhere in stderr, in any order. At least one nonempty substring; each once. May accompany stdout and exit expectations; cannot accompany `expect-diagnostic`. |
 | `# expect-exit: <n>` | The exit code the run must end with, `0` to `255`. Default `0`. |
 | `# expect-diagnostic: <CODE>` | The program must be refused at check time with this diagnostic code (`INCAN-T0001`); it is never run. Repeatable, each code once. Cannot be combined with any run expectation. |
 | `# pending: <reason>` | The fixture does not hold yet, and why: the change it waits for. Optional, at most once, with a reason. The fixture's case is generated `#[ignore = "pending: <reason>"]`, so every run counts it as ignored with its reason; run with `--include-ignored` it fails while it is still red. The root adds one case, `pending_fixtures_still_wait`, that runs every pending fixture of the area and fails when one of them now shows what it declares, until its line is removed. |
@@ -84,9 +85,11 @@ Lines of a block directive follow it, each `#` plus at least two spaces; the fir
 
 **The header is contiguous.** A blank line ends it, and so does any other line that is not a `#` comment. A directive after that point (`# expect-stdout:` below a blank line, say) is refused with its line number rather than ignored, because a fixture whose expectations were silently dropped would pass on less than it declares.
 
+**Stderr is compared as substrings.** Each indented item must occur verbatim in the complete stderr. Empty blocks, empty substrings, duplicate items, and trailing whitespace are refused.
+
 **Stdout is compared as lines.** Both sides are split with Rust's `str::lines()`: the final newline is not required, CRLF is accepted, and nothing else is normalized. An expected line that ends with whitespace is refused (a report could not show the difference), so trailing whitespace in a program's output cannot be asserted and does not match. `expect-stdout-contains` refuses an empty block (anything would satisfy it) and a line listed twice (one occurrence satisfies both).
 
-A header must declare at least one observable (`expect-stdout`, `expect-stdout-contains`, an explicit `expect-exit`, or `expect-diagnostic`). A program with nothing to show is not a twin. Two refusals name both lines involved: the second stdout block beside the first, and an `expect-diagnostic` beside a run expectation (or the other way round, whichever comes second).
+A header must declare at least one observable (`expect-stdout`, `expect-stdout-contains`, `expect-stderr-contains`, an explicit `expect-exit`, or `expect-diagnostic`). A program with nothing to show is not a twin. Two refusals name both lines involved: the second stdout block beside the first, and an `expect-diagnostic` beside a run expectation (or the other way round, whichever comes second).
 
 ## What the runner does
 

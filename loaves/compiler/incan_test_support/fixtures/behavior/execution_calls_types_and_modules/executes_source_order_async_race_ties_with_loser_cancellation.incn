@@ -3,15 +3,19 @@
 #   1
 
 
+"""Executes source order async race ties with loser cancellation."""
 import std.async
 
 async def first() -> int:
+  """Return `1` for this fixture."""
   return 1
 
 async def second() -> int:
+  """Return `2` for this fixture."""
   return 2
 
 async def program_result() -> int:
+  """Compute and return `winner`."""
   winner = race for value:
     await first() => value
     await second() =>
@@ -21,4 +25,5 @@ async def program_result() -> int:
 
 
 async def main() -> None:
+    """Print the fixture values in the expected order."""
     println(await program_result())

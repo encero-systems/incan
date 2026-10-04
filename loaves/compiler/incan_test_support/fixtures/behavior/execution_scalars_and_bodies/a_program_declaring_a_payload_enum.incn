@@ -2,13 +2,17 @@
 # expect-stdout:
 #   42
 
+"""A program that declares an enum with a payload variant runs."""
 enum Flag:
+    """Represent the On alternatives in this fixture."""
     On(int)
 
 
 def program_result() -> int:
+    """Return `42` for this fixture."""
     return 42
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

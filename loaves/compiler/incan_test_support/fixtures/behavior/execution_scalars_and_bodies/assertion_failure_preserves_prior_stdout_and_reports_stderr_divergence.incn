@@ -3,11 +3,14 @@
 #   before assertion
 # expect-exit: 101
 
+"""Assertion failure preserves prior stdout and reports stderr divergence, stopping the program."""
 def guarded(a: int) -> int:
+    """Print the assertion marker and require a positive input."""
     println("before assertion")
     assert a > 0
     return a
 
 
 def main() -> None:
+    """Call `guarded(0)` with the fixture inputs."""
     guarded(0)

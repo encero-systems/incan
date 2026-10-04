@@ -2,5 +2,7 @@
 # expect-stdout:
 #   count 3 true
 
+"""Println renders every argument, space-separated, rather than only the first."""
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println("count", 3, true)

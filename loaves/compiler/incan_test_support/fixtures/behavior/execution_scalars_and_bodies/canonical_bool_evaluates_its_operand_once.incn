@@ -3,13 +3,17 @@
 #   bool operand
 #   false
 
+"""Canonical bool evaluates its operand once."""
 def marked() -> str:
+  """Print the operand marker before returning the operand."""
   println("bool operand")
   return ""
 
 def observe() -> bool:
+  """Return the fixture expression `bool(marked())`."""
   return bool(marked())
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

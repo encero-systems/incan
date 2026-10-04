@@ -3,12 +3,16 @@
 #   99
 
 
+"""Keeps same spelled source scalar callables."""
 def int(value: str) -> int:
+  """Return `99` for this fixture."""
   return 99
 
 def program_result() -> int:
+  """Return the fixture expression `int("not a builtin conversion")`."""
   return int("not a builtin conversion")
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

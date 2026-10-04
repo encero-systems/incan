@@ -2,5 +2,7 @@
 # expect-diagnostic: INCAN-T0001
 
 
+"""The checker rejects a source declaration that redefines immutable print."""
 def print(value: int) -> int:
+  """Return the fixture expression `value + 1`."""
   return value + 1

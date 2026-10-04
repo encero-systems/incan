@@ -2,13 +2,17 @@
 # expect-stdout:
 #   310
 
+"""Writes a mut list parameter back to the caller (#2022)."""
 def bump(mut items: List[int]) -> None:
+  """Increment the first element of the caller-owned list."""
   items[0] = items[0] + 1
 
 def inc(mut n: int) -> None:
+  """Increment the caller-owned mutable integer."""
   n = n + 1
 
 def program_result() -> int:
+  """Compute and return `items[0] * 100 + n`."""
   mut items: List[int] = [1, 5]
   bump(items)
   bump(items)
@@ -18,4 +22,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())
