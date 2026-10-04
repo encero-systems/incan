@@ -893,7 +893,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     cargo_no_default_features,
                     cargo_all_features,
                     generated_cargo_target_dir,
-                    backend: incan_driver::build::BackendSelectionOptions::default(),
                 },
                 report_options: BuildReportOptions {
                     format: report,
