@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use crate::backend::selection::BackendExecutionReceipt;
+use crate::build::caller_facet::{CallerFacetRequest, scan_rust_caller_paths, select_checked_caller_exports};
 use crate::build::caller_owned::has_caller_owned_project_libraries;
 use crate::build::library_exports::resolve_library_project_root;
 use crate::build::library_outputs::{
     library_publication_receipts, packaged_library_loaf_store_root, write_library_manifest_artifacts,
 };
-use crate::build::library_project::prepare_library_project;
+use crate::build::library_project::{prepare_library_project, prepare_library_project_with_caller_facet};
 use crate::build::output_materialization::{
     completed_output_default_backend_receipt, select_default_project_output,
     warn_for_completed_output_lock_fingerprint_drift,
@@ -59,18 +60,27 @@ use crate::oven_store::open_default_oven_store;
 use crate::project::discover_effective_project_manifest;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect_workspace::mark_oven_direct_rust_inspection;
+use incan_frontend::library_exports::collect_checked_public_exports;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
+use incan_frontend::typechecker::TypeChecker;
+use incan_frontend::{lexer, parser};
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_cargo_compat::direct_rustc_compile_environment;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
-    OvenRustcError, OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries,
-    bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_run,
+    OvenCallerOwnedRustcLibrary, OvenRustcError, OvenTrustedDirectRustcTargetRequest,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_run,
+    bake_trusted_direct_rustc_run_with_artifact_role,
 };
 use oven_store::store::OvenArtifactKind;
-use oven_store::write_receipt;
+use oven_store::{
+    OvenGeneratedProjectRequest, generated_project_source_evidence, receipt_generated_project_with_source_evidence,
+    write_receipt,
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Compile a receipt-authorized generated executable through the selected direct-rustc Oven plan.
 pub fn bake_oven_project(
@@ -524,6 +534,361 @@ fn publish_project_lock_after_provider_bake(
     publish_oven_project_lock(project_root, entrypoint, package_features)
 }
 
+/// Discover the conventional or explicitly declared binary roots of a project's Rust facet.
+fn discover_project_rust_binary_units(manifest: &ProjectManifest) -> CliResult<Vec<(String, PathBuf)>> {
+    let mut units = manifest
+        .rust_binary_roles()
+        .iter()
+        .map(|role| (role.name.clone(), manifest.project_root().join(&role.path)))
+        .collect::<Vec<_>>();
+    if units.is_empty() {
+        let rust_root = manifest
+            .rust_source
+            .as_ref()
+            .map(|source| manifest.project_root().join(&source.root))
+            .unwrap_or_else(|| manifest.project_root().to_path_buf());
+        let source = rust_root.join("src/main.rs");
+        if source.is_file() {
+            let name = manifest
+                .project
+                .as_ref()
+                .and_then(|project| project.name.clone())
+                .unwrap_or_else(|| "rust_unit".to_string());
+            units.push((name, source));
+        }
+    }
+    for (_, source) in &units {
+        let metadata = fs::symlink_metadata(source).map_err(|error| {
+            CliError::failure(format!(
+                "project Rust binary source {} cannot be read: {error}",
+                source.display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(CliError::failure(format!(
+                "project Rust binary source must be a regular file: {}",
+                source.display()
+            )));
+        }
+    }
+    Ok(units)
+}
+
+/// Hash the checked caller surface selected for one library and Rust unit.
+fn caller_facet_digest(library: &str, exports: &BTreeSet<String>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-caller-facet-v1\0");
+    hasher.update(library.as_bytes());
+    for export in exports {
+        hasher.update(b"\0");
+        hasher.update(export.as_bytes());
+    }
+    format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RustCallerScanCache {
+    source_digest: String,
+    paths: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Reuse a syntax scan until the Rust unit's source identity changes.
+fn cached_rust_caller_paths(
+    project_root: &Path,
+    unit_name: &str,
+    source: &str,
+) -> CliResult<BTreeMap<String, BTreeSet<String>>> {
+    let source_digest = format!("sha256:{}", hex::encode(Sha256::digest(source.as_bytes())));
+    let cache_path = project_root
+        .join("target/rust/caller-scans")
+        .join(format!("{unit_name}.json"));
+    if let Ok(bytes) = fs::read(&cache_path)
+        && let Ok(cache) = serde_json::from_slice::<RustCallerScanCache>(&bytes)
+        && cache.source_digest == source_digest
+    {
+        return Ok(cache.paths);
+    }
+    let paths = scan_rust_caller_paths(source);
+    let parent = cache_path
+        .parent()
+        .ok_or_else(|| CliError::failure(format!("caller scan cache has no parent: {}", cache_path.display())))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| CliError::failure(format!("cannot create caller scan cache {}: {error}", parent.display())))?;
+    let payload = serde_json::to_vec_pretty(&RustCallerScanCache {
+        source_digest,
+        paths: paths.clone(),
+    })
+    .map_err(|error| CliError::failure(format!("cannot serialize caller scan cache: {error}")))?;
+    fs::write(&cache_path, payload).map_err(|error| {
+        CliError::failure(format!(
+            "cannot write caller scan cache {}: {error}",
+            cache_path.display()
+        ))
+    })?;
+    Ok(paths)
+}
+
+/// Collect checked public exports from the canonical library entrypoint for caller selection.
+fn checked_library_exports(source: &Path) -> CliResult<Vec<incan_frontend::library_exports::CheckedNamedExport>> {
+    let text = fs::read_to_string(source).map_err(|error| {
+        CliError::failure(format!(
+            "cannot read caller library source {}: {error}",
+            source.display()
+        ))
+    })?;
+    let tokens =
+        lexer::lex(&text).map_err(|errors| CliError::failure(format!("caller library lex errors: {errors:?}")))?;
+    let program = parser::parse(&tokens)
+        .map_err(|errors| CliError::failure(format!("caller library parse errors: {errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| CliError::failure(format!("caller library type errors: {errors:?}")))?;
+    Ok(collect_checked_public_exports(&program, &checker))
+}
+
+/// Build a Rust-only project's binaries against one sibling Incan Loaf by direct rustc.
+struct ProjectRustBakeContext<'a> {
+    manifest: &'a ProjectManifest,
+    package_features: &'a FeatureSelection,
+    rustc: &'a Path,
+    target: &'a str,
+    toolchain: &'a str,
+    project_name: &'a str,
+    project_version: &'a str,
+}
+
+/// Receipt one Rust source unit with the exact callee and caller-facet identities it consumes.
+fn project_rust_unit_receipt(
+    context: &ProjectRustBakeContext<'_>,
+    unit_name: &str,
+    source: &Path,
+    profile: &str,
+    callee_identity: &str,
+    facet_id: &str,
+) -> CliResult<(oven_store::OvenReceipt, PathBuf)> {
+    let receipt_path = context
+        .manifest
+        .project_root()
+        .join("target/rust/receipts")
+        .join(format!("{unit_name}-{profile}.json"));
+    let request = OvenGeneratedProjectRequest::new(
+        context.manifest.project_root(),
+        context.project_name,
+        context.project_version,
+        context.target,
+        context.toolchain,
+        profile,
+        Vec::new(),
+    )
+    .with_generated_source("rust-unit", source)
+    .with_build_unit_input("callee-incan-unit", callee_identity)
+    .with_build_unit_input("caller-facet", facet_id);
+    let evidence = generated_project_source_evidence(&request).map_err(|error| CliError::failure(error.to_string()))?;
+    let receipt = receipt_generated_project_with_source_evidence(&request, &evidence)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
+    Ok((receipt, receipt_path))
+}
+
+/// Build one profile of one Rust unit against its selected Incan caller artifact.
+fn bake_project_rust_profile(
+    context: &ProjectRustBakeContext<'_>,
+    unit_name: &str,
+    source: &Path,
+    library: &str,
+    dependency: &oven_model::manifest::LibraryDependencySpec,
+    selection: &crate::build::caller_facet::CallerFacetSelection,
+    facet_id: &str,
+    profile: &str,
+) -> CliResult<OvenProjectBakeProfileReport> {
+    let receipt_reference = format!("target/rust/receipts/{unit_name}-{profile}.json");
+    let caller = CallerFacetRequest {
+        exports: selection.exports.iter().cloned().collect(),
+        facet_id: facet_id.to_string(),
+        receipt_reference,
+        target: context.target.to_string(),
+        profile: profile.to_string(),
+    };
+    let dependency_path = dependency.path.to_str().ok_or_else(|| {
+        CliError::failure(format!(
+            "Incan dependency path is not UTF-8: {}",
+            dependency.path.display()
+        ))
+    })?;
+    let prepared = prepare_library_project_with_caller_facet(
+        Some(dependency_path),
+        None,
+        CargoPolicy::default(),
+        context.package_features,
+        None,
+        Vec::new(),
+        false,
+        false,
+        None,
+        true,
+        false,
+        OvenProjectPlanMode::ExplicitBake,
+        None,
+        &BackendSelectionOptions::default(),
+        Some(&caller),
+    )
+    .map_err(|error| {
+        CliError::failure(format!(
+            "failed to prepare caller library `{library}` for `{unit_name}`: {error}"
+        ))
+    })?;
+    let oven = prepared
+        .oven
+        .as_ref()
+        .ok_or_else(|| CliError::failure("caller library preparation did not produce an Oven plan"))?;
+    let selected = oven
+        .profiles
+        .get(profile)
+        .ok_or_else(|| CliError::failure(format!("caller library has no `{profile}` Oven profile")))?;
+    let library_bake = bake_oven_library(&prepared, oven, profile, None).map_err(|error| {
+        CliError::failure(format!(
+            "failed to bake caller library `{library}` for `{unit_name}`: {error}"
+        ))
+    })?;
+    let mut artifact_plan = selected
+        .plan_selection
+        .source_artifact_plan("generated-root")
+        .map_err(|error| CliError::failure(format!("failed to select caller library closure `{library}`: {error}")))?;
+    attach_caller_owned_rustc_libraries(
+        &mut artifact_plan,
+        &[OvenCallerOwnedRustcLibrary {
+            crate_name: library.replace('-', "_"),
+            output: library_bake.output,
+            digest: library_bake.output_digest,
+            expose_extern: true,
+        }],
+    )
+    .map_err(oven_rustc_error)?;
+    let (receipt, receipt_path) = project_rust_unit_receipt(
+        context,
+        unit_name,
+        source,
+        profile,
+        &selected.receipt.identity,
+        facet_id,
+    )?;
+    let output = context
+        .manifest
+        .project_root()
+        .join("target/rust")
+        .join(profile)
+        .join(unit_name);
+    let bake = bake_trusted_direct_rustc_run_with_artifact_role(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &receipt,
+            artifacts: selected.plan_selection.artifacts(),
+            artifact_root: selected.plan_selection.output_guard_root(),
+            artifact_plan: Some(&artifact_plan),
+            rustc: context.rustc,
+            source,
+            output: &output,
+            crate_name: &unit_name.replace('-', "_"),
+            edition: "2024",
+            source_evidence_key: "rust-unit",
+            features: &[],
+            prefer_dynamic: false,
+        },
+        "generated-root",
+    )
+    .map_err(oven_rustc_error)?;
+    Ok(OvenProjectBakeProfileReport {
+        project_target: format!("rust:{unit_name}"),
+        profile: profile.to_string(),
+        target: context.target.to_string(),
+        toolchain: context.toolchain.to_string(),
+        receipt: receipt_path,
+        receipt_identity: receipt.identity,
+        build_unit_identity: receipt.build_unit_identity,
+        plan_identity: selected.plan_selection.report_identity(),
+        action: if bake.reused { "reused" } else { "baked" },
+    })
+}
+
+/// Build every Rust-only project binary against its checked sibling Incan caller facet.
+fn bake_project_rust_units(
+    manifest: &ProjectManifest,
+    units: &[(String, PathBuf)],
+    package_features: &FeatureSelection,
+    requested_target: Option<&str>,
+) -> CliResult<OvenProjectBakeReport> {
+    if manifest.library_dependencies().is_empty() {
+        return Err(CliError::failure(
+            "a project Rust unit must declare an Incan `loaf` dependency",
+        ));
+    }
+    let rustc = oven_rustc::rustc::resolve_active_rustc().map_err(oven_rustc_error)?;
+    let target = requested_target
+        .map(str::to_owned)
+        .unwrap_or(oven_rustc::rustc::rustc_host_target(&rustc).map_err(oven_rustc_error)?);
+    let toolchain = oven_rustc::rustc::rustc_identity(&rustc).map_err(oven_rustc_error)?;
+    let project_name = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.clone())
+        .unwrap_or_else(|| "rust_unit".to_string());
+    let project_version = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.version.clone())
+        .unwrap_or_else(|| "0.1.0".to_string());
+    let store = open_default_oven_store()?;
+    let context = ProjectRustBakeContext {
+        manifest,
+        package_features,
+        rustc: &rustc,
+        target: &target,
+        toolchain: &toolchain,
+        project_name: &project_name,
+        project_version: &project_version,
+    };
+    let mut profiles = Vec::new();
+    let mut generated_sources = BTreeMap::new();
+
+    for (unit_name, source) in units {
+        let source_text = fs::read_to_string(source)
+            .map_err(|error| CliError::failure(format!("cannot read Rust unit {}: {error}", source.display())))?;
+        let requested_by_library = cached_rust_caller_paths(manifest.project_root(), unit_name, &source_text)?;
+        if requested_by_library.is_empty() {
+            return Err(CliError::failure(format!(
+                "project Rust unit `{unit_name}` does not reference an Incan `<library>::caller::incan::<export>` path"
+            )));
+        }
+        if requested_by_library.len() > 1 {
+            return Err(CliError::failure(format!(
+                "project Rust unit `{unit_name}` references more than one Incan caller library; this bounded planner accepts one sibling Loaf per Rust unit"
+            )));
+        }
+        for (library, requested) in requested_by_library {
+            let dependency = manifest.library_dependencies().get(&library).ok_or_else(|| {
+                CliError::failure(format!("Rust caller path names undeclared Incan Loaf `{library}`"))
+            })?;
+            let library_source = dependency.path.join("src/lib.incn");
+            let checked = checked_library_exports(&library_source)?;
+            let selection = select_checked_caller_exports(&library, &requested, &checked).map_err(CliError::failure)?;
+            let facet_id = caller_facet_digest(&library, &requested);
+            for profile in explicit_bake_profiles() {
+                generated_sources.insert(format!("rust:{unit_name}"), source.clone());
+                profiles.push(bake_project_rust_profile(
+                    &context, unit_name, source, &library, dependency, &selection, &facet_id, profile,
+                )?);
+            }
+        }
+    }
+    Ok(OvenProjectBakeReport {
+        project: manifest.project_root().to_path_buf(),
+        generated_sources,
+        store: store.root().to_path_buf(),
+        profiles,
+        outputs: Vec::new(),
+    })
+}
+
 /// Explicitly prepare compatible Oven closures for every manifest-backed target in one Incan project.
 ///
 /// This is preparation rather than execution: it records fresh source/lock/SDK/provider receipt evidence, reuses a
@@ -542,6 +907,26 @@ pub fn bake_oven_project_targets(
         .to_str()
         .ok_or_else(|| CliError::failure(format!("Oven project path is not valid UTF-8: {}", project.display())))?;
     let project_root = resolve_library_project_root(Some(project))?;
+    let manifest = discover_effective_project_manifest(&project_root)?.ok_or_else(|| {
+        CliError::failure(format!(
+            "`incan oven bake --project` requires a loaf.toml project at {}",
+            project_root.display()
+        ))
+    })?;
+    let rust_units = discover_project_rust_binary_units(&manifest)?;
+    let has_incan_target = project_root
+        .join(OvenBakeProjectTarget::Library.source_relative_path())
+        .is_file()
+        || project_root
+            .join(OvenBakeProjectTarget::Executable.source_relative_path())
+            .is_file()
+        || manifest
+            .project
+            .as_ref()
+            .is_some_and(|project| !project.scripts.is_empty());
+    if !rust_units.is_empty() && !has_incan_target {
+        return bake_project_rust_units(&manifest, &rust_units, package_features, requested_target);
+    }
     let targets = discover_oven_bake_project_targets(&project_root)?;
     let dependency_surface_entrypoint = oven_bake_dependency_surface_entrypoint(&targets)
         .ok_or_else(|| CliError::failure("explicit Oven project bake discovered no dependency-surface entrypoint"))?
