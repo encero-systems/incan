@@ -1048,17 +1048,37 @@ fn indent_block(text: &str) -> String {
 /// The call each case of a generated behavior root makes: run the fixture `name` of `area` and fail with its
 /// expected-versus-actual unless it shows what its header declares.
 ///
-/// A harness error (an unreadable or missing fixture, a missing scratch root) comes back as `Err`; a fixture that ran
-/// and did not show what it declared is a panic carrying the report, so libtest prints it as written rather than as
-/// one escaped string. A `pending:` fixture's case is generated `#[ignore]`d with its reason, so it runs only when
-/// ignored cases are asked for, and then it fails while it is still red: that run is asking what is left to fix.
+/// A harness error (an unreadable or missing fixture, a missing scratch root) comes back as `Err`, and so does a
+/// fixture that ran and did not show what it declared, as a [`FixtureMismatch`] carrying the expected-versus-actual
+/// report. A `pending:` fixture's case is generated `#[ignore]`d with its reason, so it runs only when ignored cases
+/// are asked for, and then it fails while it is still red: that run is asking what is left to fix.
 pub fn assert_fixture_holds(area: &str, name: &str) -> Result<(), Box<dyn Error>> {
     let fixture = fixture_in_area(area, name)?;
     match run_fixture(&fixture, &scratch_root()?)? {
         Outcome::Passed => Ok(()),
-        Outcome::Failed(failure) | Outcome::Pending(failure) => panic!("{failure}"),
+        Outcome::Failed(failure) | Outcome::Pending(failure) => Err(Box::new(FixtureMismatch(failure))),
     }
 }
+
+/// A fixture that ran and did not show what its header declared, as the error a test case returns.
+///
+/// libtest prints a failing case's error with `{:?}`, so `Debug` writes the same multi-line report as `Display`
+/// instead of one escaped string.
+pub struct FixtureMismatch(pub FixtureFailure);
+
+impl fmt::Display for FixtureMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for FixtureMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl Error for FixtureMismatch {}
 
 /// The one case a generated root adds when its area has `pending:` fixtures: every one of them must still not show
 /// what it declares.

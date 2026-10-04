@@ -27,19 +27,19 @@ def main() -> None:
     num_str = "42"
     num = int(num_str)
     println(f"String '{num_str}' -> int {num}")
-    
+
     value = 123
     value_str = str(value)
     println(f"Int {value} -> string '{value_str}'")
-    
+
     float_str = "3.14"
     f = float(float_str)
     println(f"String '{float_str}' -> float {f}")
-    
+
     int_val = 10
     float_val = float(int_val)
     println(f"Int {int_val} -> float {float_val}")
-    
+
     a = int("10")
     b = int("20")
     sum = a + b
