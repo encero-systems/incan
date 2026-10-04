@@ -2,9 +2,12 @@
 # expect-stdout:
 #   héllo
 
+"""Selected string helpers preserve shared edge semantics."""
 def result() -> str:
+    """Return the fixture expression `"HÉLLO".lower()`."""
     return "HÉLLO".lower()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(result())

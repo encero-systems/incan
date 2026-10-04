@@ -2,10 +2,12 @@
 # expect-stdout:
 #   [ a b ]
 
+"""Split() without a separator on a str parameter keeps the parameter as one part."""
 def split_default(text: str) -> str:
     """Return the original text through split and join without supplying a separator."""
     return "|".join(text.split())
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(f"[{split_default(" a b ")}]")

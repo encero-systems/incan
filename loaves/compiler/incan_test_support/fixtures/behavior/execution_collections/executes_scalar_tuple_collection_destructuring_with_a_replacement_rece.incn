@@ -4,7 +4,9 @@
 #   45
 
 
+"""Executes scalar tuple collection destructuring with a replacement receipt."""
 def program_result() -> int:
+  """Traverse `for a, b in pairs` and return `0`."""
   pairs = [(1, 2), (4, 5)]
   for a, b in pairs:
     if a == 4:
@@ -13,4 +15,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

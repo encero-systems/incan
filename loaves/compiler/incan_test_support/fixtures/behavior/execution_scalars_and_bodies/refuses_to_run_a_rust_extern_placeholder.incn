@@ -2,16 +2,20 @@
 # expect-stdout:
 # expect-exit: 101
 
+"""Refuses to run a rust extern placeholder (#2023), as the legacy route runs it."""
 rust.module("incan_std_testing")
 
 @rust.extern
 def fail_t(msg: str) -> None:
+  """Declare an unimplemented callable reached by this fixture."""
   ...
 
 def program_result() -> int:
+  """Compute and return `7`."""
   fail_t("boom")
   return 7
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

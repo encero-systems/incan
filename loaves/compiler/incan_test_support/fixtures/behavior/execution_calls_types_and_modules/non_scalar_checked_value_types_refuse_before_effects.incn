@@ -3,10 +3,13 @@
 #   must not run
 #   true
 
+"""Non scalar checked value types refuse before effects, as the legacy route runs it."""
 def probe(value: int | List[int]) -> bool:
+  """Emit the pre-check marker before testing the value."""
   println("must not run")
   return isinstance(value, int)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(probe(1))

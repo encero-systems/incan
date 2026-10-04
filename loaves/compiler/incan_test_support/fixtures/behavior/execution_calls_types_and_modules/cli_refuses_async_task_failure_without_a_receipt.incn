@@ -2,15 +2,19 @@
 # expect-stdout:
 # expect-exit: 101
 
+"""Cli refuses async task failure without a receipt, as the legacy route runs it."""
 import std.async
 
 async def child() -> int:
+  """Fail the assertion when this callable is reached."""
   assert false
   return 7
 
 async def program_result() -> int:
+  """Return the fixture expression `await child()`."""
   return await child()
 
 
 async def main() -> None:
+    """Print the fixture values in the expected order."""
     println(await program_result())

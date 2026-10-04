@@ -7,7 +7,9 @@
 #   34
 
 
+"""Enumerate lists are zero based and preserve tuple forms."""
 def enumerate_profile() -> int:
+  """Print enumeration indices and values while summing them."""
   values = [10, 20]
   mut total = 0
   for pair in enumerate(values):
@@ -23,4 +25,5 @@ def enumerate_profile() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(enumerate_profile())

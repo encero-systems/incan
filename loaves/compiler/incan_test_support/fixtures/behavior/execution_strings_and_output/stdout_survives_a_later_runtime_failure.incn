@@ -3,10 +3,13 @@
 #   before failure
 # expect-exit: 101
 
+"""Stdout survives a later runtime failure, stopping the program."""
 def program_result() -> None:
+    """Print the marker before deliberately failing the assertion."""
     println("before failure")
     assert false
 
 
 def main() -> None:
+    """Call `program_result()` with the fixture inputs."""
     program_result()

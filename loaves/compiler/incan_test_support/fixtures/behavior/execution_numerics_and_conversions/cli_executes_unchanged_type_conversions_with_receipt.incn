@@ -24,6 +24,7 @@ f = float("3.14")
 """
 
 def main() -> None:
+    """Print `f"String '{num_str}' -> int {num}"` after preparing the fixture inputs."""
     num_str = "42"
     num = int(num_str)
     println(f"String '{num_str}' -> int {num}")

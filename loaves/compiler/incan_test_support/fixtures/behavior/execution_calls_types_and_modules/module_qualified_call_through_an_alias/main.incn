@@ -2,8 +2,10 @@
 # expect-stdout:
 #   42
 
+"""A module-qualified call through `import helper as provider` returns its result."""
 import helper as provider
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(provider.bump(41))

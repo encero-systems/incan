@@ -9,7 +9,9 @@
 #   41
 
 
+"""Cli executes enumerate and zip without fallback."""
 def program_result() -> int:
+  """Traverse `for index, value in enumerate(values)` and return `total`."""
   values = [10, 20]
   labels = ["ten"]
   mut total = 0
@@ -25,4 +27,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

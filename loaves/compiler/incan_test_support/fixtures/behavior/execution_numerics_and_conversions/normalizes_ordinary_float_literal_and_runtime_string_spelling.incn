@@ -3,9 +3,12 @@
 #   1000.5 125.0 1000.5 12500000000.0
 
 
+"""Normalizes ordinary float literal and runtime string spelling."""
 def program_result() -> str:
+  """Return the fixture expression `f"{str(1_000.50)} {str(1.25e2)} {float('1_000.50')} {float('1.25e1_0')}"`."""
   return f"{str(1_000.50)} {str(1.25e2)} {float('1_000.50')} {float('1.25e1_0')}"
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

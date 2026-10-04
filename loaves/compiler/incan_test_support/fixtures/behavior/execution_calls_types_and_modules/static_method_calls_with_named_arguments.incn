@@ -2,15 +2,20 @@
 # expect-stdout:
 #   34
 
+"""A type's static method is called with named arguments in any order, and a static method calls another."""
 model Scale:
+    """Hold factor used by this fixture."""
     factor: int
 
     def unit() -> int:
+        """Return `4` for this fixture."""
         return 4
 
     def times(value: int, by: int) -> int:
+        """Return the fixture expression `value * by + Scale.unit()`."""
         return value * by + Scale.unit()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(Scale.times(by=10, value=3))

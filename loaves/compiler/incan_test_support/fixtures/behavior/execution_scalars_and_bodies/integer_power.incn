@@ -2,9 +2,12 @@
 # expect-stdout:
 #   8
 
+"""`**` between ints is integer exponentiation."""
 def program_result() -> int:
+    """Return the fixture expression `2 ** 3`."""
     return 2 ** 3
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())
