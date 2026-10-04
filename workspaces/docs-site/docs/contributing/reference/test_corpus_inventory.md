@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3562 | 247 | 8 |
+| keep | 3563 | 247 | 8 |
 | re-point | 526 | 86 | 1056 |
 | retire | 1505 | 153 | 0 |
 | unaffected | 1650 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7243** | **644** | **1069** |
+| **Total** | **7244** | **644** | **1069** |
 
 - Retire-class tests: 1505, of which twinned 1023, dies 294, open 188 (neither yet).
 - Retire-class files with open rows: 34 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -122,7 +122,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (770 tests in 109 files: keep 376, re-point 137, retire 103, unaffected 154)
+### `loaves/compiler/incan_driver` (771 tests in 109 files: keep 377, re-point 137, retire 103, unaffected 154)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -141,7 +141,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs` | 2 | 82 | 82 | re-point | - | - | - | #1561 | run 2, replacement 2, checker 2 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/src/backend/shadow/tests.rs` | 47 | 1252 | 1252 | re-point | - | - | - | #1561 | run 3, replacement 30 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself. |
 | `loaves/compiler/incan_driver/src/build/bake.rs` | 5 | 1551 | 172 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 3 | 314 | 71 | keep | - | - | - | #1337 | checker 2, parser 2 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
+| `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 4 | 358 | 99 | keep | - | - | - | #1337 | checker 3, parser 3 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
 | `loaves/compiler/incan_driver/src/build/caller_owned.rs` | 7 | 1044 | 315 | unaffected | - | - | - | #1561 | checker 4 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/inline_command.rs` | 5 | 129 | 75 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/library_exports.rs` | 17 | 1718 | 1344 | keep | - | - | - | #1561 | codegen 1, checker 13, parser 14 | library re-export resolution and Rust ABI query paths from checked declarations. |
@@ -305,7 +305,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/checked_program/rust_trait_receiver_codegen.rs` | 2 | 196 | 196 | retire (retire 2) | 0/2 | 0 | - | #1561 | codegen 2, text 1, checker 2, parser 2 | asserts generated Rust text. |
 | `loaves/compiler/incan_emit/src/checked_program/sdk_module_derives.rs` | 5 | 257 | 257 | retire (keep 2, retire 3) | 1/3 | 2 | - | #1561 | codegen 3, checker 5, parser 5 | SDK module derive requirements flowing into codegen; two tests assert the metadata round trip only. |
 | `loaves/compiler/incan_emit/src/checked_program/tests.rs` | 5 | 497 | 497 | keep (keep 4, retire 1) | 1/1 | 0 | - | #1561 | codegen 1, replacement 1, checker 4, parser 4, legacy_ir 1 | checked-program facts (callable shapes, forwarding metadata, vocab refusal); one test drives codegen. |
-| `loaves/compiler/incan_emit/src/codegen.rs` | 148 | 9885 | 6601 | retire (retire 148) | 101/148 | 16 | required | #1561 | codegen 141, text 52, checker 131, parser 96, legacy_ir 134 | IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before. Rows disposed by the `smoke` area and by the codegen fixture areas: behavior fixtures under fixtures/behavior/codegen_*, re-point CLI tests for the rust:: contracts a real crate runs, dies for generated-text mechanics, open rows for rust:: candidates and for programs that pass `incan check` and fail to compile. |
+| `loaves/compiler/incan_emit/src/codegen.rs` | 148 | 9899 | 6601 | retire (retire 148) | 101/148 | 16 | required | #1561 | codegen 141, text 52, checker 131, parser 96, legacy_ir 134 | IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before. Rows disposed by the `smoke` area and by the codegen fixture areas: behavior fixtures under fixtures/behavior/codegen_*, re-point CLI tests for the rust:: contracts a real crate runs, dies for generated-text mechanics, open rows for rust:: candidates and for programs that pass `incan check` and fail to compile. |
 | `loaves/compiler/incan_emit/src/codegen/capability_bridge.rs` | 1 | 190 | 18 | retire (retire 1) | 1/1 | 0 | - | #1561 | parser 1 | codegen capability activation for generated projects. |
 | `loaves/compiler/incan_emit/src/codegen/dependency_metadata.rs` | 8 | 1364 | 201 | retire (retire 8) | 2/8 | 6 | - | #1561 | checker 1, parser 7, legacy_ir 7 | externally-reachable item and generated-module path tables of the generated project; every test dies with it. |
 | `loaves/compiler/incan_emit/src/conversions.rs` | 80 | 2974 | 1645 | retire (retire 80) | 51/80 | 8 | required | #1561 | legacy_ir 75 | Rust conversion policy (to_string/borrow/clone plans) for emission; every test drives `determine_conversion` on synthetic IR. Twinned by the ownership_* behavior fixtures and re-point interop programs per test; `rust::` programs are candidates; the token renderers and the unspellable `Unknown` states die. |

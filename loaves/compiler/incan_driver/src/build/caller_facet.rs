@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use incan_frontend::ast::Visibility;
-use incan_frontend::library_exports::{CheckedExportKind, CheckedNamedExport};
+use incan_frontend::library_exports::{CheckedExportKind, CheckedExportProjection, CheckedNamedExport};
 use incan_frontend::symbols::ResolvedType;
 
 /// One library-scoped caller facet selected from Rust source paths.
@@ -83,6 +83,12 @@ pub fn select_checked_caller_exports(
         let export = exports_by_name
             .get(name.as_str())
             .ok_or_else(|| format!("caller export `{library}::{name}` is missing or is not public"))?;
+        if !is_root_declaration(export) {
+            return Err(format!(
+                "caller export `{library}::{name}` is not declared in the library entrypoint: `caller::incan` \
+                 re-exports entrypoint declarations under their own names, not aliases, re-exports or submodule items"
+            ));
+        }
         export_representability(export, &exports_by_name)
             .map_err(|reason| format!("caller export `{library}::{name}` is not representable: {reason}"))?;
         selected.push(name.clone());
@@ -91,6 +97,16 @@ pub fn select_checked_caller_exports(
         library: library.to_string(),
         exports: selected,
     })
+}
+
+/// Whether `export` exposes its own declaration from the library entrypoint under its own name.
+///
+/// The caller namespace re-exports each selected item as `crate::<name>`, which names exactly such a declaration in
+/// the generated crate. An alias, a re-export or a submodule declaration lives at another path, so it is refused
+/// rather than projected under a path that does not name it.
+fn is_root_declaration(export: &CheckedNamedExport) -> bool {
+    matches!(export.identity.projection, CheckedExportProjection::Direct)
+        && matches!(export.identity.source_path.as_slice(), [name] if *name == export.name)
 }
 
 /// Validate one selected checked export and every nominal type reachable from its public shape.
@@ -249,6 +265,7 @@ mod tests {
     use incan_frontend::{lexer, parser};
 
     use super::{scan_rust_caller_paths, select_checked_caller_exports};
+    use incan_frontend::library_exports::CheckedExportProjection;
 
     #[test]
     fn caller_scan_unions_paths_and_ignores_comments_and_literals() {
@@ -297,6 +314,33 @@ const TEXT: &str = "hidden::caller::incan::ignored";
             unsupported.contains("later") && unsupported.contains("async"),
             "{unsupported}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_selection_refuses_an_export_that_is_not_a_root_declaration() -> Result<(), Box<dyn std::error::Error>> {
+        // `caller::incan` re-exports `crate::<name>`, which names only a root declaration under its own name; a
+        // re-export or a submodule item lives elsewhere, so selecting it would project a path that does not name it.
+        let exports = checked_exports("pub def answer() -> int:\n    return 42\n")?;
+        let mut reexported = exports.clone();
+        for export in &mut reexported {
+            export.identity.projection = CheckedExportProjection::Reexport {
+                target_path: vec!["lib".to_string(), "inner".to_string(), "answer".to_string()],
+            };
+        }
+        let mut nested = exports;
+        for export in &mut nested {
+            export.identity.source_path = vec!["lib".to_string(), "inner".to_string(), "answer".to_string()];
+        }
+        for exports in [reexported, nested] {
+            let refused = select_checked_caller_exports("policy", &BTreeSet::from(["answer".to_string()]), &exports)
+                .err()
+                .ok_or("a non-root export was selected")?;
+            assert!(
+                refused.contains("answer") && refused.contains("library entrypoint"),
+                "{refused}"
+            );
+        }
         Ok(())
     }
 
