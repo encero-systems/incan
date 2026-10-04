@@ -1,0 +1,46 @@
+# behavior: cli executes unchanged type conversions with receipt
+# expect-stdout:
+#   String '42' -> int 42
+#   Int 123 -> string '123'
+#   String '3.14' -> float 3.14
+#   Int 10 -> float 10.0
+#   10 + 20 = 30
+
+"""
+Type Conversions in Incan
+
+This example demonstrates:
+- int() - convert to integer
+- str() - convert to string
+- float() - convert to float
+- Parse strings to numbers
+
+Python equivalent:
+```python
+x = int("42")
+s = str(123)
+f = float("3.14")
+```
+"""
+
+def main() -> None:
+    num_str = "42"
+    num = int(num_str)
+    println(f"String '{num_str}' -> int {num}")
+    
+    value = 123
+    value_str = str(value)
+    println(f"Int {value} -> string '{value_str}'")
+    
+    float_str = "3.14"
+    f = float(float_str)
+    println(f"String '{float_str}' -> float {f}")
+    
+    int_val = 10
+    float_val = float(int_val)
+    println(f"Int {int_val} -> float {float_val}")
+    
+    a = int("10")
+    b = int("20")
+    sum = a + b
+    println(f"10 + 20 = {sum}")

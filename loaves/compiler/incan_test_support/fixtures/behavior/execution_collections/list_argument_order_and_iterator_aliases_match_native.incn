@@ -1,0 +1,37 @@
+# behavior: list argument order and iterator aliases match native
+# expect-stdout:
+#   left
+#   left
+#   right
+#   pair
+#   pair
+#   58
+
+
+def left_values() -> list[int]:
+  println("left")
+  return [4, 5]
+
+def right_values() -> list[int]:
+  println("right")
+  return [10, 20]
+
+def observe() -> int:
+  mut total = 0
+  values = left_values()
+  for prior_value in values:
+    total += prior_value
+  enumerated = enumerate(values)
+  enumerated_alias = enumerated
+  for enum_index, enum_value in enumerated_alias:
+    total += enum_index + enum_value
+  paired = zip(left_values(), right_values())
+  paired_alias = paired
+  for pair_left, pair_right in paired_alias:
+    println("pair")
+    total += pair_left + pair_right
+  return total
+
+
+def main() -> None:
+    println(observe())

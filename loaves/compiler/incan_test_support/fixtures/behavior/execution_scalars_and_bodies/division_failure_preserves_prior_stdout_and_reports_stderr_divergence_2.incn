@@ -1,0 +1,12 @@
+# behavior: division failure preserves prior stdout and reports stderr divergence, as the legacy route runs it
+# expect-stdout:
+#   before division
+# expect-exit: 101
+
+def divide(a: int, b: int) -> int:
+    println("before division")
+    return a // b
+
+
+def main() -> None:
+    println(divide(1, 0))

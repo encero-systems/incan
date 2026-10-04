@@ -1,0 +1,14 @@
+# behavior: lexical len shadow executes the user declaration
+# expect-stdout:
+#   99
+
+
+def len(value: str) -> int:
+    return 99
+
+def length(value: str) -> int:
+    return len(value)
+
+
+def main() -> None:
+    println(length("é"))

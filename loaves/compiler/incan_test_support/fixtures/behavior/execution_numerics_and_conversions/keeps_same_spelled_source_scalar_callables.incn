@@ -1,0 +1,14 @@
+# behavior: keeps same spelled source scalar callables
+# expect-stdout:
+#   source str
+
+
+def str(value: int) -> str:
+  return "source str"
+
+def program_result() -> str:
+  return str(42)
+
+
+def main() -> None:
+    println(program_result())

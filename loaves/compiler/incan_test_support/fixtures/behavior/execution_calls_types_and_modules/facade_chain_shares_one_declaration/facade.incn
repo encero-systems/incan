@@ -1,0 +1,3 @@
+pub from provider import compute
+
+pub renamed = alias compute

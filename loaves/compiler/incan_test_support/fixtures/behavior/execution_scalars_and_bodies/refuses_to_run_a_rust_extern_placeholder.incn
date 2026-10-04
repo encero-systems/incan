@@ -1,0 +1,17 @@
+# behavior: refuses to run a rust extern placeholder (#2023), as the legacy route runs it
+# expect-stdout:
+# expect-exit: 101
+
+rust.module("incan_std_testing")
+
+@rust.extern
+def fail_t(msg: str) -> None:
+  ...
+
+def program_result() -> int:
+  fail_t("boom")
+  return 7
+
+
+def main() -> None:
+    println(program_result())

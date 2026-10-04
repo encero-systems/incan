@@ -1,0 +1,12 @@
+# behavior: preserves typed numeric values in print and fstring paths
+# expect-stdout:
+#   10
+
+
+def program_result() -> str:
+  value: u128 = 10
+  return str(value)
+
+
+def main() -> None:
+    println(program_result())

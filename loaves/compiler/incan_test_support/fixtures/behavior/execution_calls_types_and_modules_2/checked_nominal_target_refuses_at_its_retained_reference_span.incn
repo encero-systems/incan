@@ -1,0 +1,13 @@
+# behavior: checked nominal target refuses at its retained reference span, as the legacy route runs it
+# expect-stdout:
+#   false
+
+model Marker:
+  value: int
+
+def probe(value: Marker | str) -> bool:
+  return isinstance(value, Marker)
+
+
+def main() -> None:
+    println(probe("text"))

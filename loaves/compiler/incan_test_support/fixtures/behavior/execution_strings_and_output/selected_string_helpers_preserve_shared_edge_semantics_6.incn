@@ -1,0 +1,10 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   α, β
+
+def result() -> str:
+    return ", ".join(["α", "β"])
+
+
+def main() -> None:
+    println(result())

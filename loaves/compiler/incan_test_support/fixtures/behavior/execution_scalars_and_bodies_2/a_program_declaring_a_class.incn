@@ -1,0 +1,14 @@
+# behavior: a program that declares a class runs
+# expect-stdout:
+#   42
+
+class Pair:
+    left: int
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())

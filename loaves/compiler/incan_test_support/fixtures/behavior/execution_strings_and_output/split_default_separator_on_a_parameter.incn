@@ -1,0 +1,11 @@
+# behavior: split() without a separator on a str parameter keeps the parameter as one part
+# expect-stdout:
+#   [ a b ]
+
+def split_default(text: str) -> str:
+    """Return the original text through split and join without supplying a separator."""
+    return "|".join(text.split())
+
+
+def main() -> None:
+    println(f"[{split_default(" a b ")}]")

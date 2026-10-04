@@ -1,0 +1,10 @@
+# behavior: string membership cli records the shared helper result
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+    return "a" in "abc"
+
+
+def main() -> None:
+    println(program_result())

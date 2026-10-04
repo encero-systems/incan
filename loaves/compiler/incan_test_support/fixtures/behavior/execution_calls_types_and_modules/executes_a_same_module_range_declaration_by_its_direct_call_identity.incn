@@ -1,0 +1,14 @@
+# behavior: executes a same module range declaration by its direct call identity
+# expect-stdout:
+#   42
+
+
+def range(start: int, end: int) -> int:
+  return start + end
+
+def program_result() -> int:
+  return range(20, 22)
+
+
+def main() -> None:
+    println(program_result())

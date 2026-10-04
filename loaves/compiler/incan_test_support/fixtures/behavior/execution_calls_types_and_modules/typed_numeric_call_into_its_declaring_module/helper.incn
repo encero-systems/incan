@@ -1,0 +1,2 @@
+pub def widen(value: u8) -> u8:
+    return value

@@ -1,0 +1,14 @@
+# behavior: a u8 list built in a callee module returns its element to the caller
+# expect-stdout:
+#   41
+
+from helper import widen
+
+
+def program_result() -> u8:
+    start: u8 = 41
+    return widen(start)
+
+
+def main() -> None:
+    println(program_result())

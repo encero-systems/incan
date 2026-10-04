@@ -1,0 +1,14 @@
+# behavior: refuses enum targets whose canonical member disagrees with the physical record, as the legacy route runs it
+# expect-stdout:
+#   false
+
+enum Signal:
+  Ready
+  Stop
+
+def program_result() -> bool:
+  return Signal.Ready == Signal.Stop
+
+
+def main() -> None:
+    println(program_result())

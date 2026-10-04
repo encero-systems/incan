@@ -1,0 +1,12 @@
+# behavior: executes checked typed numeric locals through selected scalar conversions
+# expect-stdout:
+#   1
+
+
+def program_result() -> int:
+  value: f64 = 1.23456789
+  return int(value)
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,14 @@
+# behavior: a program that declares a model field alias runs
+# expect-stdout:
+#   42
+
+model Pair:
+    left [alias="wire_left"]: int
+
+
+def program_result() -> int:
+    return 42
+
+
+def main() -> None:
+    println(program_result())
