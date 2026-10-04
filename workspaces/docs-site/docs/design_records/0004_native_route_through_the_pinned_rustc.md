@@ -1,6 +1,6 @@
 ---
 id: DD-0004
-title: Compile Incan natively through the pinned rustc, with a driver Loaf that Oven invokes
+title: Compile Incan directly through the pinned rustc, with a driver Loaf that Oven invokes
 status: Draft
 type: design-decision
 date: 2026-10-03
@@ -18,7 +18,7 @@ sources:
   - RFC 124
 ---
 
-# DD-0004: Compile Incan natively through the pinned rustc, with a driver Loaf that Oven invokes
+# DD-0004: Compile Incan directly through the pinned rustc, with a driver Loaf that Oven invokes
 
 ## Context
 
@@ -41,13 +41,15 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 - Incan code drives a Rust layer built against rustc's internals. One driver builds that layer, an Incan unit that fills its body plan, and a Rust executable that calls the Incan unit. The executable runs rustc in its own process and compiles a program whose function body the Incan code planned.
 - Real Body IR runs natively. The driver runs this repository's Incan front end in-process and lowers the unchanged kernels of the `fib` and `collatz` benchmarks to MIR, calling the same stdlib runtime helpers the emitted route calls. The output is identical to the emitted-Rust route's for the same sources, and optimized runtime is on par.
 - Whole programs compile natively. The unchanged `fib`, `collatz` and `mandelbrot` benchmark programs, `main` included, compile from source to native binaries with no Rust source at any point. Their output is identical to the emitted route's, and optimized runtime is at parity.
-- A first corpus native lane runs. It compiles every single-file behavior fixture that records its expected output, runs it natively, and compares stdout and exit code. 24 fixtures pass, none produce wrong output, none fail, and 439 are refused with the construct they need named. The lane caught two behavior differences and three lowering defects, all fixed or refused:
+- A first corpus lane runs on the direct route. It compiles every single-file behavior fixture that records its expected output, runs it natively, and compares stdout and exit code. 24 fixtures pass, none produce wrong output, none fail, and 439 are refused with the construct they need named. The lane caught two behavior differences and three lowering defects, all fixed or refused:
     - a `@rust.extern` placeholder run as a body (#2023);
     - an `import this` whose module effect Body IR does not carry.
 
     The largest refusal is imports, at 113 fixtures: a program that imports from the stdlib needs the stdlib's own units compiled natively, which is where Oven building several units, and the toolchain building its own stdlib, come in.
 
 ## Decision
+
+**There is one route, the direct route.** Incan compiles through the pinned rustc with no generated Rust. It replaces the Rust-emission route rather than running beside it, and the Body IR interpreter is removed (#1337).
 
 **The driver is its own Loaf, pinned to rustc.**
 
@@ -107,7 +109,7 @@ A spike on `feature/1337-rustc-front-end` (`workspaces/spikes/1337-rustc-front-e
 
 **New code is Incan unless Rust is clearly better.**
 
-- The native route's new code is written in Incan by default. That includes the Body IR → MIR lowering, drop and unwind building, and the driver's own orchestration.
+- The direct route's new code is written in Incan by default. That includes the Body IR → MIR lowering, drop and unwind building, and the driver's own orchestration.
 - Rust is used only where it is the better tool. Here that is the narrow layer that holds rustc's internal types, which are bound to rustc's lifetimes and interned values, plus any code where exact lifetimes and borrows matter for performance.
 - Every piece that stays Rust names its reason.
 - Once both languages share one crate graph, splitting a component across them costs nothing at the boundary, so this extends Incan's standing self-hosting rule to the compiler's own internals.
@@ -146,20 +148,23 @@ The inner loop on real Body IR, with an optimized driver and the front end in-pr
 
 **The checker carries more facts.** It must hold complete trait obligations and closure capture facts, because the lowering depends on both. Body IR must also record parameter modes. Today it passes an argument to a `mut` parameter as a copy and lets the callee drop it, where RFC 129 and the emitted route write through (#2022). It must also carry the facts the lowering currently compensates for: a value-returning function's trailing result, now a discarded expression statement (#2025), extern delegation (#2023), the checked type of a literal, which leaves an `int` literal accepted as a `float` as an integer constant, the receiver mode of mutating builtin methods, and the precise type of a `range(..)` value.
 
+**The Incan lowering meets rustc through a plain-data plan.** The lowering is Incan by decision. It consumes Body IR (Incan matches Body IR's enum shapes, struct variants included) and fills a plan of blocks, places, calls and drops addressed by index. The plan's crate is plain Rust data that names no rustc type. The driver, the one unit allowed rustc's internals, turns a finished plan into MIR. The lowering never calls into rustc code.
+
+A layer that owns rustc's types cannot be what the lowering imports. As a `[rust-dependencies]` crate it does not bake without the driver-only `rustc_private` permission, so the checker never sees its API. A plain-data plan crate bakes, typechecks and runs like any other Rust dependency (spike probes `rustc_seam_check` and `mir_plan_check`).
+
 **Open, to settle before this record is accepted:**
 
-- **How the Incan lowering reaches rustc.** The lowering is Incan by decision. A narrow Rust layer owns every rustc type and presents a plain builder of blocks, places, calls and drops addressed by index. The lowering drives that builder and is compiled first by the previous compiler. On the native route this works: the spike's Incan unit calls that layer as an ordinary call in one crate graph, and the executable embedding it runs rustc. Incan code also matches Rust enums of Body IR's three variant shapes, struct variants by named field patterns, so the lowering can consume Body IR directly. Still untested is the real checker typing the Rust layer's API through Rust inspection, which reads the layer's source while that source names rustc's internal crates.
-- **Generic bodies of published Loaves.** How do they reach a native consumer: through the rustc metadata of the Loaf's compiled unit, through RFC 123's executable representation, or both?
+- **Generic bodies of published Loaves.** How do they reach a consumer on the direct route: through the rustc metadata of the Loaf's compiled unit, through RFC 123's executable representation, or both?
 - **Async.** How do Incan `async` bodies lower: as MIR coroutines the front end builds, or by another route?
 
 ## Non-goals
 
 - A native code generator of Incan's own, such as Cranelift. Generic, trait and async Rust can only be instantiated by rustc.
-- An interpreter that calls compiled Rust. The Body IR interpreter proved Body IR carries complete semantics; it does not ship.
+- An interpreter that calls compiled Rust. The Body IR interpreter proved Body IR carries complete semantics; it is removed (#1337).
 - Rust source generated in memory and handed to rustc. That is still generated Rust.
 - A fork of rustc. The driver already gets everything a fork would give: it decides unstable-feature permission per unit, and rustc's driver callbacks and query overrides carry items, bodies, spans and cross-crate metadata. A fork would not remove the churn of rustc's internals; it would turn a driver upgrade into rebasing a patch series every release. It would also mean building and shipping rustc and LLVM for every target, owning security backports, and making Rust built through Incan differ from upstream. Revisit only when a needed hook cannot be had through callbacks or query overrides, such as resolving Incan items without AST injection, injecting THIR, or tying rustc's incremental reuse to unit identity. Even then, propose the hook upstream first, as Clippy and Miri did for theirs.
 - Linking rustc into the compiler. Every compiler binary, including the language server, would then carry rustc's library and build against its unstable interface.
-- Inspection of the native route. That is a separate design.
+- Inspection of the direct route. That is a separate design.
 - More than one rustc per toolchain release (DD-0002).
 
 ## Revisit condition
