@@ -1,6 +1,7 @@
 //! Building one `Body` per lowered function or method declaration, including receiver resolution.
 
 use super::*;
+use incan_lang::lang::decorators::{self, DecoratorId};
 
 /// Lower every non-abstract method in `methods` (owned by the declaration named `owner_name`) into one
 /// [`bir::Body`] each, skipping abstract methods (`body: None`). `receiver_ty` is the typechecker-equivalent type
@@ -24,6 +25,61 @@ pub(super) fn lower_owner_method_bodies(
         .filter_map(|method| lower_method_body(&method.node, method.span, owner_name, &receiver_ty, lowering_facts))
         .collect()
 }
+
+/// The delegation an `@rust.extern` declaration named `name` records, or `None` for an ordinary declaration (#2023).
+///
+/// The item is the declaration's own name in the file's `rust.module(...)` module, for functions and static methods
+/// alike, as the emitted route's delegation wrapper calls it. The checker refuses an extern in a file with no
+/// `rust.module(...)`, so that case never reaches lowering; it still lowers fail-closed, to a body whose only statement
+/// refuses, rather than to the placeholder.
+fn extern_delegation(
+    decorators: &[ast::Spanned<ast::Decorator>],
+    name: &str,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> Option<Result<bir::ExternDelegation, String>> {
+    let is_extern = decorators
+        .iter()
+        .any(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::RustExtern));
+    if !is_extern {
+        return None;
+    }
+    Some(match lowering_facts.rust_module {
+        Some(module) => Ok(bir::ExternDelegation {
+            rust_module: module.to_string(),
+            rust_item: name.to_string(),
+        }),
+        None => Err(format!(
+            "`@rust.extern` declaration `{name}` in a file with no `rust.module(...)` binding"
+        )),
+    })
+}
+
+/// Lower a declaration's statements, unless it is an `@rust.extern` whose `...` placeholder must not become code.
+///
+/// An ordinary body returns its trailing expression when it has a value-returning type (#2025). Returns the body's
+/// statements and its delegation. An extern's statements are empty (or a single refusal when its delegation could not
+/// be resolved), and its parameters are not dropped by the body: the delegated Rust item owns them.
+fn lower_declaration_statements(
+    builder: &mut BodyBuilder<'_, '_>,
+    delegation: Option<Result<bir::ExternDelegation, String>>,
+    source: &[ast::Spanned<ast::Statement>],
+    root_scope: bir::ScopeId,
+    span: HirSourceSpan,
+) -> (Vec<bir::Statement>, Option<bir::ExternDelegation>) {
+    let mut stmts = Vec::new();
+    match delegation {
+        Some(Ok(delegation)) => return (stmts, Some(delegation)),
+        Some(Err(description)) => builder.push_unsupported_stmt(description, span, &mut stmts),
+        None => {
+            builder.lower_block_into(source, root_scope, &mut stmts);
+            let owner_return_type = builder.owner_return_type.clone();
+            return_trailing_value(&owner_return_type, &mut stmts);
+            builder.insert_scope_drops(&mut stmts, root_scope);
+        }
+    }
+    (stmts, None)
+}
+
 /// Lower one function declaration's body into Body IR v0.
 pub(super) fn lower_function_body(
     function: &ast::FunctionDecl,
@@ -77,13 +133,16 @@ pub(super) fn lower_function_body(
         });
     }
 
-    let mut stmts = Vec::new();
     builder
         .borrowed_parameters
         .extend(params.iter().filter(|param| param.mutable).map(|param| param.local));
-    builder.lower_block_into(&function.body, root_scope, &mut stmts);
-    return_trailing_value(&owner_return_type, &mut stmts);
-    builder.insert_scope_drops(&mut stmts, root_scope);
+    let (stmts, extern_delegation) = lower_declaration_statements(
+        &mut builder,
+        extern_delegation(&function.decorators, &function.name, lowering_facts),
+        &function.body,
+        root_scope,
+        hir_span(decl_span),
+    );
 
     if builder
         .locals
@@ -112,6 +171,7 @@ pub(super) fn lower_function_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: function.is_async(),
+        extern_delegation,
     }
 }
 /// Lower one method declaration's body into Body IR v0, or `None` for an abstract method (`body: None` — a trait
@@ -221,16 +281,19 @@ pub(super) fn lower_method_body(
         });
     }
 
-    let mut stmts = Vec::new();
     builder.borrowed_parameters.extend(
         params
             .iter()
             .filter(|param| param.mutable && param.name != "self")
             .map(|param| param.local),
     );
-    builder.lower_block_into(body_stmts, root_scope, &mut stmts);
-    return_trailing_value(&owner_return_type, &mut stmts);
-    builder.insert_scope_drops(&mut stmts, root_scope);
+    let (stmts, extern_delegation) = lower_declaration_statements(
+        &mut builder,
+        extern_delegation(&method.decorators, &method.name, lowering_facts),
+        body_stmts,
+        root_scope,
+        hir_span(decl_span),
+    );
 
     if builder
         .locals
@@ -259,6 +322,7 @@ pub(super) fn lower_method_body(
         runtime_requirements: builder.runtime_requirements,
         panic_facts: builder.panic_facts,
         is_async: method.is_async(),
+        extern_delegation,
     })
 }
 /// Reconstruct the concrete `self` type for a method declared on `owner_name`, mirroring how
