@@ -1,12 +1,13 @@
 #!/bin/sh
 set -eu
 
-[ "$#" = 1 ] || {
-  echo "usage: resolve_release_cargo.sh EXPLICIT_CARGO" >&2
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || {
+  echo "usage: resolve_release_cargo.sh EXPLICIT_CARGO [RUSTUP_TOOLCHAIN]" >&2
   exit 2
 }
 
 explicit_cargo="$1"
+requested_toolchain="${2:-${RUSTUP_TOOLCHAIN:-}}"
 if [ -n "$explicit_cargo" ]; then
   [ -x "$explicit_cargo" ] || {
     echo "explicit Cargo is not executable: $explicit_cargo" >&2
@@ -42,13 +43,17 @@ IFS="$saved_ifs"
 
 rustup_bin="${resolved_cargo%/*}/rustup"
 if [ ! -x "$rustup_bin" ]; then
+  [ -z "$requested_toolchain" ] || {
+    echo "could not select pinned Cargo toolchain $requested_toolchain without Rustup; set CARGO_BIN to an exact executable" >&2
+    exit 1
+  }
   printf '%s\n' "$resolved_cargo"
   exit 0
 fi
 
-if [ -n "${RUSTUP_TOOLCHAIN:-}" ]; then
-  selected_cargo="$("$rustup_bin" which --toolchain "$RUSTUP_TOOLCHAIN" cargo)" || {
-    echo "could not resolve Cargo for pinned Rustup toolchain $RUSTUP_TOOLCHAIN" >&2
+if [ -n "$requested_toolchain" ]; then
+  selected_cargo="$("$rustup_bin" which --toolchain "$requested_toolchain" cargo)" || {
+    echo "could not resolve Cargo for pinned Rustup toolchain $requested_toolchain" >&2
     exit 1
   }
 else

@@ -161,6 +161,11 @@ fn release_cargo_resolver() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
 }
 
+/// Return the release packager's shared native-toolchain selector.
+fn release_native_toolchain_resolver() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/resolve_release_native_toolchain.sh")
+}
+
 fn release_cargo_selector() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
 }
@@ -206,9 +211,8 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
     }
 
     let selected = Command::new(release_cargo_selector())
-        .env("RUSTUP_TOOLCHAIN", "1.98.0")
         .env("PATH", format!("{}:{}", guard_bin.display(), bin.display()))
-        .arg("")
+        .args(["", "nightly-2026-03-24"])
         .output()?;
     assert!(
         selected.status.success(),
@@ -216,7 +220,10 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
         String::from_utf8_lossy(&selected.stderr)
     );
     assert_eq!(String::from_utf8(selected.stdout)?, format!("{}\n", pinned.display()));
-    assert_eq!(fs::read_to_string(&log)?, "which --toolchain 1.98.0 cargo\n");
+    assert_eq!(
+        fs::read_to_string(&log)?,
+        "which --toolchain nightly-2026-03-24 cargo\n"
+    );
     assert!(!guard_log.exists(), "the repository target guard must never execute");
 
     fs::remove_file(&log)?;
@@ -287,6 +294,32 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
 }
 
 #[test]
+fn release_native_toolchain_selector_preserves_exact_overrides() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let cc = fixture.path().join("clang");
+    let cxx = fixture.path().join("clang++");
+    let sysroot = fixture.path().join("sysroot");
+    fs::write(&cc, "#!/bin/sh\nexit 0\n")?;
+    fs::write(&cxx, "#!/bin/sh\nexit 0\n")?;
+    fs::create_dir(&sysroot)?;
+    for compiler in [&cc, &cxx] {
+        let mut permissions = fs::metadata(compiler)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(compiler, permissions)?;
+    }
+
+    let output = Command::new(release_native_toolchain_resolver())
+        .args([cc.as_os_str(), cxx.as_os_str(), sysroot.as_os_str()])
+        .output()?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        format!("{}\t{}\t{}\n", cc.display(), cxx.display(), sysroot.display())
+    );
+    Ok(())
+}
+
+#[test]
 fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
     let script = fs::read_to_string(toolchain_package_archive_script())?;
     let policy_bake = script
@@ -317,7 +350,12 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="));
     assert!(script.contains("\"$policy_toolchain_root/bin/incan\" oven bake"));
     assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
-    assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\""));
+    assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\" \"$publisher_toolchain\""));
+    assert!(script.contains("publisher_toolchain=\"${INCAN_RELEASE_PUBLISHER_TOOLCHAIN:-nightly-2026-03-24}\""));
+    assert!(script.contains("resolve_release_native_toolchain.sh"));
+    assert!(script.contains("--cc \"$cc_bin\""));
+    assert!(script.contains("--cxx \"$cxx_bin\""));
+    assert!(script.contains("--c-sysroot \"$c_sysroot\""));
     assert!(!script.contains("cargo_bin=\"$(command -v cargo)\""));
     // The explicit-versus-`PATH` decision lives in the resolver the packaging script delegates to.
     let resolver = fs::read_to_string(release_cargo_resolver())?;
@@ -328,6 +366,8 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
     assert!(script.contains("--policy-engine-target \"$target\""));
     assert!(script.contains(".release_store_member.artifact_identity"));
+    assert!(script.contains("jq -er '.loafs | length' \"$loaf_root/envelope.json\""));
+    assert!(!script.contains("find \"$loaf_root\" -name loaf.json"));
     assert!(script.contains("release_policy_publisher_home=\"$(mktemp -d"));
     assert!(script.contains("rm -rf \"$release_policy_publisher_home\""));
     Ok(())
@@ -1642,11 +1682,23 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         evidence_workflow.contains("uses: ./.github/actions/run-oven-compiler-suite"),
         "complete compiler-suite correctness must remain in explicit release evidence"
     );
-    let focused_target = makefile
+    let (focused_target, retention_target) = makefile
         .split_once(".PHONY: test-oven-focused")
-        .and_then(|(_, suffix)| suffix.split_once(".PHONY: test-oven-pr-regressions"))
-        .map(|(target, _)| target)
-        .ok_or("Makefile omitted the focused Oven target boundary")?;
+        .and_then(|(_, suffix)| suffix.split_once(".PHONY: test-oven-report-retention"))
+        .and_then(|(focused, suffix)| {
+            suffix
+                .split_once(".PHONY: test-oven-pr-regressions")
+                .map(|(retention, _)| (focused, retention))
+        })
+        .ok_or("Makefile omitted the focused Oven or report-retention target boundary")?;
+    assert!(
+        retention_target.contains("cargo test --locked -p oven-cli --lib")
+            && retention_target.contains("commands::oven::suite_retention")
+            && retention_target.contains("commands::oven::partition_reconciliation")
+            && !retention_target.contains("python3")
+            && !retention_target.contains("$("),
+        "the report-retention target must run the Rust retention and reconciliation tests through Cargo alone"
+    );
     let focused_cargo_tests = focused_target
         .lines()
         .filter(|line| line.contains("cargo test"))
@@ -1679,6 +1731,18 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         !repo_root().join("scripts/run_oven_compiler_suite.sh").exists(),
         "product-level compiler-suite orchestration must not live in shell"
+    );
+    let timing_record = workflow
+        .split_once("  oven-timing-record:")
+        .and_then(|(_, suffix)| suffix.split_once("  oven-release-smoke:"))
+        .map(|(job, _)| job)
+        .ok_or("pull-request CI is missing the measured-durations job boundary")?;
+    assert!(
+        timing_record
+            .find("name: test-linux-tools")
+            .zip(timing_record.find("target/debug/incan oven reconcile-partitions"))
+            .is_some_and(|(download, reconcile)| download < reconcile),
+        "the measured-durations job must fetch this run's compiler before it reconciles partition coverage"
     );
     Ok(())
 }
