@@ -45,9 +45,8 @@ pub use ir::{GenerationError, IrCodegen};
 
 // Backend-selection identity and execution receipt (#986)
 pub use selection::{
-    BackendExecutionReceipt, BackendKind, BackendSelection, BackendSelectionError, CompatibilityProfile,
-    FallbackOutcome, FallbackPolicy, SelectionReason, ShadowComparisonState, digest_output, finalize_receipt,
-    resolve_execution, select_backend,
+    BackendExecutionReceipt, BackendKind, BackendSelection, BackendSelectionError, digest_output, finalize_receipt,
+    select_backend,
 };
 
 // Project generation (public API)

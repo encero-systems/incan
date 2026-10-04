@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use crate::backend::selection::{BackendKind, FallbackPolicy, ShadowComparisonState, finalize_receipt, select_backend};
+use crate::backend::selection::{BackendKind, finalize_receipt, select_backend};
 use crate::build::output_paths::packaged_library_metadata_files;
 use crate::build::package_loafs::write_packaged_library_loaf_manifest;
 use crate::build::publication::project_output_payload_for_bake;
@@ -96,18 +96,10 @@ pub fn fixture_project_output_publication_for(
         caller_relative_path: format!("target/fixture/{profile}-{label}"),
         output_relative_path: OVEN_PROJECT_OUTPUT_ARTIFACT_PATH.to_string(),
     }];
-    let backend_selection = select_backend(
-        BackendKind::Legacy,
-        false,
-        false,
-        format!("sha256:fixture-source-{label}"),
-        FallbackPolicy::Refuse,
-    );
+    let backend_selection = select_backend(BackendKind::Legacy, format!("sha256:fixture-source-{label}"));
     let backend_receipt = finalize_receipt(
         &backend_selection,
-        BackendKind::Legacy,
         format!("sha256:fixture-output-{label}"),
-        ShadowComparisonState::NotRequested,
         diagnostics::DIAGNOSTIC_SCHEMA_VERSION,
     )?;
     let payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
