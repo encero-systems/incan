@@ -2,7 +2,7 @@
 
 Ring: **compiler**
 
-Owns compilation sessions, module graphs, build orchestration, generated caches and replacement compatibility. The CLI owns clap parsing; some driver diagnostics still print directly to stderr, including declared backend-fallback notices.
+Owns compilation sessions, module graphs, build orchestration and generated caches. The CLI owns clap parsing; some driver diagnostics still print directly to stderr.
 
 ## Current sources
 
@@ -10,7 +10,6 @@ Owns compilation sessions, module graphs, build orchestration, generated caches 
 - `loaves/compiler/incan_driver/src/session.rs` — compilation sessions
 - `loaves/compiler/incan_frontend/src/parsed_module.rs` — parsed-module data consumed by the driver
 - `loaves/compiler/incan_driver/src/generated_cache.rs`
-- `loaves/compiler/incan_driver/src/replacement_compatibility.rs`
 - `loaves/compiler/incan_frontend/src/compiler_stack.rs` — shared frontend stack configuration
 - `loaves/compiler/incan_driver/src/backend/project/generator.rs` — generated Rust project rendering
 
@@ -20,4 +19,4 @@ Owns compilation sessions, module graphs, build orchestration, generated caches 
 
 This is what `incan-lsp` and `incan` both link. Its existence is what makes the LSP compile without the CLI (audit finding 1).
 
-`loaves/compiler/incan_driver/src/lib.rs` is the crate root. Build orchestration lives directly under the crate's source directory beside `backend/`, `inspect/`, `generated_cache.rs`, `replacement_compatibility.rs` and `shadow_support.rs`. The generated-project modules remain in `loaves/compiler/incan_driver/src/backend/project/`; moving their planning, lock projection, Cargo manifest and runner responsibilities into the Oven ring still requires dependency inversions.
+`loaves/compiler/incan_driver/src/lib.rs` is the crate root. Build orchestration lives directly under the crate's source directory beside `backend/`, `inspect/` and `generated_cache.rs`. The generated-project modules remain in `loaves/compiler/incan_driver/src/backend/project/`; moving their planning, lock projection, Cargo manifest and runner responsibilities into the Oven ring still requires dependency inversions.
