@@ -2184,7 +2184,8 @@ mod link_execution {
         Ok(())
     }
 
-    #[cfg(all(test, unix))]
+    // These fixtures execute a publisher, which only a host with the confinement primitive can do.
+    #[cfg(all(test, target_os = "macos"))]
     mod tests {
         use std::collections::BTreeMap;
         use std::error::Error;

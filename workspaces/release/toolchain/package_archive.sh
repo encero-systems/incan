@@ -19,6 +19,10 @@ Environment:
                  Prebuilt compiler-owned Oven Loafs used by packaging tests and controlled staging
   INCAN_SDK_DISTRIBUTION_PROFILE
                  SDK profile whose component payloads are packaged (default: full)
+  INCAN_RELEASE_PUBLISHER_TOOLCHAIN
+                 Rustup toolchain providing compatibility-publisher Cargo (default: nightly-2026-03-24)
+  INCAN_RELEASE_CC, INCAN_RELEASE_CXX, INCAN_RELEASE_C_SYSROOT
+                 Exact native compiler executables and sysroot used by release Loaf publication
   TOOLCHAIN_RELEASE    Release name override (default: tag name or v<workspace version>)
 USAGE
 }
@@ -412,8 +416,13 @@ git show HEAD:Cargo.lock > "$package_dir/crates/Cargo.lock" \
 #   2. The first `cargo` on `PATH` whose directory is NOT inside a repository `target/` tree. A real,
 #      system-installed Cargo is never legitimately located there; only a guard or build artifact would be.
 explicit_cargo_bin="${CARGO_BIN:-}"
-cargo_bin="$(workspaces/release/toolchain/resolve_release_cargo.sh "$explicit_cargo_bin")" \
+publisher_toolchain="${INCAN_RELEASE_PUBLISHER_TOOLCHAIN:-nightly-2026-03-24}"
+cargo_bin="$(workspaces/release/toolchain/resolve_release_cargo.sh "$explicit_cargo_bin" "$publisher_toolchain")" \
   || fail "could not resolve authoritative Cargo for release packaging"
+native_toolchain="$(workspaces/release/toolchain/resolve_release_native_toolchain.sh \
+  "${INCAN_RELEASE_CC:-}" "${INCAN_RELEASE_CXX:-}" "${INCAN_RELEASE_C_SYSROOT:-}")" \
+  || fail "could not resolve the native toolchain for release packaging"
+IFS=$'\t' read -r cc_bin cxx_bin c_sysroot <<< "$native_toolchain"
 # Resolve the real Cargo home now, before the guarded `$HOME` can hide the offline registry cache.
 # A selected Cargo can be either a user shim or a toolchain executable, so its parent directories
 # alone are not authoritative for the registry location.
@@ -436,11 +445,10 @@ elif [ -d "$HOME/.cargo/registry" ]; then
 else
   cargo_home_dir="$(dirname "$(dirname "$cargo_bin")")"
 fi
-# A Cargo resolved outside the repository guard is commonly Rustup's shim. Ask its sibling Rustup for the active
-# toolchain's exact Cargo instead of selecting the first directory below `toolchains/`: filesystem order is not
-# toolchain authority. A caller that sets `RUSTUP_TOOLCHAIN` selects that exact toolchain; otherwise Rustup's active
-# override/default applies. The release workflow supplies the supported version explicitly. A caller-provided
-# `CARGO_BIN` remains exact authority and a non-Rustup Cargo installation remains unchanged.
+# A Cargo resolved outside the repository guard is commonly Rustup's shim. Ask its sibling Rustup for the pinned
+# compatibility-publisher Cargo instead of selecting the first directory below `toolchains/`: filesystem order and
+# the consumer compiler's `RUSTUP_TOOLCHAIN` are not publisher authority. A caller-provided `CARGO_BIN` remains exact
+# authority.
 # `cargo metadata --offline` below resolves its registry cache from `$CARGO_HOME` (default
 # `$HOME/.cargo`), which is equally a victim of the guard's `$HOME` redirect: the offline cache
 # prewarmed into the real Cargo home would otherwise be invisible. `clear_inherited_cargo_environment`
@@ -448,8 +456,8 @@ fi
 # every Cargo invocation this script makes afterward.
 : "${CARGO_HOME:=$cargo_home_dir}"
 export CARGO_HOME
-printf 'package_archive: DEBUG cargo resolution: CARGO_BIN=%s CARGO_HOME=%s HOME=%s resolved=%s PATH=%s\n' \
-  "${CARGO_BIN:-<unset>}" "${CARGO_HOME:-<unset>}" "${HOME:-<unset>}" "$cargo_bin" "$PATH" >&2
+printf 'package_archive: DEBUG cargo resolution: CARGO_BIN=%s publisher_toolchain=%s CARGO_HOME=%s HOME=%s resolved=%s PATH=%s\n' \
+  "${CARGO_BIN:-<unset>}" "$publisher_toolchain" "${CARGO_HOME:-<unset>}" "${HOME:-<unset>}" "$cargo_bin" "$PATH" >&2
 # The archive ships a deliberately reduced support workspace, so its lock must describe that workspace rather than the
 # complete compiler repository. Seed resolution from the verified repository lock, reconcile only the removed workspace
 # members without network access, then prove the shipped closure is stable under Cargo's locked mode.
@@ -573,6 +581,9 @@ else
     --sdk-inventory "$sdk_seed_root/sdk-inventory.json" \
     --cargo "$cargo_bin" \
     --rustc "$rustc_bin" \
+    --cc "$cc_bin" \
+    --cxx "$cxx_bin" \
+    --c-sysroot "$c_sysroot" \
     --policy-engine-store "$policy_engine_store" \
     --policy-engine-identity "$policy_engine_identity" \
     --policy-engine-target "$target" \
@@ -584,12 +595,13 @@ else
     || fail "release Oven Loaf envelope retained a different policy-engine identity"
 fi
 [ -d "$loaf_root" ] || fail "release package is missing Oven Loafs"
-[ "$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')" = "2" ] \
+loaf_count="$(jq -er '.loafs | length' "$loaf_root/envelope.json")" \
+  || fail "release package has no readable Oven Loaf envelope"
+[ "$loaf_count" = "2" ] \
   || fail "release package must contain one release core and one debug Oven foundation Loaf"
 
 sdk_component_count="$(find "$sdk_seed_root/components" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 sdk_payload_bytes="$(find "$sdk_seed_root" -type f -exec wc -c {} + | awk '$2 != "total" { total += $1 } END { print total + 0 }')"
-loaf_count="$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')"
 loaf_payload_bytes="$(find "$loaf_root" -type f -exec wc -c {} + | awk '$2 != "total" { total += $1 } END { print total + 0 }')"
 loaf_physical_bytes="$(du -sk "$loaf_root" | awk '{ print $1 * 1024 }')"
 
