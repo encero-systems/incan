@@ -597,3 +597,15 @@ fn replacement_executes_a_static_method_call() -> Result<(), Box<dyn std::error:
     assert_eq!(execution.value, ReplacementValue::Int(34));
     Ok(())
 }
+
+#[test]
+fn replacement_calls_a_function_passed_as_a_value() -> Result<(), Box<dyn std::error::Error>> {
+    let module = lower_typed_body_ir(
+        "def square(x: int) -> int:\n  return x * x\n\n\
+         def apply(f: Callable[int, int], v: int) -> int:\n  return f(v)\n\n\
+         def main() -> int:\n  return apply(square, 7)\n",
+    )?;
+    let execution = execute_free_function(&module, "main", &[])?;
+    assert_eq!(execution.value, ReplacementValue::Int(49));
+    Ok(())
+}

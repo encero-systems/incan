@@ -39,6 +39,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         match &expr.node {
             ast::Expr::Ident(name) => {
                 let ty = self.resolve_ty(expr.span);
+                // A function named as a value (`apply(square, 7)`) is a partial with no presets: a capture-free closure
+                // that forwards every argument to it, as a local partial is lowered.
+                if !self.bindings.contains_key(name)
+                    && self
+                        .type_info
+                        .resolved_identity(expr.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+                {
+                    let partial = ast::PartialExpr {
+                        target: Box::new(expr.clone()),
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                    };
+                    return self.lower_partial(&partial, expr.span, scope, out);
+                }
                 let Some(place) = self.place_for_name(name, expr.span, &ty) else {
                     return self.unsupported_operand(
                         format!("resolved reference `{name}` has no Body IR value representation"),
