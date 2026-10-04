@@ -282,7 +282,6 @@ nav:
       - How-to:
           - Install/build/run: tooling/how-to/install_and_run.md
           - Managing dependencies: tooling/how-to/dependencies.md
-          - Execute a published package: tooling/how-to/execute_published_package.md
           - CI & automation: tooling/how-to/ci_and_automation.md
           - Troubleshooting: tooling/how-to/troubleshooting.md
           - Editor setup: tooling/how-to/editor_setup.md
