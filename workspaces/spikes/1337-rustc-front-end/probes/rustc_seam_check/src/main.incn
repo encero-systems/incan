@@ -1,0 +1,12 @@
+from rust::mir_seam import BodyPlan, compile
+
+
+pub def compile_answer(value: int, program: str, output: str, sysroot: str) -> int:
+    mut plan = BodyPlan.new()
+    plan.add_constant_return("answer", value)
+    return compile(plan, program, output, sysroot)
+
+
+def main() -> None:
+    plan = BodyPlan.new()
+    println(plan.len())

@@ -1,0 +1,9 @@
+[project]
+name = "plan_check"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+mir_plan = { path = "rust/mir_plan" }

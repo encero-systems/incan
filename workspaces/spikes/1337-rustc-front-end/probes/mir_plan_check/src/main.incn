@@ -1,0 +1,13 @@
+from rust::mir_plan import BodyPlan
+
+
+def plan_answer(value: int) -> BodyPlan:
+    mut plan = BodyPlan.new()
+    plan.add_constant_return("answer", value)
+    return plan
+
+
+def main() -> None:
+    plan = plan_answer(42)
+    println(plan.len())
+    println(plan.constant_for("answer"))
