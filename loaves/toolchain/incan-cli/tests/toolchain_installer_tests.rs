@@ -1732,6 +1732,18 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         !repo_root().join("scripts/run_oven_compiler_suite.sh").exists(),
         "product-level compiler-suite orchestration must not live in shell"
     );
+    let timing_record = workflow
+        .split_once("  oven-timing-record:")
+        .and_then(|(_, suffix)| suffix.split_once("  oven-release-smoke:"))
+        .map(|(job, _)| job)
+        .ok_or("pull-request CI is missing the measured-durations job boundary")?;
+    assert!(
+        timing_record
+            .find("name: test-linux-tools")
+            .zip(timing_record.find("target/debug/incan oven reconcile-partitions"))
+            .is_some_and(|(download, reconcile)| download < reconcile),
+        "the measured-durations job must fetch this run's compiler before it reconciles partition coverage"
+    );
     Ok(())
 }
 

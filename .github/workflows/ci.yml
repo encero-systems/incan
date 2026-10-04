@@ -820,6 +820,15 @@ jobs:
       # completeness is proven here, over every partition's report: each index present, each whole root once, each
       # sliced root's slices disjoint and adding up to the inventory it observed. This step is what turns four
       # partial reports into complete-suite evidence, so it fails the job on any gap or overlap.
+      #
+      # The reconciliation is a compiler command, so this job fetches the compiler the replay partitions ran.
+      - name: Download compiler and reference generators
+        uses: actions/download-artifact@v7
+        with:
+          name: test-linux-tools
+          path: target/debug
+      - name: Restore executable permissions
+        run: chmod +x target/debug/incan
       - name: Reconcile joint coverage across partitions
         run: |
           target/debug/incan oven reconcile-partitions target/oven-timing-record \

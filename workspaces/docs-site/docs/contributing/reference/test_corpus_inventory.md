@@ -2698,7 +2698,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs` | 13 | 823 | 823 | re-point (keep 9, re-point 4) | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/script_target_diagnostics.rs` | 1 | 44 | 44 | re-point | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
 | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` | 1 | 128 | 128 | re-point | - | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs` | 31 | 2781 | 2781 | unaffected | - | - | required | #1561 | run 4 | installer, archive packager and release manifest. |
+| `loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs` | 31 | 2793 | 2793 | unaffected | - | - | required | #1561 | run 4 | installer, archive packager and release manifest. |
 | `loaves/toolchain/incan-cli/tests/vocab_guardrails.rs` | 3 | 575 | 575 | unaffected | - | - | - | #1561 | text 1 | source audits (semantic string audit, stringly vocab checks). |
 
 Per-test overrides in `loaves/toolchain/incan-cli/src/commands/build.rs`:
