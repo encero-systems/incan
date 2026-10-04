@@ -7,6 +7,7 @@
 
 pub mod backend_selection;
 pub mod bake;
+pub mod caller_facet;
 pub mod caller_owned;
 pub mod inline_command;
 pub mod library_exports;

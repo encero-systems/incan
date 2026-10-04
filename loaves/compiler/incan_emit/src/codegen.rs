@@ -768,6 +768,29 @@ impl IrGenerationOptions<'_> {
     }
 }
 
+/// RFC 097 identity embedded in an Oven-materialized Rust caller artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallerIdentity {
+    /// Incan package name.
+    pub package_name: String,
+    /// Incan package version.
+    pub package_version: String,
+    /// Digest of the library-scoped selected export facet.
+    pub caller_facet_id: String,
+    /// Independently versioned caller ABI.
+    pub caller_abi_version: String,
+    /// Compatible Incan compiler version range.
+    pub compiler_version_range: String,
+    /// Schema version of this identity record.
+    pub manifest_schema_version: u32,
+    /// Rust target triple of the materialized artifact.
+    pub target: String,
+    /// Build profile of the materialized artifact.
+    pub profile: String,
+    /// Exact Oven receipt or Loaf asset identity that authorized materialization.
+    pub receipt_reference: String,
+}
+
 /// IR-based Rust code generator
 ///
 /// This is the unified entrypoint for code generation. It uses the typed IR and syn/quote for code emission.
@@ -817,6 +840,10 @@ pub struct IrCodegen<'a> {
     externally_reachable_items: HashSet<String>,
     /// Private dependency-module IR items called by generated code appended inside that module.
     externally_reachable_items_by_module: HashMap<Vec<String>, HashSet<String>>,
+    /// Checked source names selected for the Rust-hosted caller facet.
+    caller_facet_exports: BTreeSet<String>,
+    /// Inspectable identity bound to the selected caller facet, when this is a caller artifact.
+    caller_identity: Option<CallerIdentity>,
     /// Public serialized value-enum identities for library builds, keyed by source identity (`module.Type`).
     public_ordinal_type_identities: HashMap<String, String>,
     /// Whether non-stdlib dependency modules keep public items that are not otherwise reachable.
@@ -1028,6 +1055,8 @@ impl<'a> IrCodegen<'a> {
             strict_generated_lints: false,
             externally_reachable_items: HashSet::new(),
             externally_reachable_items_by_module: HashMap::new(),
+            caller_facet_exports: BTreeSet::new(),
+            caller_identity: None,
             public_ordinal_type_identities: HashMap::new(),
             preserve_dependency_public_items: true,
             public_typecheck_module_paths: HashSet::new(),
@@ -1052,6 +1081,18 @@ impl<'a> IrCodegen<'a> {
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
+    }
+
+    /// Select checked public names for `caller::incan` and bind their inspectable artifact identity.
+    ///
+    /// The driver validates representability before calling this method. Emission only re-exports the already emitted
+    /// definitions, preserving one Rust definition and the source spelling for every selected item.
+    pub fn with_caller_facet(mut self, exports: impl IntoIterator<Item = String>, identity: CallerIdentity) -> Self {
+        self.caller_facet_exports.extend(exports);
+        self.externally_reachable_items
+            .extend(self.caller_facet_exports.iter().cloned());
+        self.caller_identity = Some(identity);
+        self
     }
 
     /// Return the stable module key used by source imports and CLI collection for one dependency module.
@@ -2030,6 +2071,57 @@ impl<'a> IrCodegen<'a> {
         format!("{main_code}\n#[doc(hidden)]\npub mod __incan_provider_rust {{\n{reexports}\n}}\n")
     }
 
+    /// Attach the selected caller namespace and its top-level infrastructure identity record.
+    fn attach_caller_facet(&self, main_code: String) -> String {
+        let Some(identity) = self.caller_identity.as_ref() else {
+            return main_code;
+        };
+        let reexports = self
+            .caller_facet_exports
+            .iter()
+            .map(|name| format!("        pub use crate::{name};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "{main_code}\n\
+             pub mod caller {{\n\
+                 #[derive(Debug, Clone, Copy)]\n\
+                 pub struct Identity {{\n\
+                     pub package_name: &'static str,\n\
+                     pub package_version: &'static str,\n\
+                     pub caller_facet_id: &'static str,\n\
+                     pub caller_abi_version: &'static str,\n\
+                     pub compiler_version_range: &'static str,\n\
+                     pub manifest_schema_version: u32,\n\
+                     pub target: &'static str,\n\
+                     pub profile: &'static str,\n\
+                     pub receipt_reference: &'static str,\n\
+                 }}\n\
+                 pub const IDENTITY: Identity = Identity {{\n\
+                     package_name: {package_name:?},\n\
+                     package_version: {package_version:?},\n\
+                     caller_facet_id: {caller_facet_id:?},\n\
+                     caller_abi_version: {caller_abi_version:?},\n\
+                     compiler_version_range: {compiler_version_range:?},\n\
+                     manifest_schema_version: {manifest_schema_version},\n\
+                     target: {target:?},\n\
+                     profile: {profile:?},\n\
+                     receipt_reference: {receipt_reference:?},\n\
+                 }};\n\
+                 pub mod incan {{\n{reexports}\n                 }}\n\
+             }}\n",
+            package_name = identity.package_name,
+            package_version = identity.package_version,
+            caller_facet_id = identity.caller_facet_id,
+            caller_abi_version = identity.caller_abi_version,
+            compiler_version_range = identity.compiler_version_range,
+            manifest_schema_version = identity.manifest_schema_version,
+            target = identity.target,
+            profile = identity.profile,
+            receipt_reference = identity.receipt_reference,
+        )
+    }
+
     /// Accumulate the exact provider and Rust crate roots required by checked public API types and class layouts.
     fn collect_provider_rust_bridge_roots(&mut self, type_info: &TypeCheckInfo) -> Result<(), GenerationError> {
         for (library, routes) in &type_info.declarations.foreign_pub_type_remappings {
@@ -2163,7 +2255,8 @@ impl<'a> IrCodegen<'a> {
 
         // Use the IR pipeline: AST → IR → Rust
         let code = self.try_generate_via_ir(program, &HashSet::new())?;
-        Ok(self.attach_provider_rust_dependency_bridge(code))
+        let code = self.attach_provider_rust_dependency_bridge(code);
+        Ok(self.attach_caller_facet(code))
     }
 
     /// Generate code via the IR pipeline (fallible version)
@@ -2858,7 +2951,8 @@ impl<'a> IrCodegen<'a> {
             modules.insert(name.clone(), module_code);
         }
 
-        Ok((self.attach_provider_rust_dependency_bridge(main_code), modules))
+        let main_code = self.attach_provider_rust_dependency_bridge(main_code);
+        Ok((self.attach_caller_facet(main_code), modules))
     }
 
     /// Generate Rust code for a multi-file project with nested module paths
@@ -3176,7 +3270,8 @@ impl<'a> IrCodegen<'a> {
             modules.insert(path.clone(), module_code);
         }
 
-        Ok((self.attach_provider_rust_dependency_bridge(main_code), modules))
+        let main_code = self.attach_provider_rust_dependency_bridge(main_code);
+        Ok((self.attach_caller_facet(main_code), modules))
     }
 }
 
@@ -3209,6 +3304,35 @@ mod tests {
 
     /// Generated crate-root Rust and source-module Rust keyed by module path.
     type GeneratedProject = (String, HashMap<Vec<String>, String>);
+
+    #[test]
+    fn selected_caller_items_are_reexported_below_reserved_top_level() -> Result<(), Box<dyn std::error::Error>> {
+        let program = parse_program_result(
+            "pub model Plan:\n    pub version: int\n\n\npub def make_plan() -> Plan:\n    return Plan(version=3)\n",
+        )?;
+        let identity = CallerIdentity {
+            package_name: "policy".to_string(),
+            package_version: "1.2.3".to_string(),
+            caller_facet_id: "sha256:facet".to_string(),
+            caller_abi_version: "1".to_string(),
+            compiler_version_range: ">=0.6.0-dev.7,<0.7.0".to_string(),
+            manifest_schema_version: 1,
+            target: "aarch64-apple-darwin".to_string(),
+            profile: "debug".to_string(),
+            receipt_reference: "sha256:receipt".to_string(),
+        };
+        let generated = IrCodegen::new()
+            .with_caller_facet(["Plan".to_string(), "make_plan".to_string()], identity)
+            .try_generate(&program)?;
+        let compact = generated.split_whitespace().collect::<String>();
+        assert!(compact.contains("pubmodcaller{"), "{generated}");
+        assert!(compact.contains("pubconstIDENTITY:Identity"), "{generated}");
+        assert!(compact.contains("pubmodincan{"), "{generated}");
+        assert!(compact.contains("pubusecrate::Plan;"), "{generated}");
+        assert!(compact.contains("pubusecrate::make_plan;"), "{generated}");
+        assert!(!compact.contains("pubmodcaller{pubusecrate::Plan"), "{generated}");
+        Ok(())
+    }
 
     /// Build lowering with the frontend-owned ownership proof for one source type annotation.
     fn lowering_with_mutable_reference_projection(

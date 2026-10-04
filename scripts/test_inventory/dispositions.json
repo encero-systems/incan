@@ -120,6 +120,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/caller_facet.rs": {
+      "disposition": "keep",
+      "notes": "checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/caller_owned.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
