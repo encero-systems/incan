@@ -519,6 +519,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// Locals whose value has been moved out via a full-value (non-projected) read, so scope-exit drop insertion
     /// skips them.
     moved_out: HashSet<bir::LocalId>,
+    /// `mut` parameters of non-`Copy` type: the callee borrows the caller's value (#2022), so it never drops one.
+    pub(super) borrowed_parameters: HashSet<bir::LocalId>,
     /// Locals whose current value was built by `lower_range_value` or copied from another such local. A checked
     /// `Range[T]` spelling alone is not a layout contract: parameters, call results, imports, and user
     /// declarations can use it without the four-field `AggregateKind::Range` representation. Only this
@@ -558,6 +560,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             moved_out: HashSet::new(),
+            borrowed_parameters: HashSet::new(),
             materialized_range_locals: HashSet::new(),
             loop_break_targets: Vec::new(),
             runtime_requirements: Vec::new(),
@@ -874,7 +877,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|local| local.id)
             .collect();
         for id in candidates {
-            if self.moved_out.contains(&id) {
+            if self.moved_out.contains(&id) || self.borrowed_parameters.contains(&id) {
                 continue;
             }
             stmts.push(bir::Statement {

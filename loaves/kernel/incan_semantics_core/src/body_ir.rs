@@ -1378,13 +1378,19 @@ pub struct CallableParam {
     pub span: HirSourceSpan,
     /// The value to use when this parameter is omitted, or the explicit reason direct evaluation is unavailable.
     pub default: CallableParamDefault,
+    /// The parameter is declared `mut` (#2022). For a non-`Copy` type the callee borrows the caller's value mutably
+    /// and its changes are visible to the caller: callers pass the argument as
+    /// [`OwnershipFact::MutBorrow`], and the callee neither owns nor drops the parameter, as the emitted route's
+    /// `&mut T` parameter does. For a `Copy` type it is a mutable local copy, so callers still pass a copy.
+    pub mutable: bool,
 }
 
 impl CallableParam {
     /// Render a deterministic maintainer-facing spelling for this parameter.
     fn render_snapshot(&self) -> String {
         format!(
-            "{}: {} local=_{} span={}..{}{}",
+            "{}{}: {} local=_{} span={}..{}{}",
+            if self.mutable { "mut " } else { "" },
             self.name,
             self.ty,
             self.local.0,
@@ -3456,6 +3462,7 @@ mod tests {
             ],
             params: vec![
                 CallableParam {
+                    mutable: false,
                     local: local_x,
                     name: "x".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -3463,6 +3470,7 @@ mod tests {
                     default: CallableParamDefault::Required,
                 },
                 CallableParam {
+                    mutable: false,
                     local: local_y,
                     name: "y".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -3713,6 +3721,7 @@ mod tests {
         );
         assert_eq!(
             CallableParam {
+                mutable: false,
                 local: LocalId(7),
                 name: "suffix".to_string(),
                 ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -3731,6 +3740,7 @@ mod tests {
     #[test]
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
+            mutable: false,
             local: LocalId(1),
             name: "limit".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -3748,6 +3758,7 @@ mod tests {
             })),
         };
         let preset = CallableParam {
+            mutable: false,
             local: LocalId(2),
             name: "method".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -3755,6 +3766,7 @@ mod tests {
             default: CallableParamDefault::PartialPreset { capture: LocalId(6) },
         };
         let unsupported = CallableParam {
+            mutable: false,
             local: LocalId(4),
             name: "payload".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Bytes),
@@ -3993,6 +4005,7 @@ mod tests {
                     place: Place::from_local(LocalId(2)),
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
+                            mutable: false,
                             local: param_local,
                             name: "z".to_string(),
                             ty: IncanType::Primitive(IncanPrimitiveType::Int),
