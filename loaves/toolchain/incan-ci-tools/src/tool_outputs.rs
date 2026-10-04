@@ -15,6 +15,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 const TOOLS: [&str; 3] = ["incan", "generate_lang_reference", "generate_feature_inventory"];
+/// Path of this executable as the CI workflow invokes it.
+const RECORDER: &str = "target/debug/incan-ci-tool-outputs";
 const ROOT_INPUTS: [&str; 4] = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain"];
 const RECIPE: [&str; 2] = [
     "CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics",
@@ -120,28 +122,49 @@ struct OutputManifest {
     outputs: BTreeMap<String, String>,
 }
 
-/// Parse the process arguments and run one operation, publishing fail-closed CI outputs on error.
-pub fn run_from_environment() -> io::Result<()> {
+/// How one operation ended once its CI outputs were published.
+#[derive(Debug)]
+pub enum Completion {
+    /// The operation produced its evidence.
+    Done,
+    /// The operation could not vouch for the tool outputs. Its fail-closed outputs are published, so CI continues on
+    /// the cold compiler build: these outputs are an accelerator, never a gate.
+    Unavailable(io::Error),
+}
+
+/// Parse the process arguments and run one operation, publishing fail-closed CI outputs when it is unavailable.
+///
+/// An error means the fail-closed outputs themselves could not be published.
+pub fn run_from_environment() -> io::Result<Completion> {
     let cli = Cli::parse();
     let unavailable = unavailable_context(&cli.operation);
-    match run(cli.operation) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            publish_github_outputs(&BTreeMap::from([
-                ("eligible", "false"),
-                ("hit", "false"),
-                ("admitted", "false"),
-            ]))?;
-            if let Some((state, operation)) = unavailable {
-                fs::create_dir_all(&state)?;
-                write_json(
-                    &state.join(format!("{operation}-unavailable.json")),
-                    &json!({"status": "unavailable", "detail": error.to_string()}),
-                )?;
-            }
-            Err(error)
-        }
+    let github_output = env::var_os("GITHUB_OUTPUT").map(PathBuf::from);
+    settle(run(cli.operation), unavailable, github_output.as_deref())
+}
+
+/// Turn an operation result into its completion, publishing fail-closed outputs and evidence for a refusal.
+fn settle(
+    result: io::Result<()>,
+    unavailable: Option<(PathBuf, &'static str)>,
+    github_output: Option<&Path>,
+) -> io::Result<Completion> {
+    let Err(error) = result else {
+        return Ok(Completion::Done);
+    };
+    if let Some(github_output) = github_output {
+        append_github_outputs(
+            github_output,
+            &BTreeMap::from([("eligible", "false"), ("hit", "false"), ("admitted", "false")]),
+        )?;
     }
+    if let Some((state, operation)) = unavailable {
+        fs::create_dir_all(&state)?;
+        write_json(
+            &state.join(format!("{operation}-unavailable.json")),
+            &json!({"status": "unavailable", "detail": error.to_string()}),
+        )?;
+    }
+    Ok(Completion::Unavailable(error))
 }
 
 /// Return the state path and operation name used for unavailable evidence.
@@ -1063,11 +1086,13 @@ fn record_cargo_messages(destination: &Path, stream: impl BufRead, mut diagnosti
 }
 
 /// Verify that CI invokes the exact fingerprinted recipe through this recorder.
+///
+/// The recorder is the built executable, not `cargo run`: the build coordinates are read from this process's
+/// environment, and a Cargo or Rustup launcher adds its own per-process variables to it.
 fn verify_workflow_recipe(workspace: &Path) -> io::Result<()> {
     let workflow = fs::read_to_string(workspace.join(".github/workflows/ci.yml"))?;
     for command in RECIPE {
-        let expected =
-            format!("{command} | cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- record ");
+        let expected = format!("{command} | {RECORDER} record ");
         if workflow.matches(&expected).count() != 1 {
             return Err(io::Error::other(
                 "workflow build command differs from the fingerprinted recipe",
@@ -1131,6 +1156,11 @@ fn publish_github_outputs<V: AsRef<str>>(values: &BTreeMap<&str, V>) -> io::Resu
     let Some(path) = env::var_os("GITHUB_OUTPUT") else {
         return Ok(());
     };
+    append_github_outputs(Path::new(&path), values)
+}
+
+/// Append step outputs to one GitHub output file.
+fn append_github_outputs<V: AsRef<str>>(path: &Path, values: &BTreeMap<&str, V>) -> io::Result<()> {
     let mut output = OpenOptions::new().create(true).append(true).open(path)?;
     for (name, value) in values {
         writeln!(output, "{name}={}", value.as_ref())?;
@@ -1329,6 +1359,56 @@ mod tests {
                 .is_some_and(|error| error.contains("CARGO_REGISTRIES_PRIVATE_INDEX"))
         );
         assert!(error.as_deref().is_some_and(|error| !error.contains("secret")));
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_launcher_variables_are_unsupported_build_configuration() {
+        for name in ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "RUST_RECURSION_COUNT"] {
+            let error = build_environment(vec![(name.to_owned(), "launcher".to_owned())])
+                .err()
+                .map(|error| error.to_string());
+            assert!(error.as_deref().is_some_and(|error| error.contains(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn repository_workflow_runs_the_recorder_as_a_plain_executable() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        verify_workflow_recipe(&workspace)?;
+        let workflow = fs::read_to_string(workspace.join(".github/workflows/ci.yml"))?;
+        assert!(
+            !workflow.contains("--bin incan-ci-tool-outputs --"),
+            "the recorder reads its own environment as build coordinates and must not be launched through `cargo run`"
+        );
+        assert!(workflow.contains(&format!("{RECORDER} identity ")));
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_operation_publishes_fail_closed_outputs_and_completes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let state = root.path().join("state");
+        let github_output = root.path().join("github-output");
+        let completion = settle(
+            Err(io::Error::other("refused")),
+            Some((state.clone(), "identity")),
+            Some(&github_output),
+        )?;
+        assert!(matches!(completion, Completion::Unavailable(error) if error.to_string() == "refused"));
+        assert_eq!(
+            fs::read_to_string(&github_output)?,
+            "admitted=false\neligible=false\nhit=false\n"
+        );
+        let evidence: Value = read_json(&state.join("identity-unavailable.json"))?;
+        assert_eq!(evidence, json!({"status": "unavailable", "detail": "refused"}));
+
+        let untouched = root.path().join("untouched-output");
+        assert!(matches!(settle(Ok(()), None, Some(&untouched))?, Completion::Done));
+        assert!(!untouched.exists());
+
+        let unpublishable = root.path().join("missing-directory/github-output");
+        assert!(settle(Err(io::Error::other("refused")), None, Some(&unpublishable)).is_err());
         Ok(())
     }
 

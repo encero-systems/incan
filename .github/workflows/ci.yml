@@ -287,10 +287,14 @@ jobs:
           make fetch-locked-cargo-sources
           make fetch-oven-loaf-sources
           make fetch-release-support-workspace-sources
+      # The recorder reads this job's environment as the build coordinates of the recipe below, so every step runs it
+      # as a plain executable. Launched through `cargo run` it would see Cargo's and Rustup's per-process variables.
+      - name: Build the Linux tool-output recorder
+        run: cargo build --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs
       - name: Fingerprint Linux tool inputs
         id: tool-inputs
         run: >-
-          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- identity --state target/ci-tool-evidence
+          target/debug/incan-ci-tool-outputs identity --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
       - name: Restore exact Linux tool outputs
         continue-on-error: true
@@ -303,27 +307,27 @@ jobs:
         id: tool-restore
         if: steps.tool-inputs.outputs.eligible == 'true'
         run: >-
-          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- restore --state target/ci-tool-evidence
+          target/debug/incan-ci-tool-outputs restore --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
       - name: Build optimized Linux compiler and reference generators
         if: steps.tool-restore.outputs.hit != 'true'
         run: |
           set -o pipefail
           mkdir -p target/ci-tool-evidence
-          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- record target/ci-tool-private/compiler.jsonl
-          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_lang --bin generate_lang_reference --message-format=json-render-diagnostics | cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- record target/ci-tool-private/reference.jsonl
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | target/debug/incan-ci-tool-outputs record target/ci-tool-private/compiler.jsonl
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_lang --bin generate_lang_reference --message-format=json-render-diagnostics | target/debug/incan-ci-tool-outputs record target/ci-tool-private/reference.jsonl
       - name: Audit cold Linux tool input coverage
         id: tool-admission
         if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible == 'true'
         run: >-
-          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- admit --state target/ci-tool-evidence
+          target/debug/incan-ci-tool-outputs admit --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
           --cargo-log target/ci-tool-private/compiler.jsonl
           --cargo-log target/ci-tool-private/reference.jsonl
       - name: Collect ineligible cold tool facts
         if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible != 'true'
         run: >-
-          cargo run --locked -q -p incan-ci-tools --bin incan-ci-tool-outputs -- collect --state target/ci-tool-evidence
+          target/debug/incan-ci-tool-outputs collect --state target/ci-tool-evidence
           --bundle target/ci-tools-restored
           --cargo-log target/ci-tool-private/compiler.jsonl
           --cargo-log target/ci-tool-private/reference.jsonl
