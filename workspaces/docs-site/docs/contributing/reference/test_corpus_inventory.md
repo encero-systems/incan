@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3564 | 245 | 8 |
+| keep | 3566 | 245 | 8 |
 | re-point | 526 | 86 | 1055 |
 | retire | 1504 | 153 | 0 |
 | unaffected | 1648 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7242** | **642** | **1068** |
+| **Total** | **7244** | **642** | **1068** |
 
 - Retire-class tests: 1504, of which twinned 1023, dies 294, open 187 (neither yet).
 - Retire-class files with open rows: 34 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -122,7 +122,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (767 tests in 107 files: keep 373, re-point 137, retire 103, unaffected 154)
+### `loaves/compiler/incan_driver` (768 tests in 107 files: keep 374, re-point 137, retire 103, unaffected 154)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -198,7 +198,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_shadow_tests.rs` | 1 | 154 | 154 | re-point | - | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_tests.rs` | 4 | 199 | 199 | keep | - | - | - | #1561 | run 1, replacement 3, checker 3, parser 3 | Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. |
 | `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/async_tasks_and_race.rs` | 10 | 467 | 467 | keep | - | - | - | #1561 | run 4, replacement 6 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); async tasks and `race`, direct and through the CLI. |
-| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/bodies_bindings_and_scalars.rs` | 18 | 576 | 576 | keep | - | - | - | #1561 | replacement 18 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); core body execution, bindings, projections and scalars. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/bodies_bindings_and_scalars.rs` | 19 | 604 | 604 | keep | - | - | - | #1561 | replacement 19 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); core body execution, bindings, projections and scalars. |
 | `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/callables_and_generators.rs` | 19 | 772 | 772 | keep | - | - | - | #1561 | replacement 19 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); named calls, closures, partials, callable defaults and generators. |
 | `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_nominal_and_enum_values.rs` | 9 | 703 | 703 | keep | - | - | - | #1561 | run 9 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven nominal and enum programs with their receipts and refusals. |
 | `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_refusals_shadow_and_boundaries.rs` | 13 | 812 | 812 | keep | - | - | - | #1561 | run 13, replacement 1 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven refusals without a receipt, shadow requests that stay explicitly non-green, module and Rust interop boundaries. |
@@ -326,7 +326,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/reference_shape.rs` | 3 | 107 | 65 | retire (retire 3) | 0/3 | 3 | - | #1561 | legacy_ir 3 | reference-shape predicates of the emitter's argument planning over hand-built IR; every test dies with it. |
 | `loaves/compiler/incan_emit/src/replacement/executable_resolution_tests.rs` | 17 | 1102 | 1102 | keep | - | - | - | #1561 | codegen 1, replacement 16, checker 17, parser 17 | replacement route (executable resolution, provider preflight, source profile). |
 | `loaves/compiler/incan_emit/src/replacement/hashed/tests.rs` | 15 | 314 | 314 | keep | - | - | - | #1561 | replacement 15 | replacement route (executable resolution, provider preflight, source profile). |
-| `loaves/compiler/incan_emit/src/replacement/mod.rs` | 4 | 8149 | 262 | keep | - | - | - | #1561 | replacement 4 | replacement route (executable resolution, provider preflight, source profile). |
+| `loaves/compiler/incan_emit/src/replacement/mod.rs` | 4 | 8158 | 263 | keep | - | - | - | #1561 | replacement 4 | replacement route (executable resolution, provider preflight, source profile). |
 | `loaves/compiler/incan_emit/src/replacement/provider/tests.rs` | 15 | 1004 | 1004 | keep | - | - | - | #1561 | replacement 15, checker 15, parser 15 | replacement route (executable resolution, provider preflight, source profile). |
 | `loaves/compiler/incan_emit/src/replacement/provider/tests/host_preflight_tests.rs` | 13 | 589 | 589 | keep | - | - | - | #1561 | replacement 13 | replacement route (executable resolution, provider preflight, source profile). |
 | `loaves/compiler/incan_emit/src/replacement/source_profile.rs` | 4 | 272 | 128 | keep | - | - | - | #1561 | replacement 3, parser 3 | replacement route (executable resolution, provider preflight, source profile). |
@@ -1856,19 +1856,19 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2096 tests in 114 files: keep 2096)
+### `loaves/compiler/incan_frontend` (2097 tests in 114 files: keep 2097)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_frontend/src/api_metadata.rs` | 17 | 3778 | 944 | keep | - | - | - | #1561 | checker 17, parser 17 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 1097 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 14 | 390 | 390 | keep | - | - | - | #1561 | replacement 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 1100 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 14 | 391 | 391 | keep | - | - | - | #1561 | replacement 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 39 | 1074 | 1074 | keep | - | - | - | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs` | 28 | 797 | 797 | keep | - | - | - | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/control_flow_and_loops.rs` | 23 | 745 | 745 | keep | - | - | - | #1561 | replacement 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/for_patterns.rs` | 16 | 482 | 482 | keep | - | - | - | #1561 | replacement 3, checker 6, parser 7 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/identities_and_imports.rs` | 17 | 1027 | 1027 | keep | - | - | - | #1561 | replacement 12, checker 12, parser 12 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs` | 7 | 298 | 298 | keep | - | - | - | #1561 | replacement 5, checker 5, parser 5 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs` | 8 | 331 | 331 | keep | - | - | - | #1561 | replacement 5, checker 5, parser 5 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 32 | 1023 | 1023 | keep | - | - | - | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs` | 41 | 906 | 906 | keep | - | - | - | #1561 | - | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/patterns_and_assertions.rs` | 24 | 810 | 810 | keep | - | - | - | #1561 | replacement 7, checker 2, parser 2 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
@@ -2581,11 +2581,11 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/kernel/incan_semantics_core/src/authority.rs` | 9 | 344 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
-| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 4476 | 1087 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 4503 | 1088 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/closure_digest.rs` | 12 | 430 | 226 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/dependencies.rs` | 4 | 317 | 155 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/emitted_symbol.rs` | 7 | 559 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
-| `loaves/kernel/incan_semantics_core/src/executable_representation.rs` | 13 | 1310 | 585 | keep | - | - | - | #1561 | replacement 13 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_semantics_core/src/executable_representation.rs` | 13 | 1313 | 588 | keep | - | - | - | #1561 | replacement 13 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/facts.rs` | 12 | 1494 | 408 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/hir.rs` | 2 | 242 | 66 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/namespace.rs` | 7 | 148 | 78 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
