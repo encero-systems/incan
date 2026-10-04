@@ -284,12 +284,11 @@ pub(super) fn owner_self_type(owner_name: &str, owner_type_params: &[ast::TypePa
 /// Make a value-returning body's trailing expression its `return` (#2025).
 ///
 /// The checker accepts a function whose last statement is an expression (`n + 1`, a `match`, or an `if`/`else` whose
-/// branches end in expressions) because that trailing value is the function's result, and the emitted route returns
-/// it. Lowered statement by statement, the tail would be an [`bir::StatementKind::Expr`], which Body IR defines as
-/// discarding its value, so every consumer would have to guess at a trailing-statement convention Body IR otherwise
-/// avoids. This states the result explicitly instead. A unit function keeps its expression statement, a body whose
-/// return type the checker did not resolve is left alone rather than guessed at, and a generator's trailing
-/// expression is not its yield sequence's result.
+/// branches end in expressions) because that trailing value is the function's result. Lowered statement by statement,
+/// the tail would be an [`bir::StatementKind::Expr`], which Body IR defines as discarding its value, so every consumer
+/// would have to guess at a trailing-statement convention Body IR otherwise avoids. This states the result explicitly
+/// instead. A unit function keeps its expression statement, a body whose return type the checker did not resolve is
+/// left alone rather than guessed at, and a generator's trailing expression is not its yield sequence's result.
 fn return_trailing_value(return_type: &IncanType, stmts: &mut [bir::Statement]) {
     let returns_value = !matches!(
         return_type,
@@ -302,8 +301,18 @@ fn return_trailing_value(return_type: &IncanType, stmts: &mut [bir::Statement]) 
 
 /// Turn the tail of `stmts` into a `return`: an expression statement directly, an `if`/`else` through the tail of
 /// each branch.
+///
+/// A branch block already carries its scope's drops when this runs, so the tail is the last statement that is not a
+/// `Drop`. Rewriting it in place gives the branch the shape an explicit `return` there has: the value is the result,
+/// and the scope's drops still follow it as that scope's cleanup.
 fn return_trailing_value_in(stmts: &mut [bir::Statement]) {
-    let Some(last) = stmts.last_mut() else { return };
+    let Some(last) = stmts
+        .iter_mut()
+        .rev()
+        .find(|stmt| !matches!(stmt.kind, bir::StatementKind::Drop { .. }))
+    else {
+        return;
+    };
     match &mut last.kind {
         bir::StatementKind::Expr { value } => {
             last.kind = bir::StatementKind::Return {

@@ -695,8 +695,8 @@ fn returns_a_value(stmt: &bir::Statement) -> bool {
 
 #[test]
 fn a_value_returning_function_returns_its_trailing_expression_issue2025() -> Result<(), Box<dyn std::error::Error>> {
-    // The checker accepts each body because its trailing expression is the function's result, and the emitted route
-    // returns it. Body IR must say so with a `return`, not record a discarded expression statement.
+    // The checker accepts each body because its trailing expression is the function's result. Body IR must say so
+    // with a `return`, not record a discarded expression statement.
     let cases = [
         (
             "pick",
@@ -706,6 +706,11 @@ fn a_value_returning_function_returns_its_trailing_expression_issue2025() -> Res
         (
             "choose",
             "def choose(n: int) -> str:\n  if n == 1:\n    \"one\"\n  else:\n    \"other\"\n",
+        ),
+        // A branch with an owned local ends in its scope's drop, after the value.
+        (
+            "first",
+            "def first(n: int) -> int:\n  if n == 1:\n    mut xs = [1]\n    xs[0]\n  else:\n    2\n",
         ),
     ];
     for (name, source) in cases {
