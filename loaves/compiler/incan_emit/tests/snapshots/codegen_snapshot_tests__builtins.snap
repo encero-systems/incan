@@ -64,7 +64,7 @@ fn test_int_builtin() {
 fn test_float_builtin() {
     let whole: i64 = 42;
     let decimal: f64 = (whole) as f64;
-    let _ = println!("{}", decimal);
+    let _ = println!("{}", incan_std_core::strings::float_to_string(decimal));
 }
 fn test_bool_builtin() {
     let value: i64 = 1;
@@ -78,7 +78,11 @@ fn test_sorted_builtin() {
         __v.sort();
         __v
     };
-    let _ = println!("{}", sorted_items);
+    let _ = println!(
+        "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
+        vec![format!("{:?}", sorted_items)]; incan_std_core::strings::fstring(& __parts,
+        & __args) }
+    );
 }
 fn main() {
     std::panic::set_hook(

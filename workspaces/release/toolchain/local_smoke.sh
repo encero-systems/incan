@@ -217,7 +217,7 @@ smoke_direct() {
 
 # npm and Homebrew render metadata for every supported target, while a local smoke build produces only the current
 # host binary. Reuse that host archive as a packaging-only fixture for missing foreign targets; the smoke never runs
-# those foreign-labelled copies.
+# those foreign-labeled copies.
 ensure_platform_archive_fixtures() {
   require_archive
   local release archive checksum target target_archive target_checksum

@@ -1,0 +1,61 @@
+# behavior: a narrower integer or an f32 value widens into a wider binding, argument, return, yielded item, field, list slot, Option payload and union member, match arms and loop break values of two integer types widen to the wider one, a lookup probe widens to the element or key type, and two integer types compare in a type holding both
+# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::accepted_numeric_widenings_build
+# expect-stdout:
+#   -5 250 -10 1.5
+#   250 [-5, 250]
+#   -5 true
+#   true true 1
+#   true false
+#   [-5, 300] -5 1000 7 -5
+
+model Holder:
+    value: int
+
+
+def twice(value: int) -> int:
+    return value * 2
+
+
+def widened(value: u16) -> i64:
+    return value
+
+
+def items_from(small: i8) -> Generator[int]:
+    yield small
+    yield 300
+
+
+def pick(n: int, small: i8, wide: int) -> int:
+    chosen = match n:
+        0 => small
+        _ => wide
+    return chosen
+
+
+def main() -> None:
+    small: i8 = -5
+    byte: u8 = 250
+    narrow: f32 = 1.5
+    wide: int = small
+    println(f"{wide} {widened(byte)} {twice(small)} {narrow + 0.0}")
+    mut values: list[int] = [small, 0]
+    values[1] = byte
+    holder = Holder(value=byte)
+    println(f"{holder.value} {values}")
+    maybe: Option[int] = small
+    held: int | str = byte
+    match maybe:
+        Some(inner) => println(f"{inner} {isinstance(held, int)}")
+        None => println("none")
+    table: dict[int, str] = {250: "b"}
+    println(f"{small in values} {byte in table} {values.count(small)}")
+    println(f"{small < byte} {byte == -1}")
+    items = items_from(small).collect()
+    found: Option[int] = match byte:
+        250 => 7
+        _ => None
+    counted = loop:
+        if byte > 100:
+            break small
+        break 1000
+    println(f"{items} {pick(0, small, 1000)} {pick(1, small, 1000)} {found.unwrap_or(0)} {counted}")

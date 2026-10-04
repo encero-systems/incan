@@ -1,14 +1,15 @@
 # RFC 023: Trait bound inference - additional cases
 #
 # Covers:
-# - f-string interpolation -> Display
+# - f-string interpolation of a type parameter declares Display (INCAN-T0103 refuses an unbounded one)
 # - Dict literal with generic key -> Eq + Hash
-# - arithmetic operators: +, -, *, /, % -> Add/Sub/Mul/Div/Rem<Output = T>
+# - arithmetic operators: +, -, * -> Add/Sub/Mul<Output = T> (/, //, % and ** on a type parameter are refused
+#   at check time, INCAN-T0109: their numeric rules belong to the concrete numeric types)
 # - clone() method call -> Clone
 # - transitive inference across generic function calls
 # - combined explicit + inferred bounds
 
-def show[T](x: T) -> str:
+def show[T with Display](x: T) -> str:
     return f"{x}"
 
 def make_dict[T](k: T) -> Dict[T, int]:
@@ -23,12 +24,6 @@ def subtract[T](a: T, b: T) -> T:
 def multiply[T](a: T, b: T) -> T:
     return a * b
 
-def divide[T](a: T, b: T) -> T:
-    return a / b
-
-def modulo[T](a: T, b: T) -> T:
-    return a % b
-
 def duplicate[T](x: T) -> T:
     return x.clone()
 
@@ -38,7 +33,7 @@ def are_equal[T](left: T, right: T) -> bool:
 def wrapper[T](a: T, b: T) -> bool:
     return are_equal(a, b)
 
-def show_eq[T with Eq](x: T) -> str:
+def show_eq[T with (Eq, Display)](x: T) -> str:
     return f"{x}"
 
 def main() -> None:

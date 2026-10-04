@@ -1,0 +1,8 @@
+{
+  "lock": {
+    "digest": "sha256:5487e83f49eaa10d9739682fec205258b6d419344970d57e29a5ea586109a91f",
+    "path": "oven.lock"
+  },
+  "revision": "81e5a082f22a237ef747150b718edd37f1879d90",
+  "schema": 1
+}

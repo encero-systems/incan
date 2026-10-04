@@ -2,7 +2,7 @@
 A delivery robot walking a route, where both closed sets it works with own their own behavior.
 
 `Direction` knows how to reverse itself, so backing out of a blocked leg is `heading.opposite()` rather than a
-lookup table maintained somewhere else. Both enums adopt the same `Labelled` trait, because a route sheet needs a
+lookup table maintained somewhere else. Both enums adopt the same `Labeled` trait, because a route sheet needs a
 word for a heading and a word for an outcome and does not care which is which. And `Status` says once, with an
 alternation, which of its cases mean "still working on it", instead of repeating the branch per variant.
 
@@ -43,13 +43,13 @@ class Status(Enum):
 """
 
 
-trait Labelled:
+trait Labeled:
     """Anything on a route sheet that can name itself in the dispatcher's words."""
 
     def label(self) -> str: ...
 
 
-enum Direction with Labelled:
+enum Direction with Labeled:
     """A compass heading the robot can travel along."""
 
     North
@@ -78,7 +78,7 @@ enum Direction with Labelled:
         return self.label()
 
 
-enum Status with Labelled:
+enum Status with Labeled:
     """Where one leg of the route has got to."""
 
     Pending
@@ -117,7 +117,7 @@ def retreat(leg: Leg) -> Direction:
     return leg.heading.opposite()
 
 
-def describe[T with Labelled](item: T) -> str:
+def describe[T with Labeled](item: T) -> str:
     """Name anything on the route sheet, without caring whether it is a heading or an outcome."""
     return item.label()
 

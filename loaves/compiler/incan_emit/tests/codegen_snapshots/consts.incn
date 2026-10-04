@@ -19,4 +19,4 @@ def main() -> None:
     print(L.len())
     print(METADATA.canonical_forms.len())
     print(D.len())
-    print(T)
+    print(T[0], T[1])

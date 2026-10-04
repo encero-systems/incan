@@ -1,0 +1,12 @@
+# behavior: a field write through a binding declared with let, not mut, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Point:
+    x: int
+    y: int
+
+
+def main() -> None:
+    let point = Point(x=1, y=2)
+    point.x = 3
+    println(point.x)

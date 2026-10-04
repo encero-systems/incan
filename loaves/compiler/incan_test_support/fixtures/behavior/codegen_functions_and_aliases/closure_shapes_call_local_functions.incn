@@ -1,0 +1,29 @@
+# behavior: a closure bound to a local and a closure passed to a user-defined method both call a local function (#1492)
+# retires: loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs::closure_shapes_that_already_resolved_are_unchanged_issue1492
+# expect-stdout:
+#   code 3
+#   code 5
+
+def describe(code: int) -> str:
+    return f"code {code}"
+
+
+model Expression:
+    seed: int
+
+    def eval(self, render: Callable[int, str]) -> str:
+        return render(self.seed)
+
+
+pub def run_local(seed: int) -> str:
+    f = (code) => describe(code)
+    return f(seed)
+
+
+pub def run_method(expression: Expression) -> str:
+    return expression.eval((code) => describe(code))
+
+
+def main() -> None:
+    println(run_local(3))
+    println(run_method(Expression(seed=5)))

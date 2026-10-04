@@ -52,8 +52,8 @@ impl TypeChecker {
         self.await_output_type_from_type(ty)
     }
 
-    /// Return whether this expression is a direct async call in an `await` operand.
-    fn expr_is_async_call_realization(&mut self, expr: &Spanned<Expr>) -> bool {
+    /// Return whether this expression is a direct async call, the shape `await` and a task argument both admit.
+    pub(in crate::typechecker::check_expr) fn expr_is_async_call_realization(&mut self, expr: &Spanned<Expr>) -> bool {
         if self
             .type_info
             .rust
@@ -64,6 +64,11 @@ impl TypeChecker {
         }
         match &expr.node {
             Expr::Call(callee, _, _) => self.call_expr_is_async(callee),
+            // `time.sleep(...)` through a module binding is a call of the module's function, which the parser spells
+            // as a method call on the binding (#1561).
+            Expr::MethodCall(base, method, _, _) if self.imported_module_for_expr(base).is_some() => {
+                self.module_function_member_is_async(base, method)
+            }
             Expr::MethodCall(base, method, _, _) => self.method_call_expr_is_async(base, method),
             Expr::Paren(inner) | Expr::Try(inner) => self.expr_is_async_call_realization(inner),
             _ => false,
@@ -80,18 +85,23 @@ impl TypeChecker {
                 }
                 _ => false,
             }),
-            Expr::Field(base, member) => self
-                .imported_module_for_expr(base)
-                .and_then(|(_, module_path)| self.resolve_imported_module_function_member(&module_path, member))
-                .is_some_and(|kind| match kind {
-                    SymbolKind::Function(info) => info.is_async,
-                    SymbolKind::FunctionOverloads(overloads) => {
-                        !overloads.is_empty() && overloads.iter().all(|overload| overload.info.is_async)
-                    }
-                    _ => false,
-                }),
+            Expr::Field(base, member) => self.module_function_member_is_async(base, member),
             _ => false,
         }
+    }
+
+    /// Return whether `base.member` names an async function of the module `base` binds (`import std.async.time`, then
+    /// `time.sleep`): a function declared `async`, or an overload set whose every overload is.
+    fn module_function_member_is_async(&mut self, base: &Spanned<Expr>, member: &str) -> bool {
+        self.imported_module_for_expr(base)
+            .and_then(|(_, module_path)| self.resolve_imported_module_function_member(&module_path, member))
+            .is_some_and(|kind| match kind {
+                SymbolKind::Function(info) => info.is_async,
+                SymbolKind::FunctionOverloads(overloads) => {
+                    !overloads.is_empty() && overloads.iter().all(|overload| overload.info.is_async)
+                }
+                _ => false,
+            })
     }
 
     /// Return whether a method-call receiver resolves to an async method.
@@ -314,23 +324,29 @@ impl TypeChecker {
     }
 
     /// Type-check a block race arm, using a trailing expression statement as the arm value.
+    ///
+    /// The arm is a statement block of its own for `for` loop planning: only the winning arm runs, so an assignment in
+    /// it does not run on every path.
     fn check_race_arm_block_body(&mut self, stmts: &[Spanned<Statement>]) -> ResolvedType {
         let Some((last, prefix)) = stmts.split_last() else {
             return ResolvedType::Unit;
         };
 
         self.report_unreachable_after_return(stmts);
+        self.enter_item_taking_block();
         for stmt in prefix {
             self.check_statement(stmt);
         }
 
-        match &last.node {
+        let arm_ty = match &last.node {
             Statement::Expr(expr) => self.check_expr(expr),
             _ => {
                 self.check_statement(last);
                 ResolvedType::Unit
             }
-        }
+        };
+        self.exit_item_taking_block();
+        arm_ty
     }
 
     /// Validate the `?` (try) operator.
@@ -414,7 +430,7 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.push_loop_context(LoopContextKind::Expression, expected.cloned());
+        self.push_loop_context(LoopContextKind::Expression, expected.cloned(), span.start);
         self.check_statement_block(&loop_expr.body);
         let loop_ctx = self.pop_loop_context();
         self.symbols.exit_scope();

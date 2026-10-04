@@ -1,0 +1,19 @@
+# behavior: a builtin trait imported under an alias (`Eq as Equality`) works as a generic bound on a type that derives it
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::aliased_builtin_bound_lowers_to_the_rust_mapped_trait
+# expect-stdout:
+#   1
+
+from std.derives.comparison import Eq as Equality
+
+
+@derive(Eq)
+model Point:
+    x: int
+
+
+def require_equality[T with Equality](value: T) -> T:
+    return value
+
+
+def main() -> None:
+    println(require_equality(Point(x=1)).x)

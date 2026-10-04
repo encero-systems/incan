@@ -1,0 +1,60 @@
+# behavior: a dependency type published at its declaring module, at a directory facade and at the package root is one type to its consumer: a value spelled through one path is accepted where another is expected, a model reached only as the element type of another model's list field has its declaration's fields and methods even when the root publishes a different model under its name, and a pattern names a type imported after the signature that returns it (#1561)
+# expect-stdout:
+#   2
+#   0 a#0
+#   b 7500
+#   a#0 0
+#   0 1
+#   exact exact
+#   z#9 9
+#   b 99 root
+#   found 3
+
+from pub::recall import SearchProfile, best_outcome, build_index, entry_id, entry_id_text, exact_query, Outcome
+from pub::recall import Nomination as RootNomination, Candidate
+from pub::recall.search import Nomination as FacadeNomination, SearchProfile as FacadeProfile
+from pub::recall.search.models import Nomination as DeclaredNomination
+
+
+def root_label(nomination: RootNomination) -> str:
+    return nomination.label()
+
+
+def facade_rank(nomination: FacadeNomination) -> int:
+    return nomination.rank
+
+
+def profile_name(profile: FacadeProfile) -> str:
+    match profile:
+        case FacadeProfile.Exact:
+            return "exact"
+        case FacadeProfile.Approximate:
+            return "approximate"
+
+
+def main() -> None:
+    match build_index([entry_id("a"), entry_id("b"), entry_id("c")]):
+        case Ok(index):
+            match exact_query(index, 2):
+                case Ok(result):
+                    println(len(result.nominations))
+                    println(f"{result.nominations[0].rank} {result.nominations[0].label()}")
+                    println(f"{entry_id_text(result.nominations[1].entry_id)} {result.nominations[1].relevance_bps}")
+                    first = result.nominations[0]
+                    println(f"{root_label(first)} {facade_rank(first)}")
+                    declared: DeclaredNomination = first
+                    println(f"{declared.rank} {len(result.candidates) - 1}")
+                    println(f"{profile_name(result.profile)} {profile_name(SearchProfile.Exact)}")
+                    rooted: RootNomination = FacadeNomination(entry_id=entry_id("z"), rank=9, relevance_bps=1)
+                    println(f"{root_label(rooted)} {facade_rank(rooted)}")
+                    root_candidate = Candidate(label="root")
+                    println(f"{entry_id_text(result.candidates[1].entry_id)} {result.candidates[1].score} {root_candidate.label}")
+                case Err(error):
+                    println(error.message())
+            match best_outcome(index):
+                case Outcome.Found(RootNomination(rank=rank)):
+                    println(f"found {rank}")
+                case Outcome.Missing:
+                    println("missing")
+        case Err(error):
+            println(error.message())

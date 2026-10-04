@@ -1,0 +1,12 @@
+import std.async
+from std.web import route, POST
+
+
+@route("/things/{id}", methods=[POST])
+pub async def create(id: int) -> str:
+    return str(id)
+
+
+@route("/search/{id}")
+pub async def search(id: int) -> str:
+    return str(id)

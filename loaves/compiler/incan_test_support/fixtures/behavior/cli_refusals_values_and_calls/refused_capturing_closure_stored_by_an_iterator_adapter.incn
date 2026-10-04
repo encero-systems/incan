@@ -1,0 +1,11 @@
+# behavior: a closure that captures local values, or a local holding one, is refused at check time as the callback of an iterator's map, filter, flat_map, take_while or skip_while, which keep it in the lazy iterator they return
+# expect-diagnostic: INCAN-T0001
+
+
+def main() -> None:
+    n = 2
+    items = [1, 2, 3]
+    scaled = items.iter().map((x) => x * n).collect()
+    scale = (x) => x > n
+    kept = items.iter().filter(scale).collect()
+    println(len(scaled) + len(kept))

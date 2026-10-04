@@ -1,0 +1,8 @@
+# behavior: import python names no module the compiler provides, so it is refused at check time
+# expect-diagnostic: INCAN-I0001
+
+import python "requests" as pyreq
+
+
+def main() -> None:
+    println("ok")

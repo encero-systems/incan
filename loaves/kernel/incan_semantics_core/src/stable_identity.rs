@@ -20,25 +20,40 @@
 //!   is therefore required rather than defensive.
 //! - **The scope discriminant's value.** [`ScopeDiscriminant`] indexes a module-wide table filled in traversal order,
 //!   so inserting or moving any declaration renumbers every declaration traversed after it and untouched siblings
-//!   appear to change. Only whether a declaration is nested may enter the identity, never where its scope sat in the
-//!   traversal.
+//!   appear to change. Nested declarations instead carry their stable named owner plus a collision-local ordinal; the
+//!   module-global table position never enters this identity.
 
 use serde::{Deserialize, Serialize};
 
 use crate::facts::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 use crate::types::IncanType;
 
-/// Whether a declaration is module-level or introduced inside an enclosing scope.
-///
-/// This records only what [`crate::facts::ScopeDiscriminant`] is *for* — separating same-named bindings in sibling
-/// scopes from a module-level declaration of that name — while discarding the discriminant's numeric value, which
-/// is an index into a traversal-ordered table and therefore positional.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum DeclarationNesting {
-    /// Unique within its origin without needing a scope to disambiguate it.
+/// Stable location of a declaration within its semantic owner.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum StableDeclarationLocation {
+    /// Unique within its origin without needing a lexical owner.
     ModuleLevel,
-    /// Introduced inside an enclosing scope, such as a local, parameter, receiver, or generic binder.
-    Nested,
+    /// Introduced inside a named declaration.
+    Nested {
+        /// Edit-stable identity of the nearest named semantic owner.
+        owner: Box<StableDeclarationId>,
+        /// Ordinal among same-name, same-kind bindings in this owner.
+        ///
+        /// This is deliberately not the module-global scope-table index. An unrelated differently-named insertion or
+        /// root-declaration reorder cannot change it. Inserting another same-name, same-kind binding before an
+        /// anonymous sibling can rekey later siblings; without persisted source ids or labels, identical anonymous
+        /// blocks have no stronger edit-stable distinction.
+        binding_ordinal: u32,
+    },
+}
+
+/// Checked context required to project a nested declaration into an edit-stable identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StableDeclarationContext {
+    /// Already-projected nearest named owner, including its final checked signature when applicable.
+    pub owner: StableDeclarationId,
+    /// Ordinal among the owner's same-name, same-kind bindings.
+    pub binding_ordinal: u32,
 }
 
 /// A canonical rendering of a declaration's signature, used to separate overloads.
@@ -105,8 +120,8 @@ pub struct StableDeclarationId {
     pub declaration_name: String,
     /// Declaration category.
     pub kind: SemanticSourceTargetKind,
-    /// Whether the declaration is module-level or nested, without the discriminant's positional value.
-    pub nesting: DeclarationNesting,
+    /// Semantic location, excluding raw scope-table indices.
+    pub location: StableDeclarationLocation,
     /// Separates declarations that share every field above, which in practice means overloads.
     pub signature: Option<DeclarationSignature>,
 }
@@ -114,21 +129,32 @@ pub struct StableDeclarationId {
 impl StableDeclarationId {
     /// Derive a stable identity from the compilation's canonical identity.
     ///
-    /// The span is dropped and the scope discriminant is reduced to [`DeclarationNesting`]. `signature` separates
-    /// overloads and may be `None` for a declaration that cannot collide — but a caller that has a signature
-    /// available should pass it, because absence is only safe where the declaration kind admits no overloading.
-    pub fn from_canonical(canonical: &CanonicalSymbolId, signature: Option<DeclarationSignature>) -> Self {
-        Self {
+    /// The span and raw scope discriminant are dropped. A nested declaration requires checked semantic owner context;
+    /// absence fails closed instead of recreating the old colliding `Nested` key. `signature` separates overloads and
+    /// should be supplied from final checked types whenever available.
+    pub fn from_canonical(
+        canonical: &CanonicalSymbolId,
+        signature: Option<DeclarationSignature>,
+        context: Option<StableDeclarationContext>,
+    ) -> Option<Self> {
+        let location = match canonical.scope_discriminant {
+            None => StableDeclarationLocation::ModuleLevel,
+            Some(_) => {
+                let context = context?;
+                StableDeclarationLocation::Nested {
+                    owner: Box::new(context.owner),
+                    binding_ordinal: context.binding_ordinal,
+                }
+            }
+        };
+        Some(Self {
             namespace: canonical.namespace,
             origin: canonical.origin.clone(),
             declaration_name: canonical.declaration_name.clone(),
             kind: canonical.kind.clone(),
-            nesting: match canonical.scope_discriminant {
-                Some(_) => DeclarationNesting::Nested,
-                None => DeclarationNesting::ModuleLevel,
-            },
+            location,
             signature,
-        }
+        })
     }
 
     /// Render a deterministic, span-free spelling for snapshots, digests, and diagnostics.
@@ -151,9 +177,11 @@ impl StableDeclarationId {
             SymbolNamespace::Member => "member/",
             SymbolNamespace::ModulePath => "path/",
         };
-        let nesting = match self.nesting {
-            DeclarationNesting::ModuleLevel => "",
-            DeclarationNesting::Nested => "#nested",
+        let location = match &self.location {
+            StableDeclarationLocation::ModuleLevel => String::new(),
+            StableDeclarationLocation::Nested { owner, binding_ordinal } => {
+                format!("#in({})[{binding_ordinal}]", owner.render_compact())
+            }
         };
         let signature = self
             .signature
@@ -161,7 +189,7 @@ impl StableDeclarationId {
             .map(|signature| format!("|{}", signature.as_str()))
             .unwrap_or_default();
         format!(
-            "{namespace}{}:{origin}::{}{nesting}{signature}",
+            "{namespace}{}:{origin}::{}{location}{signature}",
             self.kind.as_str(),
             self.declaration_name
         )
@@ -176,35 +204,156 @@ mod tests {
     use crate::types::IncanPrimitiveType;
 
     fn canonical(name: &str, span: (usize, usize), scope: Option<usize>) -> CanonicalSymbolId {
+        canonical_of_kind(name, span, scope, SemanticSourceTargetKind::Function)
+    }
+
+    /// Mint one canonical record the way `SymbolTable::mint_identity_with_kind` does for a lexical binding: module
+    /// origin, unqualified declaration name, the binding's own kind, a scope-table discriminant for anything not at
+    /// module level, and the declaration span.
+    fn canonical_of_kind(
+        name: &str,
+        span: (usize, usize),
+        scope: Option<usize>,
+        kind: SemanticSourceTargetKind,
+    ) -> CanonicalSymbolId {
         CanonicalSymbolId {
             namespace: SymbolNamespace::OrdinaryLexical,
             origin: SymbolOrigin::Module(vec!["environ".to_string()]),
             declaration_name: name.to_string(),
-            kind: SemanticSourceTargetKind::Function,
+            kind,
             scope_discriminant: scope.map(ScopeDiscriminant),
             declaration_span: HirSourceSpan::new(span.0, span.1),
         }
     }
 
+    /// The two records from #1629: parameters both named `value`, minted in sibling functions of one module, so
+    /// they share namespace, origin, name and kind and differ only in scope discriminant and declaration span. The
+    /// projection used to drop both distinguishing fields and reduce every nested scope to one `#nested` key, so
+    /// the two were published as one declaration. Each parameter is now owned by its own function's stable
+    /// identity, and that ownership, not the span or the traversal index, is what separates them.
+    #[test]
+    fn sibling_parameters_named_alike_do_not_share_a_stable_identity_issue1629()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let left_parameter = canonical_of_kind("value", (30, 35), Some(2), SemanticSourceTargetKind::Parameter);
+        let right_parameter = canonical_of_kind("value", (80, 85), Some(3), SemanticSourceTargetKind::Parameter);
+        assert_ne!(
+            left_parameter, right_parameter,
+            "the canonical identities were never the collision"
+        );
+
+        // The issue's own probe: convert without owner context. The old projection answered twice with
+        // `parameter:...::value#nested`; the projection now refuses rather than inventing a colliding key.
+        assert_eq!(
+            StableDeclarationId::from_canonical(&left_parameter, None, None),
+            None,
+            "a nested binding has no stable identity without its checked owner"
+        );
+        assert_eq!(StableDeclarationId::from_canonical(&right_parameter, None, None), None);
+
+        let owner = |name: &str, span: (usize, usize)| {
+            StableDeclarationId::from_canonical(&canonical(name, span, None), None, None)
+                .ok_or_else(|| format!("module-level owner `{name}` must project"))
+        };
+        let project = |parameter: &CanonicalSymbolId, owner: StableDeclarationId| {
+            StableDeclarationId::from_canonical(
+                parameter,
+                None,
+                Some(StableDeclarationContext {
+                    owner,
+                    binding_ordinal: 0,
+                }),
+            )
+            .ok_or("an owned parameter must project")
+        };
+        let left = project(&left_parameter, owner("left", (0, 60))?)?;
+        let right = project(&right_parameter, owner("right", (61, 120))?)?;
+        assert_ne!(left, right, "sibling functions' parameters are distinct declarations");
+        assert_ne!(left.render_compact(), right.render_compact());
+        assert!(
+            left.render_compact().contains("#in(function:environ::left)"),
+            "the rendering names the lexical owner: {}",
+            left.render_compact()
+        );
+
+        // Ownership is what carries the identity: moving both functions down the file and renumbering the scope
+        // table leaves each parameter equal to itself, while the two stay apart.
+        let moved_left = project(
+            &canonical_of_kind("value", (530, 535), Some(41), SemanticSourceTargetKind::Parameter),
+            owner("left", (500, 560))?,
+        )?;
+        let moved_right = project(
+            &canonical_of_kind("value", (580, 585), Some(42), SemanticSourceTargetKind::Parameter),
+            owner("right", (561, 620))?,
+        )?;
+        assert_eq!(
+            left, moved_left,
+            "an unrelated span and scope-table shift is the same declaration"
+        );
+        assert_eq!(right, moved_right);
+        assert_ne!(moved_left, moved_right);
+        Ok(())
+    }
+
     /// The defining property: the same declaration at a different offset is the same declaration.
     #[test]
     fn identity_survives_a_moved_declaration() {
-        let before = StableDeclarationId::from_canonical(&canonical("read", (100, 200), None), None);
-        let after = StableDeclarationId::from_canonical(&canonical("read", (900, 1000), None), None);
+        let before = StableDeclarationId::from_canonical(&canonical("read", (100, 200), None), None, None);
+        let after = StableDeclarationId::from_canonical(&canonical("read", (900, 1000), None), None, None);
         assert_eq!(before, after);
-        assert_eq!(before.render_compact(), after.render_compact());
+        assert_eq!(
+            before.as_ref().map(StableDeclarationId::render_compact),
+            after.as_ref().map(StableDeclarationId::render_compact)
+        );
     }
 
     /// A scope discriminant is an index into a traversal-ordered table, so its value must not reach identity.
     /// Its presence must, or a nested binding would collide with a module-level declaration of the same name.
     #[test]
-    fn nesting_is_recorded_without_its_positional_value() {
-        let first = StableDeclarationId::from_canonical(&canonical("value", (10, 20), Some(2)), None);
-        let renumbered = StableDeclarationId::from_canonical(&canonical("value", (10, 20), Some(97)), None);
+    fn nesting_requires_checked_owner_context_without_using_the_raw_scope_value() {
+        let owner = StableDeclarationId::from_canonical(&canonical("read", (1, 100), None), None, None);
+        let first = owner.clone().and_then(|owner| {
+            StableDeclarationId::from_canonical(
+                &canonical("value", (10, 20), Some(2)),
+                None,
+                Some(StableDeclarationContext {
+                    owner,
+                    binding_ordinal: 0,
+                }),
+            )
+        });
+        let renumbered = owner.clone().and_then(|owner| {
+            StableDeclarationId::from_canonical(
+                &canonical("value", (10, 20), Some(97)),
+                None,
+                Some(StableDeclarationContext {
+                    owner,
+                    binding_ordinal: 0,
+                }),
+            )
+        });
         assert_eq!(first, renumbered, "a renumbered scope is the same declaration");
 
-        let module_level = StableDeclarationId::from_canonical(&canonical("value", (10, 20), None), None);
+        let sibling = owner.and_then(|owner| {
+            StableDeclarationId::from_canonical(
+                &canonical("value", (30, 40), Some(3)),
+                None,
+                Some(StableDeclarationContext {
+                    owner,
+                    binding_ordinal: 1,
+                }),
+            )
+        });
+        assert_ne!(
+            first, sibling,
+            "same-named anonymous siblings need collision-local ordinals"
+        );
+
+        let module_level = StableDeclarationId::from_canonical(&canonical("value", (10, 20), None), None, None);
         assert_ne!(first, module_level, "a nested binding is not its module-level namesake");
+        assert!(
+            StableDeclarationId::from_canonical(&canonical("value", (10, 20), Some(2)), None, None).is_none(),
+            "nested identity must fail closed when checked owner context is absent"
+        );
     }
 
     /// Dropping the span alone is not sufficient: overloads then collide. This is the case measured in
@@ -215,8 +364,8 @@ mod tests {
         let two_arguments = canonical("get_as", (218, 500), None);
 
         let without = (
-            StableDeclarationId::from_canonical(&one_argument, None),
-            StableDeclarationId::from_canonical(&two_arguments, None),
+            StableDeclarationId::from_canonical(&one_argument, None, None),
+            StableDeclarationId::from_canonical(&two_arguments, None, None),
         );
         assert_eq!(
             without.0, without.1,
@@ -229,6 +378,7 @@ mod tests {
             StableDeclarationId::from_canonical(
                 &one_argument,
                 Some(DeclarationSignature::from_callable_types([&str_type], &result)),
+                None,
             ),
             StableDeclarationId::from_canonical(
                 &two_arguments,
@@ -236,6 +386,7 @@ mod tests {
                     [&str_type, &str_type],
                     &result,
                 )),
+                None,
             ),
         );
         assert_ne!(with.0, with.1, "the signature separates them");
@@ -277,8 +428,9 @@ mod tests {
     /// The rendering is persisted and compared across edits, so it must carry no offset at all.
     #[test]
     fn rendering_carries_no_offset() {
-        let rendered =
-            StableDeclarationId::from_canonical(&canonical("read", (1234, 5678), None), None).render_compact();
+        let rendered = StableDeclarationId::from_canonical(&canonical("read", (1234, 5678), None), None, None)
+            .map(|identity| identity.render_compact())
+            .unwrap_or_default();
         assert!(
             !rendered.contains("1234") && !rendered.contains("5678"),
             "rendered: {rendered}"

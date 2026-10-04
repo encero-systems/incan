@@ -6,7 +6,9 @@
 //! Each entry carries explicit ownership metadata so stdlib/runtime-facing vocabulary can be filtered without
 //! hard-coded side tables.
 
+use crate::lang::derives::DeriveId;
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
+use crate::lang::stdlib::facets;
 
 /// Stable identifier for a surface type. TODO: given RFC 023 approach, we should move/remove some of these types.
 /// Stdlibs should be able to define their own types.
@@ -94,6 +96,13 @@ pub struct SurfaceTypeInfo {
     pub kind: SurfaceTypeKind,
     pub ownership: SurfaceTypeOwnership,
     pub item: LangItemInfo<SurfaceTypeId>,
+    /// Whether a value of this type can be neither copied nor cloned, so a use that takes it by value moves the one
+    /// value out of the place that holds it.
+    ///
+    /// Set only where the runtime type is known to implement neither `Copy` nor `Clone` and the checker relies on it:
+    /// a `for` loop whose body hands such an item on by value takes the items out of the list it iterates (#1844).
+    /// An unset flag does not claim that the type can be cloned.
+    pub not_cloneable: bool,
 }
 
 const RUNTIME_ASYNC_SYNC: SurfaceTypeOwnership = runtime(
@@ -111,10 +120,12 @@ const RUNTIME_ASYNC_RACE: SurfaceTypeOwnership = runtime(
     SurfaceTypeCategory::AsyncRace,
     "Runtime race helper vocabulary surfaced through `std.async.race`; name lookup requires the stdlib module import.",
 );
-const RUNTIME_ASYNC_CHANNEL: SurfaceTypeOwnership = runtime(
+const STDLIB_ASYNC_CHANNEL: SurfaceTypeOwnership = stdlib(
     "std.async.channel",
     SurfaceTypeCategory::AsyncChannel,
-    "Runtime channel vocabulary surfaced through `std.async.channel`; name lookup requires the stdlib module import.",
+    "Channel handle declared by `std.async.channel` as a newtype over its runtime type, the type `channel()` and \
+     `oneshot()` return; core records the spelling so compiler passes share it, and name lookup requires the stdlib \
+     module import.",
 );
 const INTEROP_RUST: SurfaceTypeOwnership = interop(
     SurfaceTypeCategory::RustInterop,
@@ -176,7 +187,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         Since(0, 1),
     ),
     // Task handles
-    info(
+    not_cloneable(info(
         SurfaceTypeId::JoinHandle,
         "JoinHandle",
         SurfaceTypeKind::Generic,
@@ -184,7 +195,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         "Handle to a spawned task.",
         RFC::_000,
         Since(0, 1),
-    ),
+    )),
     info(
         SurfaceTypeId::TaskJoinError,
         "TaskJoinError",
@@ -209,7 +220,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::Sender,
         "Sender",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Bounded channel sender.",
         RFC::_000,
         Since(0, 1),
@@ -218,7 +229,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::Receiver,
         "Receiver",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Bounded channel receiver.",
         RFC::_000,
         Since(0, 1),
@@ -227,7 +238,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::OneshotSender,
         "OneshotSender",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Oneshot channel sender.",
         RFC::_000,
         Since(0, 1),
@@ -236,7 +247,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::OneshotReceiver,
         "OneshotReceiver",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Oneshot channel receiver.",
         RFC::_000,
         Since(0, 1),
@@ -401,6 +412,151 @@ pub fn category(id: SurfaceTypeId) -> SurfaceTypeCategory {
     info_for(id).ownership.category
 }
 
+/// Whether a field read on a value of this surface type reads a field of the one type it wraps.
+///
+/// `Json[T]` and `Query[T]` are the web extractor wrappers: `body.name` on a `Json[User]` reads the `name` field of the
+/// `User` it carries, and `body.value` is that `User`. The checker resolves such a field on `T`, and the generated read
+/// goes through the wrapper, so the field is borrowed storage however the wrapper itself is owned.
+#[must_use]
+pub fn field_access_reads_wrapped_value(id: SurfaceTypeId) -> bool {
+    matches!(id, SurfaceTypeId::Json | SurfaceTypeId::Query)
+}
+
+/// Whether a value of this surface type can be neither copied nor cloned; see [`SurfaceTypeInfo::not_cloneable`].
+#[must_use]
+pub fn is_not_cloneable(id: SurfaceTypeId) -> bool {
+    info_for(id).not_cloneable
+}
+
+/// Return the runtime-owned surface type whose runtime Rust type `rust_path` names, generic arguments allowed.
+///
+/// A stdlib provider's checked API names a runtime type by its Rust path where source spells the surface type:
+/// `spawn` returns `incan_std_async::task::JoinHandle<T>` for `JoinHandle[T]`. The runtime type of a surface type
+/// declared in `std.<namespace>.<rest>` lives at `<facet>[::<namespace>]::<rest>::<Name>`, the location runtime
+/// re-exports use, so a path names the surface type exactly when it spells that location.
+#[must_use]
+pub fn from_runtime_rust_path(rust_path: &str) -> Option<SurfaceTypeId> {
+    let path = rust_path.strip_prefix("::").unwrap_or(rust_path);
+    let base = path.split_once('<').map_or(path, |(base, _)| base).trim_end();
+    let id = from_str(base.rsplit("::").next()?)?;
+    runtime_rust_path_segments(id)?
+        .into_iter()
+        .eq(base.split("::"))
+        .then_some(id)
+}
+
+/// Return the segments of the Rust path a runtime-owned surface type's runtime type lives at.
+fn runtime_rust_path_segments(id: SurfaceTypeId) -> Option<Vec<&'static str>> {
+    let ownership = info_for(id).ownership;
+    if ownership.owner != SurfaceTypeOwner::Runtime {
+        return None;
+    }
+    let mut module = ownership.stdlib_module_path?.split('.').skip(1);
+    let namespace = module.next()?;
+    let mut segments = vec![facets::for_namespace(namespace)];
+    if !facets::namespace_is_facet_root(namespace) {
+        segments.push(namespace);
+    }
+    segments.extend(module);
+    segments.push(as_str(id));
+    Some(segments)
+}
+
+/// What the compiler records about one surface type's implementation of a builtin derive.
+///
+/// A surface type is realized by a runtime struct or by a stdlib newtype, and the answer mirrors that declaration: the
+/// struct's own trait implementations, or the newtype's derive list. The typechecker's derive relation reads it for
+/// every question it asks of a surface type (the automatic `Clone` and `Debug` of a field's type, #1754; `Eq` and
+/// `Hash` of a set element or dict key, #1758; a clone the checker requires).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceDeriveSupport {
+    /// The realization implements the derive for every type argument.
+    Implements,
+    /// The realization implements the derive exactly when its type arguments do, as Rust's `Vec` does.
+    FollowsTypeArguments,
+    /// The realization does not implement the derive, whatever its type arguments.
+    Missing,
+    /// Nothing is recorded: the compiler makes no claim, and each consumer keeps its own policy for an unknown type.
+    NotRecorded,
+}
+
+/// Return what is recorded about this surface type's implementation of `derive`.
+///
+/// Answers are recorded for `Clone`, `Debug`, `Eq` and `Hash`; every other derive is
+/// [`SurfaceDeriveSupport::NotRecorded`]. The match is exhaustive over the closed enum, so a new surface type states
+/// its answers when it is added. The `Clone` answers of the stdlib newtypes restate their `@derive(Clone)`
+/// declarations, and a test reads those declarations and fails when the two disagree.
+#[must_use]
+pub fn derive_support(id: SurfaceTypeId, derive: DeriveId) -> SurfaceDeriveSupport {
+    use SurfaceDeriveSupport::{FollowsTypeArguments, Implements, Missing, NotRecorded};
+    if !matches!(
+        derive,
+        DeriveId::Clone | DeriveId::Debug | DeriveId::Eq | DeriveId::Hash
+    ) {
+        return NotRecorded;
+    }
+    let is_eq_or_hash = matches!(derive, DeriveId::Eq | DeriveId::Hash);
+    match id {
+        // A task handle owns its task and a race arm its pending future: the runtime structs implement none of these.
+        SurfaceTypeId::JoinHandle | SurfaceTypeId::RaceArm => Missing,
+        // Generic `@derive(Clone)` stdlib newtypes over shared runtime state. A derive on a generic type bounds its
+        // parameter, so `Clone` and the automatic `Debug` hold exactly when the element type's do.
+        SurfaceTypeId::Mutex | SurfaceTypeId::RwLock | SurfaceTypeId::Sender => {
+            if is_eq_or_hash {
+                Missing
+            } else {
+                FollowsTypeArguments
+            }
+        }
+        // Non-generic `@derive(Clone)` stdlib newtypes; the runtime types they wrap implement `Debug`.
+        SurfaceTypeId::Semaphore | SurfaceTypeId::Barrier => {
+            if is_eq_or_hash {
+                Missing
+            } else {
+                Implements
+            }
+        }
+        // Generic stdlib newtypes without `@derive(Clone)`: they carry the automatic `Debug` only.
+        SurfaceTypeId::Receiver | SurfaceTypeId::OneshotSender | SurfaceTypeId::OneshotReceiver => {
+            if derive == DeriveId::Debug {
+                FollowsTypeArguments
+            } else {
+                Missing
+            }
+        }
+        // The runtime join error derives `Clone` and implements `Debug`, and nothing else.
+        SurfaceTypeId::TaskJoinError => {
+            if is_eq_or_hash {
+                Missing
+            } else {
+                Implements
+            }
+        }
+        SurfaceTypeId::Vec => FollowsTypeArguments,
+        // A hash map implements `Hash` for no arguments.
+        SurfaceTypeId::HashMap => {
+            if derive == DeriveId::Hash {
+                Missing
+            } else {
+                FollowsTypeArguments
+            }
+        }
+        // These web owners contain runtime state that provides no `Clone`; a kept dict lookup therefore cannot copy
+        // one out of the map (#1830). Other derive capabilities remain unspecified here.
+        SurfaceTypeId::App | SurfaceTypeId::Response | SurfaceTypeId::Request if derive == DeriveId::Clone => Missing,
+        SurfaceTypeId::App
+        | SurfaceTypeId::Response
+        | SurfaceTypeId::Html
+        | SurfaceTypeId::Json
+        | SurfaceTypeId::Query
+        | SurfaceTypeId::Path
+        | SurfaceTypeId::Body
+        | SurfaceTypeId::Request
+        | SurfaceTypeId::FieldInfo
+        | SurfaceTypeId::ValidationError => NotRecorded,
+    }
+}
+
 /// Iterate over all surface types with the given implementation owner.
 pub fn types_for_owner(owner: SurfaceTypeOwner) -> impl Iterator<Item = &'static SurfaceTypeInfo> {
     SURFACE_TYPES.iter().filter(move |t| t.ownership.owner == owner)
@@ -483,6 +639,15 @@ const fn info(
             stability: Stability::Stable,
             examples: &[],
         },
+        not_cloneable: false,
+    }
+}
+
+/// Mark a surface type entry whose values can be neither copied nor cloned.
+const fn not_cloneable(entry: SurfaceTypeInfo) -> SurfaceTypeInfo {
+    SurfaceTypeInfo {
+        not_cloneable: true,
+        ..entry
     }
 }
 
@@ -521,5 +686,211 @@ const fn interop(category: SurfaceTypeCategory, rationale: &'static str) -> Surf
         category,
         stdlib_module_path: None,
         rationale,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_handle_and_race_arm_lack_every_recorded_derive() {
+        for id in [SurfaceTypeId::JoinHandle, SurfaceTypeId::RaceArm] {
+            for derive in [DeriveId::Clone, DeriveId::Debug, DeriveId::Eq, DeriveId::Hash] {
+                assert_eq!(
+                    derive_support(id, derive),
+                    SurfaceDeriveSupport::Missing,
+                    "{} must be recorded as lacking {}",
+                    as_str(id),
+                    crate::lang::derives::as_str(derive)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn web_owned_handles_lack_clone_issue1830() {
+        for id in [SurfaceTypeId::App, SurfaceTypeId::Response, SurfaceTypeId::Request] {
+            assert_eq!(
+                derive_support(id, DeriveId::Clone),
+                SurfaceDeriveSupport::Missing,
+                "{} must be recorded as non-Clone",
+                as_str(id)
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_rust_path_names_the_surface_type_at_its_facet_location() {
+        for path in [
+            "incan_std_async::task::JoinHandle<T>",
+            "incan_std_async::task::JoinHandle<i64>",
+            "::incan_std_async::task::JoinHandle",
+        ] {
+            assert_eq!(from_runtime_rust_path(path), Some(SurfaceTypeId::JoinHandle), "{path}");
+        }
+        assert_eq!(
+            from_runtime_rust_path("incan_std_async::sync::Mutex<i64>"),
+            Some(SurfaceTypeId::Mutex)
+        );
+        assert_eq!(
+            from_runtime_rust_path("incan_std_async::channel::Sender<String>"),
+            None,
+            "a channel handle is the stdlib newtype, not its runtime type"
+        );
+        for path in [
+            "incan_std_async::sync::JoinHandle<T>",
+            "incan_std_async::JoinHandle<T>",
+            "tokio::task::JoinHandle<T>",
+            "incan_std_core::task::JoinHandle<T>",
+            "incan_std_async::task::Unknown<T>",
+        ] {
+            assert_eq!(from_runtime_rust_path(path), None, "{path}");
+        }
+    }
+
+    /// `std.async.channel` declares each channel handle as a newtype over its runtime type and `channel()` returns the
+    /// newtype, so an import of the handle binds the newtype rather than re-exporting the runtime type.
+    #[test]
+    fn channel_handles_are_the_stdlib_newtypes_channel_returns() {
+        for id in [
+            SurfaceTypeId::Sender,
+            SurfaceTypeId::Receiver,
+            SurfaceTypeId::OneshotSender,
+            SurfaceTypeId::OneshotReceiver,
+        ] {
+            assert_eq!(owner(id), SurfaceTypeOwner::Stdlib, "{}", as_str(id));
+            assert_eq!(stdlib_module_path(id), Some("std.async.channel"), "{}", as_str(id));
+        }
+    }
+
+    #[test]
+    fn channel_and_lock_handles_follow_their_stdlib_newtype_derives() {
+        for id in [SurfaceTypeId::Mutex, SurfaceTypeId::Sender] {
+            assert_eq!(
+                derive_support(id, DeriveId::Clone),
+                SurfaceDeriveSupport::FollowsTypeArguments
+            );
+            assert_eq!(derive_support(id, DeriveId::Hash), SurfaceDeriveSupport::Missing);
+        }
+        assert_eq!(
+            derive_support(SurfaceTypeId::Semaphore, DeriveId::Clone),
+            SurfaceDeriveSupport::Implements
+        );
+        for id in [
+            SurfaceTypeId::Receiver,
+            SurfaceTypeId::OneshotSender,
+            SurfaceTypeId::OneshotReceiver,
+        ] {
+            assert_eq!(derive_support(id, DeriveId::Clone), SurfaceDeriveSupport::Missing);
+            assert_eq!(
+                derive_support(id, DeriveId::Debug),
+                SurfaceDeriveSupport::FollowsTypeArguments
+            );
+        }
+    }
+
+    /// Return whether `source` declares `name` as a `pub type ... = newtype`, and if so whether an `@derive(...)`
+    /// naming `Clone` decorates it.
+    fn stdlib_newtype_derives_clone(source: &str, name: &str) -> Option<bool> {
+        let lines = source.lines().collect::<Vec<_>>();
+        let index = lines.iter().position(|line| {
+            line.strip_prefix("pub type ")
+                .and_then(|rest| rest.strip_prefix(name))
+                .is_some_and(|rest| rest.starts_with(['[', ' ']) && rest.contains("= newtype "))
+        })?;
+        let decorators = lines.get(..index)?;
+        Some(
+            decorators
+                .iter()
+                .rev()
+                .take_while(|line| line.trim_start().starts_with('@'))
+                .filter_map(|line| line.trim().strip_prefix("@derive("))
+                .any(|args| args.trim_end_matches(')').split(',').any(|arg| arg.trim() == "Clone")),
+        )
+    }
+
+    /// The `Clone` answers for stdlib newtypes are copied from their `@derive(Clone)` declarations; this fails when a
+    /// declaration and the registry disagree, or when a declaration the registry describes can no longer be found.
+    #[test]
+    fn clone_answers_match_the_stdlib_newtype_declarations() -> Result<(), String> {
+        let stdlib_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../stdlib");
+        let mut checked = Vec::new();
+        for info in SURFACE_TYPES {
+            let Some(segments) = info
+                .ownership
+                .stdlib_module_path
+                .and_then(|module| module.strip_prefix("std."))
+                .map(|module| module.split('.').collect::<Vec<_>>())
+            else {
+                continue;
+            };
+            let Some(facet) = segments.first() else {
+                continue;
+            };
+            let path = stdlib_root
+                .join(facet)
+                .join("src")
+                .join(format!("{}.incn", segments.join("/")));
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let name = as_str(info.item.id);
+            let Some(declared) = stdlib_newtype_derives_clone(&source, name) else {
+                continue;
+            };
+            let recorded = matches!(
+                derive_support(info.item.id, DeriveId::Clone),
+                SurfaceDeriveSupport::Implements | SurfaceDeriveSupport::FollowsTypeArguments
+            );
+            if declared != recorded {
+                return Err(format!(
+                    "{name}: {} declares @derive(Clone) = {declared}, but derive_support records Clone = {recorded}",
+                    path.display()
+                ));
+            }
+            checked.push(name);
+        }
+        for expected in [
+            "Mutex",
+            "RwLock",
+            "Semaphore",
+            "Barrier",
+            "Sender",
+            "Receiver",
+            "OneshotSender",
+            "OneshotReceiver",
+        ] {
+            if !checked.contains(&expected) {
+                return Err(format!(
+                    "the stdlib newtype declaration of {expected} was not found; checked: {checked:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn interop_collections_follow_their_arguments_and_unverified_types_are_not_recorded() {
+        assert_eq!(
+            derive_support(SurfaceTypeId::Vec, DeriveId::Hash),
+            SurfaceDeriveSupport::FollowsTypeArguments
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::HashMap, DeriveId::Clone),
+            SurfaceDeriveSupport::FollowsTypeArguments
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::HashMap, DeriveId::Hash),
+            SurfaceDeriveSupport::Missing
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::Html, DeriveId::Clone),
+            SurfaceDeriveSupport::NotRecorded
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::Mutex, DeriveId::Default),
+            SurfaceDeriveSupport::NotRecorded
+        );
     }
 }

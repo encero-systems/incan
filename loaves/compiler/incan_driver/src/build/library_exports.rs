@@ -374,18 +374,39 @@ impl<'a> LibraryReexportResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use crate::build::rust_extern::collect_rust_extern_contexts;
+    use crate::modules::{imported_module_deps_for_with_index, module_key_index, register_module_path_segments};
+    use incan_frontend::api_metadata::{
+        ApiAlias, ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
+        CheckedApiPackageIdentity, collect_checked_api_metadata, materialize_api_alias_projections,
+        materialize_checked_api_public_namespaces,
+    };
     use incan_frontend::library_exports::{
         CheckedExportIdentity, CheckedExportKind, CheckedNamedExport, checked_exports_by_name,
         collect_checked_public_exports,
     };
+    use incan_frontend::library_manifest::{
+        ExportIdentityKind, LibraryManifest, LibraryManifestError, NativeUnionExport, NativeUnionOwnerExport, TypeRef,
+    };
+    use incan_frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
+    use incan_frontend::module::declaration_package_identity;
+    use incan_frontend::provider::{
+        NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord,
+    };
     use incan_frontend::symbols::ResolvedType;
+    use incan_frontend::typechecker::TypeChecker;
     use incan_frontend::{ParsedModule, lexer, parser};
     use oven_model::manifest::ProjectManifest;
+
+    /// Package name, source modules, and consumer source for one re-export publication case.
+    type ReexportProject<'a> = (&'a str, &'a [(&'a str, &'a str)], String);
 
     #[cfg(feature = "rust_inspect")]
     #[test]
@@ -927,6 +948,770 @@ mod tests {
         assert!(resolved.iter().any(|export| export.name == "DataSet"));
         assert!(resolved.iter().any(|export| export.name == "filter_ds"));
 
+        Ok(())
+    }
+
+    /// Check every source module of a library and assemble its manifest the way a library build does: each module's
+    /// checked exports and checked API, the package-root exports the entrypoint resolves, the public module
+    /// namespaces, and the identity graph joined from them. `sources` maps paths under `src/` to their text;
+    /// `lib.incn` is the entrypoint, which library collection names `main` and orders last.
+    fn published_library_manifest(
+        package: &str,
+        sources: &[(&str, &str)],
+    ) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+        let mut modules = Vec::new();
+        for (relative, source) in sources {
+            let stem = relative
+                .strip_suffix(".incn")
+                .ok_or_else(|| format!("source `{relative}` is not an .incn file"))?;
+            let path_segments = if stem == "lib" {
+                vec!["main".to_string()]
+            } else {
+                // A directory's `mod.incn` is the directory's own module, as module collection names it.
+                let stem = stem.strip_suffix("/mod").unwrap_or(stem);
+                stem.split('/').map(str::to_string).collect::<Vec<_>>()
+            };
+            let file_path = PathBuf::from(format!("{package}/src/{relative}"));
+            let tokens = lexer::lex(source).map_err(|errors| format!("`{relative}` lex errors: {errors:?}"))?;
+            let ast = parser::parse_with_module_path(&tokens, file_path.to_str())
+                .map_err(|errors| format!("`{relative}` parse errors: {errors:?}"))?;
+            modules.push(ParsedModule {
+                name: path_segments.join("_"),
+                path_segments,
+                file_path,
+                source: (*source).to_string(),
+                ast,
+            });
+        }
+        modules.sort_by_key(|module| module.path_segments == ["main"]);
+        let lib_module = modules.last().ok_or("the library has no entrypoint module")?;
+        let module_idx_by_key = module_key_index(&modules);
+        let mut checked_exports_by_module = HashMap::new();
+        let mut checked_exports_by_source_module = Vec::new();
+        let mut api_modules = Vec::new();
+        for (idx, module) in modules.iter().enumerate() {
+            let dependencies = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
+            let mut checker = TypeChecker::new();
+            checker
+                .set_current_package_identity(declaration_package_identity(Some(package), Some(&module.path_segments)));
+            checker.set_current_module_path(Some(module.path_segments.clone()));
+            register_module_path_segments(&mut checker, &modules);
+            checker
+                .check_with_imports(&module.ast, &dependencies)
+                .map_err(|errors| format!("module `{}` should check: {errors:?}", module.path_segments.join(".")))?;
+            let exports = collect_checked_public_exports(&module.ast, &checker);
+            api_modules.push(collect_checked_api_metadata(
+                &module.ast,
+                &checker,
+                module.path_segments.clone(),
+            ));
+            checked_exports_by_source_module.push((module.path_segments.clone(), exports.clone()));
+            checked_exports_by_module.insert(module_key(&module.path_segments), checked_exports_by_name(exports));
+        }
+        materialize_api_alias_projections(&mut api_modules);
+        let selected = LibraryReexportResolver::new(&checked_exports_by_module)
+            .resolve(lib_module)
+            .map_err(|errors| format!("the entrypoint's exports should resolve: {errors:?}"))?;
+        let mut manifest = LibraryManifest::from_checked_exports(package, "0.1.0", &selected);
+        let mut api = CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: Some(CheckedApiPackageIdentity {
+                name: package.to_string(),
+                version: Some("0.1.0".to_string()),
+            }),
+            modules: api_modules,
+            public_namespaces: Vec::new(),
+        };
+        materialize_checked_api_public_namespaces(&mut api)?;
+        manifest.contract_metadata.identity_graph.extend_checked_api_exports(
+            package,
+            &api,
+            &checked_exports_by_source_module,
+        )?;
+        manifest.contract_metadata.api = Some(api);
+        Ok(manifest)
+    }
+
+    /// Encode `manifest` as a library build writes it, decode it again, and check `consumer` against the decoded
+    /// manifest as a dependency named `package`.
+    fn encode_and_consume(
+        package: &str,
+        manifest: &LibraryManifest,
+        consumer: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        check_consumer(package, manifest, consumer, false)
+    }
+
+    /// Check `consumer` against `manifest`, encoded and decoded as a library build writes it, as a dependency named
+    /// `package`. With `admitted`, the dependency is also admitted as a resolved provider artifact, as a consumer build
+    /// admits it, so nominal identities carry the selected provider; without it, the consumer reads the manifest index
+    /// alone.
+    fn check_consumer(
+        package: &str,
+        manifest: &LibraryManifest,
+        consumer: &str,
+        admitted: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let encoded = manifest
+            .to_json_string()
+            .map_err(|error| format!("`{package}` should encode: {error}"))?;
+        let decoded = LibraryManifest::from_json_str(&encoded)?;
+        let artifact = LibraryArtifactMetadata::from_crate_root(
+            package,
+            package,
+            std::env::temp_dir().join(format!("incan_test_{package}_artifacts/target/lib")),
+        );
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            package.to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(decoded.clone()),
+                metadata: artifact.clone(),
+            },
+        )]));
+        let tokens = lexer::lex(consumer).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        if admitted {
+            let record = ProviderRecord {
+                identity: ProviderIdentity {
+                    name: package.to_string(),
+                    version: decoded.version.clone(),
+                    digest: format!(
+                        "{:0>64}",
+                        package.bytes().map(|byte| format!("{byte:02x}")).collect::<String>()
+                    ),
+                    feature_projection: Default::default(),
+                },
+                provenance: ProviderProvenance::ProjectDependency {
+                    dependency_key: package.to_string(),
+                    manifest_path: artifact.manifest_path.clone(),
+                },
+                authority: NamespaceAuthority::ProjectDependency {
+                    dependency_key: package.to_string(),
+                },
+                namespace_claims: Default::default(),
+                available: true,
+                enabled: true,
+                manifest: Some(Arc::new(decoded)),
+                artifact: Some(artifact),
+                implementation_facets: Vec::new(),
+            };
+            checker.set_provider_plan(Arc::new(ProviderPlan::new(index, vec![record], [])?));
+        } else {
+            checker.set_library_manifest_index(index);
+        }
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("the consumer of `{package}` should check: {errors:?}"))?;
+        Ok(())
+    }
+
+    /// A non-root module that re-exports another module's declarations is published with its namespace: the manifest
+    /// encodes a re-export spelled from the package root (`crate.inner`, also from a nested module) or as a root-level
+    /// sibling (`inner`), through a chain of two modules, under an `as` alias, and for a function, a model, an enum and
+    /// a const, and a consumer imports each name through every module that publishes it.
+    #[test]
+    fn submodule_reexports_publish_their_namespace_in_the_manifest_issue1561() -> Result<(), Box<dyn std::error::Error>>
+    {
+        const INNER: &str = "pub def greet(name: str) -> str:\n    return f\"hi {name}\"\n\n\npub model Greeting:\n    pub text: str\n\n\npub enum Tone:\n    Warm\n    Cool\n\n\npub const LOUDNESS: int = 3\n";
+        const GREET_THREE: &str = "\n\ndef run_all() -> str:\n    first = greet(\"a\")\n    second = second_greet(\"b\")\n    third = third_greet(\"c\")\n    return f\"{first} {second} {third}\"\n";
+        let projects: [ReexportProject<'_>; 7] = [
+            (
+                "reexport_repro",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import (\n    greet,\n)\n"),
+                    ("lib.incn", "pub from middle import (\n    greet,\n)\n"),
+                ],
+                format!(
+                    "from pub::reexport_repro import greet\nfrom pub::reexport_repro.middle import greet as second_greet\nfrom pub::reexport_repro.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "root_spelling_beside_middle",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import (\n    greet,\n)\n"),
+                    ("lib.incn", "pub from crate.inner import (\n    greet,\n)\n"),
+                ],
+                format!(
+                    "from pub::root_spelling_beside_middle import greet\nfrom pub::root_spelling_beside_middle.middle import greet as second_greet\nfrom pub::root_spelling_beside_middle.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "two_module_chain",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import greet\n"),
+                    ("outer.incn", "pub from crate.middle import greet\n"),
+                    ("lib.incn", "pub from outer import greet\n"),
+                ],
+                format!(
+                    "from pub::two_module_chain import greet\nfrom pub::two_module_chain.outer import greet as second_greet\nfrom pub::two_module_chain.middle import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "renamed_reexports",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import greet as salute\n"),
+                    ("outer.incn", "pub from crate.middle import salute as wave\n"),
+                    ("lib.incn", "pub from outer import wave as greet\n"),
+                ],
+                format!(
+                    "from pub::renamed_reexports import greet\nfrom pub::renamed_reexports.outer import wave as second_greet\nfrom pub::renamed_reexports.middle import salute as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "sibling_spelling",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from inner import greet\n"),
+                    ("lib.incn", "pub from middle import greet\n"),
+                ],
+                format!(
+                    "from pub::sibling_spelling import greet\nfrom pub::sibling_spelling.middle import greet as second_greet\nfrom pub::sibling_spelling.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+            (
+                "nominal_reexports",
+                &[
+                    ("inner.incn", INNER),
+                    ("middle.incn", "pub from crate.inner import Greeting, Tone, LOUDNESS\n"),
+                    ("lib.incn", "pub from middle import Greeting, Tone, LOUDNESS\n"),
+                ],
+                "from pub::nominal_reexports import Greeting, Tone, LOUDNESS\nfrom pub::nominal_reexports.middle import Greeting as MiddleGreeting, Tone as MiddleTone, LOUDNESS as MIDDLE_LOUDNESS\n\n\ndef tone_weight(tone: Tone) -> int:\n    match tone:\n        case Tone.Warm:\n            return 1\n        case Tone.Cool:\n            return 2\n\n\ndef middle_tone_weight(tone: MiddleTone) -> int:\n    match tone:\n        case MiddleTone.Warm:\n            return 1\n        case MiddleTone.Cool:\n            return 2\n\n\ndef run_all() -> int:\n    first = Greeting(text=\"a\")\n    second = MiddleGreeting(text=\"bc\")\n    weight = tone_weight(Tone.Warm) + middle_tone_weight(MiddleTone.Cool)\n    return LOUDNESS + MIDDLE_LOUDNESS + len(first.text) + len(second.text) + weight\n".to_string(),
+            ),
+            (
+                "nested_root_spelling",
+                &[
+                    ("pkg/inner.incn", INNER),
+                    ("pkg/middle.incn", "pub from crate.pkg.inner import greet\n"),
+                    ("lib.incn", "pub from pkg.middle import greet\n"),
+                ],
+                format!(
+                    "from pub::nested_root_spelling import greet\nfrom pub::nested_root_spelling.pkg.middle import greet as second_greet\nfrom pub::nested_root_spelling.pkg.inner import greet as third_greet\n{GREET_THREE}"
+                ),
+            ),
+        ];
+        let failures = projects
+            .iter()
+            .filter_map(|(package, sources, consumer)| {
+                published_library_manifest(package, sources)
+                    .and_then(|manifest| encode_and_consume(package, &manifest, consumer))
+                    .err()
+                    .map(|error| format!("{package}: {error}"))
+            })
+            .collect::<Vec<_>>();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n").into())
+        }
+    }
+
+    /// The checked API alias `module` declares under `name`, for tests that tamper with one.
+    fn declared_alias<'a>(manifest: &'a mut LibraryManifest, module: &str, name: &str) -> Option<&'a mut ApiAlias> {
+        manifest
+            .contract_metadata
+            .api
+            .as_mut()?
+            .modules
+            .iter_mut()
+            .find(|candidate| candidate.module_path == [module.to_string()])?
+            .declarations
+            .iter_mut()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Alias(alias) if alias.name == name => Some(alias),
+                _ => None,
+            })
+    }
+
+    /// Require `manifest` to be refused for an identity-graph entry the checked API does not back.
+    fn refused_as_unbacked(manifest: &LibraryManifest, case: &str) -> Result<(), Box<dyn std::error::Error>> {
+        match manifest.to_json_string() {
+            Err(LibraryManifestError::Invalid(message))
+                if message.contains("is not backed by a checked API namespace declaration") =>
+            {
+                Ok(())
+            }
+            other => Err(format!("{case} should be refused as unbacked, got {other:?}").into()),
+        }
+    }
+
+    /// Resolving a namespace alias's spelling does not accept an identity-graph entry the checked API does not back: an
+    /// entry no namespace member publishes, an alias whose projection names another declaration or the same-named
+    /// declaration of another module, and an alias whose target names a module the package does not have are each
+    /// refused.
+    #[test]
+    fn submodule_reexport_manifest_still_refuses_unbacked_entries_issue1561() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let manifest = published_library_manifest(
+            "reexport_repro",
+            &[
+                (
+                    "inner.incn",
+                    "pub def greet(name: str) -> str:\n    return f\"hi {name}\"\n",
+                ),
+                ("middle.incn", "pub from crate.inner import greet\n"),
+                ("lib.incn", "pub from middle import greet\n"),
+            ],
+        )?;
+        manifest.to_json_string()?;
+
+        let mut unpublished = manifest.clone();
+        let mut entry = unpublished
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .find(|entry| entry.public_path == ["reexport_repro", "middle", "greet"].map(str::to_string))
+            .cloned()
+            .ok_or("missing the `middle.greet` identity")?;
+        entry.public_name = "fabricated".to_string();
+        entry.public_path = ["reexport_repro", "middle", "fabricated"].map(str::to_string).to_vec();
+        unpublished.contract_metadata.identity_graph.exports.push(entry);
+        refused_as_unbacked(&unpublished, "an entry no namespace member publishes")?;
+
+        for (source_path, case) in [
+            (&["inner", "not_greet"][..], "an alias projecting another declaration"),
+            (
+                &["elsewhere", "inner", "greet"][..],
+                "an alias projecting the same-named declaration of another module",
+            ),
+        ] {
+            let mut wrong_projection = manifest.clone();
+            declared_alias(&mut wrong_projection, "middle", "greet")
+                .and_then(|alias| alias.projected_function.as_mut())
+                .ok_or("missing the `middle.greet` projection")?
+                .source_path = source_path.iter().map(|segment| (*segment).to_string()).collect();
+            refused_as_unbacked(&wrong_projection, case)?;
+        }
+
+        let mut missing_module = manifest;
+        declared_alias(&mut missing_module, "middle", "greet")
+            .ok_or("missing the `middle.greet` alias")?
+            .target_path = ["crate", "elsewhere", "greet"].map(str::to_string).to_vec();
+        refused_as_unbacked(&missing_module, "an alias targeting a module the package does not have")?;
+        Ok(())
+    }
+
+    /// Give the first parameter of the root function export `function` a native union of the named `members`, owned by
+    /// the containing artifact, and record its emitted representation, as a library build publishes a union spelled
+    /// in a public signature: a member the package declares is bound to its declaration's canonical identity. The
+    /// in-memory build these tests use stops before union projection, so the published shape is placed here.
+    fn with_containing_artifact_union(
+        mut manifest: LibraryManifest,
+        function: &str,
+        members: &[&str],
+    ) -> Result<LibraryManifest, String> {
+        let local_nominals = members
+            .iter()
+            .filter_map(|name| {
+                manifest
+                    .contract_metadata
+                    .identity_graph
+                    .exports
+                    .iter()
+                    .find(|export| export.public_name == *name && export.kind != ExportIdentityKind::Alias)
+                    .and_then(|export| export.canonical.clone())
+                    .map(|canonical| ((*name).to_string(), canonical))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let export = manifest
+            .exports
+            .functions
+            .iter_mut()
+            .find(|export| export.name == function)
+            .ok_or_else(|| format!("`{function}` is not a root function export"))?;
+        let param = export
+            .params
+            .first_mut()
+            .ok_or_else(|| format!("`{function}` has no parameter"))?;
+        let union = NativeUnionExport {
+            owner: NativeUnionOwnerExport::ContainingArtifact,
+            rust_name: "__IncanUnion0000000000001561".to_string(),
+            members: members
+                .iter()
+                .map(|name| TypeRef::Named {
+                    name: (*name).to_string(),
+                    origin: None,
+                })
+                .collect(),
+            local_nominals,
+            checked_projection: None,
+        };
+        param.ty = TypeRef::NativeUnion(union.clone());
+        manifest.contract_metadata.native_unions.push(union);
+        Ok(manifest)
+    }
+
+    /// Generate the Rust source of `consumer` against `manifest`, published as `package` and admitted as a resolved
+    /// provider artifact, as a consumer build generates it.
+    fn generate_admitted_consumer(
+        package: &str,
+        manifest: &LibraryManifest,
+        consumer: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let decoded = LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
+        let artifact = LibraryArtifactMetadata::from_crate_root(
+            package,
+            package,
+            std::env::temp_dir().join(format!("incan_test_{package}_artifacts/target/lib")),
+        );
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            package.to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(decoded.clone()),
+                metadata: artifact.clone(),
+            },
+        )]));
+        let record = ProviderRecord {
+            identity: ProviderIdentity {
+                name: package.to_string(),
+                version: decoded.version.clone(),
+                digest: format!(
+                    "{:0>64}",
+                    package.bytes().map(|byte| format!("{byte:02x}")).collect::<String>()
+                ),
+                feature_projection: Default::default(),
+            },
+            provenance: ProviderProvenance::ProjectDependency {
+                dependency_key: package.to_string(),
+                manifest_path: artifact.manifest_path.clone(),
+            },
+            authority: NamespaceAuthority::ProjectDependency {
+                dependency_key: package.to_string(),
+            },
+            namespace_claims: Default::default(),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(decoded)),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        };
+        let tokens = lexer::lex(consumer).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut codegen = crate::backend::IrCodegen::new();
+        codegen.set_provider_plan(Arc::new(ProviderPlan::new(index, vec![record], [])?));
+        codegen
+            .try_generate(&program)
+            .map_err(|error| format!("the consumer of `{package}` should generate: {error:?}").into())
+    }
+
+    /// Build `package` from `sources`, encode its manifest, and check each consumer in `consumers` against it, once
+    /// through the manifest index alone and once with the dependency admitted as a provider.
+    fn consume_library(package: &str, sources: &[(&str, &str)], consumers: &[(&str, String)]) -> Vec<String> {
+        consume_library_through(
+            package,
+            sources,
+            consumers,
+            &[("manifest index", false), ("admitted provider", true)],
+        )
+    }
+
+    /// Build `package` from `sources`, encode its manifest, and check each consumer in `consumers` against it through
+    /// each of `routes`, a label and whether the dependency is admitted as a provider.
+    fn consume_library_through(
+        package: &str,
+        sources: &[(&str, &str)],
+        consumers: &[(&str, String)],
+        routes: &[(&str, bool)],
+    ) -> Vec<String> {
+        match published_library_manifest(package, sources) {
+            Ok(manifest) => consume_manifest(package, &manifest, consumers, routes),
+            Err(error) => vec![format!("{package}: {error}")],
+        }
+    }
+
+    /// Check each consumer in `consumers` against `manifest`, published as `package`, through each of `routes`.
+    fn consume_manifest(
+        package: &str,
+        manifest: &LibraryManifest,
+        consumers: &[(&str, String)],
+        routes: &[(&str, bool)],
+    ) -> Vec<String> {
+        consumers
+            .iter()
+            .flat_map(|(case, consumer)| {
+                routes
+                    .iter()
+                    .copied()
+                    .filter_map(|(route, admitted)| {
+                        check_consumer(package, manifest, consumer, admitted)
+                            .err()
+                            .map(|error| format!("{package} / {case} / {route}: {error}"))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Every public path of one published type names one type: a value of the type spelled through the package root,
+    /// a module that re-exports it (also through a chain of two modules, a directory facade and a module binding), or
+    /// its declaring module is accepted where any other spelling is expected, for a model, an enum, a newtype, a
+    /// generic model and a class, a trait bound spelled through one path holds for a type imported through another,
+    /// and fields, methods and properties are read through each spelling. A directory facade that re-exports its
+    /// child's declaration publishes it without the import from the facade being ambiguous.
+    #[test]
+    fn reexported_types_keep_one_identity_across_public_paths_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+        const INNER: &str = "pub trait Named:\n    def name(self) -> str\n\n\npub model Greeting with Named:\n    pub text: str\n\n    def shout(self) -> str:\n        return self.text.upper()\n\n    def name(self) -> str:\n        return self.text\n\n\npub enum Tone:\n    Warm\n    Cool\n\n\npub newtype Loudness = int\n\n\npub model Pair[T]:\n    pub left: T\n    pub right: T\n\n\npub class Counter:\n    pub count: int\n\n    pub property doubled -> int:\n        return self.count * 2\n";
+        const NAMES: &str = "Named, Greeting, Tone, Loudness, Pair, Counter";
+        const USES: &str = "\n\ndef tone_weight(tone: Tone) -> int:\n    match tone:\n        case Tone.Warm:\n            return 1\n        case Tone.Cool:\n            return 2\n\n\ndef middle_tone_weight(tone: MiddleTone) -> int:\n    match tone:\n        case MiddleTone.Warm:\n            return 1\n        case MiddleTone.Cool:\n            return 2\n\n\ndef text_len(greeting: Greeting) -> int:\n    return len(greeting.text) + len(greeting.shout())\n\n\ndef middle_text_len(greeting: MiddleGreeting) -> int:\n    return len(greeting.text) + len(greeting.shout())\n\n\ndef volume(level: Loudness) -> int:\n    return level.0\n\n\ndef pair_sum(pair: Pair[int]) -> int:\n    return pair.left + pair.right\n\n\ndef doubled(counter: MiddleCounter) -> int:\n    return counter.doubled + counter.count\n\n\ndef named_len[T with MiddleNamed](item: T) -> int:\n    return len(item.name())\n\n\ndef run_all() -> int:\n    first = tone_weight(MiddleTone.Warm) + middle_tone_weight(Tone.Cool) + tone_weight(InnerTone.Cool)\n    second = text_len(MiddleGreeting(text=\"a\")) + middle_text_len(Greeting(text=\"bc\")) + text_len(InnerGreeting(text=\"d\"))\n    third: Greeting = MiddleGreeting(text=\"e\")\n    fourth: MiddleGreeting = InnerGreeting(text=\"f\")\n    fifth = volume(MiddleLoudness(3)) + volume(InnerLoudness(4))\n    pair: MiddlePair[int] = InnerPair(left=1, right=2)\n    sixth = pair_sum(pair) + doubled(Counter(count=2)) + doubled(InnerCounter(count=1))\n    seventh = named_len(Greeting(text=\"g\")) + named_len(InnerGreeting(text=\"h\"))\n    return first + second + len(third.text) + len(fourth.shout()) + fifth + sixth + seventh\n";
+        let imports = |package: &str, middle: &str, inner: &str| {
+            format!(
+                "from pub::{package} import {NAMES}\nfrom pub::{package}.{middle} import Named as MiddleNamed, Greeting as MiddleGreeting, Tone as MiddleTone, Loudness as MiddleLoudness, Pair as MiddlePair, Counter as MiddleCounter\nfrom pub::{package}.{inner} import Greeting as InnerGreeting, Tone as InnerTone, Loudness as InnerLoudness, Pair as InnerPair, Counter as InnerCounter\n{USES}"
+            )
+        };
+        let reexport = |from: &str| format!("pub from {from} import {NAMES}\n");
+        let mut failures = consume_library(
+            "tone_paths",
+            &[
+                ("inner.incn", INNER),
+                ("middle.incn", &reexport("crate.inner")),
+                ("lib.incn", &reexport("middle")),
+            ],
+            &[
+                ("root, middle and inner", imports("tone_paths", "middle", "inner")),
+                (
+                    "a module binding",
+                    "from pub::tone_paths import Tone, Greeting\nimport pub::tone_paths.middle as middle\n\n\ndef tone_weight(tone: Tone) -> int:\n    match tone:\n        case Tone.Warm:\n            return 1\n        case Tone.Cool:\n            return 2\n\n\ndef run_all() -> int:\n    greeting: Greeting = middle.Greeting(text=\"a\")\n    return tone_weight(middle.Tone.Warm) + len(greeting.shout())\n".to_string(),
+                ),
+            ],
+        );
+        failures.extend(consume_library(
+            "chained_tone_paths",
+            &[
+                ("inner.incn", INNER),
+                ("middle.incn", &reexport("crate.inner")),
+                ("outer.incn", &reexport("crate.middle")),
+                ("lib.incn", &reexport("outer")),
+            ],
+            &[("root, outer and inner", imports("chained_tone_paths", "outer", "inner"))],
+        ));
+        failures.extend(consume_library(
+            "nested_tone_paths",
+            &[
+                ("pkg/inner.incn", INNER),
+                ("pkg/mod.incn", &reexport("crate.pkg.inner")),
+                ("lib.incn", &reexport("pkg")),
+            ],
+            &[(
+                "root, facade and inner",
+                imports("nested_tone_paths", "pkg", "pkg.inner"),
+            )],
+        ));
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n").into())
+        }
+    }
+
+    /// A consumer reads the fields and methods of a model it reaches only as the element type of another model's list,
+    /// option or dict field, a method result or an enum payload, when the element model is declared in a sibling module
+    /// the owner imports privately with other items, and both are re-exported through a directory facade and the
+    /// package root, at one or two levels and in nested directories. The element type resolves to the declaration the
+    /// owner's module names also when the root does not publish it or publishes another model under its name, and a
+    /// pattern names a type the consumer imports after the signature that returns it. A library whose public surface
+    /// carries a native union is read from its admitted artifact's rebuilt layouts, where a model the root re-exports
+    /// from a submodule keeps its fields too.
+    #[test]
+    fn reexported_element_models_keep_their_fields_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+        const MODELS: &str = "pub newtype MemoryId = int\n\n\npub enum SearchProfile:\n    Fast\n    Exact\n\n\npub enum SearchErrorKind:\n    Empty\n    Invalid\n\n\npub const DEFAULT_LIMIT: int = 10\n\n\npub model Nomination:\n    pub memory_id: MemoryId\n    pub rank: int\n    pub relevance_bps: int\n\n    def score(self) -> int:\n        return self.rank * self.relevance_bps\n\n\npub model SearchError:\n    pub kind: SearchErrorKind\n";
+        const EXACT: &str = "from crate.search.models import (\n    DEFAULT_LIMIT,\n    MemoryId,\n    Nomination,\n    SearchError,\n    SearchErrorKind,\n    SearchProfile,\n)\n\n\npub model ExactResult:\n    pub profile: SearchProfile\n    pub nominations: list[Nomination]\n    pub best: Option[Nomination]\n    pub by_rank: dict[int, Nomination]\n\n    def first(self) -> Option[Nomination]:\n        if len(self.nominations) == 0:\n            return None\n        return Some(self.nominations[0])\n\n\npub enum Outcome:\n    Found(Nomination)\n    Missing\n\n\npub def best_outcome(count: int) -> Outcome:\n    if count < 1:\n        return Outcome.Missing\n    return Outcome.Found(Nomination(memory_id=MemoryId(count), rank=count, relevance_bps=DEFAULT_LIMIT))\n\n\npub def exact_query(count: int) -> Result[ExactResult, SearchError]:\n    if count < 0:\n        return Err(SearchError(kind=SearchErrorKind.Invalid))\n    mut nominations: list[Nomination] = []\n    for index in range(count):\n        nominations.append(Nomination(memory_id=MemoryId(index), rank=index + 1, relevance_bps=DEFAULT_LIMIT))\n    return Ok(ExactResult(profile=SearchProfile.Exact, nominations=nominations, best=None, by_rank={}))\n";
+        const FACADE: &str = "pub from crate.search.models import (\n    DEFAULT_LIMIT,\n    MemoryId,\n    Nomination,\n    SearchError,\n    SearchErrorKind,\n    SearchProfile,\n)\npub from crate.search.exact import (\n    ExactResult,\n    Outcome,\n    best_outcome,\n    exact_query,\n)\n";
+        const ROOT: &str = "pub from search import (\n    DEFAULT_LIMIT,\n    MemoryId,\n    Nomination,\n    SearchError,\n    SearchErrorKind,\n    SearchProfile,\n    ExactResult,\n    Outcome,\n    best_outcome,\n    exact_query,\n)\n";
+        const READS: &str = "\n\ndef top_rank() -> int:\n    match exact_query(2):\n        case Ok(result):\n            return result.nominations[0].rank + result.nominations[1].relevance_bps + result.nominations[0].score()\n        case Err(_):\n            return 0\n\n\ndef first_memory() -> int:\n    match exact_query(1):\n        case Ok(result):\n            for nomination in result.nominations:\n                return nomination.memory_id.0\n            return 0\n        case Err(_):\n            return 0\n";
+        const OPTIONAL_READS: &str = "\n\ndef best_rank() -> int:\n    match exact_query(1):\n        case Ok(result):\n            match result.best:\n                case Some(nomination):\n                    return nomination.rank + nomination.score()\n                case None:\n                    return 0\n        case Err(_):\n            return 0\n";
+        let mut failures = consume_library(
+            "hyper_two_level",
+            &[
+                ("search/models.incn", MODELS),
+                ("search/exact.incn", EXACT),
+                ("search/mod.incn", FACADE),
+                ("lib.incn", ROOT),
+            ],
+            &[
+                (
+                    "reached only",
+                    format!("from pub::hyper_two_level import exact_query\n{READS}"),
+                ),
+                (
+                    "element type imported",
+                    format!("from pub::hyper_two_level import exact_query, Nomination, MemoryId\n{READS}\n\ndef ranks() -> list[int]:\n    match exact_query(2):\n        case Ok(result):\n            picked: Nomination = result.nominations[0]\n            identity: MemoryId = picked.memory_id\n            return [picked.rank, identity.0]\n        case Err(_):\n            return []\n"),
+                ),
+                (
+                    "a method result and an enum payload",
+                    "from pub::hyper_two_level import exact_query, best_outcome, Outcome, Nomination\n\n\ndef first_rank() -> int:\n    match exact_query(1):\n        case Ok(result):\n            match result.first():\n                case Some(nomination):\n                    return nomination.rank + nomination.memory_id.0\n                case None:\n                    return 0\n        case Err(_):\n            return 0\n\n\ndef outcome_rank() -> int:\n    match best_outcome(1):\n        case Outcome.Found(nomination):\n            return nomination.rank + nomination.score()\n        case Outcome.Missing:\n            return 0\n\n\ndef record_rank() -> int:\n    match best_outcome(2):\n        case Outcome.Found(Nomination(rank=rank)):\n            return rank\n        case Outcome.Missing:\n            return 0\n\n\ndef keyed_rank() -> int:\n    match exact_query(1):\n        case Ok(result):\n            for nomination in result.by_rank.values():\n                return nomination.relevance_bps\n            return 0\n        case Err(_):\n            return 0\n".to_string(),
+                ),
+                (
+                    "through std.testing",
+                    "from std.testing import assert_is_ok\nfrom pub::hyper_two_level import exact_query\n\n\ndef top_rank() -> int:\n    result = assert_is_ok(exact_query(2))\n    return result.nominations[0].rank + len(result.nominations)\n".to_string(),
+                ),
+                (
+                    "through the facade",
+                    format!("from pub::hyper_two_level.search import exact_query, Nomination\n{READS}\n\ndef picked() -> int:\n    match exact_query(1):\n        case Ok(result):\n            first: Nomination = result.nominations[0]\n            return first.rank\n        case Err(_):\n            return 0\n"),
+                ),
+            ],
+        );
+        failures.extend(consume_library(
+            "hyper_unexported_element",
+            &[
+                ("search/models.incn", MODELS),
+                ("search/exact.incn", EXACT),
+                ("search/mod.incn", FACADE),
+                ("lib.incn", "pub from search import ExactResult, exact_query\n"),
+            ],
+            &[(
+                "reached only",
+                format!("from pub::hyper_unexported_element import exact_query\n{READS}"),
+            )],
+        ));
+        failures.extend(consume_library(
+            "hyper_shadowed_element",
+            &[
+                ("search/models.incn", MODELS),
+                ("search/exact.incn", EXACT),
+                ("search/mod.incn", FACADE),
+                ("other.incn", "pub model Nomination:\n    pub label: str\n"),
+                ("lib.incn", "pub from search import ExactResult, exact_query\npub from other import Nomination\n"),
+            ],
+            &[
+                ("reached only", format!("from pub::hyper_shadowed_element import exact_query\n{READS}")),
+                (
+                    "root name imported",
+                    format!("from pub::hyper_shadowed_element import exact_query, Nomination\n{READS}\n\ndef label_len(nomination: Nomination) -> int:\n    return len(nomination.label)\n"),
+                ),
+            ],
+        ));
+        failures.extend(consume_library(
+            "hyper_one_level",
+            &[
+                ("models.incn", &MODELS.replace("crate.search.", "crate.")),
+                ("exact.incn", &EXACT.replace("crate.search.", "crate.")),
+                ("lib.incn", &FACADE.replace("crate.search.", "crate.")),
+            ],
+            &[(
+                "reached only",
+                format!("from pub::hyper_one_level import exact_query\n{READS}"),
+            )],
+        ));
+        failures.extend(consume_library(
+            "hyper_nested",
+            &[
+                ("memory/search/models.incn", MODELS),
+                (
+                    "memory/search/exact.incn",
+                    &EXACT.replace("crate.search.", "crate.memory.search."),
+                ),
+                (
+                    "memory/search/mod.incn",
+                    &FACADE.replace("crate.search.", "crate.memory.search."),
+                ),
+                (
+                    "memory/mod.incn",
+                    &ROOT.replace("from search", "from crate.memory.search"),
+                ),
+                ("lib.incn", &ROOT.replace("from search", "from memory")),
+            ],
+            &[(
+                "reached only",
+                format!("from pub::hyper_nested import exact_query\n{READS}"),
+            )],
+        ));
+
+        // ---- A native union in the public surface: only an admitted provider projects its containing artifact ----
+        const WEIGH: &str = "\n\npub def weigh(result: ExactResult) -> int:\n    return len(result.nominations)\n";
+        let admitted = [("admitted provider", true)];
+        for (package, root) in [
+            ("hyper_union_two_level", format!("{ROOT}{WEIGH}")),
+            (
+                "hyper_union_unexported_element",
+                format!("pub from search import ExactResult, exact_query\n{WEIGH}"),
+            ),
+        ] {
+            let manifest = published_library_manifest(
+                package,
+                &[
+                    ("search/models.incn", MODELS),
+                    ("search/exact.incn", EXACT),
+                    ("search/mod.incn", FACADE),
+                    ("lib.incn", &root),
+                ],
+            )
+            .and_then(|manifest| {
+                Ok(with_containing_artifact_union(
+                    manifest,
+                    "weigh",
+                    &["ExactResult", "int"],
+                )?)
+            });
+            let manifest = match manifest {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    failures.push(format!("{package}: {error}"));
+                    continue;
+                }
+            };
+            failures.extend(consume_manifest(
+                package,
+                &manifest,
+                &[
+                    (
+                        "reached only",
+                        format!("from pub::{package} import exact_query\n{READS}{OPTIONAL_READS}"),
+                    ),
+                    (
+                        "through std.testing",
+                        format!("from std.testing import assert_is_ok\nfrom pub::{package} import exact_query\n\n\ndef top_rank() -> int:\n    result = assert_is_ok(exact_query(2))\n    return result.nominations[0].rank + len(result.nominations)\n"),
+                    ),
+                ],
+                &admitted,
+            ));
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n").into())
+        }
+    }
+
+    /// A consumer building a compiled library's model with an empty list, an empty dict and `None` for fields whose
+    /// element types it never imports spells each element type from the dependency crate: at the package root for a
+    /// type the root republishes and at its declaring module for one it does not. The manifest records the provider's
+    /// bare spelling, which named nothing in the consumer's crate (`Vec::<EvidenceId>::new()`, rustc E0425).
+    #[test]
+    fn a_dependency_models_empty_fields_spell_their_element_types_from_the_dependency_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = published_library_manifest(
+            "card_provider",
+            &[
+                ("ids.incn", "pub newtype EvidenceId = str\n\n\npub newtype Tag = str\n"),
+                (
+                    "cards.incn",
+                    "from crate.ids import EvidenceId, Tag\n\n\npub model Card:\n    pub evidence_ids: list[EvidenceId]\n    pub tags: dict[str, Tag]\n    pub first: Option[EvidenceId]\n",
+                ),
+                (
+                    "lib.incn",
+                    "pub from cards import Card\npub from ids import EvidenceId\n",
+                ),
+            ],
+        )?;
+        let source = generate_admitted_consumer(
+            "card_provider",
+            &manifest,
+            "from pub::card_provider import Card\n\n\ndef main() -> None:\n    card = Card(evidence_ids=[], tags={}, first=None)\n    println(len(card.evidence_ids) + len(card.tags))\n",
+        )?;
+        let spelled = |text: &str| source.replace(' ', "").contains(text);
+        assert!(
+            spelled("Vec::<card_provider::EvidenceId>::new()"),
+            "the empty list names the root's `EvidenceId`:\n{source}"
+        );
+        assert!(
+            !spelled("Vec::<EvidenceId>") && !spelled(",Tag>"),
+            "no element type is spelled by the provider's bare name:\n{source}"
+        );
         Ok(())
     }
 }

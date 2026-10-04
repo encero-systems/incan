@@ -1,79 +1,71 @@
-# Symbol aliases
+# Symbol aliases (reference)
 
-This page is the reference for top-level symbol aliases and same-type method aliases.
-
-Symbol aliases give an existing declaration another resolved name. They are declarations, not runtime assignments, and they do not create wrapper functions or copied declarations.
+An alias is a declaration that gives an existing declaration another name. This page specifies top-level aliases, method aliases and enum variant aliases, and how aliases are imported and re-exported.
 
 ## Top-level aliases
 
-Use a top-level alias when a module should expose another name for an existing callable or type-like symbol:
+```text
+[pub] NAME = TARGET
+[pub] NAME = alias TARGET
+```
+
+- `TARGET` is a symbol path. `NAME = alias TARGET` is the same declaration as `NAME = TARGET`.
+- The alias has its target's type and signature, and a call through it calls the target.
+- A `pub` alias is exported. Its target is public.
+
+Supported targets:
+
+- a function, including an overloaded one;
+- a `static`;
+- a `model`, `class`, `enum`, `newtype` or type alias;
+- a trait;
+- an imported public symbol of one of these kinds;
+- a member of a `std.*` module, a project source module or a `pub::` package namespace, written through a binding of that module: `math.sqrt` after `import std.math as math`;
+- another alias of one of these, without a cycle.
+
+An alias of a module member binds that member under the alias name, with the alias's visibility, as importing the member under that name does.
 
 ```incan
+import std.math as math
+
 pub def avg(x: int, y: int) -> int:
     return (x + y) // 2
 
-pub mean = avg
+pub mean = avg                   # accepted
+pub average = alias avg          # accepted
+pub root = math.sqrt             # accepted
+common_divisor = math.gcd        # accepted
 ```
 
-The alias can be called wherever the target can be called:
+Refused (`INCAN-P0001`): a target that is not a symbol path, such as a literal or a call.
+
+Refused (`INCAN-T0001`):
+
+- a target that does not resolve;
+- a target of another kind, such as a `const`, a field or a local value;
+- an alias whose name is already declared in the module;
+- a cycle of aliases;
+- a `pub` alias whose target is private.
 
 ```incan
-def main() -> int:
-    return mean(10, 20)
+def helper(x: int) -> int:
+    return x
+
+const LIMIT: int = 10
+
+count = 1                 # refused: not a symbol path (INCAN-P0001)
+later = helper(1)         # refused: not a symbol path (INCAN-P0001)
+limit = LIMIT             # refused: a const is not an alias target
+left = right              # refused: alias cycle
+right = left              # refused: alias cycle
+pub exposed = helper      # refused: helper is private
 ```
 
-The explicit spelling is equivalent:
+## Importing and re-exporting aliases
 
-```incan
-pub average = alias avg
-```
-
-Use the explicit `alias` marker when it improves readability near other declarations. It does not change the type, visibility, lowering, or export behavior.
-
-## Supported targets
-
-A top-level alias target must resolve to an existing declaration symbol supported by the compiler:
-
-- function
-- model
-- class
-- enum
-- trait
-- newtype
-- type alias
-- imported public symbol with compatible export metadata
-- another acyclic alias to one of the supported target kinds
-
-The target is written as a symbol path, not as an arbitrary expression. These are rejected:
-
-```incan
-count = 1           # use const count = 1
-later = make_avg()  # calls are not alias targets
-```
-
-## Public aliases
-
-A public alias uses `pub`:
-
-```incan
-pub mean = avg
-pub average = alias avg
-```
-
-A public alias may only expose a target that is itself public/exportable. This keeps the public API from hiding a private implementation behind a facade alias:
-
-```incan
-def avg(x: int, y: int) -> int:
-    return (x + y) // 2
-
-pub mean = avg  # rejected: avg is private
-```
-
-When a library is built, public aliases are exported as alias metadata. They are not duplicated as independent function or type declarations.
-
-## Importing aliases
-
-Public aliases participate in normal imports:
+- A public alias is imported like any public symbol: `from stats import mean`.
+- `from stats import mean as average_value` binds `average_value` in the importing module; `mean` stays an alias of its target in `stats`.
+- A module can re-export an alias without importing its target (`pub from stats import mean`), and a further module can re-export that under another name. A call through any of these names calls the alias's target.
 
 ```incan
 # stats.incn
@@ -84,122 +76,72 @@ pub mean = avg
 ```
 
 ```incan
+# facade.incn
+pub from stats import mean
+```
+
+```incan
+# public_api.incn
+pub from facade import mean as average
+```
+
+```incan
 # main.incn
-from stats import mean
+from facade import mean
+from public_api import average
 
-def main() -> int:
-    return mean(10, 20)
+def main() -> None:
+    println(mean(10, 20))        # accepted: calls avg
+    println(average(2, 4))       # accepted: calls avg
 ```
 
-Import aliases and symbol aliases are separate features and can be combined:
+## Method aliases
 
-```incan
-from stats import mean as average_value
+```text
+NAME = METHOD
+NAME = alias METHOD
 ```
 
-`average_value` is an import-local name for the exported alias `mean`; `mean` remains an alias of `avg` in the exporting module metadata.
+- A method alias appears in a `model`, `class`, `trait` or `newtype` body and names a method of the same type.
+- The alias has the target method's receiver, parameters, return type, async status, generic parameters and overloads. A call through it calls the target.
 
-## Same-type method aliases
-
-Inside a model, class, trait, or newtype body, a method alias gives an existing method another name on the same type:
+Refused (`INCAN-T0001`): a target that is not a method of the same type, such as a field, a free function or a method of another type, and a cycle of method aliases.
 
 ```incan
+def helper() -> int:
+    return 1
+
 model Reading:
     value: int
-    mean = avg
+    mean = avg                   # accepted
+    v = value                    # refused: value is a field
+    h = helper                   # refused: helper is not a method of Reading
 
     def avg(self) -> int:
         return self.value
 ```
 
-The alias can be called like the target method:
+## Enum variant aliases
 
-```incan
-def main() -> int:
-    reading = Reading(value=10)
-    return reading.mean()
+```text
+NAME = alias VARIANT
 ```
 
-The explicit marker is also accepted:
+- A variant alias in an `enum` body names a variant of that enum. It adds no variant.
+- In an enum that declares values, the alias has its target's value; it is not a second variant with that value.
+- A variant alias can name its variant in a pattern (see [Match patterns](match_patterns.md#variant-patterns)).
 
-```incan
-model Reading:
-    value: int
-    mean = alias avg
-
-    def avg(self) -> int:
-        return self.value
-```
-
-Method aliases are same-type only. They cannot point at a method on another type, a free function, or a field.
-
-## Enum Variant Aliases
-
-Inside an enum body, a variant alias gives an existing variant another name without creating a second runtime variant:
+Refused (`INCAN-T0001`): a target that is not a variant of the same enum.
 
 ```incan
 enum Level(str):
     WARN = "WARN"
     FATAL = "FATAL"
-    WARNING = alias WARN
-    CRITICAL = alias FATAL
+    WARNING = alias WARN         # accepted
+    CRITICAL = alias FATAL       # accepted
+    SEVERE = alias PANIC         # refused: PANIC is not a variant of Level
 ```
 
-Variant aliases are useful when an enum has a compact canonical wire spelling but also wants a longer source spelling. For value enums, the alias reuses the target variant's raw value and does not bypass duplicate raw-value validation.
+## See also
 
-## Overloads and signatures
-
-A method alias projects the target method surface. The alias keeps the target receiver, parameters, return type, async status, generic parameters, and overload set.
-
-If the target method is overloaded, the alias exposes the same overload group under the alias name. Call resolution still uses the target signatures; the alias does not introduce another implementation body.
-
-## Lowering and identity
-
-Aliases preserve language-level identity but do not add runtime behavior:
-
-- calls through a top-level function alias lower to the canonical function target;
-- public top-level aliases emit backend re-exports when needed;
-- calls through a method alias lower to the canonical method target;
-- API metadata and library manifests record aliases as aliases;
-- diagnostics report the alias name at the use site and may also name the canonical target.
-
-## Rejected forms
-
-The compiler rejects:
-
-- arbitrary top-level assignment;
-- targets that do not resolve;
-- unsupported target kinds, such as `const`, `static`, fields, or runtime values;
-- duplicate alias names;
-- direct or indirect alias cycles;
-- public aliases targeting private or non-exportable declarations;
-- method aliases targeting missing methods;
-- method alias cycles.
-
-Examples:
-
-```incan
-left = right
-right = left  # rejected: alias cycle
-```
-
-```incan
-model Reading:
-    value: int
-    mean = avg  # rejected: avg is not declared on Reading
-```
-
-## Choosing between aliases and wrappers
-
-Use an alias when the new name should be the same API surface as the target.
-
-Use a wrapper function or method when the new name changes behavior, adapts parameters, adds validation, changes docs, or should appear as an independent callable:
-
-```incan
-def avg(x: int, y: int) -> int:
-    return (x + y) // 2
-
-def mean_nonzero(x: int, y: int) -> int:
-    assert x != 0 and y != 0
-    return avg(x, y)
-```
+- [Scopes and name resolution](../explanation/scopes_and_name_resolution.md): aliases and wrappers, and how tools and diagnostics see an alias

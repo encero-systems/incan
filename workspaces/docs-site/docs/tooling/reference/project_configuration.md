@@ -18,6 +18,8 @@ my_project/
 
 You can scaffold a full new project (manifest, entry point, starter test, README, and `.gitignore`) with `incan new`. Use `incan init` when you already have a directory and want to add Incan project files there.
 
+Lock publication requires a discoverable SDK inventory when the existing project or workspace-member state in `oven.lock` records an SDK. A lock writer does not replace that state with an SDK-less lock. Without recorded SDK state, a lock without SDK state is valid.
+
 ## `[project]`
 
 Project metadata. All fields are optional.
@@ -165,11 +167,12 @@ headers = ["interop/include/bridge.h"]
 output = "bridge_shim"
 ```
 
-The section currently has one field:
+The section has one field:
+The section accepts:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `schema` | integer | Oven interop declaration schema. The current value is `1`. |
+| `schema` | integer | Oven interop declaration schema; accepted value: `1`. |
 
 Each `[[interop.c.targets]]` entry accepts:
 
@@ -221,7 +224,8 @@ Each `[[interop.c.targets.shims]]` entry accepts:
 
 All declared paths must be normalized relative paths to regular package files. Absolute paths, parent traversal, symlinks, directories, backslashes, and ambient search paths are rejected.
 
-`incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. The lock keeps its own key there because it records Oven's *resolved* facts rather than echoing the authored table; the two names are independent, and the lock's is versioned by the lockfile format. Locking itself does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The separate explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
+`incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. This key contains resolved Oven facts and is versioned by the lockfile format. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies the lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it does not invoke Cargo or search host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
+`incan lock` writes normalized requirements and content hashes for package-owned files under the versioned `semantic.oven.interop` lock key. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
 
 For an end-to-end binding example, see [Checked C bindings](../../language/how-to/checked_c_bindings.md#freeze-oven-interop-requirements-for-a-target).
 
@@ -258,7 +262,8 @@ Fields:
 
 Env-level `requires-incan` narrows the project requirement for that environment. `incan env show <env>` and `incan env run <env> <script> --dry-run` display the effective requirement and whether the active compiler satisfies it; actual `incan env run` execution rejects unsatisfied constraints before spawning the script.
 
-Environment matrices from RFC 073 remain deferred beyond `0.3`; ordinary named envs may declare `requires-incan`, but matrix expansion is not available yet.
+Environment matrices are unsupported. Named environments may declare `requires-incan`.
+Environment matrices are not accepted. Named environments may declare `requires-incan`.
 
 Use the environment with:
 
@@ -336,6 +341,23 @@ Incan dependency table fields:
 
 Feature requests are unified additively across every active dependency edge. They are Incan package features, not Cargo features; Rust crates continue to use the explicitly separate `[rust-dependencies]` and `--cargo-*` surfaces.
 
+## `[[rust.bin]]`
+
+Each `[[rust.bin]]` table declares one executable role for the Loaf's own Rust unit.
+
+```toml
+[[rust.bin]]
+name = "incan"
+path = "src/main.rs"
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | Executable name; unique among the Loaf's binary roles and limited to ASCII letters, digits, `-`, and `_`. |
+| `path` | string | Relative `.rs` source path inside the project and inside `[rust.source].root` when that root is declared; unique among the Loaf's binary roles. |
+
+A project with at least one `[[rust.bin]]` entry and no `[project.scripts].main` uses these roles for a plain `incan build`. A project with a `main` script builds that Incan entrypoint instead.
+
 ## `[rust-dependencies]`
 
 Rust crate dependencies available in all contexts (build, run, test).
@@ -385,12 +407,8 @@ criterion = "0.5"
 test_helpers = { path = "../test-helpers" }
 ```
 
-Importing a dev-only crate from production code is a compile-time error:
-
-```text
-error: Rust crate `criterion` is dev-only and cannot be imported from production code
-hint: Move the dependency to [rust-dependencies], or import it only from tests.
-```
+Importing a dev-only crate from production code is refused at compile time.
+Importing a dev-only crate from production code is a compile-time error that names the crate and requires it to move to `[rust-dependencies]` or remain test-only.
 
 **Overlap rules**: If the same crate appears in both `[rust-dependencies]` and `[rust-dev-dependencies]`, the version, source, and default-features must match. Features are unioned, and the crate is treated as a normal dependency.
 
@@ -414,9 +432,61 @@ metrics = { version = "1.0", features = ["prometheus"], optional = true }
 
 These declarations are Cargo-compatibility inputs, not public Incan package features. Oven Alpha does not ask Cargo to activate an optional Rust dependency during a normal build. The selected toolchain Loaf must already authorize the requested Rust dependency/feature closure; otherwise the command stops with unsupported-envelope guidance. Use `[project.features]` for public Incan features, but do not use `dep:` there to name a Rust dependency: `dep:` activates an optional Incan dependency from `[dependencies]`.
 
+## `[[rust.facts.link]]` and `[[rust.facts.tool]]`
+
+Registry-authored `[[rust.facts]]` bindings may declare publisher-only native-link and generator work. Multiple declarations use nested arrays of tables; keyed tables and scalar spellings are invalid.
+
+```toml
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = 'cfg(target_arch = "aarch64")'
+executable = { name = "clang", owner = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", path = "bin/clang", digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+environment = []
+sources = [{ name = "helper-source", kind = "file", path = "c/helper.c", digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }]
+objects = [{ name = "helper.o", language = "c", arguments = [{ literal = "-isysroot" }, { owner = "SDKs/MacOSX27.0.sdk" }, { literal = "-O2" }, { literal = "-c" }, { input = "helper-source" }, { literal = "-o" }, { output = "helper.o" }] }]
+library = { name = "sys_helper", kind = "static" }
+
+[[rust.facts.tool]]
+name = "bindgen"
+target = 'cfg(target_os = "linux")'
+executable = { name = "bindgen", owner = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", path = "bin/bindgen", digest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+arguments = [{ input = "header" }, { literal = "--output" }, { output = "bindings" }]
+environment = [{ name = "LANG", literal = "C" }]
+inputs = [{ name = "header", kind = "file", path = "include/helper.h", digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }]
+outputs = [{ name = "bindings", kind = "file", path = "generated/bindings.rs" }]
+```
+
+`link` fields are `name`, `target`, `executable`, `environment`, `sources`, `objects`, and `library`. `objects` is non-empty, sorted by unique `name`, and each entry has exactly `name`, `language`, and `arguments`. An object name is one portable relative `.o` file name. `language` accepts `c`, `cpp`, or `assembly`. Arguments remain ordered. `{ literal = "..." }` records non-path text, `{ input = "..." }` and `{ output = "..." }` name declared source and object paths, and `{ owner = "..." }` names a portable relative path below the executable's immutable owner root. Each object must contain at least one input and exactly one output equal to its own `name`; absolute or traversing owner paths, a literal object file name, another output name, a missing output, or an extra output is refused. Every declared source must be referenced by at least one object. Source and object names share one logical namespace. A source with `kind = "tree"` may use `path = "."` to declare the complete checksummed crate source; `.` remains invalid for file sources, outputs, and owner arguments, and every other path must be non-empty with only normal relative components. Source paths may overlap, including file sources contained within an include-tree source; source-to-output and output-to-output overlaps are refused. `library` has exactly `name` and `kind`; only `static` is supported, and `dynamic` is refused. A link declaration does not name an archive path, archive digest, product digest, archiver, or producer receipt; those belong to the admitted asset and receipt.
+
+A publisher link bake resolves `executable.path` and every owner argument below the caller-held immutable executable-owner root, verifies the executable digest, clears the ambient environment, and invokes the compiler once per object. The owner closure is the executable path plus every `{ owner = "..." }` path referenced by the record; a directory includes all of its descendants recursively. Its canonical inventory lists every entry once, sorted by owner-relative path, with one UTF-8 line `<kind>\t<path>\t<value>\n`: `file` uses the `sha256:` digest of its bytes, `symlink` uses its link text, and `dir` has an empty value. The owner identity is the `sha256:` digest of those inventory bytes. Before execution, the publisher reproduces this identity from the supplied owner root or refuses. Read confinement admits data reads of exactly the closure—subpaths for declared directories and literals for declared files or symlinks—and metadata-only reads on every ancestor directory; no other owner content is readable. Logical argv records an owner argument as `owner:<path>`, so no physical host spelling enters the receipt. After every invocation succeeds, the product root must contain exactly the declared objects. The Oven writes `lib<library.name>.a` in object-name order with the indexed Darwin, BSD, GNU, or COFF archive format rustc selects for the target. The receipt binds each object's logical arguments and digest plus the archive digest, and consumers import only the verified archive.
+
+Publisher executable roots are configured outside projects. The release publisher accepts repeatable `--link-owner <ROOT>` arguments and also reads `link-owner` as a list of paths under `[publisher]` in `$INCAN_HOME/config.toml`, or `~/.incan/config.toml` when `INCAN_HOME` is unset. A path grants no identity by itself: Oven inventories the exact closure the selected record names and uses the root only when the resulting identity equals `executable.owner`. Missing and multiply matching roots are refusals.
+
+`tool` fields are `name`, `target`, `executable`, `arguments`, `environment`, `inputs`, and `outputs`. Inputs are digested bytes. Outputs are a logical product contract with `name`, `kind`, and owner-relative `path`; their bytes and digests belong to the admitted asset.
+
+`out.name` and `tool.outputs[].path` use the same path namespace relative to `OUT_DIR`. A generated file or tree is declared exactly once: either as a committed `out` input or as a `tool` output. Equal or overlapping paths across those fields are refused.
+
+A publisher tool invocation resolves `executable.path` only below `executable.owner`, verifies the executable digest immediately before execution, clears the ambient environment, supplies the declared arguments and environment in order, and exposes only the complete declared input closure and product root. The supported publisher-tool execution host is macOS, where a deny-by-default Seatbelt profile confines reads and writes; a host without equivalent filesystem and process-tree confinement refuses the publisher operation. Missing or substituted executables, input digest drift, path escape, symlinks, missing products, extra products, unsuccessful exit, timeout, or bounded-output overflow refuse publication.
+
+The producer receipt binds the executable bytes, portable argument and environment declarations, input catalog, generated product catalog, build host, compilation target, and sorted consuming-unit identities. A link receipt binds each object's logical arguments and digest plus the archive digest. Each product becomes a `GeneratedOutput`-owned generated input of the selected consuming unit. Consumer builds accept only those receipt-bound asset bytes and never resolve or execute the producer tool.
+
+`executable` has the exact fields `name`, `owner`, `path`, and `digest`. `owner` and `digest` are lowercase `sha256:` identities, and `path` is relative to that immutable owner. Oven never serializes an absolute executable location or resolves ambient `PATH` during consumption.
+
+Each `arguments` entry has exactly one of `literal`, `input`, or `output`. Each `environment` entry has `name` and exactly one of `literal` or `input`. `sources`, `inputs`, and `outputs` have `name`, `kind`, and `path`; `kind` is `file` or `tree`. A source or input also has `digest`; a tree additionally has a sorted `members` list of `{ path, digest }` entries whose canonical catalog digest must equal the tree digest.
+
+`link`, `tool`, `objects`, `environment`, `sources`, `inputs`, `outputs`, and tree `members` are sorted by their documented logical key and duplicate-free. One logical work name may occur only once across `link` and `tool` in a fact record, and an input and output cannot claim the same logical name. Omitting a list is identical to writing an empty list, but a link record with omitted or empty `objects` is refused. Paths are portable owner-relative spellings: absolute, drive-qualified, UNC, URI, home-relative, traversal, empty-component, and symlink-substituted paths are refused. `target` is either an exact target triple or one `cfg(...)` predicate evaluated from supplied target evidence.
+
 ## Legacy alias tables
 
-`[rust.dependencies]` and `[rust.dev-dependencies]` remain supported as backward-compatible aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`. Prefer the non-nested table names in new manifests.
+`[rust.dependencies]` and `[rust.dev-dependencies]` are aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`.
+`[rust.dependencies]` and `[rust.dev-dependencies]` are aliases for the canonical `[rust-dependencies]` and `[rust-dev-dependencies]` tables.
 
 ## Dependency sources
 
@@ -442,7 +512,8 @@ pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 ```
 
 !!! warning "Strict mode and git branches"
-    When building with `--locked` or `--frozen`, git dependencies using `branch = "..."` are rejected because branches are not reproducible. Use `tag` or `rev` instead.
+    `--locked` and `--frozen` reject git dependencies using `branch = "..."`. Git dependencies in these modes require `tag` or `rev`.
+With `--locked` or `--frozen`, a git dependency using `branch = "..."` is rejected; the accepted immutable selectors are `tag` and `rev`.
 
 ### Path
 

@@ -15,7 +15,7 @@ use incan_lang::lang::{
 
 use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
-use crate::conversions::exact_float_value_validation;
+use crate::conversions::{exact_float_value_validation, incan_mutable_param_passed_as_rust_mut_ref};
 use incan_ir::decl::{IrRustAttrArg, IrRustLintAllow, Visibility};
 use incan_ir::expr::{IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern};
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
@@ -944,7 +944,7 @@ impl<'a> IrEmitter<'a> {
                 .type_params
                 .iter()
                 .map(|tp| {
-                    let ident = format_ident!("{}", &tp.name);
+                    let ident = Self::rust_ident(&tp.name);
                     quote! { #ident }
                 })
                 .collect();
@@ -1179,7 +1179,7 @@ impl<'a> IrEmitter<'a> {
                 .type_params
                 .iter()
                 .map(|tp| {
-                    let ident = format_ident!("{}", &tp.name);
+                    let ident = Self::rust_ident(&tp.name);
                     quote! { #ident }
                 })
                 .collect();
@@ -1215,7 +1215,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit an Incan trait declaration, including source docstrings and direct supertrait bounds.
     pub(in crate::emit) fn emit_trait(&self, trait_decl: &incan_ir::decl::IrTrait) -> Result<TokenStream, EmitError> {
-        let name = format_ident!("{}", &trait_decl.name);
+        let name = Self::rust_ident(&trait_decl.name);
         let iterator_trait_name = core_traits::as_str(TraitId::Iterator);
         let iterator_trait = format_ident!("{iterator_trait_name}");
         let sum_trait = format_ident!("{}", core_traits::as_str(TraitId::Sum));
@@ -1250,11 +1250,27 @@ impl<'a> IrEmitter<'a> {
             let rest = bound_tokens.iter().skip(1).map(|b| quote! { + #b });
             quote! { : #first #(#rest)* }
         };
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1561 -- a `Generator[T]`, which satisfies `Iterator[T]` (RFC 006, RFC 088), reached
+        //   the RFC 088 adapters and an `Iterator[T]` parameter as the runtime wrapper, which implements only Rust's
+        //   `Iterator`, so every adapter, terminal consumer and `Iterator[T]` argument over a generator was refused by
+        //   rustc (E0277).
+        // - Behavior evidence: the `generator_iterator_surface` behavior fixture and the emission test
+        //   `generator_adapters_and_consumers_compile`.
+        // - Semantic owner: the checker's protocol typing (a generator is an `Iterator[T]` value) and lowering's
+        //   iterator method classification; this impl only lets the runtime wrapper answer `__next__`.
+        // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route runs generators
+        //   through the same iteration protocol as every other iterator.
         let iterator_mut_forwarding = if trait_decl.name == iterator_trait_name {
             quote! {
                 impl<T, I: #iterator_trait<T> + ?Sized> #iterator_trait<T> for &mut I {
                     fn __next__(&mut self) -> Option<T> {
                         (**self).__next__()
+                    }
+                }
+                impl<T> #iterator_trait<T> for incan_std_core::iter::Generator<T> {
+                    fn __next__(&mut self) -> Option<T> {
+                        ::std::iter::Iterator::next(self)
                     }
                 }
             }
@@ -1284,6 +1300,11 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a trait method with an optional method-local Rust bound.
+    ///
+    /// The same path spells the trait declaration's slot (no body) and every `impl Trait for Type` method (an override
+    /// or an expanded default), so a parameter's Rust shape must depend only on the signature, never on a body: a
+    /// `mut` aggregate parameter is `&mut T` in both, exactly as the call site passes it, and a parameter the callee
+    /// owns (a `mut` scalar or Rust handle) is a plain `T` in the slot and a `mut` binding in a body that uses it.
     fn emit_trait_method_with_where(
         &self,
         func: &incan_ir::decl::IrFunction,
@@ -1315,12 +1336,26 @@ impl<'a> IrEmitter<'a> {
                         Self::emit_param_name(&p.name, &used_names)
                     };
                     let pty = self.emit_type(&p.ty);
-                    if matches!(p.mutability, incan_ir::types::Mutability::OwnedMutable)
-                        && (func.body.is_empty() || used_names.contains(&p.name))
-                    {
-                        quote! { mut #pname: #pty }
-                    } else {
-                        quote! { #pname: #pty }
+                    match p.mutability {
+                        // A binding pattern such as `mut n` belongs to a body; a trait slot without one spells the
+                        // plain parameter, which every implementation may still bind mutably.
+                        incan_ir::types::Mutability::OwnedMutable
+                            if !func.body.is_empty() && used_names.contains(&p.name) =>
+                        {
+                            quote! { mut #pname: #pty }
+                        }
+                        // A `mut` parameter reaches the trait slot the way it reaches a free function or an inherent
+                        // method: an aggregate by `&mut` so the caller sees the change, a scalar as a mutable local
+                        // binding in the body only (#1773).
+                        incan_ir::types::Mutability::Mutable if incan_mutable_param_passed_as_rust_mut_ref(p) => {
+                            quote! { #pname: &mut #pty }
+                        }
+                        incan_ir::types::Mutability::Mutable
+                            if !func.body.is_empty() && used_names.contains(&p.name) =>
+                        {
+                            quote! { mut #pname: #pty }
+                        }
+                        _ => quote! { #pname: #pty },
                     }
                 }
             })
@@ -1991,6 +2026,52 @@ mod tests {
             compact.contains("fnreplace(&self,mutitems:ProviderHandle<(&mutWidget,&mutGadget)>)"),
             "trait default methods must keep a writable owned Rust handle, got: {emitted}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn bodyless_trait_slot_drops_owned_mutable_rust_parameter_binding_issue1828()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let items_ty = IrType::NamedGeneric("Vec".to_string(), vec![IrType::Int]);
+        let func = IrFunction {
+            name: "replace".to_string(),
+            docstring: None,
+            params: vec![
+                FunctionParam {
+                    name: "self".to_string(),
+                    ty: IrType::SelfType,
+                    mutability: Mutability::Immutable,
+                    is_self: true,
+                    kind: incan_frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "items".to_string(),
+                    ty: items_ty,
+                    mutability: Mutability::OwnedMutable,
+                    is_self: false,
+                    kind: incan_frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+            ],
+            return_type: IrType::Unit,
+            body: Vec::new(),
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_extern_name: None,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        };
+
+        let emitted = emitter.emit_trait_method(&func)?.to_string();
+        let compact = emitted.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+        assert!(compact.contains("fnreplace(&self,items:Vec<i64>);"), "{emitted}");
+        assert!(!compact.contains("mutitems"), "{emitted}");
         Ok(())
     }
 }

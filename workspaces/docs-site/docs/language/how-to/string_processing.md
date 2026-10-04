@@ -13,6 +13,12 @@ age = parts[1]
 role = parts[2]
 ```
 
+To split on runs of whitespace, as Python's `split()` with no argument does, use `split_whitespace()`; `split()` without a separator returns the whole string as one item:
+
+```incan
+words = "  alpha   beta ".split_whitespace()   # ["alpha", "beta"]
+```
+
 > Note: Indexing panics if out of range. If you need fallible parsing, validate the length before indexing (or use a
 > `Result`-returning helper function).
 
@@ -32,8 +38,49 @@ email = raw_input.strip().lower()
 println(email)  # user@example.com
 ```
 
+`strip()` trims both ends; there is no one-sided variant, so trim and then split when only one side matters.
+
+## Test for a substring
+
+`needle in text` tests whether `text` contains `needle`, and `needle not in text` tests the opposite; the `contains` method gives the same answer as `in`.
+
+```incan
+sentence = "the quick brown fox"
+
+if "quick" in sentence:
+    println("Found it!")
+```
+
+## Replace text
+
+```incan
+text = "hello world"
+println(text.replace("world", "incan"))  # hello incan
+```
+
+## Move between text and bytes
+
+`encode` gives the UTF-8 bytes of a `str`; `decode` reads UTF-8 bytes back and returns `Result[str, ValidationError]`, so malformed input is handled where the bytes enter the program rather than crashing it. Keep `decode` strict there, and use `errors="replace"` only for text you copy for display:
+
+```incan
+def greet(payload: bytes) -> Result[str, ValidationError]:
+    text = payload.decode()?
+    return Ok(f"hello, {text}")
+
+def main() -> Result[None, ValidationError]:
+    payload: bytes = "héllo".encode()
+    println(len(payload))                       # 6
+    match greet(payload):
+        Ok(line) => println(line)               # hello, héllo
+        Err(error) => println(f"{error}")       # invalid-utf8: 'utf-8' codec can't decode bytes: …
+    println(b"\xff".decode(errors="replace")?)  # U+FFFD replacement character
+    return Ok(None)
+```
+
+The error's `code` is `invalid-utf8` for malformed input, `unknown-encoding` for a run-time label naming another codec, and `unknown-errors-policy` for a run-time policy other than `"strict"` or `"replace"`. Other codecs are not built into `str` and `bytes`: files use `std.fs` (`read_text` / `write_text`), and hexadecimal, base64 and similar text formats live in [`std.encoding`](binary_text_encoding.md).
+
 ## See also
 
-- [Strings and bytes (Reference)](../reference/strings.md)
+- [Strings and bytes (Reference)](../reference/strings.md) — every `str` and `bytes` method with its contract
 - [Strings and formatting (Tutorial)](../tutorials/book/07_strings_and_formatting.md)
 - [File I/O (How-to)](file_io.md)

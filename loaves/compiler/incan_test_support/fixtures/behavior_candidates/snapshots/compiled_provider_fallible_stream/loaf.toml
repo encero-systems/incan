@@ -1,0 +1,9 @@
+[project]
+name = "compiled_provider_fallible_stream"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+streams = { path = "deps/streams" }

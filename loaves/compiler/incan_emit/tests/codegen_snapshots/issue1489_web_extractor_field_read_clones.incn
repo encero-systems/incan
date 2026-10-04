@@ -1,0 +1,30 @@
+"""Issue #1489: a field read through a web extractor wrapper clones at every owned sink, even at the wrapper's last use."""
+
+from std.web import route, Json, Query, GET
+from std.serde import json
+import std.async
+
+@derive(json)
+model Search:
+    q: str
+
+@derive(json)
+model Reply:
+    value: str
+
+@route("/search", methods=[GET])
+async def search(query: Query[Search]) -> Json[Reply]:
+    return Json(Reply(value=query.q))
+
+@route("/assign", methods=[GET])
+async def assign(query: Query[Search]) -> Json[Reply]:
+    picked = query.q
+    return Json(Reply(value=picked))
+
+@route("/list", methods=[GET])
+async def listed(query: Query[Search]) -> Json[Reply]:
+    values = [query.q]
+    return Json(Reply(value=values[0]))
+
+def main() -> None:
+    pass

@@ -1,0 +1,13 @@
+# behavior: a Rust standard-input handle assigned to a second name is used through that name and the program continues
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_does_not_assume_opaque_rust_value_is_clone
+# expect-stdout:
+#   handle taken over
+
+from rust::std::io import stdin
+
+
+def main() -> None:
+    input = stdin()
+    handle = input
+    _ = handle.lock()
+    println("handle taken over")

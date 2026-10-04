@@ -1,0 +1,21 @@
+# behavior: an iterator adapter or terminal called on a list, a set or an Iterable value itself, rather than on the iterator its iter() returns, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+
+def double(x: int) -> int:
+    return x * 2
+
+
+def odd(x: int) -> bool:
+    return x % 2 == 1
+
+
+def any_odd(xs: Iterable[int]) -> bool:
+    return xs.any(odd)
+
+
+def main() -> None:
+    items = [1, 2, 3]
+    println(items.map(double))
+    println({1, 2}.filter(odd))
+    println(any_odd(items))

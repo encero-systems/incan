@@ -1,0 +1,74 @@
+# behavior: types that adopt Eq or Ord and define their dunders compare with every operator, sort, serve as set elements with a derived Hash and meet Eq and Ord bounds, an Ord adopter's own __le__ and a dunder taking the declaring type included
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::eq_and_ord_adopters_build_and_compare_issue1561
+# expect-stdout:
+#   2
+#   true
+#   true
+#   true
+#   true
+#   true
+#   false
+#   false
+#   1
+#   3
+#   true
+
+from std.derives.comparison import Eq, Ord
+
+
+@derive(Hash)
+model UserKey with Eq:
+    id: int
+
+    def __eq__(self, other: UserKey) -> bool:
+        return self.id == other.id
+
+
+model Score with Ord:
+    points: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.points == other.points
+
+    def __lt__(self, other: Self) -> bool:
+        return self.points < other.points
+
+
+model Reversed with Ord:
+    value: int
+
+    def __eq__(self, other: Reversed) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Reversed) -> bool:
+        return self.value > other.value
+
+    def __le__(self, other: Reversed) -> bool:
+        return true
+
+
+def same[T with Eq](left: T, right: T) -> bool:
+    return left == right
+
+
+def before[T with Ord](left: T, right: T) -> bool:
+    return left < right
+
+
+def lowest[T with (Ord, Clone)](items: list[T]) -> T:
+    return sorted(items)[0]
+
+
+def main() -> None:
+    keys: set[UserKey] = {UserKey(id=1), UserKey(id=1), UserKey(id=2)}
+    println(len(keys))
+    println(same(UserKey(id=3), UserKey(id=3)))
+    println(UserKey(id=3) != UserKey(id=4))
+    println(before(Score(points=1), Score(points=2)))
+    println(Score(points=3) > Score(points=2))
+    println(Score(points=2) >= Score(points=2))
+    println(Score(points=2) <= Score(points=1))
+    println(Score(points=2).__ge__(Score(points=3)))
+    println(lowest([Score(points=3), Score(points=1), Score(points=2)]).points)
+    println(sorted([Reversed(value=1), Reversed(value=3)])[0].value)
+    println(Reversed(value=1) <= Reversed(value=0))

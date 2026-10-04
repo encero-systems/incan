@@ -1,0 +1,44 @@
+from config import LIMIT
+
+pub static COUNT: int = 3
+pub static ITEMS: list[int] = [1, 2]
+
+
+def inner(k: int = LIMIT) -> int:
+    return k
+
+
+pub def take(n: int = COUNT) -> int:
+    return n
+
+
+pub def wrap(n: int = inner()) -> int:
+    return n
+
+
+pub def first(items: list[int] = ITEMS) -> int:
+    return items[0]
+
+
+pub def has(flag: bool = ITEMS.contains(2)) -> bool:
+    return flag
+
+
+pub def size(n: int = len(ITEMS)) -> int:
+    return n
+
+
+pub class Box:
+    pub v: int
+
+    def fetch(self, n: int = LIMIT) -> int:
+        return n + self.v
+
+    def add(self, n: int) -> int:
+        return n + self.v
+
+    capped = partial add(n=COUNT)
+
+    @staticmethod
+    def make(v: int = COUNT) -> Box:
+        return Box(v=v)

@@ -2,14 +2,13 @@
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::type_param_subst_map_call_site;
 use crate::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
 use crate::typechecker::helpers::option_ty;
 use crate::typechecker::type_info::ConstructorFieldBinding;
+use incan_lang::lang::conventions::TYPE_CONSTRUCTOR_HOOK;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
-
-const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 
 impl TypeChecker {
     /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
@@ -33,6 +32,8 @@ impl TypeChecker {
         }
 
         // Track provided fields and validate existence/duplicates/type compatibility.
+        let errors_before_fields = self.errors.len();
+        let mut field_arguments: Vec<(&Spanned<Expr>, ResolvedType)> = Vec::new();
         let mut provided: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
         let mut type_bindings: std::collections::HashMap<String, ResolvedType> = std::collections::HashMap::new();
         // Canonical field bound by each written argument, in written source order, for #1158's Body IR binding fact.
@@ -62,6 +63,7 @@ impl TypeChecker {
             }
 
             let value_ty = self.check_expr_with_expected(expr, Some(&field_info.ty));
+            self.record_value_destination_if_compatible(expr.span, &value_ty, &field_info.ty);
 
             if provided.contains_key(&canonical_name) {
                 self.errors.push(errors::duplicate_field_in_call(
@@ -83,6 +85,7 @@ impl TypeChecker {
             }
 
             self.infer_type_param_bindings(&field_info.ty, &value_ty, &mut type_bindings);
+            field_arguments.push((expr, field_info.ty.clone()));
 
             if !self.types_compatible(&value_ty, &field_info.ty)
                 && !self.record_validated_newtype_field_coercion_if_possible(
@@ -117,6 +120,26 @@ impl TypeChecker {
         if every_required_field_supplied {
             self.record_constructor_field_binding_for_lowering(type_name, &bound_fields, &provided, call_span);
         }
+
+        // ---- Fields that bind one type parameter bind it to one type (#1561) ----
+        let type_params = self
+            .lookup_type_info(type_name)
+            .map(|info| Self::constructor_hook_owner_type_params(info).to_vec())
+            .unwrap_or_default();
+        let arguments = field_arguments.iter().map(|(expr, ty)| (*expr, ty)).collect::<Vec<_>>();
+        self.unify_argument_type_bindings(&type_params, &arguments, &mut type_bindings);
+        if self.errors.len() == errors_before_fields {
+            self.refuse_conflicting_type_arguments(display_name, &type_params, &arguments, &type_bindings);
+        }
+        if self.errors.len() == errors_before_fields {
+            self.record_argument_destinations_at_bindings(&type_params, &arguments, &type_bindings);
+        }
+        self.refuse_unsatisfied_nominal_type_arguments(
+            type_name,
+            &type_bindings,
+            TypeArgumentOrigin::Inferred,
+            call_span,
+        );
 
         self.constructor_result_type_with_bindings(type_name, &type_bindings)
     }
@@ -335,8 +358,8 @@ impl TypeChecker {
         if type_args.len() != type_params.len() {
             self.errors.push(errors::explicit_type_arg_arity(
                 name,
-                type_params.len(),
-                type_args.len(),
+                type_params,
+                &Self::written_type_args(type_args),
                 span,
             ));
             return Some((ResolvedType::Unknown, std::collections::HashMap::new()));
@@ -344,6 +367,27 @@ impl TypeChecker {
         let resolved_args: Vec<ResolvedType> = type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
         let bindings = type_param_subst_map_call_site(type_params, &resolved_args);
         Some((ResolvedType::Generic(name.to_string(), resolved_args), bindings))
+    }
+
+    /// Use an expected generic result to specialize a constructor whose call does not spell type arguments.
+    ///
+    /// Constructor fields must be checked after this substitution so destination-typed literals inside the call use
+    /// the result's concrete or method-generic arguments rather than the enclosing owner's same-named parameters.
+    pub(in crate::typechecker::check_expr::calls) fn expected_constructor_type_context(
+        &self,
+        name: &str,
+        type_info: &TypeInfo,
+        expected: Option<&ResolvedType>,
+    ) -> Option<(ResolvedType, std::collections::HashMap<String, ResolvedType>)> {
+        let type_params = Self::constructor_hook_owner_type_params(type_info);
+        let Some(ResolvedType::Generic(expected_name, expected_args)) = expected else {
+            return None;
+        };
+        if expected_name != name || expected_args.len() != type_params.len() {
+            return None;
+        }
+        let bindings = type_param_subst_map_call_site(type_params, expected_args);
+        Some((expected.cloned()?, bindings))
     }
 
     /// Compute the constructor result surface type, substituting any generic bindings inferred from constructor fields.
@@ -415,7 +459,7 @@ impl TypeChecker {
         }
 
         if self.symbols.lookup(name).is_some()
-            && let Some(tid) = surface_types::from_str(name)
+            && let Some(tid) = self.constructor_surface_type(name)
         {
             if matches!(tid, SurfaceTypeId::ValidationError) {
                 let mut message_count = 0usize;
@@ -487,6 +531,15 @@ impl TypeChecker {
                             value.span,
                         ));
                     }
+                    // The type arguments a generic newtype's value implies must satisfy its declared bounds (#1867).
+                    let mut type_bindings = std::collections::HashMap::new();
+                    self.infer_type_param_bindings(&newtype.underlying, &value_ty, &mut type_bindings);
+                    self.refuse_unsatisfied_nominal_type_arguments(
+                        name,
+                        &type_bindings,
+                        TypeArgumentOrigin::Inferred,
+                        span,
+                    );
                     return self.constructor_result_type(name);
                 }
                 let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
@@ -534,8 +587,8 @@ impl TypeChecker {
         if !type_args.is_empty() && type_args.len() != type_params.len() {
             self.errors.push(errors::explicit_type_arg_arity(
                 type_name,
-                type_params.len(),
-                type_args.len(),
+                type_params,
+                &Self::written_type_args(type_args),
                 span,
             ));
             return Some(ResolvedType::Unknown);

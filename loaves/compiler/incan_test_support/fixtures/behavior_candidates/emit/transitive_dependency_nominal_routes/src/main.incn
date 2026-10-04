@@ -1,0 +1,15 @@
+# behavior: a dependency's model field typed with a model from the dependency's own dependency is constructed with a value built from that package (declared by the consumer too, since a transitive package is not importable), and a list literal of ints passed to the dependency's function is accepted as a list of that package's union
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::public_constructor_metadata_preserves_checked_foreign_routes
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::nested_external_union_target_overrides_parent_qualifier
+# expect-stdout:
+#   pen 300
+#   #7 #8
+
+from pub::pricing import Basket, column_names
+from pub::catalog import Product
+
+
+def main() -> None:
+    basket = Basket(product=Product(name="pen", cents=150), quantity=2)
+    println(f"{basket.product.name} {basket.total()}")
+    println(column_names([7, 8]))

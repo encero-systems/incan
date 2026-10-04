@@ -1,0 +1,26 @@
+# behavior: a generic function reads a named public field and the field items of whatever model it is given
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::generic_value_field_reflection_methods_infer_field_value_bound
+# expect-stdout:
+#   Some("Ann")
+#   name=Ann
+#   Some("Bo")
+
+model User:
+    pub name: str
+
+
+model Pet:
+    pub name: str
+
+
+def reflect_values[T](value: T) -> None:
+    named = value.__field_value__("name")
+    println(f"{named:?}")
+    for field, item in value.__field_items__():
+        println(f"{field}={item}")
+
+
+def main() -> None:
+    reflect_values(User(name="Ann"))
+    pet_name = Pet(name="Bo").__field_value__("name")
+    println(f"{pet_name:?}")

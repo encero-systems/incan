@@ -1,0 +1,7 @@
+when feature("alpha"):
+    pub def alpha_value() -> str:
+        return "alpha"
+
+when feature("beta"):
+    pub def beta_value() -> str:
+        return "beta"

@@ -1,0 +1,11 @@
+# behavior: slice syntax on a type that defines no __getslice__ hook is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Plain:
+    items: list[int]
+
+
+def main() -> None:
+    p = Plain(items=[1, 2])
+    cut = p[0:1]
+    println(len(cut))

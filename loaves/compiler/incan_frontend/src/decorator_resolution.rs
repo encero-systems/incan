@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Declaration, Decorator, ImportKind, ImportPath, Program};
+use crate::ast::{Declaration, Decorator, Expr, ImportKind, ImportPath, Program};
 use crate::symbols::SymbolTable;
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::decorators;
@@ -37,6 +37,24 @@ impl DecoratorPrefixLookup for HashMap<String, Vec<String>> {
 impl DecoratorPrefixLookup for SymbolTable {
     fn prefix_segments(&self, leading_segment: &str) -> Option<&[String]> {
         self.import_binding_path(leading_segment)
+    }
+}
+
+/// Return the name a `@derive(...)` argument spells: a bare name (`Serialize`, `json`) as written, and a
+/// module-qualified one (`json.Serialize`, `serde.json.Serialize`) as its dotted path.
+///
+/// Any other argument expression names no derive. Every reader of derive arguments goes through this one spelling, so
+/// the qualified form adopts exactly what the bare import does (#1885).
+pub fn derive_argument_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Field(base, name) => {
+            let mut spelled = derive_argument_name(&base.node)?;
+            spelled.push('.');
+            spelled.push_str(name);
+            Some(spelled)
+        }
+        _ => None,
     }
 }
 

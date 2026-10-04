@@ -1,0 +1,38 @@
+# behavior: enumerate unpacks into an index and a str item in a for loop and in a list comprehension, and both build the same model list (#389, #483)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue389_for_tuple_unpack_enumerate_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue483_list_comp_tuple_unpack_enumerate_codegen
+# expect-stdout:
+#   a 0 0
+#   bb 1 1
+#   a 0 0
+#   bb 1 1
+
+model Binding:
+    name: str
+    output_index: int
+    expr_index: int
+
+
+def field_ref(index: int) -> int:
+    return index
+
+
+pub def bind(xs: list[str]) -> list[Binding]:
+    mut out: list[Binding] = []
+    for idx, name in enumerate(xs):
+        out.append(Binding(name=name, output_index=idx, expr_index=field_ref(idx)))
+    return out
+
+
+pub def bind_comprehension(xs: list[str]) -> list[Binding]:
+    return [Binding(name=name, output_index=idx, expr_index=field_ref(idx)) for idx, name in enumerate(xs)]
+
+
+def show(bindings: list[Binding]) -> None:
+    for binding in bindings:
+        println(f"{binding.name} {binding.output_index} {binding.expr_index}")
+
+
+def main() -> None:
+    show(bind(["a", "bb"]))
+    show(bind_comprehension(["a", "bb"]))

@@ -47,32 +47,32 @@ fn replacement_shadow_observation_does_not_leak_program_output() -> Result<(), B
     Ok(())
 }
 
-/// Shadow preparation may admit ordinary float parsing, but the direct route must classify non-finite exact results.
+/// `f64` is `float` (RFC 009), so a non-finite value parsed into an `f64` return completes on the direct route as the
+/// IEEE float it is instead of failing as an exact-width carrier would.
 #[test]
-fn replacement_shadow_route_classifies_runtime_non_finite_exact_f64_results() -> Result<(), Box<dyn std::error::Error>>
-{
+fn replacement_shadow_route_completes_non_finite_f64_results_as_floats() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def exact(value: str) -> f64:\n    return float(value)\n";
-    for input in ["NaN", "inf", "-inf", "1e9999"] {
+    for (input, rendered) in [("NaN", "NaN"), ("inf", "inf"), ("-inf", "-inf"), ("1e9999", "inf")] {
         let profile = ShadowComparisonProfile::new(source, "exact", vec![ReplacementValue::Str(input.to_string())]);
         let prepared = PreparedShadowProfile::new(&profile)?;
+        assert_eq!(prepared.result_kind, FunctionResultKind::Float, "{input}");
         let observed = observe_replacement_route(&profile, &prepared)?;
 
-        assert!(
-            observed.execution.is_none(),
-            "{input} must not produce direct execution evidence"
-        );
         assert_eq!(
             observed.observation.as_ref().map(|observation| &observation.observable),
-            Some(&SourceObservable::Failed {
-                failure: RuntimeFailureClass::NonFiniteExactF64,
+            Some(&SourceObservable::Completed {
+                result: TypedFunctionResult {
+                    kind: FunctionResultKind::Float,
+                    value: rendered.to_string(),
+                },
             }),
-            "{input} must retain the exact-float failure class"
+            "{input} must complete as a float"
         );
         assert!(observed.output.stdout().is_empty(), "{input} unexpectedly wrote stdout");
         assert!(observed.output.stderr().is_empty(), "{input} unexpectedly wrote stderr");
         assert!(
             observed.unavailable_reason.is_none(),
-            "{input}: classified failure became unavailable"
+            "{input}: a completed float result became unavailable"
         );
     }
     Ok(())
@@ -406,16 +406,16 @@ fn the_generated_entrypoint_writes_a_typed_result_without_touching_program_strea
     assert!(program.contains("def add(x: int, y: int) -> int:"), "{program}");
     assert!(
         program.contains(
-            "from rust::std::fs import rename as __incan_shadow_fs_rename_v1, write as __incan_shadow_fs_write_v1"
+            "from rust::std::fs import rename as _incan_shadow_fs_rename_v1, write as _incan_shadow_fs_write_v1"
         ),
         "{program}"
     );
     assert!(
-        program.contains("from rust::std::path import Path as __incan_shadow_rust_path_v1"),
+        program.contains("from rust::std::path import Path as _incan_shadow_rust_path_v1"),
         "{program}"
     );
     assert!(
-        program.contains("from rust::std::process import exit as __incan_shadow_process_exit_v1"),
+        program.contains("from rust::std::process import exit as _incan_shadow_process_exit_v1"),
         "{program}"
     );
     assert!(
@@ -425,25 +425,24 @@ fn the_generated_entrypoint_writes_a_typed_result_without_touching_program_strea
         "{program}"
     );
     assert!(
-        program.contains("__incan_shadow_result_value_v1 = add(40, 2)"),
+        program.contains("_incan_shadow_result_value_v1 = add(40, 2)"),
         "{program}"
     );
     assert!(
-        program.contains(
-            "match __incan_shadow_fs_write_v1(__incan_shadow_rust_path_v1.new(\"/worker-owned/result.next\"),"
-        ),
+        program
+            .contains("match _incan_shadow_fs_write_v1(_incan_shadow_rust_path_v1.new(\"/worker-owned/result.next\"),"),
         "{program}"
     );
     assert!(
-        program.contains("Err(_) => __incan_shadow_process_exit_v1(86)"),
+        program.contains("Err(_) => _incan_shadow_process_exit_v1(86)"),
         "{program}"
     );
     assert!(
-        program.contains("match __incan_shadow_fs_rename_v1(__incan_shadow_rust_path_v1.new(\"/worker-owned/result.next\"), __incan_shadow_rust_path_v1.new(\"/worker-owned/result\"))"),
+        program.contains("match _incan_shadow_fs_rename_v1(_incan_shadow_rust_path_v1.new(\"/worker-owned/result.next\"), _incan_shadow_rust_path_v1.new(\"/worker-owned/result\"))"),
         "{program}"
     );
     assert!(
-        program.contains("Err(_) => __incan_shadow_process_exit_v1(87)"),
+        program.contains("Err(_) => _incan_shadow_process_exit_v1(87)"),
         "{program}"
     );
     assert!(!program.contains("println("), "{program}");
@@ -954,7 +953,7 @@ fn string_arguments_are_escaped_into_incan_literals() -> Result<(), ShadowUnavai
         &prepared.wrapper_identifiers,
     )?;
     assert!(
-        program.contains(r#"__incan_shadow_result_value_v1 = greet("A\"da\\")"#),
+        program.contains(r#"_incan_shadow_result_value_v1 = greet("A\"da\\")"#),
         "{program}"
     );
     Ok(())
@@ -1228,15 +1227,15 @@ fn a_source_process_import_is_unavailable_before_private_transport_statuses_can_
 #[test]
 fn a_source_binding_that_matches_an_older_generated_temporary_selects_a_fresh_stem() -> Result<(), ShadowUnavailable> {
     let profile = ShadowComparisonProfile::new(
-        "def __incan_shadow_result_value_v1() -> int:\n    return 42\n",
-        "__incan_shadow_result_value_v1",
+        "def _incan_shadow_result_value_v1() -> int:\n    return 42\n",
+        "_incan_shadow_result_value_v1",
         vec![],
     );
 
     let prepared = PreparedShadowProfile::new(&profile)?;
     assert_eq!(
         prepared.wrapper_identifiers.result_value,
-        "__incan_shadow_result_value_v2"
+        "_incan_shadow_result_value_v2"
     );
     let program = profile.legacy_program_source(
         prepared.result_kind,
@@ -1244,7 +1243,7 @@ fn a_source_binding_that_matches_an_older_generated_temporary_selects_a_fresh_st
         &prepared.wrapper_identifiers,
     )?;
     assert!(
-        program.contains("__incan_shadow_result_value_v2 = __incan_shadow_result_value_v1()"),
+        program.contains("_incan_shadow_result_value_v2 = _incan_shadow_result_value_v1()"),
         "{program}"
     );
     emit_legacy_rust(&program)?;

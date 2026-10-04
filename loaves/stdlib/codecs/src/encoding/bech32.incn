@@ -11,7 +11,7 @@ interchangeable.
 from std.encoding._shared import EncodingError, _encoding_error
 
 const _CHARSET: str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-const _GENERATOR: list[int] = [996825010, 642813549, 513874426, 1027748829, 705979059]
+const _GENERATOR: FrozenList[int] = [996825010, 642813549, 513874426, 1027748829, 705979059]
 const _BECH32_CONST: int = 1
 const _BECH32M_CONST: int = 734539939
 const _ASCII_PRINTABLE: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"

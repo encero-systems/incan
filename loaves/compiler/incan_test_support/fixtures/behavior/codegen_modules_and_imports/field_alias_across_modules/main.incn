@@ -1,0 +1,17 @@
+# behavior: a model field declared with a keyword-spelled alias is read and constructed through the alias from another module, through an import alias of the model, and through self in its own module
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_multi_file_model_aliases_work_across_modules
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_multi_file_model_aliases_work_with_import_alias
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_multi_file_self_alias_resolution_in_dependency_module
+# expect-stdout:
+#   x
+#   y
+#   z
+
+from store.json_store import get_type, make, make_aliased
+from db.schema import Account
+
+
+def main() -> None:
+    println(get_type(make()))
+    println(make_aliased().get_type())
+    println(Account(type="z").type)

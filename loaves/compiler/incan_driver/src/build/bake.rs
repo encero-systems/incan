@@ -18,7 +18,8 @@ use crate::build::output_materialization::{
 };
 use crate::build::output_paths::{
     library_project_output_sidecars, normalized_project_entrypoint, oven_binary_path, packaged_library_metadata_files,
-    project_output_bake_files, project_root_for_completed_output, validated_project_output_relative_path,
+    project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
+    validated_project_output_relative_path,
 };
 use crate::build::output_selection::project_output_report_snapshot;
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
@@ -34,7 +35,8 @@ use crate::build::plan_selection::{
     registry_leaf_authority_for_plan_selection,
 };
 use crate::build::publication::{
-    project_output_payload_for_bake, publish_project_inspection_authority, publish_project_output_loaf,
+    ProjectInspectionDependencyAuthority, project_output_payload_for_bake, publish_project_inspection_authority,
+    publish_project_output_loaf,
 };
 use crate::build::reuse::try_reuse_baked_project;
 use crate::build::source_authority::{
@@ -44,9 +46,9 @@ use crate::build::{
     BackendSelectionOptions, BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent,
     OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest,
     OvenPackagedLibraryLoafProfile, OvenPreparedLibrary, OvenPreparedProject, OvenProjectBakeAuthorityContext,
-    OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenProjectOutputBakeRequest, OvenProjectPlanMode,
-    OvenStoredProjectOutput, PendingOvenProjectOutput, PreparedLibraryProject, library_publication,
-    oven_bake_executable_output_dir, oven_bake_project_target_identity,
+    OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenProjectOutputBakeRequest,
+    OvenProjectPlanMode, OvenStoredProjectOutput, PendingOvenProjectOutput, PreparedLibraryProject,
+    library_publication, oven_bake_executable_output_dir, oven_bake_project_target_identity,
 };
 use crate::build_report::artifact_report;
 use crate::cargo_policy::{CargoPolicy, enforce_project_toolchain_constraint};
@@ -85,21 +87,26 @@ pub fn bake_oven_project(
             &open_default_oven_store()?,
             &prepared.provider_plan,
             profile,
+            !prepared.plan_selection.uses_packaged_provider_closure(),
         )?;
         // The conflict decision must cover every selection path -- including an imported packaged-provider closure,
         // whose composed link carries the SDK base's and the provider's own copies of any shared package exactly
         // like a re-materialized one does.
-        if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
-            registry_authority.as_ref(),
-            &closure,
-            prepared.plan_selection.artifact_plan(),
-        )? {
-            return Err(oven_native_closure_refusal(
-                &prepared.crate_name,
-                &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
-            ));
-        }
-        if !prepared.plan_selection.uses_packaged_provider_closure() {
+        if prepared.plan_selection.uses_packaged_provider_closure() {
+            if let Some((package, pinned_by, divergence)) = caller_owned_provider_registry_conflict(
+                registry_authority.as_ref(),
+                &closure,
+                prepared.plan_selection.artifact_plan(),
+            )? {
+                let reason = provider_registry_conflict_reason(&package, pinned_by.as_deref(), divergence.as_deref());
+                return Err(oven_native_closure_refusal(
+                    &prepared.crate_name,
+                    &format!(
+                        "the caller-owned provider is source-free and cannot be recompiled into a coherent closure; {reason}"
+                    ),
+                ));
+            }
+        } else {
             extra_dependency_search_paths = closure.dependency_search_paths.clone();
             registry_authority = closure.merged_authority(registry_authority);
             let re_materialized = rematerialize_caller_owned_libraries_with_authority_context(
@@ -112,6 +119,8 @@ pub fn bake_oven_project(
                 prepared.generator.output_dir(),
                 registry_authority.as_ref(),
                 &extra_dependency_search_paths,
+                &closure.compiler_runtime_libraries,
+                &closure.compiler_runtime_registry_authorities,
                 authority_context,
             )?;
             re_materialized_package_library_names.extend(
@@ -133,6 +142,14 @@ pub fn bake_oven_project(
     artifact_plan.compile_environment =
         direct_rustc_compile_environment(prepared.generator.output_dir(), &prepared.generator.crate_root_path())
             .map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(held) = prepared.runtime_foundation.as_ref() {
+        let closure = held.closure.as_ref().ok_or_else(|| {
+            CliError::failure("selected runtime foundation lost its admitted dependency closure".to_string())
+        })?;
+        closure
+            .compose_artifact_plan(&mut artifact_plan)
+            .map_err(oven_rustc_error)?;
+    }
     attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries).map_err(oven_rustc_error)?;
     // Loading a re-materialized caller-owned library's own metadata (for example a query-engine provider linked
     // above) can require Rustc to locate that library's own further dependencies purely through
@@ -192,6 +209,7 @@ pub fn bake_oven_library(
             &open_default_oven_store()?,
             &selected.provider_plan,
             profile,
+            !selected.plan_selection.uses_packaged_provider_closure(),
         )?;
         // Refuse only where the conflict cannot be resolved. The re-materialization below rebuilds each provider's
         // Rust dependency libraries against the *merged* authority through
@@ -203,14 +221,17 @@ pub fn bake_oven_library(
         // The rejection previously ran on every selection path, so the resolvable case never reached the machinery
         // that resolves it.
         if selected.plan_selection.uses_packaged_provider_closure() {
-            if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
+            if let Some((package, pinned_by, divergence)) = caller_owned_provider_registry_conflict(
                 registry_authority.as_ref(),
                 &closure,
                 selected.plan_selection.artifact_plan(),
             )? {
+                let reason = provider_registry_conflict_reason(&package, pinned_by.as_deref(), divergence.as_deref());
                 return Err(oven_native_closure_refusal(
                     &oven.crate_name,
-                    &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
+                    &format!(
+                        "the caller-owned provider is source-free and cannot be recompiled into a coherent closure; {reason}"
+                    ),
                 ));
             }
         } else {
@@ -226,6 +247,8 @@ pub fn bake_oven_library(
                 &prepared.out_dir,
                 registry_authority.as_ref(),
                 &extra_dependency_search_paths,
+                &closure.compiler_runtime_libraries,
+                &closure.compiler_runtime_registry_authorities,
                 authority_context,
             )?;
             re_materialized_package_library_names.extend(
@@ -510,7 +533,11 @@ fn publish_project_lock_after_provider_bake(
 pub fn bake_oven_project_targets(
     project: &Path,
     package_features: &FeatureSelection,
+    requested_target: Option<&str>,
 ) -> CliResult<OvenProjectBakeReport> {
+    if requested_target.is_some_and(|target| target.trim().is_empty()) {
+        return Err(CliError::failure("explicit Oven bake target must not be empty"));
+    }
     let project = project
         .to_str()
         .ok_or_else(|| CliError::failure(format!("Oven project path is not valid UTF-8: {}", project.display())))?;
@@ -520,13 +547,17 @@ pub fn bake_oven_project_targets(
         .ok_or_else(|| CliError::failure("explicit Oven project bake discovered no dependency-surface entrypoint"))?
         .to_path_buf();
     let store = open_default_oven_store()?;
-    let mut authority_context = OvenProjectBakeAuthorityContext::default();
+    let mut authority_context = OvenProjectBakeAuthorityContext {
+        requested_target: requested_target.map(str::to_owned),
+        ..OvenProjectBakeAuthorityContext::default()
+    };
     if canonical_baked_project_lock_path(&project_root)?.is_file()
         && let Some(reused) = try_reuse_baked_project(
             &project_root,
             &targets,
             &store,
             package_features,
+            requested_target,
             &mut authority_context,
         )?
     {
@@ -887,12 +918,26 @@ pub fn bake_oven_project_targets(
         let (registry_dependencies, dev_registry_dependencies) =
             canonical_project_inspection_dependencies(dependency_surface)?;
         let source_authority_digest = authority_context.final_project_source_authority(&project_root)?;
+        #[cfg(feature = "rust_inspect")]
+        let project_locked_registry_packages = project_locked_registry_packages(
+            rust_inspect_manifest_dirs
+                .iter()
+                .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
+                .collect::<Vec<_>>()
+                .iter()
+                .map(PathBuf::as_path),
+        )?;
+        #[cfg(not(feature = "rust_inspect"))]
+        let project_locked_registry_packages = Vec::new();
         let inspection_authority = publish_project_inspection_authority(
             &store,
             &project_root,
             &source_authority_digest,
-            &registry_dependencies,
-            &dev_registry_dependencies,
+            ProjectInspectionDependencyAuthority {
+                registry_dependencies: &registry_dependencies,
+                dev_registry_dependencies: &dev_registry_dependencies,
+                locked_registry_packages: &project_locked_registry_packages,
+            },
             &test_dependency_envelope,
             library_inspection_constituent.as_ref(),
         )?;
@@ -923,6 +968,10 @@ pub fn bake_oven_project_targets(
         // The inspection authority names the debug test dependency envelope's exact plan. Retain that selection until
         // every output Loaf is visible: otherwise a later output admission can prune the now-unleased constituent and
         // leave a source-current authority that points at a missing closure.
+        let outputs = published_outputs
+            .iter()
+            .map(OvenProjectBakeOutputReport::from)
+            .collect();
         let _complete_publication_set = (test_dependency_envelope, inspection_authority, published_outputs);
         #[cfg(feature = "rust_inspect")]
         for manifest_dir in rust_inspect_manifest_dirs {
@@ -933,6 +982,7 @@ pub fn bake_oven_project_targets(
             generated_sources,
             store: store.root().to_path_buf(),
             profiles,
+            outputs,
         })
     })();
     match publication {
@@ -1002,7 +1052,7 @@ mod tests {
             .map(|error| error.to_string())
             .unwrap_or_default();
         assert!(refusal.contains("Oven refuses to build `app`"), "{refusal}");
-        assert!(refusal.contains("#1241"), "{refusal}");
+        assert!(refusal.contains("semantically different compiled units"), "{refusal}");
         assert!(refusal.contains("colliding StableCrateId"), "{refusal}");
     }
 

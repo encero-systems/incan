@@ -1,0 +1,57 @@
+# behavior: filtered list and dict comprehensions over model and int sources keep only the items passing the predicate (#364, #602)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue364_filtered_list_comp_borrow_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_filtered_dict_comp_predicate_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue602_comprehension_copy_hotpaths_codegen
+# expect-stdout:
+#   a
+#   1
+#   4 16
+#   2
+#   1 4 9
+#   4 9
+#   1 4
+
+"""Issue #364 regression: filtered list comprehensions must not destructure `&item`."""
+
+
+@derive(Clone)
+model StoredNode:
+    store_id_raw: int
+    node: str
+
+
+def store_nodes(store_id: int, stored_nodes: list[StoredNode]) -> list[str]:
+    return [stored.node for stored in stored_nodes if stored.store_id_raw == store_id]
+
+
+def squares(xs: list[int]) -> list[int]:
+    return [x * x for x in xs]
+
+
+def positive_squares(xs: list[int]) -> list[int]:
+    return [x * x for x in xs if x > 0]
+
+
+def index_by_value(xs: list[int]) -> dict[int, int]:
+    return {x: x * x for x in xs if x > 0}
+
+
+def main() -> None:
+    nodes: list[StoredNode] = [
+        StoredNode(store_id_raw=1, node="a"),
+        StoredNode(store_id_raw=2, node="b"),
+    ]
+    matched = store_nodes(1, nodes)
+    println(matched[0])
+    println(len(matched))
+    xs = [1, 2, 3, 4]
+    evens = {x: x * x for x in xs if x % 2 == 0}
+    println(f"{evens[2]} {evens[4]}")
+    println(len(evens))
+    values = [-1, 1, 2, 3]
+    copied = squares(values)
+    filtered = positive_squares(values)
+    indexed = index_by_value(values)
+    println(f"{copied[0]} {copied[2]} {copied[3]}")
+    println(f"{filtered[1]} {filtered[2]}")
+    println(f"{indexed[1]} {indexed[2]}")

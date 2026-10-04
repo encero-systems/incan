@@ -1,0 +1,40 @@
+# behavior: a for loop that awaits each task handle of a call result, a list literal or a comprehension receives each handle by value and prints each task's result, and a nested loop takes the handles out of each list such a loop receives
+# expect-stdout:
+#   1
+#   2
+#   3
+#   4
+#   5
+#   6
+#   7
+
+from std.async import spawn
+from std.async.task import JoinHandle
+
+
+async def work(value: int) -> int:
+    return value
+
+
+def made() -> list[JoinHandle[int]]:
+    return [spawn(work(1)), spawn(work(2))]
+
+
+async def main() -> None:
+    for handle in made():
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    for handle in [spawn(work(3)), spawn(work(4))]:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    for handle in [spawn(work(n)) for n in [5]]:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    for group in [[spawn(work(6))], [spawn(work(7))]]:
+        for handle in group:
+            match await handle:
+                Ok(value) => println(value)
+                Err(_) => println("join failed")

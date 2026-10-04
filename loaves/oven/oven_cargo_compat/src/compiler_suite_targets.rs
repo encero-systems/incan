@@ -663,7 +663,7 @@ pub fn compiler_suite_direct_cli_plan(
     ))
 }
 
-/// Resolve exactly one normal `incan` CLI target from publisher artifacts already catalogued for an isolated target.
+/// Resolve exactly one normal `incan` CLI target from publisher artifacts already cataloged for an isolated target.
 #[cfg(test)]
 pub fn compiler_suite_cli_target_from_catalog(
     compiler_root: &Path,

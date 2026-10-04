@@ -1,0 +1,75 @@
+# behavior: checked C bindings over the host libc call a scalar function with an exact c.i32 carrier, receive a scalar through a c.Out slot, pass bounded NUL-terminated text through c.cstr and copy a returned C string view as UTF-8
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_function_emits_exact_ffi_signature_and_private_wrapper
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_output_slots_preserve_every_exact_scalar_carrier
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_string_input_emits_private_cstring_and_const_character_pointer_bridge
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_string_view_emits_bounded_utf8_copy_helper
+# expect-stdout:
+#   5
+#   7
+#   0.5 4
+#   5
+#   interior nul refused
+#   true
+
+from std.interop import c
+
+binding LibC:
+    header = "stdlib.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+    symbol frexp(value: c.f64, exponent: c.Out[c.i32]) -> c.f64:
+        native = "frexp"
+
+        outcome Status.OK:
+            initializes = [exponent]
+
+    symbol string_length(value: c.ConstPtr[c.c_char]) -> c.Size:
+        native = "strlen"
+
+    symbol error_text(code: c.i32) -> c.ConstPtr[c.c_char]:
+        native = "strerror"
+
+    enum Status:
+        OK: c.i32 = EXIT_SUCCESS
+
+
+def absolute(value: i32) -> i32:
+    unsafe:
+        return LibC.absolute(value)
+
+
+def split(value: f64) -> str:
+    unsafe:
+        exponent = c.out[c.i32]()
+        mantissa = LibC.frexp(value, exponent)
+        return f"{mantissa} {exponent.take()}"
+
+
+def string_length(value: str) -> Result[usize, str]:
+    text = c.cstr(value)?
+    unsafe:
+        return Ok(LibC.string_length(text.as_const_ptr()))
+
+
+def error_text(code: i32) -> Result[str, str]:
+    unsafe:
+        view = LibC.error_text(code)
+        return view.copy_utf8(max_bytes=256)
+
+
+def main() -> None:
+    println(absolute(-5))
+    println(absolute(7))
+    println(split(8.0))
+    match string_length("hello"):
+        Ok(length) => println(length)
+        Err(error) => println(f"error {error}")
+    match string_length("a\0b"):
+        Ok(length) => println(length)
+        Err(_) => println("interior nul refused")
+    match error_text(0):
+        Ok(text) => println(len(text) > 0)
+        Err(error) => println(f"error {error}")

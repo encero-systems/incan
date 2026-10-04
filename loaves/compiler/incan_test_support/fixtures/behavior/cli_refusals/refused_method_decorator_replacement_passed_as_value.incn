@@ -1,0 +1,25 @@
+# behavior: a function a decorator returns in a `self` method's place is refused where it is passed on as a value
+# expect-diagnostic: INCAN-T0116
+
+class Box:
+    value: int
+
+    @as_int
+    def label(self, value: int) -> str:
+        return f"{value}"
+
+
+def parse(box: Box, value: int) -> int:
+    return value + 1
+
+
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
+    return parse
+
+
+def apply(step: (Box, int) -> int, box: Box) -> int:
+    return step(box, 2)
+
+
+def main() -> None:
+    println(apply(parse, Box(value=1)))

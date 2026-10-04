@@ -1,0 +1,9 @@
+pub model Widget:
+    pub name: str
+
+
+pub const DEFAULT_NAME: str = "default"
+
+
+pub def make_widget(name: str) -> Widget:
+    return Widget(name=name)

@@ -12,19 +12,26 @@ use crate::ast::{
 };
 use crate::decorator_resolution;
 use crate::diagnostics::{CompileError, errors};
-use crate::module::canonicalize_source_module_segments;
+use crate::module::{canonicalize_library_declaration_module_path, canonicalize_source_module_segments};
+use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{
     BindingRegistration, CallableParam, ClassInfo, FieldInfo, FunctionInfo, ImplementationTypeParamInfo, MethodInfo,
     ModelInfo, NewtypeInfo, PropertyInfo, ResolvedType, SymbolKind, TraitInfo, TypeBoundInfo, TypeInfo,
     ValueEnumBacking, ValueEnumValue, VariableInfo, register_binding, resolve_type,
 };
 use crate::typechecker::{PartialProjectionTargetKind, TypeChecker};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 #[derive(Clone, Copy)]
 struct DefaultPathContext<'a> {
     checker: &'a TypeChecker,
     owner_module_path: Option<&'a [String]>,
+    /// Whether a default that constructs one of the package's exported models or classes is carried to consumers.
+    ///
+    /// A consumer receives a function's or method's parameter default as its own construction of the type. A field
+    /// default reaches a consumer only as a value of the constructor it fills, which has no construction form, so a
+    /// field default that constructs a type is not carried.
+    carries_constructions: bool,
 }
 
 impl<'a> DefaultPathContext<'a> {
@@ -33,7 +40,111 @@ impl<'a> DefaultPathContext<'a> {
         Self {
             checker,
             owner_module_path: non_root_module_path(checker.current_module_path.as_deref()),
+            carries_constructions: false,
         }
+    }
+
+    /// Build the path context for the parameter defaults of the functions and methods one source module exports.
+    fn for_callable_parameters(checker: &'a TypeChecker) -> Self {
+        Self {
+            carries_constructions: true,
+            ..Self::for_checker(checker)
+        }
+    }
+
+    /// Return whether a callee expression names a model or class, whose call is a construction.
+    fn names_model_or_class(self, callee: &Expr) -> bool {
+        let Expr::Ident(name) = callee else {
+            return false;
+        };
+        self.checker
+            .lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_))))
+    }
+
+    /// Return whether the package's consumers can construct the model or class a callee expression names.
+    ///
+    /// A consumer constructs the type through the package's public path, which exists for a type this module declares
+    /// `pub` and for one it imports from another module of the package. A private type, and a type of another
+    /// package or of the stdlib, has no such path.
+    fn names_exported_type(self, callee: &Expr) -> bool {
+        let Expr::Ident(name) = callee else {
+            return false;
+        };
+        match self.checker.import_binding_path(name) {
+            Some(path) => !path_is_already_absolute(path),
+            None => self.checker.declares_public(name),
+        }
+    }
+
+    /// Return whether a default's call of `callee` can be carried to the package's consumers.
+    ///
+    /// A consumer calls a function or constructs a newtype through the package's path to it: one this module declares,
+    /// a public symbol alias of one this module declares, or one it imports from another module of the package, named
+    /// directly or, for a function, through that module (`helpers.scale`). A builtin such as `abs`, `len` or `Some`, a
+    /// callable of another package or of the stdlib, and a partial, whose presets a consumer does not apply, have no
+    /// such path. A member of a type, such as a static method or an enum variant with a payload, is left to the
+    /// consumer's check, which refuses what it cannot materialize.
+    fn call_is_carried(self, callee: &Spanned<Expr>) -> bool {
+        match &callee.node {
+            Expr::Ident(name) => {
+                let identity = self.checker.type_info().resolved_identity(callee.span);
+                if self.checker.type_info().partial_projection(name).is_some()
+                    || identity.is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Partial)
+                {
+                    return false;
+                }
+                let symbol_kind = self.checker.lookup_symbol(name).map(|symbol| &symbol.kind);
+                let is_function = matches!(
+                    symbol_kind,
+                    Some(SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
+                ) || identity
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function);
+                let is_newtype = matches!(symbol_kind, Some(SymbolKind::Type(TypeInfo::Newtype(_))));
+                if !is_function && !is_newtype {
+                    return false;
+                }
+                match self.checker.import_binding_path(name) {
+                    Some(path) => !path_is_already_absolute(path),
+                    None => {
+                        is_newtype
+                            || self.checker.local_function_decls.contains_key(name)
+                            || (self.checker.declares_public(name)
+                                && identity.is_some_and(|identity| self.declares(identity)))
+                    }
+                }
+            }
+            Expr::Field(base, _) => {
+                let Expr::Ident(base_name) = &base.node else {
+                    return false;
+                };
+                let names_module = self
+                    .checker
+                    .lookup_symbol(base_name)
+                    .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Module(_)));
+                if !names_module {
+                    return true;
+                }
+                self.checker
+                    .import_binding_path(base_name)
+                    .is_some_and(|path| !path_is_already_absolute(path))
+                    && self
+                        .checker
+                        .type_info()
+                        .resolved_identity(callee.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether `identity` names a declaration of the module being exported.
+    fn declares(self, identity: &CanonicalSymbolId) -> bool {
+        let module_path = match &identity.origin {
+            SymbolOrigin::Module(module_path) | SymbolOrigin::Package { module_path, .. } => module_path,
+            SymbolOrigin::RustCrate(_) | SymbolOrigin::Builtin => return false,
+        };
+        self.checker.current_module_path.as_deref() == Some(module_path.as_slice())
     }
 
     /// Resolve a default-expression value path to the module that owns it.
@@ -90,6 +201,8 @@ pub struct CheckedTypeBound {
     pub type_args: Vec<ResolvedType>,
     pub module_path: Option<Vec<String>>,
     pub implementation_type_params: Vec<ImplementationTypeParamInfo>,
+    /// Whether the checker inferred this `Eq` or `Hash` bound from the callable's body (#1758).
+    pub inferred: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -295,6 +408,8 @@ pub enum CheckedPresetValue {
     Bytes(Vec<u8>),
     None,
     List(Vec<CheckedPresetValue>),
+    Set(Vec<CheckedPresetValue>),
+    Tuple(Vec<CheckedPresetValue>),
     Dict(Vec<(CheckedPresetValue, CheckedPresetValue)>),
     ConstRef(Vec<String>),
     ModelLiteral {
@@ -941,6 +1056,28 @@ fn checked_partial_target_kind(partial: &PartialDecl, checker: &TypeChecker) -> 
 fn checked_preset_value(expr: &Expr, context: DefaultPathContext<'_>) -> CheckedPresetValue {
     match expr {
         Expr::Literal(literal) => checked_preset_literal(literal),
+        Expr::Unary(UnaryOp::Neg, value) => match &value.node {
+            Expr::Literal(Literal::Int(value)) => value
+                .value
+                .checked_neg()
+                .map(CheckedPresetValue::Int)
+                .unwrap_or(CheckedPresetValue::Unsupported),
+            Expr::Literal(Literal::Float(value)) => CheckedPresetValue::Float(-value.value),
+            _ => CheckedPresetValue::Unsupported,
+        },
+        Expr::Paren(inner) => checked_preset_value(&inner.node, context),
+        Expr::Set(items) => CheckedPresetValue::Set(
+            items
+                .iter()
+                .map(|item| checked_preset_value(&item.node, context))
+                .collect(),
+        ),
+        Expr::Tuple(items) => CheckedPresetValue::Tuple(
+            items
+                .iter()
+                .map(|item| checked_preset_value(&item.node, context))
+                .collect(),
+        ),
         Expr::Ident(name) => CheckedPresetValue::ConstRef(context.canonical_value_path(vec![name.clone()])),
         Expr::Field(base, field) => {
             let mut path = checked_preset_path(&base.node);
@@ -1052,6 +1189,17 @@ fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) 
                 .collect(),
         ),
         Expr::Call(callee, _type_args, args) => {
+            // A consumer constructs a model or class, or calls a function, through the package's public path to it, so
+            // a default that constructs or calls anything without such a path is not carried; the parameter stays
+            // required for such callers.
+            let carried = if context.names_model_or_class(&callee.node) {
+                context.carries_constructions && context.names_exported_type(&callee.node)
+            } else {
+                context.call_is_carried(callee)
+            };
+            if !carried {
+                return CheckedParamDefault::Unsupported;
+            }
             let path = context.canonical_value_path(checked_preset_path(&callee.node));
             if path.is_empty() {
                 return CheckedParamDefault::Unsupported;
@@ -1175,6 +1323,9 @@ fn checked_preset_path(expr: &Expr) -> Vec<String> {
 }
 
 /// Build checked export metadata for a function or callable-valued decorated function binding.
+///
+/// A type parameter exports its declared bounds as spelled in source, then the `Eq` and `Hash` bounds the checker
+/// inferred for it because the body hashes it (#1758).
 fn checked_function_export(
     function: &FunctionDecl,
     checker: &TypeChecker,
@@ -1209,11 +1360,19 @@ fn checked_function_export(
         _ => return None,
     };
 
-    let default_context = DefaultPathContext::for_checker(checker);
+    let default_context = DefaultPathContext::for_callable_parameters(checker);
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         emitted_name,
-        type_params: checked_type_params(&function.type_params, checker),
+        type_params: checked_type_params(&function.type_params, checker)
+            .into_iter()
+            .map(|mut type_param| {
+                type_param.bounds.extend(map_type_bound_infos(
+                    checker.inferred_type_param_bounds(&function.name, &type_param.name),
+                ));
+                type_param
+            })
+            .collect(),
         param_defaults: function
             .params
             .iter()
@@ -1258,6 +1417,7 @@ fn checked_type_alias_export(alias: &TypeAliasDecl, checker: &TypeChecker) -> Ch
 fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<CheckedModelExport> {
     let symbol = checker.lookup_symbol(model.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Model(ModelInfo {
+        type_params: owner_type_params,
         traits,
         trait_adoptions,
         derives,
@@ -1286,7 +1446,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         name: model.name.clone(),
         type_params: checked_type_params(&model.type_params, checker),
         traits: sorted_vec(traits.to_vec()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(trait_adoptions, owner_type_params, checker),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields, field_order, &defaults, None, None, &[], checker)?,
         properties: map_public_properties(properties, checker),
@@ -1298,6 +1458,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
 fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<CheckedClassExport> {
     let symbol = checker.lookup_symbol(class.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Class(ClassInfo {
+        type_params: owner_type_params,
         extends,
         traits,
         trait_adoptions,
@@ -1325,7 +1486,7 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         type_params: checked_type_params(&class.type_params, checker),
         extends: extends.clone(),
         traits: sorted_vec(traits.to_vec()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(trait_adoptions, owner_type_params, checker),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(
             fields,
@@ -1362,6 +1523,9 @@ fn checked_trait_export(trait_decl: &TraitDecl, checker: &TypeChecker) -> Option
 }
 
 /// Extract the checked public enum contract, including value-enum metadata when present.
+///
+/// Each variant publishes the payload its own enum declares, as the enum's checked metadata records it, whatever other
+/// enum in scope shares the variant's name.
 fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<CheckedEnumExport> {
     let symbol = checker.lookup_symbol(enum_decl.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Enum(enum_info)) = &symbol.kind else {
@@ -1370,12 +1534,12 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
 
     let mut variants = Vec::new();
     for variant in &enum_decl.variants {
-        let fields = checker
-            .lookup_symbol(variant.node.name.as_str())
-            .and_then(|symbol| match &symbol.kind {
-                SymbolKind::Variant(info) => Some(info.fields.clone()),
-                _ => None,
-            })
+        // Not the bare variant name's symbol: that binds whichever enum declared the name first, and it keeps a payload
+        // type declared after the enum as a placeholder.
+        let fields = enum_info
+            .variant_fields
+            .get(&variant.node.name)
+            .cloned()
             .unwrap_or_else(|| {
                 variant
                     .node
@@ -1404,7 +1568,7 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
         name: enum_decl.name.clone(),
         type_params: checked_type_params(&enum_decl.type_params, checker),
         traits: sorted_vec(enum_info.traits.clone()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(&enum_info.trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(&enum_info.trait_adoptions, &enum_info.type_params, checker),
         value_type: enum_info.value_enum.as_ref().map(|value_enum| value_enum.value_type),
         variants,
         variant_aliases: enum_decl
@@ -1442,7 +1606,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         name: newtype_decl.name.clone(),
         type_params: checked_type_params(&newtype_decl.type_params, checker),
         traits: sorted_vec(traits.clone()),
-        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        trait_adoptions: checked_trait_adoption_closure(trait_adoptions, &info.type_params, checker),
         derives: sorted_vec(derives.clone()),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
@@ -1512,6 +1676,7 @@ fn checked_trait_bound(bound: &TraitBound, checker: &TypeChecker) -> CheckedType
             .collect(),
         module_path: checker.trait_bound_module_path(&bound.name),
         implementation_type_params: Vec::new(),
+        inferred: false,
     }
 }
 
@@ -1525,8 +1690,80 @@ fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
             type_args: bound.type_args.clone(),
             module_path: bound.module_path.clone(),
             implementation_type_params: bound.implementation_type_params.clone(),
+            inferred: bound.inferred,
         })
         .collect()
+}
+
+/// Publish direct trait adoptions together with the transitive supertraits they semantically adopt.
+///
+/// A bare generic adoption uses the owner's type parameters positionally, matching typechecking and lowering. The
+/// manifest must carry that instantiated shape because implementation-bound inference may attach requirements to an
+/// implied supertrait rather than to the directly written subtrait.
+fn checked_trait_adoption_closure(
+    adoptions: &[TypeBoundInfo],
+    owner_type_params: &[String],
+    checker: &TypeChecker,
+) -> Vec<CheckedTypeBound> {
+    let owner_args = owner_type_params
+        .iter()
+        .cloned()
+        .map(ResolvedType::TypeVar)
+        .collect::<Vec<_>>();
+    let mut checked = Vec::new();
+
+    for adoption in adoptions {
+        let mut direct = map_type_bound_infos(std::slice::from_ref(adoption));
+        if let Some(bound) = direct.first_mut() {
+            bound.module_path = bound
+                .module_path
+                .take()
+                .map(|path| canonicalize_library_declaration_module_path(&path));
+        }
+        let Some(trait_info) = checker.lookup_trait_adoption_info(adoption) else {
+            checked.extend(direct);
+            continue;
+        };
+        let direct_args = if adoption.type_args.is_empty() {
+            owner_args.iter().take(trait_info.type_params.len()).cloned().collect()
+        } else {
+            adoption.type_args.clone()
+        };
+        if let Some(bound) = direct.first_mut() {
+            bound.type_args = direct_args.clone();
+        }
+        checked.extend(direct);
+
+        if direct_args.len() != trait_info.type_params.len() {
+            continue;
+        }
+        let substitutions = type_param_subst_map(&trait_info.type_params, &direct_args);
+        for (name, type_args) in checker.semantic_supertrait_closure(&adoption.name) {
+            let source_name = checker.trait_bound_source_name(&name);
+            let implied = CheckedTypeBound {
+                module_path: checker
+                    .trait_bound_module_path(&name)
+                    .map(|path| canonicalize_library_declaration_module_path(&path)),
+                source_name,
+                type_args: type_args
+                    .iter()
+                    .map(|arg| substitute_resolved_type(arg, &substitutions))
+                    .collect(),
+                name,
+                implementation_type_params: Vec::new(),
+                inferred: false,
+            };
+            if !checked.iter().any(|bound| {
+                bound.name == implied.name
+                    && bound.module_path == implied.module_path
+                    && bound.type_args == implied.type_args
+            }) {
+                checked.push(implied);
+            }
+        }
+    }
+
+    sorted_type_bounds(checked)
 }
 
 /// Sort generic trait adoptions deterministically for stable library manifests.
@@ -1790,6 +2027,7 @@ fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
                         type_args: bound.type_args,
                         module_path: bound.module_path,
                         implementation_type_params: bound.implementation_type_params,
+                        inferred: bound.inferred,
                     })
                     .collect(),
             })
@@ -1810,7 +2048,7 @@ fn attach_method_defaults(
     checker: &TypeChecker,
 ) {
     let mut used = vec![false; ast_methods.len()];
-    let default_context = DefaultPathContext::for_checker(checker);
+    let default_context = DefaultPathContext::for_callable_parameters(checker);
     for entry in entries {
         let Some(idx) = matching_ast_method_index(entry, ast_methods, &used, checker) else {
             continue;

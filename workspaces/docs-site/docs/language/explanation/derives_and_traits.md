@@ -30,7 +30,8 @@ Use dunder methods when you need **custom semantics** for a built-in capability:
 - `__str__`: custom string output
 - `__eq__`: custom equality
 - `__lt__`: custom ordering
-- `__hash__`: custom hashing
+
+Hashing is the exception: it has no dunder hook. A set or dict hashes a type through `@derive(Hash)` or `Hash` in `@rust.derive(...)`, and a method named `__hash__` is an ordinary method that neither provides nor replaces it.
 
 Incan treats “derive + corresponding dunder” as a **conflict**. The idea is to avoid ambiguity and keep the mental model simple: “either it’s the default behavior, or it’s my behavior.”
 
@@ -49,6 +50,8 @@ Use traits for reusable, domain-specific capabilities:
 Traits are not “the derive system.” Derives are a convenience for a small set of **built-in capabilities**; traits are a general language feature for authoring reusable behavior.
 
 That gives Incan a simple mental model: a trait is both a capability declaration and an abstract accepted type. If a function says it accepts `Collection[Order]`, that means “any concrete adopter of `Collection[Order]`”, not “rewrite this API as a hidden generic bound first”.
+
+A required method is written as a bare signature, `def render(self) -> str`. The older spelling with a `: ...` body stays valid, and both declare the same required method.
 
 Read more about [traits: domain capabilities](../tutorials/book/11_traits_and_derives.md).
 
@@ -79,7 +82,7 @@ message = render(Outcome.Failure("timed out"))
 
 Use this when the enum itself owns the behavior. Keep a free function when the behavior combines several independent types or belongs to a higher-level service, view, or adapter layer.
 
-### Generic methods on types
+## Generic methods on types
 
 Methods can also introduce their own type parameters. This works on `class`, `model`, `trait`, `enum`, and `newtype` declarations, using the same syntax as generic top-level functions:
 
@@ -102,9 +105,59 @@ enum Maybe[U]:
         return value
 ```
 
+A newtype's own type parameters work differently. A newtype stores nothing but its underlying value, so each type parameter it declares has to appear in the underlying type, where that value carries it: `type Box[T] = newtype T` and `type Many[T] = newtype list[T]` are fine, while `type Tag[T] = newtype str` is refused at `T` because the wrapped `str` has nowhere to carry it. A type parameter that only a type's methods use belongs on a model or class, or on the methods themselves as method-scoped parameters.
+
+## Bounds you write and bounds the compiler infers
+
+A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value with `{value:?}` needs `Debug`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so neither the declaration nor a generic caller in the same project spells them. Displaying a value with `{value}`, `str` or `print` is the exception: it needs a bound the declaration writes, such as `T with Display`, because not every type has a display text.
+
+Inference reaches through method calls. A method's requirements include those of every other method of the same model, because they share one implementation block:
+
+```incan
+model Holder[V]:
+    value: V
+
+    def show(self) -> str:
+        return f"{self.value:?}"
+
+    def get(self) -> V:
+        return self.value
+
+def first[U](held: Holder[U]) -> U:
+    return held.get()
+```
+
+`first` writes no bound on `U`, yet it needs `Debug` (from `show`) and `Clone` (from `get`), and the compiler supplies both.
+
+Reading an element works the same way. A generic function or method that reads an element of a `list[T]` by index or of a `dict[K, T]` by key, or slices a `list[T]`, produces a value of its own, so the compiler gives the generated function the `Clone` capability on `T` that the copy needs. Most Incan types have it; a type that cannot be copied, such as a task handle (`JoinHandle`) or a `Generator`, does not.
+
+A compiled library (`.incnlib`) publishes the bounds its functions declare together with the bounds the compiler inferred for them. A generic caller in another package does not take on an inferred bound the way a caller in the same project does: it declares the bound itself, and a call that forwards its type parameter without the bound is refused. With a library function `def first[K](items: list[K]) -> K: return items[0]`, a caller in another package writes `def head[T with Clone](items: list[T]) -> T: return first(items)`.
+
 For the rationale behind explicit call-site generics (`f[T](...)` / `obj.m[T](...)`), see:
 
 - [Why call-site type arguments exist](call_site_type_arguments.md)
+
+## `mut` parameters of trait methods
+
+A trait method's `mut` parameter behaves like a function's: a list, model or class object the method changes is the caller's value. With a default `def replace(self, mut items: list[int]) -> int` that appends one element and returns `len(items)`, `widget.replace(items)` with `mut items: list[int] = [1, 2]` returns `3` and leaves `items` with 3 elements, and `widget.replace([5])` returns `2`. A call through a type parameter's bound, such as `grower.grow(items)` in `def run[T with Grower](grower: T, items: list[int]) -> int`, may run any adopter's method, so it counts as changing the parameter, and the immutable `items` is refused with `INCAN-T0117`. The rules are in [`mut` parameters](../reference/functions.md#mut-parameters).
+
+## Trait dispatch is not overloading
+
+A type may adopt one generic trait several times, `with Convert[int], Convert[float]`, and then declare two methods named `convert`. That looks like overloading, but it is not: each method satisfies a different trait instantiation, and a call picks the instantiation from its argument types or, when those do not decide, from the type the result is expected to have. Two ordinary methods with the same name stay an error, because nothing ties them to distinct instantiations. When two unrelated traits happen to require the same method name, the `for TraitName` target on each method says which adoption it belongs to.
+
+When an operation should be available only for values with a capability, state that capability as a generic bound (`T with OrderedCollection[int]`) rather than hiding inherited trait methods. The bound is checked at every call, including through supertraits.
+
+Adopting one generic trait more than once fits a type that supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into several result types, or serializing through a generic format trait. When the argument types do not pick the instantiation, a typed binding (`as_float: float = reading.convert()`) is the most direct way to give the call its expected result type.
+
+When two methods with the same name are both trait implementations, give each a method-level target (`def convert(self) for ToInt -> int`). When they are ordinary methods of the type, give them distinct names instead.
+
+## Why `@requires` is for models and classes
+
+`@requires(...)` lets a trait's default methods read fields of the adopter. Models and classes have fields shared by every value, so the requirement is meaningful for them. An enum's data lives in its variants' payloads, which differ from variant to variant, so an enum adopter provides behavior through methods instead.
+
+## Where derived behavior comes from
+
+The derive traits under `std.derives.*` (`Clone`, `Default`, `Debug`, `Eq`, `Ord`, `Hash`) are declared in the standard library's Incan source as capability contracts. The behavior of a derived implementation is produced when the program is compiled, from the type's own fields; it is not a runtime helper the program calls into. That is why a derive's requirements are about field types: `Copy` needs every field to be `Copy`, and derived equality compares every field.
 
 ## Debug vs Display: two string representations
 
@@ -130,6 +183,17 @@ This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-sha
 See also:
 
 - [How derives work](how_derives_work.md)
+
+## Copy and Clone
+
+`Clone` and `Copy` both duplicate a value; they differ in when the copy happens. A `Clone` copy happens where the code calls `.clone()`, and it is a deep copy of whatever the value holds; every model, class and enum has `Clone`. A `Copy` copy happens implicitly, on every assignment and argument pass, and the original stays usable. That is cheap only for small values that own no heap data, which is why `Copy` needs every field to be `Copy`: numbers, `bool`, and tuples, `Option` and `Result` of those, but not a `str` or a `list`.
+
+| Trait | A copy happens | Suits |
+| --- | --- | --- |
+| `Clone` | where the code calls `.clone()` | any type |
+| `Copy` | on assignment and argument passing | small, simple value types that own no heap data |
+
+As a rule of thumb, derive `Copy` only for small value types such as coordinates or identifiers, and call `.clone()` where a larger value needs a second owner. The exact rules are in [Copying and Default](../reference/derives/copying_default.md).
 
 ## Field defaults and construction (pydantic-like ergonomics)
 

@@ -13,7 +13,7 @@ authors.workspace = true
 incan_lang = { workspace = true }
 serde = { workspace = true }
 # The wire encoding for the checked representation RFC 123 publishes. Already in the workspace graph through
-# wasmtime and rust-analyzer, so making it direct adds no third-party code, licence surface, or build cost.
+# wasmtime and rust-analyzer, so making it direct adds no third-party code, license surface, or build cost.
 #
 # `default-features = false` is load-bearing, not tidiness. Postcard's defaults pull `heapless`, whose 0.7 line
 # depends on `atomic-polyfill` — unmaintained, RUSTSEC-2023-0089, with no safe upgrade available. The existing

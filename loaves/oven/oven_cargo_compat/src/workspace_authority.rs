@@ -13,7 +13,7 @@ use super::{
     OvenLegacyCargoError, digest_bytes, lock_contains_package, lock_package_identities, lock_package_reference,
     regular_file_bytes, verified_regular_file,
 };
-use oven_model::digest::digest_toolchain_source_tree_with_cache;
+use oven_model::digest::{canonical_json_string, digest_toolchain_source_tree_with_cache};
 
 /// One local package record ready to append to a staged lock.
 pub struct LockedLocalPackage {
@@ -103,7 +103,7 @@ pub fn digest_local_cargo_workspace_authority(package_root: &Path) -> Result<Opt
                 })?;
             records.insert(format!(
                 "package:{field}:{}",
-                serde_json::to_string(inherited).map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?
+                canonical_json_string(inherited).map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?
             ));
         }
     }
@@ -133,7 +133,7 @@ pub fn digest_local_cargo_workspace_authority(package_root: &Path) -> Result<Opt
         records.insert(format!(
             "dependency:{}:{}",
             dependency.alias,
-            serde_json::to_string(&specification).map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?
+            canonical_json_string(&specification).map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?
         ));
     }
     if records.is_empty() {

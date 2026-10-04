@@ -1,7 +1,8 @@
 //! Publishing and admitting a runtime-foundation asset: the immutable directory that carries a validated foundation,
-//! its provider records and the members they name, sealed under one identity and audited member by member.
+//! its selected-package source inventories and the members they name, sealed under one identity and audited member by
+//! member.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -14,17 +15,16 @@ use super::super::{
 use super::{
     OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME, OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION,
     OvenAdmittedRuntimeFoundationAsset, OvenRuntimeFoundation, OvenRuntimeFoundationAsset,
-    OvenRuntimeFoundationProviderDeclaration, OvenRuntimeFoundationProviderRecord, OvenRuntimeFoundationProviderState,
-    ValidatedOvenRuntimeFoundationAsset, runtime_foundation_invalid,
+    OvenRuntimeFoundationSourceInventory, ValidatedOvenRuntimeFoundationAsset, runtime_foundation_invalid,
 };
 
-/// Publish one complete provider-supplied runtime foundation into an installed asset root.
+/// Publish one complete source-inventory-bearing runtime foundation into an installed asset root.
 ///
-/// The caller must supply the selected foundation and exhaustive provider facts explicitly; this function never
-/// reads Cargo metadata, searches a target directory, or reconstructs a provider result. It first materializes the
-/// supplied roots to verify every source/artifact byte and provider gate, copies only descriptor-derived foundation
-/// members into a sibling staging directory, re-admits that staged payload, and only then atomically exposes it at
-/// `destination`.
+/// The caller must supply the selected foundation and exhaustive source-inventory facts explicitly; this function never
+/// reads Cargo metadata, searches a target directory, or reconstructs source evidence. It first materializes the
+/// supplied roots to verify every source/artifact byte and source-inventory gate, copies only descriptor-derived
+/// foundation members into a sibling staging directory, re-admits that staged payload, and only then atomically exposes
+/// it at `destination`.
 ///
 /// The separately held Toolchain owner is verified but never copied into this asset root. It stays part of the
 /// installed compiler distribution rather than becoming an unrecorded foundation member.
@@ -32,6 +32,28 @@ pub fn publish_runtime_foundation_asset(
     asset: OvenRuntimeFoundationAsset,
     source_foundation_root: &Path,
     toolchain_root: &Path,
+    destination: &Path,
+) -> Result<OvenAdmittedRuntimeFoundationAsset, OvenRustcError> {
+    publish_runtime_foundation_asset_with_generated_owners(
+        asset,
+        source_foundation_root,
+        toolchain_root,
+        &[],
+        destination,
+    )
+}
+
+/// Publish a runtime foundation while importing receipt-bound generated owners from explicit immutable roots.
+///
+/// Each supplied identity must already be a `GeneratedOutput` owner in the selected graph. Only graph-declared
+/// product members are copied; receipts remain provenance used to derive the owner identity and do not become
+/// compiler-visible asset bytes. Re-admission maps those copied products to the sealed foundation root, so ordinary
+/// consumers never need the publisher-local roots.
+pub fn publish_runtime_foundation_asset_with_generated_owners(
+    asset: OvenRuntimeFoundationAsset,
+    source_foundation_root: &Path,
+    toolchain_root: &Path,
+    generated_owner_roots: &[OvenSelectedRustFacetOwnerRoot],
     destination: &Path,
 ) -> Result<OvenAdmittedRuntimeFoundationAsset, OvenRustcError> {
     let destination_parent = destination
@@ -46,23 +68,28 @@ pub fn publish_runtime_foundation_asset(
         )
     })?;
     let destination = destination_parent.join(destination_name);
-    // Do not rehash/copy a provider payload if an immutable installed root already owns this name.
+    // Do not rehash/copy a source inventory payload if an immutable installed root already owns this name.
     require_absent_runtime_foundation_destination(&destination)?;
 
     let mut asset = asset;
-    canonicalize_runtime_foundation_asset_facts(&mut asset.foundation, &mut asset.providers)?;
+    canonicalize_runtime_foundation_asset_facts(&mut asset.foundation, &mut asset.source_inventories)?;
     let validated = asset.clone().validated()?;
     let source_foundation_root = canonical_directory(source_foundation_root, "runtime foundation source root")?;
     let toolchain_root = canonical_directory(toolchain_root, "runtime foundation toolchain root")?;
-    let owner_roots =
-        runtime_foundation_asset_owner_roots(&validated, source_foundation_root.clone(), toolchain_root.clone())?;
-    // Verify the source material and reject unsupported provider/native-link facts before creating any output.
+    let owner_roots = runtime_foundation_asset_owner_roots(
+        &validated,
+        source_foundation_root.clone(),
+        toolchain_root.clone(),
+        generated_owner_roots,
+    )?;
+    // Verify source, generated, native and artifact facts before creating any output.
     let _ = validated.materialize_for_publication(&owner_roots)?;
 
     let members = runtime_foundation_asset_member_paths(&validated)?;
+    let generated_sources = runtime_foundation_generated_member_sources(&validated, generated_owner_roots)?;
     let staging = create_runtime_foundation_asset_staging_directory(&destination)?;
     let result = (|| {
-        copy_runtime_foundation_asset_members(&source_foundation_root, &staging, &members)?;
+        copy_runtime_foundation_asset_members(&source_foundation_root, &staging, &members, &generated_sources)?;
         write_runtime_foundation_asset_descriptor(&staging, &asset)?;
 
         // Re-admission after copying closes the source-to-stage race and proves the staged root is complete before
@@ -133,6 +160,7 @@ fn copy_runtime_foundation_asset_members(
     source_root: &Path,
     staging_root: &Path,
     members: &RuntimeFoundationAssetMemberCatalog,
+    source_overrides: &std::collections::BTreeMap<String, PathBuf>,
 ) -> Result<(), OvenRustcError> {
     for directory in &members.directories {
         let destination = staging_root.join(directory);
@@ -141,11 +169,14 @@ fn copy_runtime_foundation_asset_members(
             source,
         })?;
     }
-    for relative_path in &members.files {
+    for relative_path in members.files.keys() {
         if relative_path == OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME {
             continue;
         }
-        let source = safe_path(source_root, relative_path, "runtime foundation source member")?;
+        let source = match source_overrides.get(relative_path) {
+            Some(source) => source.clone(),
+            None => safe_path(source_root, relative_path, "runtime foundation source member")?,
+        };
         let source = verified_regular_file(&source, "runtime foundation source member")?;
         let destination = staging_root.join(relative_path);
         let parent = destination.parent().ok_or_else(|| {
@@ -204,14 +235,32 @@ pub fn admit_runtime_foundation_asset_for_publication(
         path: descriptor.clone(),
         source,
     })?;
-    let asset = serde_json::from_slice::<OvenRuntimeFoundationAsset>(&bytes).map_err(|error| {
+    let descriptor_value = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
+        runtime_foundation_invalid(
+            "runtime foundation descriptor",
+            format!("cannot decode {}: {error}", descriptor.display()),
+        )
+    })?;
+    let schema_version = descriptor_value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| runtime_foundation_invalid("runtime foundation asset schema", "is missing or not an integer"))?;
+    if schema_version != u64::from(OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION) {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation asset schema",
+            format!(
+                "expected schema {OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION}, found {schema_version}; rebuild and republish the asset"
+            ),
+        ));
+    }
+    let asset = serde_json::from_value::<OvenRuntimeFoundationAsset>(descriptor_value).map_err(|error| {
         runtime_foundation_invalid(
             "runtime foundation descriptor",
             format!("cannot decode {}: {error}", descriptor.display()),
         )
     })?;
     let asset = asset.validated()?;
-    let owner_roots = runtime_foundation_asset_owner_roots(&asset, foundation_root.clone(), toolchain_root)?;
+    let owner_roots = runtime_foundation_asset_owner_roots(&asset, foundation_root.clone(), toolchain_root, &[])?;
     audit_runtime_foundation_asset_members(&foundation_root, &asset)?;
     Ok(OvenAdmittedRuntimeFoundationAsset { asset, owner_roots })
 }
@@ -221,6 +270,7 @@ fn runtime_foundation_asset_owner_roots(
     asset: &ValidatedOvenRuntimeFoundationAsset,
     foundation_root: PathBuf,
     toolchain_root: PathBuf,
+    generated_owner_roots: &[OvenSelectedRustFacetOwnerRoot],
 ) -> Result<Vec<OvenSelectedRustFacetOwnerRoot>, OvenRustcError> {
     let foundation = asset.foundation();
     let graph = foundation.selected_graph().graph();
@@ -231,40 +281,120 @@ fn runtime_foundation_asset_owner_roots(
         .find(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Toolchain)
         .map(|owner| owner.identity.clone())
         .ok_or_else(|| runtime_foundation_invalid("runtime foundation owners", "has no Toolchain owner"))?;
-    let expected = BTreeSet::from([foundation_owner.to_string(), toolchain_owner.clone()]);
-    let actual = graph
-        .owners
+    let supplied_generated = generated_owner_roots
         .iter()
-        .map(|owner| owner.identity.clone())
-        .collect::<BTreeSet<_>>();
-    if actual != expected {
+        .map(|owner| (owner.identity.as_str(), owner.root.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut owner_roots = Vec::with_capacity(graph.owners.len());
+    let mut identities = BTreeSet::new();
+    for owner in &graph.owners {
+        if !identities.insert(owner.identity.as_str()) {
+            return Err(runtime_foundation_invalid(
+                "runtime foundation owners",
+                "declare one owner identity more than once",
+            ));
+        }
+        let root = match owner.kind {
+            OvenSelectedRustFacetOwnerKind::Toolchain if owner.identity == toolchain_owner => toolchain_root.clone(),
+            OvenSelectedRustFacetOwnerKind::Constituent if owner.identity == foundation_owner => {
+                foundation_root.clone()
+            }
+            // Generated outputs are copied into descriptor-named directories below the sealed asset. Their separate
+            // identities preserve producer provenance while the asset root remains the sole physical publication.
+            OvenSelectedRustFacetOwnerKind::GeneratedOutput => supplied_generated
+                .get(owner.identity.as_str())
+                .cloned()
+                .unwrap_or_else(|| foundation_root.clone()),
+            _ => {
+                return Err(runtime_foundation_invalid(
+                    "runtime foundation owners",
+                    "may name only its artifact constituent, generated outputs sealed inside that asset, and the separately held Toolchain owner",
+                ));
+            }
+        };
+        owner_roots.push(OvenSelectedRustFacetOwnerRoot {
+            identity: owner.identity.clone(),
+            root,
+        });
+    }
+    if !identities.contains(foundation_owner) || !identities.contains(toolchain_owner.as_str()) {
         return Err(runtime_foundation_invalid(
             "runtime foundation owners",
-            "a release asset may name only its sealed foundation owner and its separately held Toolchain owner",
+            "omit the artifact constituent or Toolchain owner",
         ));
     }
-    Ok(vec![
-        OvenSelectedRustFacetOwnerRoot {
-            identity: foundation_owner.to_string(),
-            root: foundation_root,
-        },
-        OvenSelectedRustFacetOwnerRoot {
-            identity: toolchain_owner,
-            root: toolchain_root,
-        },
-    ])
+    Ok(owner_roots)
 }
 
-/// One exact descriptor-derived regular-file and directory catalogue for a release foundation root.
+/// Resolve graph-declared generated product paths to their publisher-local source files.
+fn runtime_foundation_generated_member_sources(
+    asset: &ValidatedOvenRuntimeFoundationAsset,
+    generated_owner_roots: &[OvenSelectedRustFacetOwnerRoot],
+) -> Result<std::collections::BTreeMap<String, PathBuf>, OvenRustcError> {
+    let roots = generated_owner_roots
+        .iter()
+        .map(|owner| (owner.identity.as_str(), owner.root.as_path()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut sources = std::collections::BTreeMap::new();
+    for unit in &asset.foundation().selected_graph().graph().units {
+        for input in &unit.generated_inputs {
+            let Some(root) = roots.get(input.source.owner.as_str()) else {
+                continue;
+            };
+            for member in &input.members {
+                let relative = runtime_foundation_asset_member_path(
+                    &input.source.path,
+                    &member.path,
+                    "publisher generated member",
+                )?;
+                let source = safe_path(root, &relative, "publisher generated member")?;
+                insert_generated_member_source(&mut sources, relative, source)?;
+            }
+        }
+        for library in &unit.linked_libraries {
+            if let super::super::OvenSelectedRustFacetLinkedLibrary::Archive { artifact, .. } = library
+                && let Some(root) = roots.get(artifact.owner.as_str())
+            {
+                let source = safe_path(root, &artifact.path, "publisher native archive")?;
+                insert_generated_member_source(&mut sources, artifact.path.clone(), source)?;
+            }
+        }
+    }
+    Ok(sources)
+}
+
+/// Insert one generated member source while refusing two owners that claim the same sealed path.
+fn insert_generated_member_source(
+    sources: &mut std::collections::BTreeMap<String, PathBuf>,
+    relative: String,
+    source: PathBuf,
+) -> Result<(), OvenRustcError> {
+    if sources.insert(relative.clone(), source).is_some() {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation generated members",
+            format!("more than one publisher owner claims `{relative}`"),
+        ));
+    }
+    Ok(())
+}
+
+/// One exact descriptor-derived regular-file and directory catalog for a release foundation root.
 #[derive(Debug, Default)]
 struct RuntimeFoundationAssetMemberCatalog {
+    files: BTreeMap<String, Option<String>>,
+    directories: BTreeSet<String>,
+}
+
+/// Filesystem members observed while auditing an already staged runtime foundation.
+#[derive(Debug, Default)]
+struct ObservedRuntimeFoundationAssetMembers {
     files: BTreeSet<String>,
     directories: BTreeSet<String>,
 }
 
-/// Audit every member below the immutable foundation root against the descriptor-derived catalogue.
+/// Audit every member below the immutable foundation root against the descriptor-derived catalog.
 ///
-/// Source trees and artifacts carry their own digest catalogues and are rehashed by later materialization. This walk
+/// Source trees and artifacts carry their own digest catalogs and are rehashed by later materialization. This walk
 /// establishes the complementary invariant: no undeclared file or directory, symlink or special filesystem member
 /// may hide alongside them in the release payload.
 fn audit_runtime_foundation_asset_members(
@@ -272,11 +402,12 @@ fn audit_runtime_foundation_asset_members(
     asset: &ValidatedOvenRuntimeFoundationAsset,
 ) -> Result<(), OvenRustcError> {
     let expected = runtime_foundation_asset_member_paths(asset)?;
-    let mut actual = RuntimeFoundationAssetMemberCatalog::default();
+    let mut actual = ObservedRuntimeFoundationAssetMembers::default();
     collect_runtime_foundation_asset_members(foundation_root, foundation_root, &mut actual)?;
-    if actual.files != expected.files || actual.directories != expected.directories {
-        let missing_files = expected.files.difference(&actual.files).cloned().collect::<Vec<_>>();
-        let extra_files = actual.files.difference(&expected.files).cloned().collect::<Vec<_>>();
+    let expected_files = expected.files.keys().cloned().collect::<BTreeSet<_>>();
+    if actual.files != expected_files || actual.directories != expected.directories {
+        let missing_files = expected_files.difference(&actual.files).cloned().collect::<Vec<_>>();
+        let extra_files = actual.files.difference(&expected_files).cloned().collect::<Vec<_>>();
         let missing_directories = expected
             .directories
             .difference(&actual.directories)
@@ -322,90 +453,46 @@ fn runtime_foundation_asset_member_paths(
     let foundation = asset.foundation();
     let graph = foundation.selected_graph().graph();
     let foundation_owner = foundation.artifact_owner();
+    // Build-script outputs live below the asset root under their own GeneratedOutput owners, the same root the
+    // owner table maps them to; the asset must carry them beside what the constituent owns directly.
+    let sealed_below_root = |owner: &str| {
+        owner == foundation_owner
+            || graph.owners.iter().any(|candidate| {
+                candidate.identity == owner && candidate.kind == OvenSelectedRustFacetOwnerKind::GeneratedOutput
+            })
+    };
     let mut members = RuntimeFoundationAssetMemberCatalog::default();
     record_runtime_foundation_asset_file(
         &mut members,
         OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME,
+        None,
         "runtime foundation descriptor",
     )?;
-    for artifact in foundation.artifacts().declared_artifact_paths()? {
-        record_runtime_foundation_asset_file(&mut members, &artifact, "runtime foundation artifact")?;
+    for (artifact, digest) in foundation.artifacts().declared_artifact_digests()? {
+        record_runtime_foundation_asset_file(&mut members, &artifact, Some(&digest), "runtime foundation artifact")?;
     }
     for unit in &graph.units {
-        if unit.source.owner == foundation_owner {
-            record_runtime_foundation_asset_directory(
-                &mut members,
-                &unit.source.root,
-                "runtime foundation source root",
-            )?;
-            for source_member in &unit.source_members {
-                record_runtime_foundation_asset_file(
-                    &mut members,
-                    &runtime_foundation_asset_member_path(
-                        &unit.source.root,
-                        &source_member.path,
-                        "runtime foundation source member",
-                    )?,
-                    "runtime foundation source member",
-                )?;
-            }
-        }
-        for directory in unit
-            .include_dirs
-            .iter()
-            .chain(unit.exclude_dirs.iter())
-            .filter(|directory| directory.owner == foundation_owner)
-        {
-            record_runtime_foundation_asset_directory(
-                &mut members,
-                &directory.path,
-                "runtime foundation source directory",
-            )?;
-        }
-        for environment in unit.environment.values() {
-            if let OvenSelectedRustFacetEnvironmentValue::Path { value } = environment
-                && value.owner == foundation_owner
-            {
-                // Foundation-owned path environment values are directories in v1 (such as OUT_DIR). A file-valued
-                // environment input needs its own digest-bearing schema rather than becoming an untracked exception.
-                record_runtime_foundation_asset_directory(
-                    &mut members,
-                    &value.path,
-                    "runtime foundation environment directory",
-                )?;
-            }
-        }
-        for generated in &unit.generated_inputs {
-            if generated.source.owner == foundation_owner {
-                record_runtime_foundation_asset_file(
-                    &mut members,
-                    &generated.source.path,
-                    "runtime foundation generated member",
-                )?;
-            }
-        }
+        record_runtime_foundation_unit_members(&mut members, unit, foundation_owner, &sealed_below_root)?;
     }
-    for record in asset.providers.values() {
-        let package = match &record.declaration {
-            OvenRuntimeFoundationProviderDeclaration::NoBuildScript { package }
-            | OvenRuntimeFoundationProviderDeclaration::BuildScript { package, .. } => package,
-        };
+    for record in asset.source_inventories.values() {
+        let package = &record.package;
         if package.root.owner != foundation_owner {
             continue;
         }
         record_runtime_foundation_asset_directory(
             &mut members,
             &package.root.path,
-            "runtime foundation provider source root",
+            "runtime foundation package source root",
         )?;
         record_runtime_foundation_asset_file(
             &mut members,
             &runtime_foundation_asset_member_path(
                 &package.root.path,
                 &package.manifest.path,
-                "runtime foundation provider manifest",
+                "runtime foundation package manifest",
             )?,
-            "runtime foundation provider manifest",
+            Some(&package.manifest.digest),
+            "runtime foundation package manifest",
         )?;
         for source_member in &package.members {
             record_runtime_foundation_asset_file(
@@ -413,13 +500,117 @@ fn runtime_foundation_asset_member_paths(
                 &runtime_foundation_asset_member_path(
                     &package.root.path,
                     &source_member.path,
-                    "runtime foundation provider source member",
+                    "runtime foundation package source member",
                 )?,
-                "runtime foundation provider source member",
+                Some(&source_member.digest),
+                "runtime foundation package source member",
             )?;
         }
     }
+    validate_runtime_foundation_environment_paths(&members, graph, &sealed_below_root)?;
     Ok(members)
+}
+
+/// Validate the complete pre-write file, directory and byte-identity layout of one runtime foundation asset.
+#[cfg(test)]
+pub(super) fn validate_runtime_foundation_asset_member_paths(
+    asset: &ValidatedOvenRuntimeFoundationAsset,
+) -> Result<(), OvenRustcError> {
+    let _ = runtime_foundation_asset_member_paths(asset)?;
+    Ok(())
+}
+
+/// Add one selected unit's source, generated-output and native-archive claims to the staging catalog.
+fn record_runtime_foundation_unit_members(
+    members: &mut RuntimeFoundationAssetMemberCatalog,
+    unit: &super::super::OvenSelectedRustFacetUnit,
+    foundation_owner: &str,
+    sealed_below_root: &impl Fn(&str) -> bool,
+) -> Result<(), OvenRustcError> {
+    if unit.source.owner == foundation_owner {
+        record_runtime_foundation_asset_directory(members, &unit.source.root, "runtime foundation source root")?;
+        for source_member in &unit.source_members {
+            let path = runtime_foundation_asset_member_path(
+                &unit.source.root,
+                &source_member.path,
+                "runtime foundation source member",
+            )?;
+            record_runtime_foundation_asset_file(
+                members,
+                &path,
+                Some(&source_member.digest),
+                "runtime foundation source member",
+            )?;
+        }
+    }
+    for directory in unit
+        .include_dirs
+        .iter()
+        .chain(unit.exclude_dirs.iter())
+        .filter(|directory| directory.owner == foundation_owner)
+    {
+        record_runtime_foundation_asset_directory(members, &directory.path, "runtime foundation source directory")?;
+    }
+    for generated in &unit.generated_inputs {
+        if !sealed_below_root(&generated.source.owner) {
+            continue;
+        }
+        record_runtime_foundation_asset_directory(
+            members,
+            &generated.source.path,
+            "runtime foundation generated root",
+        )?;
+        for member in &generated.members {
+            let path = runtime_foundation_asset_member_path(
+                &generated.source.path,
+                &member.path,
+                "runtime foundation generated member",
+            )?;
+            record_runtime_foundation_asset_file(
+                members,
+                &path,
+                Some(&member.digest),
+                "runtime foundation generated member",
+            )?;
+        }
+    }
+    for library in &unit.linked_libraries {
+        if let super::super::OvenSelectedRustFacetLinkedLibrary::Archive { artifact, digest, .. } = library
+            && sealed_below_root(&artifact.owner)
+        {
+            record_runtime_foundation_asset_file(
+                members,
+                &artifact.path,
+                Some(digest),
+                "runtime foundation native archive",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Require each sealed environment path to name an already declared file or directory without creating either kind.
+fn validate_runtime_foundation_environment_paths(
+    members: &RuntimeFoundationAssetMemberCatalog,
+    graph: &super::super::OvenSelectedRustFacetGraph,
+    sealed_below_root: &impl Fn(&str) -> bool,
+) -> Result<(), OvenRustcError> {
+    for unit in &graph.units {
+        for environment in unit.environment.values() {
+            if let OvenSelectedRustFacetEnvironmentValue::Path { value } = environment
+                && sealed_below_root(&value.owner)
+            {
+                let path = normalized_relative_path(&value.path, "runtime foundation environment path")?;
+                if !members.files.contains_key(&path) && !members.directories.contains(&path) {
+                    return Err(runtime_foundation_invalid(
+                        "runtime foundation environment path",
+                        format!("`{path}` is not a declared staged file or directory"),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Join a source-tree root and one source member while preserving the portable foundation-root path vocabulary.
@@ -436,19 +627,36 @@ fn runtime_foundation_asset_member_path(
     normalized_relative_path(&path, kind)
 }
 
-/// Add one declared regular file and every required parent directory to the exact asset catalogue.
+/// Add one declared regular file and every required parent directory to the exact asset catalog.
 fn record_runtime_foundation_asset_file(
     members: &mut RuntimeFoundationAssetMemberCatalog,
     path: &str,
+    digest: Option<&str>,
     kind: &'static str,
 ) -> Result<(), OvenRustcError> {
     let path = normalized_relative_path(path, kind)?;
+    if members.directories.contains(&path) {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation asset layout",
+            format!("`{path}` is declared as both a regular file and a directory"),
+        ));
+    }
     record_runtime_foundation_asset_parent_directories(members, &path)?;
-    members.files.insert(path);
+    let digest = digest.map(str::to_string);
+    if let Some(previous) = members.files.get(&path) {
+        if previous != &digest || digest.is_none() {
+            return Err(runtime_foundation_invalid(
+                "runtime foundation asset layout",
+                format!("`{path}` has conflicting regular-file byte identities"),
+            ));
+        }
+        return Ok(());
+    }
+    members.files.insert(path, digest);
     Ok(())
 }
 
-/// Add one declared directory and every parent directory to the exact asset catalogue.
+/// Add one declared directory and every parent directory to the exact asset catalog.
 fn record_runtime_foundation_asset_directory(
     members: &mut RuntimeFoundationAssetMemberCatalog,
     path: &str,
@@ -458,12 +666,18 @@ fn record_runtime_foundation_asset_directory(
         return Ok(());
     }
     let path = normalized_relative_path(path, kind)?;
+    if members.files.contains_key(&path) {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation asset layout",
+            format!("`{path}` is declared as both a regular file and a directory"),
+        ));
+    }
     record_runtime_foundation_asset_parent_directories(members, &path)?;
     members.directories.insert(path);
     Ok(())
 }
 
-/// Add every non-root parent of a portable path to the exact asset directory catalogue.
+/// Add every non-root parent of a portable path to the exact asset directory catalog.
 fn record_runtime_foundation_asset_parent_directories(
     members: &mut RuntimeFoundationAssetMemberCatalog,
     path: &str,
@@ -474,6 +688,12 @@ fn record_runtime_foundation_asset_parent_directories(
             break;
         }
         let directory = normalized_relative_path(&directory.to_string_lossy(), "runtime foundation asset directory")?;
+        if members.files.contains_key(&directory) {
+            return Err(runtime_foundation_invalid(
+                "runtime foundation asset layout",
+                format!("`{directory}` is a regular file but is also required as a parent directory"),
+            ));
+        }
         members.directories.insert(directory.clone());
         current = PathBuf::from(directory);
     }
@@ -484,7 +704,7 @@ fn record_runtime_foundation_asset_parent_directories(
 fn collect_runtime_foundation_asset_members(
     root: &Path,
     directory: &Path,
-    members: &mut RuntimeFoundationAssetMemberCatalog,
+    members: &mut ObservedRuntimeFoundationAssetMembers,
 ) -> Result<(), OvenRustcError> {
     let mut entries = fs::read_dir(directory)
         .map_err(|source| OvenRustcError::Io {
@@ -552,16 +772,16 @@ fn collect_runtime_foundation_asset_members(
 /// Derive the content identity of a release asset without confusing it with a compiled-unit output identity.
 pub(crate) fn runtime_foundation_asset_identity(
     foundation: &OvenRuntimeFoundation,
-    providers: &[OvenRuntimeFoundationProviderRecord],
+    source_inventories: &[OvenRuntimeFoundationSourceInventory],
 ) -> Result<String, OvenRustcError> {
     let mut foundation = foundation.clone();
-    let mut providers = providers.to_vec();
-    canonicalize_runtime_foundation_asset_facts(&mut foundation, &mut providers)?;
+    let mut source_inventories = source_inventories.to_vec();
+    canonicalize_runtime_foundation_asset_facts(&mut foundation, &mut source_inventories)?;
     let bytes = serde_json::to_vec(&(
-        "incan.oven.runtime-foundation-asset/3",
+        "incan.oven.runtime-foundation-asset/4",
         OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION,
         &foundation,
-        &providers,
+        &source_inventories,
     ))
     .map_err(|error| {
         runtime_foundation_invalid(
@@ -574,13 +794,13 @@ pub(crate) fn runtime_foundation_asset_identity(
 
 /// Normalize presentation-order fields before they become a release-asset identity input.
 ///
-/// The selected graph already has a canonical form, while foundation execution policy and provider records are
+/// The selected graph already has a canonical form, while foundation execution policy and source inventories are
 /// semantically maps keyed by selected identity. Their arrival order must not manufacture a second foundation or
 /// defeat reuse. Artifact-manifest ordering is deliberately left intact because its search-path order can affect the
 /// compiler invocation and is therefore part of the manifest's observable contract.
 pub(crate) fn canonicalize_runtime_foundation_asset_facts(
     foundation: &mut OvenRuntimeFoundation,
-    providers: &mut [OvenRuntimeFoundationProviderRecord],
+    source_inventories: &mut [OvenRuntimeFoundationSourceInventory],
 ) -> Result<(), OvenRustcError> {
     foundation.selected_graph = foundation
         .selected_graph
@@ -592,30 +812,43 @@ pub(crate) fn canonicalize_runtime_foundation_asset_facts(
     foundation
         .units
         .sort_by(|left, right| left.selected_identity.cmp(&right.selected_identity));
-    providers.sort_by(|left, right| left.selected_identity.cmp(&right.selected_identity));
-    for provider in providers {
-        match &mut provider.declaration {
-            OvenRuntimeFoundationProviderDeclaration::NoBuildScript { package } => package.members.sort(),
-            OvenRuntimeFoundationProviderDeclaration::BuildScript {
-                package,
-                host_dependencies,
-                ..
-            } => {
-                package.members.sort();
-                host_dependencies
-                    .sort_by(|left, right| left.alias.cmp(&right.alias).then_with(|| left.unit.cmp(&right.unit)));
-            }
-        }
-        if let OvenRuntimeFoundationProviderState::Captured { receipt } = &mut provider.state {
-            receipt
-                .effects
-                .generated_inputs
-                .sort_by(|left, right| left.name.cmp(&right.name).then_with(|| left.source.cmp(&right.source)));
-            receipt.effects.emitted_cfg.sort();
-            receipt.effects.checked_cfg.sort();
-            receipt.effects.rerun_paths.sort();
-            receipt.effects.rerun_environment.sort();
-        }
+    source_inventories.sort_by(|left, right| left.selected_identity.cmp(&right.selected_identity));
+    for inventory in source_inventories {
+        inventory.package.members.sort();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// A staged registry manifest cannot also become a directory, including as the parent of another artifact.
+    #[test]
+    fn runtime_foundation_layout_refuses_file_directory_overlap() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = "registry-sources/orbit-parser-3.2.1/Cargo.toml";
+        let mut exact = RuntimeFoundationAssetMemberCatalog::default();
+        record_runtime_foundation_asset_file(&mut exact, manifest, Some("sha256:manifest"), "fixture manifest")?;
+        let exact_refusal = record_runtime_foundation_asset_directory(&mut exact, manifest, "fixture directory")
+            .err()
+            .ok_or("file/directory overlap was accepted")?;
+        assert!(
+            exact_refusal
+                .to_string()
+                .contains("both a regular file and a directory")
+        );
+
+        let mut parent = RuntimeFoundationAssetMemberCatalog::default();
+        record_runtime_foundation_asset_file(&mut parent, manifest, Some("sha256:manifest"), "fixture manifest")?;
+        let parent_refusal = record_runtime_foundation_asset_file(
+            &mut parent,
+            &format!("{manifest}/nested.rs"),
+            Some("sha256:nested"),
+            "fixture nested artifact",
+        )
+        .err()
+        .ok_or("regular-file parent overlap was accepted")?;
+        assert!(parent_refusal.to_string().contains("required as a parent directory"));
+        Ok(())
+    }
 }

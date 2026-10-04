@@ -1,0 +1,67 @@
+# behavior: arguments to Rust standard-library callees take the shape their signature needs: owned bytes and a Rust Vec of bytes lend as a slice to from_utf8, an explicit as_slice() argument is kept, a bytes literal and an owned bytes local borrow as a slice, an owned Vec of bytes passes by value to String.from_utf8, and a str literal and an owned str local borrow into Path.new
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_lends_owned_incan_bytes_to_buf_as_slice
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_lends_owned_rust_vec_to_buf_as_slice
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_rust_associated_decode_lends_generic_vec_u8_to_buf_as_slice
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_keeps_explicit_slice_argument_shape
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_keeps_explicit_rust_vec_slice_argument_shape
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_fallback_still_borrows_owned_bytes_argument
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_with_generic_by_value_signature_does_not_borrow_argument
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::unregistered_decode_method_with_by_value_metadata_preserves_argument_shape
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_uses_external_planning_for_rust_rooted_field_callee
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_string_coercion_materializes_owned_string_before_borrow
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_string_coercion_borrows_owned_string_without_materializing
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_bytes_slice_coercion_borrows_owned_bytes
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_vec_bytes_coercion_materializes_owned_bytes_before_borrow
+# expect-stdout:
+#   ab
+#   cd
+#   ef
+#   gh
+#   ij
+#   kl
+#   true
+#   true
+#   true
+
+from rust::std::path import Path
+from rust::std::str import from_utf8
+from rust::std::string import String as RustString
+from rust::std::vec import Vec
+
+
+def decoded(data: bytes) -> str:
+    match from_utf8(data):
+        Ok(text) => return text
+        Err(_) => return "invalid"
+
+
+def decoded_vec(encoded: Vec[u8]) -> str:
+    match from_utf8(encoded):
+        Ok(text) => return text
+        Err(_) => return "invalid"
+
+
+def decoded_slice(encoded: Vec[u8]) -> str:
+    match from_utf8(encoded.as_slice()):
+        Ok(text) => return text
+        Err(_) => return "invalid"
+
+
+def owned(encoded: Vec[u8]) -> str:
+    match RustString.from_utf8(encoded):
+        Ok(text) => return text
+        Err(_) => return "invalid"
+
+
+def main() -> None:
+    println(decoded(b"ab"))
+    println(decoded_vec(Vec.from(b"cd")))
+    println(decoded_slice(Vec.from(b"ef")))
+    println(owned(Vec.from(b"gh")))
+    data = b"ij"
+    println(decoded(data))
+    println(decoded(b"kl"))
+    text = "a/b.txt"
+    println(Path.new(text).is_relative())
+    println(Path.new("c/d.txt").is_relative())
+    println(not Path.new("e").exists())

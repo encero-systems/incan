@@ -1,0 +1,7 @@
+from registry import Entry
+
+
+pub def summary() -> str:
+    first = Entry(key="base", amount=10)
+    second = Entry(key="tax", amount=2)
+    return f"{first.describe()} {second.describe()}"

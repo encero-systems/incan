@@ -1,0 +1,23 @@
+# behavior: one program calls into std.testing, std.collections and std.async: an assertion helper passes, a Deque counts the items appended to it, and a task that sleeps returns its value
+# expect-stdout:
+#   assertion holds
+#   2
+#   1
+
+from std.async import sleep
+from std.collections import Deque
+from std.testing import assert_eq
+
+
+async def work() -> int:
+    await sleep(0.01)
+    return 1
+
+
+async def main() -> None:
+    assert_eq(40 + 2, 42)
+    println("assertion holds")
+    mut pending = Deque[str].from_iter(["a"])
+    pending.append("b")
+    println(len(pending))
+    println(await work())

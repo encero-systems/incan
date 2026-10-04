@@ -1,0 +1,121 @@
+# behavior: a match, if let or while let arm that changes a mut parameter through a name its pattern binds changes the caller's value, over the parameter, a field of it, a loop variable over it, a nested binding, a match value, a guarded arm, a copy bound beside the change, and a field of self in a mut self method
+# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::change_through_a_pattern_binding_reaches_the_caller_issue1561
+# expect-stdout:
+#   Some([0, 1, 2, 3])
+#   Some([0, 4])
+#   [Some([0, 5]), None]
+#   Some(Some([0, 6]))
+#   3
+#   Some([0, 1, 2])
+#   Some([0, 1, 2, 3])
+#   7
+#   8
+#   2
+#   [Some([1, 7]), None]
+
+model Holder:
+    pub inner: Option[list[int]]
+
+
+enum Slot:
+    Pair(list[int], int)
+    Empty
+
+
+class Grid:
+    pub rows: list[Option[list[int]]]
+
+    def fill(mut self) -> None:
+        for row in self.rows:
+            if let Some(xs) = row:
+                xs.append(7)
+        match self.rows[0]:
+            Some(xs) => println(len(xs))
+            None => pass
+
+
+def by_match(mut box: Option[list[int]]) -> None:
+    match box:
+        Some(xs) => xs.append(1)
+        None => pass
+
+
+def by_if_let(mut box: Option[list[int]]) -> None:
+    if let Some(xs) = box:
+        xs.append(2)
+
+
+def by_while_let(mut box: Option[list[int]]) -> None:
+    while let Some(xs) = box:
+        xs.append(3)
+        break
+
+
+def by_field(mut h: Holder) -> None:
+    match h.inner:
+        Some(xs) => xs.append(4)
+        None => pass
+
+
+def by_loop_view(mut rows: list[Option[list[int]]]) -> None:
+    for row in rows:
+        if let Some(xs) = row:
+            xs.append(5)
+
+
+def by_nested(mut box: Option[Option[list[int]]]) -> None:
+    match box:
+        Some(inner) =>
+            match inner:
+                Some(xs) => xs.append(6)
+                None => pass
+        None => pass
+
+
+def popped(mut box: Option[list[int]]) -> int:
+    n = match box:
+        Some(xs) => xs.pop()
+        None => 0
+    return n
+
+
+def guarded(mut box: Option[list[int]], limit: int) -> None:
+    match box:
+        Some(xs) if len(xs) < limit => xs.append(len(xs))
+        _ => pass
+
+
+def paired(mut s: Slot) -> int:
+    match s:
+        Slot.Pair(items, n) =>
+            items.append(n)
+            return n + len(items)
+        Slot.Empty => return 0
+
+
+def main() -> None:
+    mut box = Some([0])
+    by_match(box)
+    by_if_let(box)
+    by_while_let(box)
+    println(box)
+    mut h = Holder(inner=Some([0]))
+    by_field(h)
+    println(h.inner)
+    mut rows = [Some([0]), None]
+    by_loop_view(rows)
+    println(rows)
+    mut nested = Some(Some([0]))
+    by_nested(nested)
+    println(nested)
+    println(popped(box))
+    println(box)
+    guarded(box, 5)
+    guarded(box, 1)
+    println(box)
+    mut s = Slot.Pair([1], 5)
+    println(paired(s))
+    println(paired(s))
+    mut g = Grid(rows=[Some([1]), None])
+    g.fill()
+    println(g.rows)

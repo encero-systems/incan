@@ -1,0 +1,5 @@
+pub def describe(value: int | str) -> str:
+    if isinstance(value, int):
+        return "number"
+    else:
+        return value.upper()

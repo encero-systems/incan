@@ -32,7 +32,7 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use incan_provider::inventory::{
-    discover_active_sdk_inventory, prepare_or_discover_sdk_inventory, provider_used_module_paths,
+    discover_or_reuse_published_sdk_inventory, prepare_or_discover_sdk_inventory, provider_used_module_paths,
     resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
@@ -226,6 +226,8 @@ pub struct CompilationSession {
     /// Collection, requirement discovery, and semantic analysis all need the same projection. Rebuilding it makes
     /// every command rehash provider source roots and, worse, lets a mutable local cache dominate the warm path.
     provider_plans_by_modules: ProviderPlanCache,
+    /// Semantic provider identities reused only within this checked compilation context.
+    provider_semantic_identities: Arc<incan_provider::lock_semantics::ProviderSemanticIdentitySession>,
     /// Integrity-checked active SDK catalog, when this toolchain is component-aware.
     pub sdk_inventory: Option<Arc<SdkInventory>>,
     /// Project-selected SDK component closure, when an inventory is active.
@@ -328,7 +330,9 @@ impl CompilationSession {
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
         let sdk_inventory = match sdk_source {
             SdkInventorySource::PrepareLegacyCargoIfAbsent => prepare_or_discover_sdk_inventory()?,
-            SdkInventorySource::DiscoverOnly => discover_active_sdk_inventory()?,
+            // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
+            // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
+            SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
         };
         let package_feature_plan = manifest
             .as_ref()
@@ -382,10 +386,12 @@ impl CompilationSession {
             .map_err(|error| CliError::failure(error.to_string()))?
             .unwrap_or_default();
         // Collection and execution must resolve the same SDK catalog. In a source checkout there is no installed
-        // inventory to discover, so a parser-only collection that skipped publication silently fell back to the
-        // legacy monolithic stdlib. Besides losing component-aware diagnostics, that made a transient SDK profile
-        // fail during collection and allowed the lock projection to drift before execution prepared the artifacts.
-        // Publication is content-addressed and reused; parser-only mode still avoids preparing ordinary dependencies.
+        // inventory to discover, so a session that neither published nor reused the checkout's inventory silently fell
+        // back to the legacy monolithic stdlib. Besides losing component-aware diagnostics and the standard library's
+        // vocabulary, that made a transient SDK profile fail during collection and allowed the lock projection to
+        // drift before execution prepared the artifacts. Publication is content-addressed: the check path publishes
+        // or reuses it, the Oven and collection paths reuse it only, and parser-only mode still avoids preparing
+        // ordinary dependencies.
         validate_component_inventory_selection(manifest.as_ref(), sdk_profile_override, sdk_inventory.as_deref())?;
         let sdk_selection =
             SdkComponentSelection::from_manifest_with_profile_override(manifest.as_ref(), sdk_profile_override);
@@ -431,6 +437,9 @@ impl CompilationSession {
             library_manifest_index,
             provider_plan,
             provider_plans_by_modules,
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
             sdk_inventory,
             sdk_components,
             package_feature_plan,
@@ -440,6 +449,17 @@ impl CompilationSession {
             library_imported_dsl_surfaces,
             contract_model_bundles,
         })
+    }
+
+    /// Return provider semantic identities after revalidating their exact physical and dependency context.
+    pub fn provider_semantic_identities(
+        &self,
+        provider_plan: &ProviderPlan,
+        sdk_path_dependencies: &[oven_model::manifest::DependencySpec],
+    ) -> CliResult<Arc<incan_provider::lock_semantics::CheckedProviderSemanticIdentities>> {
+        self.provider_semantic_identities
+            .identities(provider_plan, sdk_path_dependencies)
+            .map_err(CliError::failure)
     }
 
     /// Resolve module participation from this session's immutable provider, feature, and SDK inputs.
@@ -737,6 +757,9 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
             provider_plan,
             sdk_inventory: None,
             sdk_components: None,
@@ -886,6 +909,674 @@ mod tests {
 
         assert!(analysis.type_info_for_module_path(&["first".to_string()]).is_some());
         assert!(analysis.type_info_for_module_path(&["second".to_string()]).is_some());
+        Ok(())
+    }
+
+    /// The Oven session reuses the SDK inventory the check session published for a source checkout (#1774).
+    ///
+    /// `incan check` builds its session with [`SdkInventorySource::PrepareLegacyCargoIfAbsent`] and publishes the
+    /// checkout's component providers; `incan run`, `build` and `oven bake` build theirs with
+    /// [`SdkInventorySource::DiscoverOnly`] and never build providers. Before #1774 the Oven session found no
+    /// inventory in a checkout and parsed without the standard library's vocabulary. The suite exports
+    /// `INCAN_SDK_INVENTORY`, which would hide the difference, so the sessions are discovered in a child process
+    /// with that override removed and a synthetic checkout (an empty component catalog) as the only source of an
+    /// inventory: nothing before the check session publishes, and exactly the published inventory after.
+    #[test]
+    fn oven_session_reuses_the_inventory_the_check_session_published_issue1774()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "INCAN_TEST_1774_SESSION_CHILD";
+        const ENTRY: &str = "INCAN_TEST_1774_ENTRY";
+        if std::env::var_os(CHILD).is_some() {
+            let entry = PathBuf::from(std::env::var_os(ENTRY).ok_or("the child needs its entry path")?);
+            let selection = FeatureSelection::default();
+            let before = CompilationSession::discover_for_oven(&entry, &selection, None)?;
+            if let Some(inventory) = before.sdk_inventory.as_ref() {
+                return Err(format!("nothing is published yet, found {}", inventory.root.display()).into());
+            }
+            let check = CompilationSession::discover_with_selections(&entry, &selection, None)?;
+            let published = check
+                .sdk_inventory
+                .as_ref()
+                .ok_or("the check session publishes the checkout's inventory")?
+                .root
+                .clone();
+            let after = CompilationSession::discover_for_oven(&entry, &selection, None)?;
+            let reused = after
+                .sdk_inventory
+                .as_ref()
+                .ok_or("the Oven session must reuse the published inventory")?
+                .root
+                .clone();
+            assert_eq!(
+                reused, published,
+                "the Oven session reads the inventory the check session published"
+            );
+            return Ok(());
+        }
+
+        // ---- A synthetic compiler checkout whose component catalog publishes without building anything ----
+        let tmp = tempfile::tempdir()?;
+        let checkout = tmp.path().join("checkout");
+        let stdlib_root = checkout.join("loaves/stdlib");
+        std::fs::create_dir_all(checkout.join("loaves/compiler/incan_emit/src"))?;
+        std::fs::create_dir_all(&stdlib_root)?;
+        std::fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        std::fs::write(
+            checkout.join("loaves/compiler/incan_emit/Cargo.toml"),
+            "[package]\nname = \"incan_emit\"\n",
+        )?;
+        std::fs::write(
+            stdlib_root.join(incan_provider::SDK_SOURCE_CATALOG_FILE),
+            format!(
+                "[sdk]\nid = \"incan\"\nversion = \"{version}\"\ncompiler-requirement = \"={version}\"\n[profiles]\ndefault = []\nfull = []\n[components]\n",
+                version = incan_lang::version::INCAN_VERSION,
+            ),
+        )?;
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(&project)?;
+        let entry = project.join("main.incn");
+        std::fs::write(&entry, "def main() -> None:\n    pass\n")?;
+        let store = tmp.path().join("store");
+
+        let current_exe = std::env::current_exe()?;
+        let child = std::process::Command::new(&current_exe)
+            .args([
+                "--exact",
+                "session::tests::oven_session_reuses_the_inventory_the_check_session_published_issue1774",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env(ENTRY, &entry)
+            .env("INCAN_STDLIB", &stdlib_root)
+            .env("INCAN_STDLIB_DIR", &stdlib_root)
+            .env("INCAN_SOURCE_ROOT", &checkout)
+            .env(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_STORE_ENV, &store)
+            // Publication needs a builder executable to name; an empty catalog never launches it.
+            .env("CARGO_BIN_EXE_incan", &current_exe)
+            .env_remove(incan_provider::inventory::SDK_INVENTORY_OVERRIDE_ENV)
+            .env_remove(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_PATH_FILE_ENV)
+            .env_remove(incan_provider::sdk_store::INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
+            .env_remove(incan_provider::SDK_PROVIDER_BUILD_ENV)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            child.status.success(),
+            "the child session check failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "the child must run exactly this test, not an empty filter:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    /// A session with no SDK inventory, as a consumer on a fresh home has: every `std` module is collected from its
+    /// source under the generated `__incan_std` namespace and checked with the consumer's modules.
+    fn session_without_sdk_inventory(project: &Path) -> CompilationSession {
+        let library_manifest_index = LibraryManifestIndex::default();
+        let provider_plan = Arc::new(ProviderPlan::default());
+        CompilationSession {
+            manifest: None,
+            source_root: project.join("src"),
+            library_imported_vocab: library_manifest_index.library_imported_vocab(),
+            library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
+            library_manifest_index,
+            provider_plans_by_modules: Arc::new(Mutex::new(BTreeMap::from([(
+                BTreeSet::new(),
+                Arc::clone(&provider_plan),
+            )]))),
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
+            provider_plan,
+            sdk_inventory: None,
+            sdk_components: None,
+            package_feature_plan: None,
+            active_features: BTreeSet::new(),
+            declared_features: BTreeSet::new(),
+            contract_model_bundles: Vec::new(),
+        }
+    }
+
+    /// Seed the inspected `std::io::Read` a consumer's Rust inspection holds, with the methods the standard library's
+    /// `Read.by_ref(guard).take(size).read_to_end(out)` reads call, into a fresh inspection workspace.
+    #[cfg(feature = "rust_inspect")]
+    fn inspection_workspace_with_std_io_read() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+        use incan_lang::interop::{
+            RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTraitAssoc, RustTraitInfo, RustVisibility,
+        };
+        let workspace = tempfile::tempdir()?;
+        std::fs::write(
+            workspace.path().join("Cargo.toml"),
+            "[package]\nname = \"io_repro_inspection\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        let method = |name: &str, receiver: &str, params: &[(&str, &str)], return_type: &str| {
+            let receiver = RustParam {
+                name: Some("self".to_string()),
+                type_display: receiver.to_string(),
+            };
+            RustTraitAssoc::Function {
+                name: name.to_string(),
+                signature: RustFunctionSig {
+                    receiver_contract: None,
+                    type_params: Vec::new(),
+                    params: std::iter::once(receiver)
+                        .chain(params.iter().map(|(name, ty)| RustParam {
+                            name: Some((*name).to_string()),
+                            type_display: (*ty).to_string(),
+                        }))
+                        .collect(),
+                    return_type: return_type.to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                },
+            }
+        };
+        rust_inspect::RustMetadataCache::new().insert_test_item(
+            workspace.path(),
+            RustItemMetadata {
+                canonical_path: "std::io::Read".to_string(),
+                definition_path: Some("std::io::Read".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo {
+                    items: vec![
+                        method("read", "&mut self", &[("buf", "&mut [u8]")], "Result<usize>"),
+                        method("read_to_end", "&mut self", &[("buf", "&mut Vec<u8>")], "Result<usize>"),
+                        method("read_exact", "&mut self", &[("buf", "&mut [u8]")], "Result<()>"),
+                        method("by_ref", "&mut self", &[], "&mut Self"),
+                        method("take", "self", &[("limit", "u64")], "Take<Self>"),
+                    ],
+                    derive_macro: None,
+                }),
+            },
+        )?;
+        Ok(workspace)
+    }
+
+    /// Seed the inspected `rustix::fs::flock` a consumer's Rust inspection holds when it mounts `std.fs.locking` from
+    /// source into `workspace`, as the inspector reads it: its `Fd: AsFd` descriptor is lent (`&impl AsFd`), so a
+    /// lock guard keeps the file it locked.
+    #[cfg(feature = "rust_inspect")]
+    fn seed_rustix_flock(workspace: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+        let param = |name: &str, type_display: &str| RustParam {
+            name: Some(name.to_string()),
+            type_display: type_display.to_string(),
+        };
+        rust_inspect::RustMetadataCache::new().insert_test_item(
+            workspace,
+            RustItemMetadata {
+                canonical_path: "rustix::fs::flock".to_string(),
+                definition_path: Some("rustix::fs::flock".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
+                    type_params: Vec::new(),
+                    params: vec![param("fd", "&impl AsFd"), param("operation", "FlockOperation")],
+                    return_type: "Result<()>".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )?;
+        Ok(())
+    }
+
+    /// #1561: a consumer that imports `std.io` and `std.fs` with no SDK inventory, as on a fresh home, checks those
+    /// modules and the `std.derives.collection` they import from the standard library's source, under the generated
+    /// `__incan_std` namespace. That source is the standard library's own there as it is under `std` or in an SDK
+    /// component build, and it checks with and without the consumer's Rust inspection, where `Read.by_ref(guard)` on
+    /// a `borrow_mut()` guard the inspection cannot type stays as open as it is without metadata.
+    #[test]
+    fn a_consumer_without_an_sdk_inventory_checks_std_io_and_std_fs_from_source_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project = tmp.path().join("io_repro");
+        std::fs::create_dir_all(project.join("src"))?;
+        let entry = project.join("src/main.incn");
+        std::fs::write(
+            &entry,
+            "from std.io import BytesIO\nfrom std.fs import Path\n\ndef main() -> None:\n    buffer = BytesIO()\n    print(len(buffer.getvalue()))\n    print(Path(\"a\").exists())\n",
+        )?;
+        let session = session_without_sdk_inventory(&project);
+        let modules = crate::modules::collect_modules_detailed_with_session(entry, &session)
+            .map_err(|failure| failure.render_human())?;
+        for expected in [&["io"][..], &["fs"], &["derives", "collection"]] {
+            let path = std::iter::once(stdlib::INCAN_STD_NAMESPACE)
+                .chain(expected.iter().copied())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            assert!(
+                modules.iter().any(|module| module.path_segments == path),
+                "`{}` must be collected from source: {:?}",
+                path.join("."),
+                modules
+                    .iter()
+                    .map(|module| module.path_segments.join("."))
+                    .collect::<Vec<_>>()
+            );
+        }
+        session
+            .analyze_modules(
+                &modules,
+                #[cfg(feature = "rust_inspect")]
+                None,
+            )
+            .map_err(|failure| format!("without Rust inspection:\n{}", failure.render_human()))?;
+        #[cfg(feature = "rust_inspect")]
+        {
+            let inspection = inspection_workspace_with_std_io_read()?;
+            session
+                .analyze_modules(&modules, Some(inspection.path()))
+                .map_err(|failure| format!("with Rust inspection:\n{}", failure.render_human()))?;
+        }
+        Ok(())
+    }
+
+    /// A consumer whose calls reach the methods `std.io` and `std.fs` implement in their own source, trait methods
+    /// beside inherent ones: `BytesIO.write` of bytes and the typed `BinaryWrite` writes, on a local, a parameter
+    /// spelled `_BytesIO`, a field, a list element and a module-qualified construction; the typed `BinaryRead` reads;
+    /// the same calls through a type parameter's bound; the `BinaryReader.chunks` default a `BytesIO` and a `File`
+    /// both adopt; and a `File`'s and a `Path`'s text and byte reads and writes. It imports the module
+    /// [`STD_IO_CODEC_MODULE`], which makes typed writes of its own.
+    #[cfg(feature = "rust_inspect")]
+    const STD_IO_AND_FS_CALLS: &str = r#"import std.io as io
+from std.fs import Path
+from std.io import BinaryRead, BinaryWrite, BytesIO, Endian, IoError, _BytesIO
+from codec import encode_pair
+
+
+class Encoder:
+    pub writer: _BytesIO
+
+    def put(self, item: u16) -> Result[None, IoError]:
+        return self.writer.write(item, Endian.Big)
+
+
+def put_bounded[W with BinaryWrite[u32]](writer: W, item: u32) -> Result[None, IoError]:
+    return writer.write(item, Endian.Big)
+
+
+def get_bounded[R with BinaryRead[u16]](reader: R) -> Result[u16, IoError]:
+    return reader.read(Endian.Little)
+
+
+def encode(writer: _BytesIO, item: u32) -> Result[bytes, IoError]:
+    writer.write(b"ab")?
+    small: u8 = 9
+    writer.write(small, Endian.Little)?
+    writer.write(item, Endian.Big)?
+    return Ok(writer.getvalue())
+
+
+def decode(data: bytes) -> Result[str, IoError]:
+    reader = BytesIO(data)
+    head = reader.read_exact(2)?
+    small: u8 = reader.read(Endian.Little)?
+    item: u32 = reader.read(Endian.Big)?
+    return Ok(f"{len(head)} {small} {item}")
+
+
+def chunk_count(data: bytes) -> Result[int, IoError]:
+    mut count = 0
+    for chunk in BytesIO(data).chunks(4)?:
+        count = count + 1
+    return Ok(count)
+
+
+def round_trip() -> Result[str, IoError]:
+    data = encode(BytesIO(), 258)?
+    decoded = decode(data)?
+    chunks = chunk_count(data)?
+    return Ok(f"{len(data)} {decoded} {chunks}")
+
+
+def other_receivers() -> Result[str, IoError]:
+    encoder = Encoder(writer=BytesIO())
+    encoder.put(772)?
+    stream = io.BytesIO()
+    put_bounded(stream, 5)?
+    writers = [BytesIO()]
+    narrow: u16 = 513
+    writers[0].write(narrow, Endian.Little)?
+    widened = get_bounded(BytesIO(writers[0].getvalue()))?
+    pair = encode_pair(7, 9)?
+    return Ok(f"{len(encoder.writer.getvalue())} {len(stream.getvalue())} {widened} {len(pair)}")
+
+
+def files() -> Result[str, IoError]:
+    path = Path("data.txt")
+    out = path.open("w")?
+    out.write("hello")?
+    out.write_bytes(b" world")?
+    out.flush()?
+    text = path.open("r")?
+    head = text.read(5)?
+    rest = text.read_bytes(-1)?
+    exact = path.open("rb")?.read_exact(3)?
+    mut chunks = 0
+    for chunk in path.open("rb")?.chunks(4)?:
+        chunks = chunks + 1
+    raw = Path("data.bin")
+    raw.write_bytes(b"xyz")?
+    return Ok(f"{head}|{len(rest)}|{len(exact)}|{chunks}|{len(raw.read_bytes()?)}")
+
+
+def report(outcome: Result[str, IoError]) -> None:
+    match outcome:
+        Ok(text) => println(text)
+        Err(err) => println(err.message())
+
+
+def main() -> None:
+    report(round_trip())
+    report(other_receivers())
+    report(files())
+"#;
+
+    /// The module `codec` of [`STD_IO_AND_FS_CALLS`]: typed `BytesIO` writes made in a module the entry imports.
+    #[cfg(feature = "rust_inspect")]
+    const STD_IO_CODEC_MODULE: &str = r#"from std.io import BytesIO, Endian, IoError
+
+
+pub def encode_pair(first: u16, second: i32) -> Result[bytes, IoError]:
+    out = BytesIO()
+    out.write(first, Endian.Big)?
+    out.write(second, Endian.Little)?
+    return Ok(out.getvalue())
+"#;
+
+    /// The runtime crates a program that mounts `std.io` and `std.fs` from source links beside `incan_std_core`, each
+    /// with the version its source names (`rust::byteorder @ "1"`), which selects among the versions a build holds.
+    #[cfg(feature = "rust_inspect")]
+    const STD_IO_AND_FS_RUNTIME_CRATES: [(&str, Option<&str>); 4] = [
+        ("incan_std_core", None),
+        ("byteorder", Some("1.")),
+        ("encoding_rs", Some("0.8.")),
+        ("rustix", Some("1.")),
+    ];
+
+    /// Write `source` as the entry of a project with no SDK inventory under `root`, beside each of `modules` as a
+    /// module of that name, and collect its module graph as a consumer on a fresh home collects it: every `std` module
+    /// the entry reaches comes from source.
+    #[cfg(feature = "rust_inspect")]
+    fn consumer_without_sdk_inventory(
+        root: &Path,
+        source: &str,
+        modules: &[(&str, &str)],
+    ) -> Result<(CompilationSession, Vec<ParsedModule>), Box<dyn std::error::Error>> {
+        let project = root.join("consumer");
+        std::fs::create_dir_all(project.join("src"))?;
+        for (name, module) in modules {
+            std::fs::write(project.join("src").join(format!("{name}.incn")), module)?;
+        }
+        let entry = project.join("src/main.incn");
+        std::fs::write(&entry, source)?;
+        let session = session_without_sdk_inventory(&project);
+        let modules = crate::modules::collect_modules_detailed_with_session(entry, &session)
+            .map_err(|failure| failure.render_human())?;
+        Ok((session, modules))
+    }
+
+    /// Check `modules` in `session` with the Rust inspection in `inspection`, generate the Rust project an Oven build
+    /// prepares from those facts under `output`, and return its crate root.
+    ///
+    /// The entry module is the crate root; every other module, each standard-library module mounted from source
+    /// included, is emitted under its module path with its public items kept, and the edition is the Oven's default.
+    #[cfg(feature = "rust_inspect")]
+    fn generate_consumer_project(
+        session: &CompilationSession,
+        modules: &[ParsedModule],
+        inspection: &Path,
+        output: &Path,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        use crate::backend::ir::IrCodegen;
+        use crate::backend::project::ProjectGenerator;
+
+        let analysis = session
+            .analyze_modules(modules, Some(inspection))
+            .map_err(|failure| failure.render_human())?;
+        let (entry, dependencies) = modules.split_last().ok_or("the module graph has no entry module")?;
+        let type_info_of = |module: &ParsedModule| {
+            analysis
+                .type_info_for_path(&module.file_path)
+                .cloned()
+                .ok_or_else(|| format!("no analysis for {}", module.file_path.display()))
+        };
+        let mut dependency_type_info = std::collections::HashMap::new();
+        let mut codegen = IrCodegen::new();
+        codegen.set_rust_inspect_manifest_dir(inspection.to_path_buf());
+        codegen.set_preserve_dependency_public_items(true);
+        codegen.set_registry_package_identity(Some("consumer".to_string()));
+        codegen.set_root_source_module_name(Some("main".to_string()));
+        codegen.set_provider_plan(session.provider_plan_for_modules(modules)?);
+        for module in dependencies {
+            codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
+            dependency_type_info.insert(module.path_segments.clone(), type_info_of(module)?);
+        }
+        codegen.set_stdlib_cache(analysis.stdlib_cache().clone());
+        codegen.set_prechecked_type_info(type_info_of(entry)?, dependency_type_info);
+        let module_paths = dependencies
+            .iter()
+            .map(|module| module.path_segments.clone())
+            .collect::<Vec<_>>();
+        let (main_code, rust_modules) = codegen.try_generate_multi_file_nested(&entry.ast, &module_paths)?;
+        let mut generator = ProjectGenerator::new(output, "consumer", true);
+        generator.set_rust_edition(Some("2024".to_string()));
+        generator.generate_nested(&main_code, &rust_modules)?;
+        Ok(generator.crate_root_path())
+    }
+
+    /// Build the generated binary crate rooted at `crate_root` with rustc, linking `runtime_crates`, run it in
+    /// `run_directory` and return its standard output.
+    ///
+    /// Under the compiler suite, the stored capability names rustc, the standard library's facets and the directories
+    /// the suite built the workspace's crates into; see [`generated_program_rustc`]. Otherwise rustc links the runtime
+    /// crates this test binary's own build produced, found beside it in the target profile.
+    #[cfg(feature = "rust_inspect")]
+    fn build_and_run_generated_program(
+        crate_root: &Path,
+        runtime_crates: &[(&str, Option<&str>)],
+        run_directory: &Path,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let build = tempfile::tempdir()?;
+        let program = build.path().join("program");
+        let mut command = generated_program_rustc(runtime_crates)?;
+        let built = command
+            .arg(crate_root)
+            .arg("-o")
+            .arg(&program)
+            .env("CARGO_PKG_NAME", "consumer")
+            .env("CARGO_PKG_VERSION", "0.1.0")
+            .output()?;
+        if !built.status.success() {
+            return Err(format!(
+                "rustc refused the generated program:\n{}",
+                String::from_utf8_lossy(&built.stderr)
+            )
+            .into());
+        }
+        let ran = std::process::Command::new(&program)
+            .current_dir(run_directory)
+            .output()?;
+        if !ran.status.success() {
+            return Err(format!(
+                "the generated program failed:\n{}",
+                String::from_utf8_lossy(&ran.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8(ran.stdout)?)
+    }
+
+    /// Return a rustc invocation for one generated binary with `runtime_crates` as the crates it may name.
+    ///
+    /// Under the compiler suite, the stored capability's externs are the standard library's facets and the crates
+    /// they link, so a runtime crate a module mounted from source names beyond them (`byteorder`, `encoding_rs`,
+    /// `rustix`) is not among them: rustc refused `use ::rustix::fs::flock` with E0433. Each such crate is one of this
+    /// test binary's own dependencies, which the suite builds into the directories the capability searches, and it is
+    /// found there by name and version.
+    #[cfg(feature = "rust_inspect")]
+    fn generated_program_rustc(
+        runtime_crates: &[(&str, Option<&str>)],
+    ) -> Result<std::process::Command, Box<dyn std::error::Error>> {
+        use oven_store::compiler_suite_env::{OVEN_COMPILER_SUITE_CAPABILITY_ENV, OvenCompilerSuiteCapability};
+
+        let capability = OvenCompilerSuiteCapability::from_environment(OVEN_COMPILER_SUITE_CAPABILITY_ENV)
+            .map_err(std::io::Error::other)?;
+        let rustc = capability
+            .as_ref()
+            .map(|capability| capability.rustc.clone())
+            .or_else(|| std::env::var_os("RUSTC").map(PathBuf::from))
+            .unwrap_or_else(|| "rustc".into());
+        let mut command = std::process::Command::new(rustc);
+        command.args([
+            "--edition=2024",
+            "-A",
+            "warnings",
+            "--crate-name=consumer",
+            "--crate-type=bin",
+        ]);
+        if let Some(capability) = capability {
+            for path in &capability.dependency_search_paths {
+                command.arg("-L").arg(format!("dependency={}", path.display()));
+            }
+            for (name, path) in &capability.externs {
+                command.arg("--extern").arg(format!("{name}={}", path.display()));
+            }
+            for (name, version) in runtime_crates {
+                if capability.externs.contains_key(*name) {
+                    continue;
+                }
+                let artifact = newest_build_artifact(&capability.dependency_search_paths, name, "rlib", *version)?
+                    .ok_or_else(|| {
+                        format!("building a generated program requires the compiler suite to hold a compiled `{name}`")
+                    })?;
+                command.arg("--extern").arg(format!("{name}={}", artifact.display()));
+            }
+            return Ok(command);
+        }
+        let directories = test_build_artifact_directories()?;
+        for directory in &directories {
+            command.arg("-L").arg(format!("dependency={}", directory.display()));
+        }
+        let derive = newest_build_artifact(&directories, "incan_derive", std::env::consts::DLL_EXTENSION, None)?
+            .ok_or("building a generated program requires a compiled incan_derive")?;
+        command
+            .arg("--extern")
+            .arg(format!("incan_derive={}", derive.display()));
+        for (name, version) in runtime_crates {
+            let artifact = newest_build_artifact(&directories, name, "rlib", *version)?
+                .ok_or_else(|| format!("building a generated program requires a compiled `{name}`"))?;
+            command.arg("--extern").arg(format!("{name}={}", artifact.display()));
+        }
+        Ok(command)
+    }
+
+    /// Return the directories of this test binary's target profile that hold the crates its own build compiled.
+    ///
+    /// Cargo places every compiled crate of one build in the same layout as the test binary: beside it in `deps`, or
+    /// in each build unit's output directory under `build`. Only that layout is searched, because another toolchain's
+    /// build of the same profile, such as the SDK prewarm's, can leave crates in the other one that the rustc on
+    /// `PATH` refuses (E0514).
+    #[cfg(feature = "rust_inspect")]
+    fn test_build_artifact_directories() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+        let executable = std::env::current_exe()?;
+        if let Some(deps) = executable
+            .parent()
+            .filter(|parent| parent.file_name().is_some_and(|name| name == "deps"))
+        {
+            return Ok(vec![deps.to_path_buf()]);
+        }
+        let profile = executable
+            .ancestors()
+            .find(|ancestor| ancestor.join("build").is_dir())
+            .ok_or("the test executable has no target profile directory")?;
+        let mut directories = Vec::new();
+        for package in std::fs::read_dir(profile.join("build"))? {
+            for unit in std::fs::read_dir(package?.path())? {
+                let output = unit?.path().join("out");
+                if output.is_dir() {
+                    directories.push(output);
+                }
+            }
+        }
+        Ok(directories)
+    }
+
+    /// Find the newest compiled `lib<name>-<hash>.<extension>` in `directories`, of the version `version` starts when
+    /// one is given.
+    ///
+    /// The version is read from the crate's source directory (`rustix-1.1.4/src/lib.rs`), which the dependency file
+    /// rustc writes beside the artifact names, so a build that holds two versions of one crate yields the one asked
+    /// for. A build that keeps no dependency files, as the compiler suite's does, leaves the same source paths in the
+    /// artifact's own metadata, which is read instead.
+    #[cfg(feature = "rust_inspect")]
+    fn newest_build_artifact(
+        directories: &[PathBuf],
+        name: &str,
+        extension: &str,
+        version: Option<&str>,
+    ) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+        let prefix = format!("lib{name}-");
+        let mut matches = Vec::new();
+        for directory in directories {
+            for entry in std::fs::read_dir(directory)? {
+                let path = entry?.path();
+                let Some(hash) = path
+                    .file_name()
+                    .and_then(|file| file.to_str())
+                    .and_then(|file| file.strip_prefix(&prefix))
+                    .and_then(|file| file.strip_suffix(&format!(".{extension}")))
+                else {
+                    continue;
+                };
+                if let Some(version) = version {
+                    let dependency_file = directory.join(format!("{name}-{hash}.d"));
+                    let sources = std::fs::read(dependency_file).or_else(|_| std::fs::read(&path))?;
+                    let names_directory = |directory: String| {
+                        sources
+                            .windows(directory.len())
+                            .any(|window| window == directory.as_bytes())
+                    };
+                    if !names_directory(format!("{}-{version}", name.replace('_', "-")))
+                        && !names_directory(format!("{name}-{version}"))
+                    {
+                        continue;
+                    }
+                }
+                let modified = std::fs::metadata(&path).and_then(|metadata| metadata.modified()).ok();
+                matches.push((modified, path));
+            }
+        }
+        matches.sort_by_key(|(modified, _)| *modified);
+        Ok(matches.pop().map(|(_, path)| path))
+    }
+
+    /// #1561: a consumer with no SDK inventory emits the `std.io` and `std.fs` modules it mounts from source beside
+    /// its own, and every standard-library method it calls names an item those modules emit, whatever dispatch
+    /// selected it; the program builds with rustc and runs.
+    ///
+    /// A mounted module declares its methods under `__incan_std.*`, while the consumer and its other modules see them
+    /// under `std.*`. A call dispatched through `BinaryWrite`, `BinaryRead` or `BinaryReader` on a `BytesIO` named the
+    /// method under `std.io`, which no module emits, and rustc refused the program with E0599, in the entry and in
+    /// `codec` alike.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn a_consumer_without_an_sdk_inventory_builds_std_io_and_std_fs_trait_calls_from_source_issue1561()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let (session, modules) =
+            consumer_without_sdk_inventory(tmp.path(), STD_IO_AND_FS_CALLS, &[("codec", STD_IO_CODEC_MODULE)])?;
+        let inspection = inspection_workspace_with_std_io_read()?;
+        seed_rustix_flock(inspection.path())?;
+        let crate_root =
+            generate_consumer_project(&session, &modules, inspection.path(), &tmp.path().join("generated"))?;
+        let run_directory = tmp.path().join("run");
+        std::fs::create_dir_all(&run_directory)?;
+        let stdout = build_and_run_generated_program(&crate_root, &STD_IO_AND_FS_RUNTIME_CRATES, &run_directory)?;
+        assert_eq!(stdout, "7 2 9 258 2\n2 4 513 6\nhello|6|3|3|3\n");
         Ok(())
     }
 }

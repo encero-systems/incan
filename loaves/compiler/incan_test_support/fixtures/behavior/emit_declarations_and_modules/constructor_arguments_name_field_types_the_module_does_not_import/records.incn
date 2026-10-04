@@ -1,0 +1,30 @@
+from ids import EvidenceId, Evidence, Kind, Tag
+
+
+pub model Decision:
+    pub name: str
+    pub admitted_evidence_ids: list[EvidenceId]
+    pub scores: dict[EvidenceId, int]
+    pub seen: set[EvidenceId]
+    pub first: Option[EvidenceId]
+    pub nested: list[list[Evidence]]
+    pub pairs: list[tuple[EvidenceId, Kind]]
+    pub kinds: dict[str, Kind]
+
+
+pub def make_id(text: str) -> EvidenceId:
+    return EvidenceId(text)
+
+
+pub def count_kinds(kinds: list[Kind]) -> int:
+    return len(kinds)
+
+
+pub def describe(first: Option[Evidence]) -> str:
+    match first:
+        Some(evidence) => return evidence.id
+        None => return "none"
+
+
+pub def tag_count(tags: list[Tag]) -> int:
+    return len(tags)

@@ -26,7 +26,7 @@ use incan_provider::ProviderPlan;
 #[cfg(test)]
 use incan_provider::requirements::dependency_specs_match;
 use oven_cargo_compat::{OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency};
-use oven_model::manifest::{DependencySource, DependencySpec};
+use oven_model::manifest::{DependencySource, DependencySpec, LOAF_MANIFEST_FILENAME};
 use oven_rustc::plan::selection::SelectedPackagedProviderPlans;
 use oven_rustc::rustc::{OvenRustcArtifactManifest, OvenRustcArtifactPlan, trusted_artifact_plan_for_source_evidence};
 use oven_store::store::OvenStore;
@@ -278,10 +278,12 @@ pub fn checked_packaged_provider_profiles(
                 artifact.dependency_key
             )));
         };
+        let source_available = caller_owned_provider_source_is_available(artifact);
         for (profile, package) in profiles.iter().zip(packages) {
             checked.push(CheckedPackagedProviderProfile {
                 dependency_key: artifact.dependency_key.clone(),
                 artifact_root: artifact.crate_root.clone(),
+                source_available,
                 profile: (*profile).to_string(),
                 package,
             });
@@ -342,9 +344,11 @@ pub fn checked_test_dependency_package_profiles(
                 dependency.crate_name
             ))
         })?;
+        let source_available = caller_owned_provider_source_is_available(&artifact);
         checked.push(CheckedPackagedProviderProfile {
             dependency_key: artifact.dependency_key,
             artifact_root: artifact.crate_root,
+            source_available,
             profile: "debug".to_string(),
             package,
         });
@@ -352,6 +356,19 @@ pub fn checked_test_dependency_package_profiles(
     checked.sort_by(|left, right| left.dependency_key.cmp(&right.dependency_key));
     checked.dedup_by(|left, right| left.dependency_key == right.dependency_key);
     Ok(checked)
+}
+
+/// Return whether a generated package artifact still has its caller-owned project source beside it.
+///
+/// Materialized Incan libraries live at `<project>/target/lib`, so the manifest two levels above is the same source
+/// boundary that provider re-materialization uses. Imported source-free packages retain their generated artifacts
+/// and package Loaf but have no owning project manifest at that location.
+fn caller_owned_provider_source_is_available(artifact: &LibraryArtifactMetadata) -> bool {
+    artifact
+        .crate_root
+        .parent()
+        .and_then(Path::parent)
+        .is_some_and(|root| root.join(LOAF_MANIFEST_FILENAME).is_file())
 }
 
 /// Materialize every already baked provider Loaf into the consumer's bounded store at the explicit bake boundary.
@@ -503,6 +520,23 @@ mod tests {
         OvenRustcArtifactManifest, OvenRustcArtifactPlan, trusted_artifact_plan_for_source_evidence,
     };
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
+
+    #[test]
+    fn caller_owned_provider_source_availability_requires_the_owning_project_manifest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let artifact_root = project.path().join("target/lib");
+        fs::create_dir_all(&artifact_root)?;
+        let artifact = LibraryArtifactMetadata::from_crate_root("provider", "provider", &artifact_root);
+        assert!(!caller_owned_provider_source_is_available(&artifact));
+
+        fs::write(
+            project.path().join(LOAF_MANIFEST_FILENAME),
+            "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n",
+        )?;
+        assert!(caller_owned_provider_source_is_available(&artifact));
+        Ok(())
+    }
 
     /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
     #[test]

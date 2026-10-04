@@ -37,25 +37,28 @@ use incan_frontend::ast::{Declaration, ImportKind, Program};
 use incan_frontend::diagnostics::CompileError;
 use incan_frontend::library_manifest::{
     ExportIdentityKind, ImplementationAssociatedTypeExport, ImplementationTraitBoundExport,
-    ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, TypeBoundExport, TypeRef,
+    ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, TypeBoundExport,
+    TypeParamExport, TypeRef,
 };
 use incan_frontend::library_manifest_index::LibraryManifestIndex;
 use incan_frontend::module::canonicalize_source_module_segments;
 use incan_frontend::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
-use incan_lang::lang::{rust_keywords, stdlib};
+#[cfg(test)]
+use incan_lang::lang::traits;
+use incan_lang::lang::{rust_keywords, stdlib, trait_bounds};
 use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 
 use crate::emit::CallableNameResolution;
 use crate::{EmitError, EmitService, IrEmitter};
-use incan_ir::decl::{IrTraitBoundOrigin, IrTypeParam, Visibility};
+use incan_ir::decl::{FunctionParamDefault, IrTraitBoundOrigin, IrTypeParam, Visibility};
 use incan_ir::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
 };
 use incan_ir::types::{IrType, manifest_type_ref_from_ir};
-use incan_ir::{AstLowering, FunctionRegistry, IrProgram, LoweringErrors};
+use incan_ir::{AstLowering, FunctionRegistry, IrDeclKind, IrExpr, IrExprKind, IrProgram, LoweringErrors};
 
 mod capability_bridge;
 mod dependency_metadata;
@@ -65,8 +68,9 @@ mod string_try_from_bridge;
 
 use dependency_metadata::{
     DependencySymbolMetadata, collect_dependency_symbol_metadata, collect_externally_reachable_items_by_module,
-    collect_model_field_aliases, record_direct_generated_path_support_items_from_ir,
-    should_preserve_dependency_public_items,
+    collect_model_field_aliases, publish_default_constructed_fields, record_default_path_items_from_ir,
+    record_direct_generated_path_support_items_from_ir, should_preserve_dependency_public_items, source_module_origins,
+    source_module_rust_paths,
 };
 use ordinal_bridge::{OrdinalBridgeConfig, compilation_imports_std_ordinal_contract, imports_std_ordinal_contract};
 use serde_activation::{add_serde_to_newtypes, collect_serde_derives};
@@ -202,6 +206,31 @@ struct CapturedImplementationBoundRequirement {
     target_visibility: CapturedImplementationTargetVisibility,
 }
 
+/// Inferred bounds on one exported model or class's inherent implementation and methods.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapturedInherentBounds {
+    module_path: Vec<String>,
+    target_type: String,
+    owner_type_params: Vec<IrTypeParam>,
+    methods: Vec<(String, Vec<IrTypeParam>)>,
+}
+
+/// Inferred bounds on one exported free function or trait method.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CapturedCallableBounds {
+    Function {
+        module_path: Vec<String>,
+        name: String,
+        type_params: Vec<IrTypeParam>,
+    },
+    TraitMethod {
+        module_path: Vec<String>,
+        trait_name: String,
+        method_name: String,
+        type_params: Vec<IrTypeParam>,
+    },
+}
+
 /// Visibility of an implementation target resolved within the IR program that owns the implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CapturedImplementationTargetVisibility {
@@ -213,6 +242,9 @@ enum CapturedImplementationTargetVisibility {
 #[derive(Debug, Clone, Default)]
 pub struct IrGenerationMetadata {
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+    inherent_bounds: Vec<CapturedInherentBounds>,
+    /// Inferred free-function and trait-method bounds resolved from the exact emitted IR.
+    callable_bounds: Vec<CapturedCallableBounds>,
     emitted_declaration_types: Vec<crate::emit::native_unions::EmittedDeclarationTypes>,
     native_unions: Vec<incan_frontend::library_manifest::NativeUnionExport>,
     provider_plan: Option<Arc<ProviderPlan>>,
@@ -324,6 +356,69 @@ impl IrGenerationMetadata {
                 ));
             }
         }
+        for captured in &self.inherent_bounds {
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                for module in &mut api.modules {
+                    if module.module_path != captured.module_path {
+                        continue;
+                    }
+                    for declaration in &mut module.declarations {
+                        match declaration {
+                            ApiDeclaration::Model(model) if model.name == captured.target_type => {
+                                merge_inferred_type_params(&mut model.type_params, &captured.owner_type_params)?;
+                                merge_inferred_method_type_params(&mut model.methods, &captured.methods)?;
+                            }
+                            ApiDeclaration::Class(class) if class.name == captured.target_type => {
+                                merge_inferred_type_params(&mut class.type_params, &captured.owner_type_params)?;
+                                merge_inferred_method_type_params(&mut class.methods, &captured.methods)?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            let mut source_path = captured.module_path.clone();
+            source_path.push(captured.target_type.clone());
+            let public_exports = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|identity| identity.source_path == source_path)
+                .map(|identity| (identity.public_name.clone(), identity.kind))
+                .collect::<Vec<_>>();
+            for (public_name, kind) in public_exports {
+                match kind {
+                    ExportIdentityKind::Model => {
+                        if let Some(model) = manifest
+                            .exports
+                            .models
+                            .iter_mut()
+                            .find(|model| model.name == public_name)
+                        {
+                            merge_inferred_type_params(&mut model.type_params, &captured.owner_type_params)?;
+                            merge_inferred_method_type_params(&mut model.methods, &captured.methods)?;
+                        }
+                    }
+                    ExportIdentityKind::Class => {
+                        if let Some(class) = manifest
+                            .exports
+                            .classes
+                            .iter_mut()
+                            .find(|class| class.name == public_name)
+                        {
+                            merge_inferred_type_params(&mut class.type_params, &captured.owner_type_params)?;
+                            merge_inferred_method_type_params(&mut class.methods, &captured.methods)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for captured in &self.callable_bounds {
+            apply_callable_bounds_to_manifest(manifest, captured)?;
+        }
         for captured in &self.emitted_declaration_types {
             captured.apply(manifest);
         }
@@ -331,6 +426,239 @@ impl IrGenerationMetadata {
         crate::emit::native_unions::preserve_native_aliases(manifest, self.provider_plan.as_deref())?;
         Ok(())
     }
+}
+
+/// Merge compiler-inferred bounds into matching manifest type parameters without replacing source-declared bounds.
+///
+/// The emitted IR carries every bound a type parameter needs, the source-declared ones included, spelled as the Rust
+/// trait each lowers to and without the declaration's module path. A bound naming a trait the parameter already
+/// declares is that declaration, not an inferred requirement, so it is not published a second time: its IR spelling
+/// would not resolve like the declared bound in a consumer, where a trait method's bound over its trait's own type
+/// parameter (`Callable1[E, F]`) keeps `E` as a nominal name the adopter's type arguments never replace.
+fn merge_inferred_type_params(target: &mut [TypeParamExport], inferred: &[IrTypeParam]) -> Result<(), String> {
+    for inferred_param in inferred {
+        let Some(target_param) = target.iter_mut().find(|param| param.name == inferred_param.name) else {
+            continue;
+        };
+        for bound in &inferred_param.bounds {
+            if declares_bound_trait(&target_param.bounds, &bound.trait_path) {
+                continue;
+            }
+            let exported = inferred_type_bound_export(bound)?;
+            if !target_param.bounds.iter().any(|existing| {
+                existing.name == exported.name
+                    && existing.type_args == exported.type_args
+                    && existing.source_name == exported.source_name
+                    && existing.module_path == exported.module_path
+            }) {
+                target_param.bounds.push(exported);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Return whether a source-declared bound among `bounds` names the trait an emitted bound's Rust path lowers from.
+fn declares_bound_trait(bounds: &[TypeBoundExport], rust_trait_path: &str) -> bool {
+    let trait_name = match trait_bounds::rust_to_incan(rust_trait_path) {
+        Some(incan_name) => incan_name,
+        None => bound_trait_leaf(rust_trait_path),
+    };
+    bounds
+        .iter()
+        .filter(|bound| !bound.inferred)
+        .any(|bound| bound_trait_leaf(bound.source_name.as_deref().unwrap_or(&bound.name)) == trait_name)
+}
+
+/// Return a bound's trait name without the module or crate path it is spelled with.
+fn bound_trait_leaf(path: &str) -> &str {
+    path.rsplit(['.', ':']).next().unwrap_or(path)
+}
+
+/// Map each import alias a program binds to the name of the item it imports.
+fn import_alias_names(program: &IrProgram) -> HashMap<String, String> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.kind {
+            IrDeclKind::Import { items, .. } => Some(items),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|item| Some((item.alias.clone()?, item.name.clone())))
+        .collect()
+}
+
+/// Spell each bound of `type_params` by the imported item's own name where the source wrote an import alias, so a
+/// declared bound written through the alias (`T with RustSerialize`) is recognized as the declaration it restates.
+fn unaliased_type_params(type_params: &[IrTypeParam], aliases: &HashMap<String, String>) -> Vec<IrTypeParam> {
+    type_params
+        .iter()
+        .map(|param| {
+            let mut param = param.clone();
+            for bound in &mut param.bounds {
+                if let Some(name) = aliases.get(&bound.trait_path) {
+                    bound.trait_path = name.clone();
+                }
+            }
+            param
+        })
+        .collect()
+}
+
+/// Merge inferred type-parameter bounds into the corresponding exported methods.
+fn merge_inferred_method_type_params(
+    methods: &mut [impl InferredMethodExport],
+    inferred: &[(String, Vec<IrTypeParam>)],
+) -> Result<(), String> {
+    for method in methods {
+        let method_name = method.method_name().to_string();
+        for (_, type_params) in inferred.iter().filter(|(name, _)| name == &method_name) {
+            merge_inferred_type_params(method.method_type_params_mut(), type_params)?;
+        }
+    }
+    Ok(())
+}
+
+/// Shared access to method metadata in checked API and public manifest exports.
+trait InferredMethodExport {
+    /// The method's source name, which inferred bounds are keyed by.
+    fn method_name(&self) -> &str;
+    /// The method's exported type parameters, whose bounds inference extends in place.
+    fn method_type_params_mut(&mut self) -> &mut [TypeParamExport];
+}
+
+impl InferredMethodExport for incan_frontend::api_metadata::ApiMethod {
+    fn method_name(&self) -> &str {
+        &self.name
+    }
+
+    fn method_type_params_mut(&mut self) -> &mut [TypeParamExport] {
+        &mut self.type_params
+    }
+}
+
+impl InferredMethodExport for incan_frontend::library_manifest::MethodExport {
+    fn method_name(&self) -> &str {
+        &self.name
+    }
+
+    fn method_type_params_mut(&mut self) -> &mut [TypeParamExport] {
+        &mut self.type_params
+    }
+}
+
+/// Convert an inferred IR trait requirement into the checked manifest shape.
+fn inferred_type_bound_export(bound: &incan_ir::decl::IrTraitBound) -> Result<TypeBoundExport, String> {
+    Ok(TypeBoundExport {
+        name: bound.trait_path.clone(),
+        source_name: None,
+        module_path: None,
+        type_args: bound
+            .type_args
+            .iter()
+            .map(manifest_type_ref_from_ir)
+            .collect::<Result<Vec<_>, _>>()?,
+        implementation_type_params: Vec::new(),
+        inferred: true,
+    })
+}
+
+/// Publish inferred free-function and trait-method bounds to checked API and public export surfaces (#1826).
+fn apply_callable_bounds_to_manifest(
+    manifest: &mut LibraryManifest,
+    captured: &CapturedCallableBounds,
+) -> Result<(), String> {
+    match captured {
+        CapturedCallableBounds::Function {
+            module_path,
+            name,
+            type_params,
+        } => {
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                for module in &mut api.modules {
+                    if module.module_path == *module_path {
+                        for declaration in &mut module.declarations {
+                            if let ApiDeclaration::Function(function) = declaration
+                                && function.name == *name
+                            {
+                                merge_inferred_type_params(&mut function.type_params, type_params)?;
+                            }
+                        }
+                    }
+                }
+            }
+            let mut source_path = module_path.clone();
+            source_path.push(name.clone());
+            let public_names = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|identity| identity.kind == ExportIdentityKind::Function && identity.source_path == source_path)
+                .map(|identity| identity.public_name.clone())
+                .collect::<Vec<_>>();
+            for public_name in public_names {
+                if let Some(function) = manifest
+                    .exports
+                    .functions
+                    .iter_mut()
+                    .find(|function| function.name == public_name)
+                {
+                    merge_inferred_type_params(&mut function.type_params, type_params)?;
+                }
+            }
+        }
+        CapturedCallableBounds::TraitMethod {
+            module_path,
+            trait_name,
+            method_name,
+            type_params,
+        } => {
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                for module in &mut api.modules {
+                    if module.module_path == *module_path {
+                        for declaration in &mut module.declarations {
+                            if let ApiDeclaration::Trait(trait_decl) = declaration
+                                && trait_decl.name == *trait_name
+                            {
+                                for method in &mut trait_decl.methods {
+                                    if method.name == *method_name {
+                                        merge_inferred_type_params(&mut method.type_params, type_params)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut source_path = module_path.clone();
+            source_path.push(trait_name.clone());
+            let public_names = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|identity| identity.kind == ExportIdentityKind::Trait && identity.source_path == source_path)
+                .map(|identity| identity.public_name.clone())
+                .collect::<Vec<_>>();
+            for public_name in public_names {
+                if let Some(trait_export) = manifest
+                    .exports
+                    .traits
+                    .iter_mut()
+                    .find(|trait_export| trait_export.name == public_name)
+                {
+                    for method in &mut trait_export.methods {
+                        if method.name == *method_name {
+                            merge_inferred_type_params(&mut method.type_params, type_params)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Return the adopted-trait surface for a manifest declaration that can own implementations.
@@ -403,6 +731,14 @@ fn implementation_type_param_export(type_param: &IrTypeParam) -> Result<Implemen
                         IrTraitBoundOrigin::Standard => ImplementationTraitBoundOriginExport::Standard,
                         IrTraitBoundOrigin::RustCapability => ImplementationTraitBoundOriginExport::RustCapability,
                         IrTraitBoundOrigin::SourceCallable => ImplementationTraitBoundOriginExport::SourceCallable,
+                        // A function type's `Fn` bound spells a parameter or return type, never an implementation
+                        // header, so it has no manifest form.
+                        IrTraitBoundOrigin::FunctionType => {
+                            return Err(format!(
+                                "a function type's `{}` bound cannot bound an implementation header",
+                                bound.trait_path
+                            ));
+                        }
                     },
                 })
             })
@@ -496,6 +832,9 @@ pub struct IrCodegen<'a> {
     canonical_emission_package_identity: Option<String>,
     /// Canonical source-module path for the root program when its parsed AST lacks a source path.
     root_source_module_name: Option<String>,
+    /// Whether the programs being generated are modules of the standard library, which the checker checks under the
+    /// standard library's own rules.
+    standard_library_source: bool,
     /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
     /// performs for multi-module builds.
     stdlib_cache: StdlibAstCache,
@@ -508,6 +847,10 @@ pub struct IrCodegen<'a> {
     prechecked_dependency_type_info: HashMap<Vec<String>, TypeCheckInfo>,
     /// Bound-bearing implementation headers resolved from the exact IR emitted for this compilation.
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+    /// Inferred inherent-implementation and method bounds resolved from the exact emitted IR.
+    inherent_bounds: Vec<CapturedInherentBounds>,
+    /// Inferred free-function and trait-method bounds resolved from the exact emitted IR.
+    callable_bounds: Vec<CapturedCallableBounds>,
     /// Authoritative checked-API path for a library root while collecting manifest metadata.
     metadata_root_module_path: Option<Vec<String>>,
     /// Checked API supplied by the publication caller, joined only to the same emitted source module.
@@ -575,6 +918,97 @@ fn merge_native_union_capture(
 }
 
 impl<'a> IrCodegen<'a> {
+    /// Complete the callable signature of each call this module makes, through a canonical callee path, to a function
+    /// another module of the compilation declares.
+    ///
+    /// A call whose lowering carried no signature takes the declaring module's parameters, defaults included, so the
+    /// passes after this one and emission see the callee's declared surface (#1842). Every emitted module is such a
+    /// caller, the crate root and each source module alike, so `dependency_programs` holds every other lowered module
+    /// of the compilation keyed by its module path. A static such a default reads needs no binding in the caller:
+    /// lowering names it through the module that declares it.
+    fn complete_external_call_signatures<'p>(
+        program: &mut IrProgram,
+        dependency_programs: impl IntoIterator<Item = (&'p [String], &'p IrProgram)>,
+    ) {
+        use incan_ir::{Visitor, walk_expr};
+
+        let mut callables = HashMap::new();
+        for (module_path, dependency) in dependency_programs {
+            for decl in &dependency.declarations {
+                if let IrDeclKind::Function(function) = &decl.kind {
+                    callables.insert(
+                        (module_path.to_vec(), function.name.clone()),
+                        incan_ir::FunctionSignature {
+                            params: function.params.clone(),
+                            return_type: function.return_type.clone(),
+                        },
+                    );
+                }
+            }
+        }
+
+        struct ExternalCallSignatures<'a> {
+            callables: &'a HashMap<(Vec<String>, String), incan_ir::FunctionSignature>,
+        }
+        impl Visitor for ExternalCallSignatures<'_> {
+            fn expr(&mut self, expr: &mut IrExpr) {
+                if let IrExprKind::Call {
+                    callable_signature,
+                    canonical_path: Some(canonical_path),
+                    ..
+                } = &mut expr.kind
+                    && callable_signature.is_none()
+                    && let Some((callable_name, module_path)) = canonical_path.split_last()
+                {
+                    *callable_signature = self
+                        .callables
+                        .get(&(module_path.to_vec(), callable_name.clone()))
+                        .cloned();
+                }
+                walk_expr(expr, self);
+            }
+        }
+
+        /// Visit every expression a function evaluates: its source parameter defaults, then its body.
+        fn visit_function(function: &mut incan_ir::IrFunction, visitor: &mut impl Visitor) {
+            for param in &mut function.params {
+                if let Some(FunctionParamDefault::Source(default)) = &mut param.default {
+                    visitor.expr(default);
+                }
+            }
+            for stmt in &mut function.body {
+                visitor.stmt(stmt);
+            }
+        }
+
+        let mut visitor = ExternalCallSignatures { callables: &callables };
+        for stmt in &mut program.module_init {
+            visitor.stmt(stmt);
+        }
+        for decl in &mut program.declarations {
+            match &mut decl.kind {
+                IrDeclKind::Function(function) => visit_function(function, &mut visitor),
+                IrDeclKind::Impl(implementation) => {
+                    for method in &mut implementation.methods {
+                        visit_function(method, &mut visitor);
+                    }
+                }
+                IrDeclKind::Trait(declaration) => {
+                    for method in &mut declaration.methods {
+                        visit_function(method, &mut visitor);
+                    }
+                }
+                IrDeclKind::Struct(declaration) => {
+                    for default in declaration.fields.iter_mut().filter_map(|field| field.default.as_mut()) {
+                        visitor.expr(default);
+                    }
+                }
+                IrDeclKind::Const { value, .. } | IrDeclKind::Static { value, .. } => visitor.expr(value),
+                _ => {}
+            }
+        }
+    }
+
     /// Create a new IR-based code generator
     pub fn new() -> Self {
         Self {
@@ -600,10 +1034,13 @@ impl<'a> IrCodegen<'a> {
             registry_package_identity: None,
             canonical_emission_package_identity: None,
             root_source_module_name: None,
+            standard_library_source: false,
             stdlib_cache: StdlibAstCache::new(),
             prechecked_main_type_info: None,
             prechecked_dependency_type_info: HashMap::new(),
             implementation_bound_requirements: Vec::new(),
+            inherent_bounds: Vec::new(),
+            callable_bounds: Vec::new(),
             metadata_root_module_path: None,
             publication_api: None,
             publication_identities: Default::default(),
@@ -741,6 +1178,100 @@ impl<'a> IrCodegen<'a> {
                         .cmp(&right.requirement.trait_source_name),
                 )
         });
+    }
+
+    /// Capture inferred inherent-implementation headers and method generics for compiled-library consumers (#1819).
+    fn capture_inherent_bounds(&mut self, module_path: Vec<String>, program: &IrProgram) {
+        let aliases = import_alias_names(program);
+        for declaration in &program.declarations {
+            let IrDeclKind::Impl(implementation) = &declaration.kind else {
+                continue;
+            };
+            if implementation.trait_name.is_some() {
+                continue;
+            }
+            let public_target = program.declarations.iter().any(|candidate| match &candidate.kind {
+                IrDeclKind::Struct(target) => {
+                    target.name == implementation.target_type && !matches!(target.visibility, Visibility::Private)
+                }
+                _ => false,
+            });
+            if !public_target {
+                continue;
+            }
+            let source_method_name = |emitted_name: &str| {
+                program
+                    .member_projections
+                    .iter()
+                    .find_map(|(owner, source_name, identity)| {
+                        (owner == &implementation.target_type
+                            && incan_semantics_core::encode_incan_symbol_identity(identity) == emitted_name)
+                            .then(|| source_name.clone())
+                    })
+                    .unwrap_or_else(|| emitted_name.to_string())
+            };
+            let captured = CapturedInherentBounds {
+                module_path: module_path.clone(),
+                target_type: implementation.target_type.clone(),
+                owner_type_params: unaliased_type_params(&implementation.type_params, &aliases),
+                methods: implementation
+                    .methods
+                    .iter()
+                    .map(|method| {
+                        (
+                            source_method_name(&method.name),
+                            unaliased_type_params(&method.type_params, &aliases),
+                        )
+                    })
+                    .collect(),
+            };
+            if !self.inherent_bounds.contains(&captured) {
+                self.inherent_bounds.push(captured);
+            }
+        }
+        self.inherent_bounds.sort_by(|left, right| {
+            left.module_path
+                .cmp(&right.module_path)
+                .then(left.target_type.cmp(&right.target_type))
+        });
+    }
+
+    /// Capture inferred bounds on exported free functions and trait methods (#1826).
+    fn capture_callable_bounds(&mut self, module_path: Vec<String>, program: &IrProgram) {
+        let aliases = import_alias_names(program);
+        for declaration in &program.declarations {
+            match &declaration.kind {
+                IrDeclKind::Function(function) if !matches!(function.visibility, Visibility::Private) => {
+                    let name = program
+                        .function_registry
+                        .source_name(&function.name)
+                        .unwrap_or(&function.name)
+                        .to_string();
+                    let captured = CapturedCallableBounds::Function {
+                        module_path: module_path.clone(),
+                        name,
+                        type_params: unaliased_type_params(&function.type_params, &aliases),
+                    };
+                    if !self.callable_bounds.contains(&captured) {
+                        self.callable_bounds.push(captured);
+                    }
+                }
+                IrDeclKind::Trait(trait_decl) if !matches!(trait_decl.visibility, Visibility::Private) => {
+                    for method in &trait_decl.methods {
+                        let captured = CapturedCallableBounds::TraitMethod {
+                            module_path: module_path.clone(),
+                            trait_name: trait_decl.name.clone(),
+                            method_name: method.name.clone(),
+                            type_params: unaliased_type_params(&method.type_params, &aliases),
+                        };
+                        if !self.callable_bounds.contains(&captured) {
+                            self.callable_bounds.push(captured);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Return the transitive local source dependency subset needed to typecheck one program.
@@ -1087,6 +1618,12 @@ impl<'a> IrCodegen<'a> {
         self.root_source_module_name = name;
     }
 
+    /// Mark the programs being generated as modules of the standard library, checked under the standard library's own
+    /// rules, for a module generated without its `std.` module path.
+    pub fn set_standard_library_source(&mut self, standard_library_source: bool) {
+        self.standard_library_source = standard_library_source;
+    }
+
     /// Set dependency module paths that should typecheck with public source import rules.
     ///
     /// CLI test batches can emit individual test files as generated dependency modules so each file keeps its own Rust
@@ -1190,6 +1727,7 @@ impl<'a> IrCodegen<'a> {
     /// Apply codegen's shared project context to an internal typechecker pass.
     fn configure_typechecker(&self, tc: &mut incan_frontend::typechecker::TypeChecker, module_path: Option<&[String]>) {
         tc.stdlib_cache = self.stdlib_cache.clone();
+        tc.set_standard_library_source(self.standard_library_source);
         let package_identity = incan_frontend::module::declaration_package_identity(
             self.canonical_emission_package_identity.as_deref(),
             module_path,
@@ -1231,6 +1769,62 @@ impl<'a> IrCodegen<'a> {
             env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() || env::var_os(OVEN_LOAF_ENV).is_some(),
         );
         lowering.set_registry_package_identity(self.registry_package_identity.clone());
+        lowering.set_source_module_rust_paths(source_module_rust_paths(
+            self.dependency_modules
+                .iter()
+                .filter_map(|(name, program, path_segments)| {
+                    let rust_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
+                    source_module_identity_path(program, path_segments.clone(), Some(name))
+                        .map(|module_path| (module_path, rust_path))
+                }),
+            self.canonical_emission_package_identity.as_deref(),
+        ));
+        lowering.set_crate_nominal_context(Some(Arc::new(self.crate_nominal_context())));
+    }
+
+    /// Collect the nominal facts every module's lowering shares, from the modules this generator emits into one crate.
+    ///
+    /// The crate is the root program, emitted at the crate root, and each dependency module, emitted at its path. Each
+    /// module is keyed by every logical path its checked identities can name it by. Metadata-only symbol modules are
+    /// not emitted here and take no part, so a name they share with a crate module leaves that module's unions
+    /// unchanged (#1796).
+    fn crate_nominal_context(&self) -> incan_ir::lower::CrateNominalContext {
+        let mut modules = Vec::new();
+        if let Some(root) = self.current_program {
+            let root_logical_paths = [
+                source_module_identity_path(
+                    root,
+                    self.root_source_module_name
+                        .as_deref()
+                        .map(|name| name.split('.').map(str::to_owned).collect()),
+                    None,
+                ),
+                self.metadata_root_module_path
+                    .as_deref()
+                    .map(canonicalize_source_module_segments),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            modules.push((root_logical_paths, Vec::new(), root));
+        }
+        for (name, ast, path_segments) in &self.dependency_modules {
+            let rust_path = self
+                .source_dependency_module_paths
+                .iter()
+                .find_map(|(source, path)| std::ptr::eq(*source, *ast).then_some(path.clone()))
+                .or_else(|| path_segments.clone())
+                .unwrap_or_else(|| vec![(*name).to_string()]);
+            let logical_paths = [
+                Some(canonicalize_source_module_segments(&rust_path)),
+                source_module_identity_path(ast, path_segments.clone(), Some(*name)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            modules.push((logical_paths, rust_path, *ast));
+        }
+        incan_ir::lower::CrateNominalContext::from_modules(modules)
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -1538,6 +2132,8 @@ impl<'a> IrCodegen<'a> {
             code,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                inherent_bounds: std::mem::take(&mut self.inherent_bounds),
+                callable_bounds: std::mem::take(&mut self.callable_bounds),
                 emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
                 native_unions: std::mem::take(&mut self.native_unions),
                 provider_plan: self.provider_plan.clone(),
@@ -1549,6 +2145,8 @@ impl<'a> IrCodegen<'a> {
     fn try_generate_internal(&mut self, program: &'a Program) -> Result<String, GenerationError> {
         self.current_program = Some(program);
         self.implementation_bound_requirements.clear();
+        self.inherent_bounds.clear();
+        self.callable_bounds.clear();
 
         // Scan for emission-relevant features
         self.update_serde_requirement(program);
@@ -1631,6 +2229,13 @@ impl<'a> IrCodegen<'a> {
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
         self.configure_lowering(&mut lowering);
+        // This module is emitted at the crate root, so its items are reached through the root's empty path.
+        for origin in source_module_origins(
+            &root_module_path.clone().unwrap_or_default(),
+            self.canonical_emission_package_identity.as_deref(),
+        ) {
+            lowering.add_source_module_rust_path(origin, Vec::new());
+        }
         lowering.set_current_source_module_name(root_module_path.as_ref().map(|path| path.join(".")));
         lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
@@ -1723,6 +2328,12 @@ impl<'a> IrCodegen<'a> {
             .iter()
             .map(|(_, dep_ir)| dep_ir)
             .collect::<Vec<_>>();
+        Self::complete_external_call_signatures(
+            &mut ir_program,
+            dependency_ir_programs
+                .iter()
+                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+        );
         crate::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
         let root_module_path = self.metadata_root_module_path.clone().unwrap_or_else(|| {
             ir_program
@@ -1734,8 +2345,12 @@ impl<'a> IrCodegen<'a> {
         self.native_union_origins
             .insert(root_module_path.clone(), lowering.native_publication_origins());
         self.capture_implementation_bound_requirements(root_module_path.clone(), &ir_program);
+        self.capture_inherent_bounds(root_module_path.clone(), &ir_program);
+        self.capture_callable_bounds(root_module_path.clone(), &ir_program);
         for (module_path, dependency_program) in &dependency_ir_programs {
             self.capture_implementation_bound_requirements(module_path.clone(), dependency_program);
+            self.capture_inherent_bounds(module_path.clone(), dependency_program);
+            self.capture_callable_bounds(module_path.clone(), dependency_program);
         }
         let source_module_paths = dependency_ir_programs
             .iter()
@@ -1930,9 +2545,20 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             crate::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
-            dependency_ir_programs.push(dep_ir);
+            let dep_module_path = dep_identity_path.unwrap_or_else(|| vec![dep_name.to_string()]);
+            dependency_ir_programs.push((dep_module_path, dep_ir));
         }
-        let dependency_programs = dependency_ir_programs.iter().collect::<Vec<_>>();
+        let reachable_items = self.externally_reachable_items.clone();
+        Self::complete_external_call_signatures(
+            &mut ir_program,
+            dependency_ir_programs
+                .iter()
+                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+        );
+        let dependency_programs = dependency_ir_programs
+            .iter()
+            .map(|(_, dep_ir)| dep_ir)
+            .collect::<Vec<_>>();
         crate::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
 
         // Best-effort: treat registered dependency module names as internal roots.
@@ -1952,7 +2578,7 @@ impl<'a> IrCodegen<'a> {
             let inner = svc.inner_mut();
             self.apply_canonical_emission_context(inner);
             inner.set_internal_module_roots(internal_roots);
-            inner.set_externally_reachable_items(self.externally_reachable_items.clone());
+            inner.set_externally_reachable_items(reachable_items);
             self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
             Ok(svc.emit_program(&ir_program)?)
         } else {
@@ -1963,7 +2589,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_emit_zen(true);
             }
             emitter.set_needs_serde(self.needs_serde);
-            emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
+            emitter.set_externally_reachable_items(reachable_items);
             self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
             Ok(emitter.emit_program(&ir_program)?)
         }
@@ -2036,6 +2662,7 @@ impl<'a> IrCodegen<'a> {
 
         // Generate module files
         let mut lowered_modules = Vec::new();
+        let mut default_constructed_types = HashSet::new();
         for (name, ast, path_segments) in dependency_modules.clone() {
             if !module_names.contains(&name) {
                 continue;
@@ -2069,17 +2696,28 @@ impl<'a> IrCodegen<'a> {
             crate::trait_bound_inference::infer_trait_bounds(&mut ir);
             record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
             let module_path = path_segments.clone().unwrap_or_else(|| vec![name.to_string()]);
+            record_default_path_items_from_ir(&mut dependency_reachable_items, &module_path, &ir);
+            default_constructed_types.extend(lowering.default_constructed_foreign_types().iter().cloned());
             self.source_dependency_module_paths.push((ast, module_path.clone()));
             lowered_modules.push((name.to_string(), module_path, ir));
         }
+        publish_default_constructed_fields(
+            lowered_modules
+                .iter_mut()
+                .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
+            &default_constructed_types,
+        );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
-            let Some((_, current_ir, tail)) = rest
-                .split_first_mut()
-                .map(|((name, _path, ir), tail)| (name.clone(), ir, tail))
-            else {
+            let Some((current_ir, tail)) = rest.split_first_mut().map(|((_, _, ir), tail)| (ir, tail)) else {
                 continue;
             };
+            Self::complete_external_call_signatures(
+                current_ir,
+                left.iter()
+                    .chain(tail.iter())
+                    .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
+            );
             let external_programs: Vec<&incan_ir::IrProgram> = left
                 .iter()
                 .map(|(_, _, ir)| ir)
@@ -2265,6 +2903,8 @@ impl<'a> IrCodegen<'a> {
             generated,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                inherent_bounds: std::mem::take(&mut self.inherent_bounds),
+                callable_bounds: std::mem::take(&mut self.callable_bounds),
                 emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
                 native_unions: std::mem::take(&mut self.native_unions),
                 provider_plan: self.provider_plan.clone(),
@@ -2328,6 +2968,7 @@ impl<'a> IrCodegen<'a> {
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
+        let mut default_constructed_types = HashSet::new();
         for (name, ast, stored_path_segments) in dependency_modules.clone() {
             let matching_path = if let Some(stored_path_segments) = &stored_path_segments {
                 module_paths.iter().find(|path| *path == stored_path_segments)
@@ -2375,18 +3016,27 @@ impl<'a> IrCodegen<'a> {
                 // mutate unrelated dependency newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 crate::trait_bound_inference::infer_trait_bounds(&mut ir);
                 record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
+                record_default_path_items_from_ir(&mut dependency_reachable_items, path, &ir);
+                default_constructed_types.extend(lowering.default_constructed_foreign_types().iter().cloned());
                 self.source_dependency_module_paths.push((ast, path.clone()));
                 lowered_modules.push((path.clone(), ir));
             }
         }
+        publish_default_constructed_fields(
+            lowered_modules.iter_mut().map(|(path, ir)| (path.as_slice(), ir)),
+            &default_constructed_types,
+        );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
-            let Some((_, current_ir, tail)) = rest
-                .split_first_mut()
-                .map(|((path, ir), tail)| (path.clone(), ir, tail))
-            else {
+            let Some((current_ir, tail)) = rest.split_first_mut().map(|((_, ir), tail)| (ir, tail)) else {
                 continue;
             };
+            Self::complete_external_call_signatures(
+                current_ir,
+                left.iter()
+                    .chain(tail.iter())
+                    .map(|(module_path, ir)| (module_path.as_slice(), ir)),
+            );
             let external_programs: Vec<&incan_ir::IrProgram> = left
                 .iter()
                 .map(|(_, ir)| ir)
@@ -2551,11 +3201,14 @@ mod tests {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use incan_frontend::{lexer, parser};
-    use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+    use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
     use incan_test_support::canonical_projection::{projected_identities, projected_identity, projected_name};
     use std::collections::HashMap;
     #[cfg(feature = "rust_inspect")]
     use std::fs;
+
+    /// Generated crate-root Rust and source-module Rust keyed by module path.
+    type GeneratedProject = (String, HashMap<Vec<String>, String>);
 
     /// Build lowering with the frontend-owned ownership proof for one source type annotation.
     fn lowering_with_mutable_reference_projection(
@@ -2679,6 +3332,462 @@ pub model Stream[R] with Walk:
             })),
             "the checked root adoption must receive its inferred implementation header"
         );
+    }
+
+    /// A public generic adopter publishes both a direct subtrait and its implied supertrait before inferred
+    /// implementation bounds are attached to the manifest.
+    #[test]
+    fn generic_supertrait_adoption_reaches_library_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub trait Catalog[T with Clone]:
+    def item(self) -> T: ...
+
+pub trait OrderedCatalog[T with Clone] with Catalog[T]:
+    def ordered(self) -> Self: ...
+
+pub model Parcel[T with Clone] with OrderedCatalog:
+    pub value: T
+
+    def item(self) -> T:
+        return self.value
+
+    def ordered(self) -> Self:
+        return self
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["main".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("catalogs", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+
+        let mut codegen = IrCodegen::new();
+        let mut type_info = checker.type_info().clone();
+        for (name, span) in [("Catalog", (0, 70)), ("OrderedCatalog", (71, 160))] {
+            type_info.declarations.resolved_import_identities.insert(
+                name.to_string(),
+                incan_semantics_core::CanonicalSymbolId {
+                    namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+                    origin: incan_semantics_core::SymbolOrigin::Module(vec!["lib".to_string()]),
+                    declaration_name: name.to_string(),
+                    kind: incan_semantics_core::SemanticSourceTargetKind::Trait,
+                    scope_discriminant: None,
+                    declaration_span: incan_semantics_core::HirSourceSpan::new(span.0, span.1),
+                },
+            );
+        }
+        codegen.set_prechecked_type_info(type_info, HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest).map_err(|error| {
+            format!(
+                "{error}; requirements={:?}; model adoptions={:?}",
+                metadata.implementation_bound_requirements, manifest.exports.models[0].trait_adoptions
+            )
+        })?;
+        let parcel = manifest
+            .exports
+            .models
+            .iter()
+            .find(|model| model.name == "Parcel")
+            .ok_or("missing Parcel export")?;
+        assert!(
+            parcel
+                .trait_adoptions
+                .iter()
+                .any(
+                    |adoption| adoption.source_name.as_deref().unwrap_or(&adoption.name) == "Catalog"
+                        && !adoption.implementation_type_params.is_empty()
+                ),
+            "Catalog[T] did not receive its inferred implementation bounds: {:?}",
+            parcel.trait_adoptions
+        );
+        Ok(())
+    }
+
+    /// A standard-library module keeps its mounted module identity when publishing a direct generic trait adoption.
+    #[test]
+    fn stdlib_local_generic_adoption_keeps_manifest_identity() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub trait Iterator[T]:
+    def next(mut self) -> Option[T]: ...
+
+pub model BatchIterator[T, Source with Iterator[T]] with Iterator[list[T]]:
+    pub source: Source
+
+    def next(mut self) -> Option[list[T]]:
+        return None
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["derives".to_string(), "collection".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_standard_library_source(true);
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("incan_stdlib_core", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+
+        let mut codegen = IrCodegen::new();
+        codegen.set_standard_library_source(true);
+        let mut type_info = checker.type_info().clone();
+        let iterator = traits::as_str(traits::TraitId::Iterator).to_string();
+        type_info.declarations.resolved_import_identities.insert(
+            iterator.clone(),
+            incan_semantics_core::CanonicalSymbolId {
+                namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+                origin: incan_semantics_core::SymbolOrigin::Module(module_path.clone()),
+                declaration_name: iterator,
+                kind: incan_semantics_core::SemanticSourceTargetKind::Trait,
+                scope_discriminant: None,
+                declaration_span: incan_semantics_core::HirSourceSpan::new(0, 0),
+            },
+        );
+        codegen.set_prechecked_type_info(type_info, HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest).map_err(|error| {
+            format!(
+                "{error}; requirements={:?}; model adoptions={:?}",
+                metadata.implementation_bound_requirements, manifest.exports.models[0].trait_adoptions
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Issue #1819: compiled-library metadata publishes the inferred inherent impl header and method-generic bounds
+    /// that its generated Rust requires.
+    #[test]
+    fn compiled_library_inherent_method_bounds_reach_manifest_issue1819() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub model Holder[V]:
+    pub value: V
+
+    def get(self) -> V:
+        return self.value
+
+    def first[T](self, items: list[T]) -> T:
+        return items[0]
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["holders".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("holders", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+
+        let (_, metadata) = IrCodegen::new().try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest)?;
+        let holder = manifest
+            .exports
+            .models
+            .iter()
+            .find(|model| model.name == "Holder")
+            .ok_or("missing Holder export")?;
+        let owner_bounds = holder
+            .type_params
+            .iter()
+            .find(|param| param.name == "V")
+            .ok_or("missing Holder.V")?;
+        assert!(
+            owner_bounds
+                .bounds
+                .iter()
+                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::CLONE && bound.inferred),
+            "Holder.V must publish the inferred Clone impl-header bound: {owner_bounds:?}"
+        );
+        let first_bounds = holder
+            .methods
+            .iter()
+            .find(|method| method.name == "first")
+            .and_then(|method| method.type_params.iter().find(|param| param.name == "T"))
+            .ok_or("missing Holder.first.T")?;
+        assert!(
+            first_bounds
+                .bounds
+                .iter()
+                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::CLONE && bound.inferred),
+            "Holder.first.T must publish its inferred Clone bound: {first_bounds:?}"
+        );
+        Ok(())
+    }
+
+    /// Issue #1826: inferred bounds on compiled free functions and trait methods survive publication, and a consumer
+    /// must declare the forwarded bound instead of reaching rustc with an under-bounded generic signature.
+    #[test]
+    fn compiled_callable_bounds_reach_consumer_issue1826() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub def first[K](items: list[K]) -> K:
+    return items[0]
+
+pub trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.set_current_package_identity(Some("picks".to_string()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("producer check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("picks", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+        let mut codegen = IrCodegen::new();
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest)?;
+
+        let clone_bound = |type_params: &[TypeParamExport], name: &str| {
+            type_params.iter().any(|param| {
+                param.name == name
+                    && param
+                        .bounds
+                        .iter()
+                        .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::CLONE && bound.inferred)
+            })
+        };
+        let first = manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == "first")
+            .ok_or("missing first export")?;
+        assert!(clone_bound(&first.type_params, "K"), "first.K lost Clone: {first:?}");
+        let pick = manifest
+            .exports
+            .traits
+            .iter()
+            .find(|trait_export| trait_export.name == "Picker")
+            .and_then(|trait_export| trait_export.methods.iter().find(|method| method.name == "pick"))
+            .ok_or("missing Picker.pick export")?;
+        assert!(
+            clone_bound(&pick.type_params, "K"),
+            "Picker.pick.K lost Clone: {pick:?}"
+        );
+
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "picks".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "picks",
+                    "picks",
+                    std::env::temp_dir().join("issue1826_picks"),
+                ),
+            },
+        )]));
+        let consumer_source = r#"
+from pub::picks import first, Picker
+
+def head[T](items: list[T]) -> T:
+    return first(items)
+
+def chosen[T, P with Picker](picker: P, items: list[T]) -> T:
+    return picker.pick(items)
+"#;
+        let consumer_tokens =
+            lexer::lex(consumer_source).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let consumer =
+            parser::parse(&consumer_tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut consumer_checker = TypeChecker::new();
+        consumer_checker.set_library_manifest_index(index);
+        let Err(errors) = consumer_checker.check_program(&consumer) else {
+            return Err("an under-bounded consumer must be refused before Rust emission".into());
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains(incan_lang::lang::traits::as_str(
+                    incan_lang::lang::traits::TraitId::Clone
+                ))),
+            "consumer diagnostic must name Clone: {errors:?}"
+        );
+        Ok(())
+    }
+
+    /// Issue #1826: source-declared bounds are not republished as inferred ones. The emitted IR spells a bound over a
+    /// trait's own type parameter (`Callable1[E, F]`) with `E` as a nominal name, which an adopter's type arguments
+    /// never replace, and a bound declared through an import alias by the alias, which a consumer cannot resolve; a
+    /// consumer calling a default through an adopter must see only the declared bound the adoption instantiates.
+    #[test]
+    fn declared_trait_method_bounds_are_not_republished_as_inferred_issue1826() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+from std.traits.callable import Callable1
+from std.traits.callable import Callable1 as Mapper
+
+
+pub def apply[F with Mapper[int, int]](f: F, value: int) -> int:
+    return f(value)
+
+
+pub trait Failing[E]:
+    def failure(self) -> E: ...
+
+    def describe[F with Clone, Describe with (Clone, Callable1[E, F])](self, f: Describe) -> F:
+        return f(self.failure())
+
+
+pub model Lookup with Failing[str]:
+    pub key: str
+
+    def failure(self) -> str:
+        return self.key
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.set_current_package_identity(Some("failing".to_string()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("producer check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("failing", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+        let mut codegen = IrCodegen::new();
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest)?;
+
+        let describe = manifest
+            .exports
+            .traits
+            .iter()
+            .find(|trait_export| trait_export.name == "Failing")
+            .and_then(|trait_export| trait_export.methods.iter().find(|method| method.name == "describe"))
+            .ok_or("missing Failing.describe export")?;
+        let republished = describe
+            .type_params
+            .iter()
+            .flat_map(|param| param.bounds.iter().filter(|bound| bound.inferred))
+            .collect::<Vec<_>>();
+        assert!(
+            republished.is_empty(),
+            "declared bounds must not be republished as inferred: {republished:?}"
+        );
+        let apply = manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == "apply")
+            .ok_or("missing apply export")?;
+        let aliased = apply
+            .type_params
+            .iter()
+            .flat_map(|param| param.bounds.iter().filter(|bound| bound.inferred))
+            .collect::<Vec<_>>();
+        assert!(
+            aliased.is_empty(),
+            "a bound declared through an import alias must not be republished as inferred: {aliased:?}"
+        );
+
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "failing".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "failing",
+                    "failing",
+                    std::env::temp_dir().join("issue1826_failing"),
+                ),
+            },
+        )]));
+        let consumer_source = r#"
+from pub::failing import Lookup
+
+
+def main() -> None:
+    lookup = Lookup(key="missing")
+    println(lookup.describe((error) => len(error)))
+"#;
+        let consumer_tokens =
+            lexer::lex(consumer_source).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let consumer =
+            parser::parse(&consumer_tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut consumer_checker = TypeChecker::new();
+        consumer_checker.set_library_manifest_index(index);
+        consumer_checker
+            .check_program(&consumer)
+            .map_err(|errors| format!("the adopter's default must check against its declared bounds: {errors:?}"))?;
+        Ok(())
     }
 
     #[test]
@@ -2987,6 +4096,8 @@ pub modulo = alias mod
         assert!(code.contains(&format!("pub use {modulo} as modulo;")), "{code}");
     }
 
+    /// #1764: an alias of a module member is an import of that member, so the module binds the projection every call
+    /// through the alias names, beside the alias's own name.
     #[test]
     fn top_level_qualified_alias_preserves_target_path() {
         let code = generate_with_sdk_provider_modules(
@@ -2999,7 +4110,14 @@ pub root = math.sqrt
         );
         assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
         let sqrt = projected_name(&code, "sqrt", SemanticSourceTargetKind::Function);
-        assert!(code.contains(&format!("pub use math::{sqrt} as root;")), "{code}");
+        assert!(
+            code.contains(&format!("pub use crate::__incan_std::math::{sqrt};")),
+            "{code}"
+        );
+        assert!(
+            code.contains(&format!("pub use crate::__incan_std::math::{sqrt} as root;")),
+            "{code}"
+        );
     }
 
     #[test]
@@ -3039,6 +4157,88 @@ pub root = math.sqrt
             assert!(compact.contains(&expected), "{code}");
             assert!(!compact.contains("usestd::math"), "{code}");
         }
+    }
+
+    /// #1434: a module import used only by a module derive is still a use of that module, because the emitted
+    /// `impl module::Trait for T` names its binding. An aliased import must therefore survive generated-use pruning
+    /// under the binding the source chose; an unaliased root module needs no `use` because the project declares it.
+    #[test]
+    fn module_derive_retains_its_trait_module_import() -> Result<(), Box<dyn std::error::Error>> {
+        let codec = parse_program("__derives__ = [Encode]\n\n@rust.derive(\"Debug\")\npub trait Encode:\n  pass\n");
+        for (import, binding, expected_import) in [
+            ("import codec", "codec", None),
+            ("import codec as formats", "formats", Some("usecrate::codecasformats;")),
+        ] {
+            let main = parse_program(&format!(
+                "{import}\n\n@derive({binding})\nmodel Item:\n  value: int\n\ndef main() -> None:\n  item = Item(value=1)\n  println(item.value)\n"
+            ));
+            let mut codegen = IrCodegen::new();
+            codegen.add_module("codec", &codec);
+            let (main_code, _modules) = codegen.try_generate_multi_file(&main, &["codec"])?;
+            let compact = compact_rust(&main_code);
+            match expected_import {
+                Some(expected_import) => assert!(compact.contains(expected_import), "{import}: {main_code}"),
+                None => assert!(!compact.contains("usecrate::codec"), "{import}: {main_code}"),
+            }
+            assert!(
+                compact.contains(&format!("impl{binding}::EncodeforItem{{}}")),
+                "{import}: {main_code}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #1434: a compiled-SDK derive bundle reached through a root `std` import keeps the provider-qualified import
+    /// projection, so `impl toml::TomlSerialize` resolves the SDK namespace rather than the external `toml` crate.
+    #[test]
+    fn std_root_module_derive_retains_sdk_facade_import() {
+        for (import, binding) in [("toml", "toml"), ("toml as manifest", "manifest")] {
+            let source = format!(
+                "from std import {import}\n\n@derive({binding})\nmodel Project:\n  name: str\n\ndef main() -> None:\n  project = Project(name=\"demo\")\n  println(project.name)\n"
+            );
+            let code = generate_with_sdk_provider_modules(&source, vec![vec!["toml".to_string()]]);
+            let compact = compact_rust(&code);
+            let expected_import = if binding == "toml" {
+                "usecrate::__incan_std::toml;".to_string()
+            } else {
+                format!("usecrate::__incan_std::tomlas{binding};")
+            };
+            assert!(compact.contains(&expected_import), "{import}: {code}");
+            assert!(
+                compact.contains(&format!("impl{binding}::TomlSerializeforProject{{}}"))
+                    && compact.contains(&format!("impl{binding}::TomlDeserializeforProject{{}}")),
+                "{import}: {code}"
+            );
+            assert!(!compact.contains("usetoml"), "{import}: {code}");
+        }
+    }
+
+    /// #1431: a facade that re-exports a compiled-SDK `std.serde.json` trait still hands the consumer the stdlib
+    /// trait identity, so the serde derive is forwarded and the backend `to_json` default is emitted, while the
+    /// facade itself re-exports the SDK projection the consumer's `use` resolves through.
+    #[test]
+    fn sdk_facade_reexported_serde_json_trait_keeps_its_protocol() -> Result<(), Box<dyn std::error::Error>> {
+        let facade = parse_program("from std.serde.json import Serialize\n");
+        let main = parse_program(
+            "from facade import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  println(Payload(value=1).to_json())\n",
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_sdk_provider_module_paths(vec![vec!["serde".to_string(), "json".to_string()]]);
+        codegen.add_module("facade", &facade);
+        let (main_code, modules) = codegen.try_generate_multi_file(&main, &["facade"])?;
+        let compact = compact_rust(&main_code);
+        assert!(compact.contains("serde::Serialize,"), "{main_code}");
+        assert!(
+            compact.contains("implSerializeforPayload{fnto_json(&self)->String"),
+            "{main_code}"
+        );
+        assert!(compact.contains("usecrate::facade::Serialize;"), "{main_code}");
+        let facade_code = modules.get("facade").ok_or("missing facade output")?;
+        assert!(
+            compact_rust(facade_code).contains("pubusecrate::__incan_std::serde::json::Serialize;"),
+            "{facade_code}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -3344,6 +4544,7 @@ def main() -> None:
                         trait_path: String::from("rand::Rng"),
                         definition_path: None,
                         methods: vec![String::from("gen_range")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {
@@ -3465,6 +4666,7 @@ def main() -> None:
                         trait_path: String::from("demo::AlphaRender"),
                         definition_path: None,
                         methods: vec![String::from("render")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {
@@ -3477,6 +4679,7 @@ def main() -> None:
                         trait_path: String::from("demo::BetaRender"),
                         definition_path: None,
                         methods: vec![String::from("render")],
+                        methods_known: true,
                     }),
                 },
             ],
@@ -3489,6 +4692,7 @@ def main() -> None:
             derives: Vec::new(),
             visibility: Visibility::Private,
             type_params: Vec::new(),
+            phantom_type_params: Vec::new(),
             derive_rust_modules: std::collections::HashMap::new(),
             lint_allows: Vec::new(),
         })));
@@ -3507,6 +4711,7 @@ def main() -> None:
                     value: TypedExpr::new(
                         IrExprKind::Struct {
                             name: String::from("Widget"),
+                            type_args: Vec::new(),
                             fields: Vec::new(),
                             fill_defaults: false,
                         },
@@ -3525,7 +4730,7 @@ def main() -> None:
                         )),
                         method: String::from("render"),
                         dispatch: Some(IrMethodDispatch::RustExtensionTraitImport {
-                            binding: String::from("AlphaRender"),
+                            bindings: vec![String::from("AlphaRender")],
                         }),
                         type_args: Vec::new(),
                         args: Vec::new(),
@@ -3693,6 +4898,7 @@ def main() -> None:
                         trait_path: String::from("sha2::Digest"),
                         definition_path: Some(String::from("digest::digest::Digest")),
                         methods: vec![String::from("digest")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {
@@ -4186,6 +5392,7 @@ def main() -> None:
             emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
+                is_mut: false,
                 name: "name".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -4241,6 +5448,166 @@ def main() -> None:
             );
             assert!(main_code.contains(&format!("{projection}()")), "{import}: {main_code}");
         }
+        Ok(())
+    }
+
+    /// One provider module declaring `Product`, `Answer = Product | int` and a function over `Answer`.
+    fn same_named_union_module(label: &str, field_type: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        parse_program_result(&format!(
+            "pub model Product:\n    pub value: {field_type}\n\n\npub type Answer = Product | int\n\n\npub def label(answer: Answer) -> str:\n    match answer:\n        Product(product) => return f\"{label} product {{product.value}}\"\n        int(number) => return f\"{label} number {{number}}\"\n\n\npub def wrap(value: {field_type}) -> Answer:\n    return Product(value=value)\n"
+        ))
+    }
+
+    /// Return the one crate-root wrapper definition whose first variant carries `payload`.
+    fn union_wrapper_with_payload(root_code: &str, payload: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let compact = compact_rust(root_code);
+        let marker = format!("{{V0({payload}),V1(i64),}}");
+        let end = compact
+            .find(&marker)
+            .ok_or_else(|| format!("no wrapper carries `{payload}`:\n{root_code}"))?;
+        let start = compact[..end]
+            .rfind("pubenum")
+            .ok_or_else(|| format!("wrapper for `{payload}` has no enum header:\n{root_code}"))?;
+        Ok(compact[start + "pubenum".len()..end].to_string())
+    }
+
+    /// #1796: two modules of one package that each declare `Product` and `Answer = Product | int` get one wrapper each.
+    ///
+    /// The wrapper name was hashed from the members' spellings, so both modules' unions shared one crate-root wrapper
+    /// whose `Product` payload could name neither declaration, and publishing the package refused to bind that one
+    /// wrapper's `Product` to two declarations. A member whose spelling two modules of the crate declare is now spelled
+    /// by its declaring module, so each union has its own wrapper, carrying its own module's `Product`, and each module
+    /// constructs and matches through the wrapper that carries its own type.
+    #[test]
+    fn same_named_nominals_in_two_modules_get_one_union_wrapper_each_issue1796()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = same_named_union_module("first", "int")?;
+        let second = same_named_union_module("second", "str")?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let first_path = vec!["first".to_string()];
+        let second_path = vec!["second".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("first", &first, first_path.clone());
+        codegen.add_module_with_path_segments("second", &second, second_path.clone());
+        let (root_code, modules) =
+            codegen.try_generate_multi_file_nested(&root, &[first_path.clone(), second_path.clone()])?;
+
+        let first_wrapper = union_wrapper_with_payload(&root_code, "crate::first::Product")?;
+        let second_wrapper = union_wrapper_with_payload(&root_code, "crate::second::Product")?;
+        assert_ne!(
+            first_wrapper, second_wrapper,
+            "each module's union needs its own wrapper:\n{root_code}"
+        );
+
+        for (path, own, other) in [
+            (&first_path, &first_wrapper, &second_wrapper),
+            (&second_path, &second_wrapper, &first_wrapper),
+        ] {
+            let code = compact_rust(modules.get(path).ok_or("missing generated module")?);
+            assert!(
+                code.contains(&format!("pubtypeAnswer=crate::{own};")),
+                "{path:?} must alias its own wrapper:\n{code}"
+            );
+            assert!(
+                code.contains(&format!("crate::{own}::V0(Product{{value:value}})")),
+                "{path:?} must construct its own wrapper:\n{code}"
+            );
+            assert!(
+                code.contains(&format!("crate::{own}::V0(product)")),
+                "{path:?} must match through its own wrapper:\n{code}"
+            );
+            assert!(
+                !code.contains(other.as_str()),
+                "{path:?} must not reach the other wrapper:\n{code}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #1796: a union over a nominal no other module of the crate declares keeps the wrapper name it always had, so
+    /// codegen snapshots and published wrapper names are unchanged wherever no two declarations share a spelling.
+    #[test]
+    fn union_over_an_unshared_nominal_keeps_its_wrapper_name_issue1796() -> Result<(), Box<dyn std::error::Error>> {
+        let first = same_named_union_module("first", "int")?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let first_path = vec!["first".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("first", &first, first_path.clone());
+        let (_, modules) = codegen.try_generate_multi_file_nested(&root, std::slice::from_ref(&first_path))?;
+        let code = compact_rust(modules.get(&first_path).ok_or("missing generated module")?);
+        let unchanged = incan_ir::types::IrType::NamedGeneric(
+            incan_ir::types::IR_UNION_TYPE_NAME.to_string(),
+            vec![
+                incan_ir::types::IrType::Struct("Product".to_string()),
+                incan_ir::types::IrType::Int,
+            ],
+        )
+        .union_type_name()
+        .ok_or("a union has a wrapper name")?;
+        assert!(
+            code.contains(&format!("pubtypeAnswer=crate::{unchanged};")),
+            "the wrapper name must stay `{unchanged}`:\n{code}"
+        );
+        Ok(())
+    }
+
+    /// #1796: in a package build, a sibling module that imports the shared `Product` under its own name and passes one
+    /// to `first.label` builds `first`'s wrapper, the one `label` accepts.
+    ///
+    /// A package build gives the imported declaration the package's origin rather than a module origin, and the
+    /// sibling's view of `label`'s parameter spelled `Product` unqualified, so it built a third wrapper that `label`
+    /// does not accept.
+    #[test]
+    fn a_sibling_importing_a_shared_nominal_builds_the_declaring_modules_wrapper_issue1796()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = same_named_union_module("first", "int")?;
+        let second = same_named_union_module("second", "str")?;
+        let user = parse_program_result(
+            "from first import Product, label\n\n\npub def go() -> str:\n    return label(Product(value=1))\n",
+        )?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let paths = [
+            vec!["first".to_string()],
+            vec!["second".to_string()],
+            vec!["user".to_string()],
+        ];
+        let mut codegen = IrCodegen::new();
+        codegen.set_registry_package_identity(Some("producer".to_string()));
+        codegen.set_canonical_emission_package_identity(Some("producer".to_string()));
+        codegen.add_module_with_path_segments("first", &first, paths[0].clone());
+        codegen.add_module_with_path_segments("second", &second, paths[1].clone());
+        codegen.add_module_with_path_segments("user", &user, paths[2].clone());
+        let (root_code, modules) = codegen.try_generate_multi_file_nested(&root, &paths)?;
+
+        let first_wrapper = union_wrapper_with_payload(&root_code, "crate::first::Product")?;
+        let user_code = compact_rust(modules.get(&paths[2]).ok_or("missing generated module")?);
+        assert!(
+            user_code.contains(&format!("crate::{first_wrapper}::V0(Product{{value:1}})")),
+            "the sibling must build `first`'s wrapper `{first_wrapper}`:\n{user_code}"
+        );
+        Ok(())
+    }
+
+    /// #1796: a generic nominal two modules declare keeps its spelling inside a union member, so generating the
+    /// crate-root wrapper for `Holder[int] | str` does not fail on a module path where it spells one identifier.
+    #[test]
+    fn a_union_over_a_shared_generic_nominal_still_generates_issue1796() -> Result<(), Box<dyn std::error::Error>> {
+        let holder = "pub model Holder[T]:\n    pub item: T\n";
+        let first = parse_program_result(&format!(
+            "{holder}\n\npub type Held = Holder[int] | str\n\n\npub def hold() -> Held:\n    return Holder(item=1)\n"
+        ))?;
+        let second = parse_program_result(holder)?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let paths = [vec!["first".to_string()], vec!["second".to_string()]];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("first", &first, paths[0].clone());
+        codegen.add_module_with_path_segments("second", &second, paths[1].clone());
+        let (_, modules) = codegen.try_generate_multi_file_nested(&root, &paths)?;
+        let first_code = compact_rust(modules.get(&paths[0]).ok_or("missing generated module")?);
+        assert!(
+            first_code.contains("pubtypeHeld=crate::__IncanUnion"),
+            "`Held` must alias a crate-root wrapper:\n{first_code}"
+        );
         Ok(())
     }
 
@@ -4357,6 +5724,87 @@ pub def from_csv[T]() -> str:
                 && code.contains("+ Clone"),
             "{code}"
         );
+    }
+
+    #[test]
+    fn subtrait_default_satisfies_supertrait_slot_issue1825() {
+        let code = generate(
+            r#"
+trait Root:
+  def label(self) -> str: ...
+
+trait Child with Root:
+  def label(self) -> str:
+    return "child"
+
+model Item with Child:
+  value: int
+
+def describe[T with Root](item: T) -> str:
+  return item.label()
+
+def main() -> None:
+  println(Item(value=1).label())
+  println(describe(Item(value=1)))
+"#,
+        );
+        let compact = compact_rust(&code);
+        assert!(compact.contains("implRootforItem{fnlabel(&self)->String{"), "{code}");
+        assert!(!compact.contains("traitChild:Root{fnlabel"), "{code}");
+        assert!(!compact.contains("implChildforItem{fnlabel"), "{code}");
+    }
+
+    #[test]
+    fn class_override_replaces_inherited_dispatch_issue1841() {
+        let source = r#"
+class Animal:
+  id: int
+
+  def grow(self) -> int:
+    return 1
+
+  def feed(self) -> int:
+    return self.grow()
+
+class Dog extends Animal:
+  def grow(self) -> int:
+    return 2
+
+def main() -> None:
+  println(Dog(id=1).feed())
+"#;
+        let code = generate(source);
+        let mut grow_identities = projected_identities(&code, "grow", SemanticSourceTargetKind::Method)
+            .into_iter()
+            .collect::<Vec<_>>();
+        grow_identities.sort_by_key(|identity| identity.declaration_span.start);
+        assert_eq!(grow_identities.len(), 1, "{code}");
+        assert!(grow_identities[0].declaration_span.start > source.find("class Dog").unwrap_or_default());
+        let dog_grow = encode_incan_symbol_identity(&grow_identities[0]);
+        let dog_impl = code
+            .split("impl Dog")
+            .nth(1)
+            .and_then(|tail| tail.split("impl ").next())
+            .unwrap_or_default();
+        assert!(compact_rust(dog_impl).contains(&format!("self.{dog_grow}()")), "{code}");
+    }
+
+    #[test]
+    fn generic_callable_name_emits_support_for_function_items_issue1865() {
+        let code = generate(
+            r#"
+def make() -> int:
+  return 1
+
+def name_of[F](func: F) -> str:
+  return func.__name__
+
+def main() -> None:
+  println(name_of(make))
+"#,
+        );
+        assert!(code.contains("pub trait __IncanCallableName"), "{code}");
+        assert!(code.contains("impl __IncanCallableName for fn() -> i64"), "{code}");
     }
 
     #[test]
@@ -4682,26 +6130,28 @@ def main() -> None:
         Ok(())
     }
 
+    /// Issue #1839: a public static re-export wins over an earlier private import of the same projection, and a later
+    /// private import keeps the imported-static initializer needed by reads in the facade itself.
     #[test]
-    fn generated_decorator_static_collision_keeps_distinct_identifiers_and_reads()
+    fn static_reexport_and_repeat_import_keep_projection_and_initializer_issue1839()
     -> Result<(), Box<dyn std::error::Error>> {
-        let program = parse_program_result(
-            r#"
-pub static __incan_decorated_target: int = 41
+        let provider = parse_program_result("pub static counter: int = 1\n")?;
+        let provider_path = vec!["sprov".to_string()];
 
-def preserve[F]() -> ((F) -> F):
-  return (func) => func
-
-@preserve()
-pub def target() -> int:
-  return 1
-
-pub def source_value() -> int:
-  return __incan_decorated_target
-"#,
+        let facade =
+            parse_program_result("from sprov import counter\npub from sprov import counter as counter_alias\n")?;
+        let main = parse_program_result(
+            "from facade import counter_alias\n\n\ndef main() -> None:\n  println(counter_alias)\n",
         )?;
-        let generated = IrCodegen::new().try_generate(&program)?;
-        let source_projection = generated
+        let facade_path = vec!["facade".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("sprov", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[provider_path.clone(), facade_path.clone()])?;
+        let provider_code = modules.get(&provider_path).ok_or("missing generated provider module")?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
+        let projection = provider_code
             .lines()
             .find_map(|line| {
                 line.trim_start()
@@ -4709,67 +6159,370 @@ pub def source_value() -> int:
                     .and_then(|tail| tail.split(':').next())
                     .map(|payload| format!("__incan_v1_{payload}"))
             })
-            .ok_or("colliding source static did not emit an incan-v1 projection")?;
+            .ok_or("provider static did not emit an incan-v1 projection")?;
+        assert!(
+            facade_code.contains(&format!("pub use crate::sprov::{projection} as COUNTER_ALIAS;")),
+            "the facade must bind the projection publicly through its alias:\n{facade_code}"
+        );
+        let projection_imports = facade_code
+            .lines()
+            .filter(|line| line.contains(&projection) && line.contains("use"))
+            .collect::<Vec<_>>();
+        assert!(
+            projection_imports
+                .first()
+                .is_some_and(|line| line.trim_start().starts_with("pub use")),
+            "the public static binder must precede the private repeat: {projection_imports:?}\n{facade_code}"
+        );
+        assert!(
+            main_code.contains(&projection),
+            "the consumer must reach the provider projection through the facade:\n{main_code}"
+        );
 
+        let facade = parse_program_result(
+            "pub from sprov import counter as counter_alias\nfrom sprov import counter\n\n\npub def read() -> int:\n  return counter\n",
+        )?;
+        let main = parse_program_result("from facade import read\n\n\ndef main() -> None:\n  println(read())\n")?;
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("sprov", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+        let (_, modules) = codegen.try_generate_multi_file_nested(&main, &[provider_path, facade_path.clone()])?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
         assert!(
-            generated.contains("static __INCAN_DECORATED_TARGET:")
-                && generated.contains("__INCAN_DECORATED_TARGET.get()"),
-            "the generated decorator cell and its wrapper read must retain the synthetic identifier:\n{generated}"
-        );
-        assert!(
-            generated.matches(&source_projection).count() >= 3,
-            "the colliding source static declaration, init, and read must share `{source_projection}`:\n{generated}"
-        );
-        assert!(
-            !source_projection.contains("__INCAN_DECORATED_TARGET"),
-            "the source and generated static spellings unexpectedly collapsed: {source_projection}"
+            facade_code.contains("__incan_init_imported_static_counter"),
+            "the repeated private import must retain the static initializer import:\n{facade_code}"
         );
         Ok(())
     }
 
-    #[test]
-    fn generated_decorator_function_collision_keeps_distinct_identifiers_and_calls()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let program = parse_program_result(
-            r#"
-def preserve[F]() -> ((F) -> F):
-  return (func) => func
+    /// Return Cargo's build-script and unit output directories under one target profile's `build` directory.
+    fn build_output_directories(build_directory: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+        let mut outputs = Vec::new();
+        for package in std::fs::read_dir(build_directory)? {
+            let package = package?;
+            for fingerprint in std::fs::read_dir(package.path())? {
+                let output = fingerprint?.path().join("out");
+                if output.is_dir() {
+                    outputs.push(output);
+                }
+            }
+        }
+        Ok(outputs)
+    }
 
-pub def __incan_original_target() -> int:
-  return 41
+    /// Find the newest artifact whose file name satisfies `predicate` in any of `directories`.
+    fn newest_artifact(
+        directories: &[std::path::PathBuf],
+        predicate: impl Fn(&str) -> bool,
+    ) -> Result<Option<std::path::PathBuf>, std::io::Error> {
+        let mut matches = Vec::new();
+        for directory in directories {
+            for entry in std::fs::read_dir(directory)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                if predicate(name) {
+                    let modified = entry.metadata().and_then(|metadata| metadata.modified()).ok();
+                    matches.push((modified, entry.path()));
+                }
+            }
+        }
+        matches.sort_by_key(|(modified, _)| *modified);
+        Ok(matches.pop().map(|(_, path)| path))
+    }
 
-@preserve()
-pub def target() -> int:
-  return 1
-"#,
+    /// Compile a generated multi-file project as one library crate against the runtime this test binary links, so the
+    /// assertion is rustc's. Each source module is written beside the crate root and declared from it, the layout a
+    /// project build gives top-level modules.
+    fn compile_generated_project(
+        main_code: &str,
+        modules: &HashMap<Vec<String>, String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let mut crate_root = main_code.to_string();
+        for (path, code) in modules {
+            let [name] = path.as_slice() else {
+                return Err(format!("only top-level modules are laid out here, not `{}`", path.join(".")).into());
+            };
+            crate_root.push_str(&format!("\nmod {name};\n"));
+            std::fs::write(directory.path().join(format!("{name}.rs")), code)?;
+        }
+        let input = directory.path().join("main.rs");
+        std::fs::write(&input, &crate_root)?;
+        let capability = oven_model::compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
+            oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
         )?;
-        let generated = IrCodegen::new().try_generate(&program)?;
-        let public_source_projections = generated
-            .lines()
-            .filter_map(|line| {
-                line.trim_start()
-                    .strip_prefix("pub fn __incan_v1_")
-                    .and_then(|tail| tail.split('(').next())
-                    .map(|payload| format!("__incan_v1_{payload}"))
-            })
-            .collect::<std::collections::BTreeSet<_>>();
+        let rustc = capability
+            .as_ref()
+            .map(|capability| capability.rustc.clone())
+            .unwrap_or_else(|| {
+                std::env::var_os("RUSTC")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| "rustc".into())
+            });
+        let mut command = std::process::Command::new(rustc);
+        command.args([
+            "--edition=2024",
+            "--crate-type=lib",
+            "--crate-name=generated_project_fixture",
+            "-A",
+            "warnings",
+        ]);
+        if let Some(capability) = capability {
+            for path in capability.dependency_search_paths {
+                command.arg("-L").arg(format!("dependency={}", path.display()));
+            }
+            for (name, path) in capability.externs {
+                command.arg("--extern").arg(format!("{name}={}", path.display()));
+            }
+        } else {
+            let executable = std::env::current_exe()?;
+            let target_profile = executable
+                .ancestors()
+                .find(|ancestor| ancestor.join("build").is_dir())
+                .ok_or("test executable has no target profile directory")?;
+            let mut directories = build_output_directories(&target_profile.join("build"))?;
+            let deps = target_profile.join("deps");
+            if deps.is_dir() {
+                directories.push(deps);
+            }
+            for directory in &directories {
+                command.arg("-L").arg(format!("dependency={}", directory.display()));
+            }
+            let stdlib = newest_artifact(&directories, |name| {
+                name.starts_with("libincan_std_core-") && name.ends_with(".rlib")
+            })?
+            .ok_or("generated-Rust proof requires a compiled incan_std_core artifact")?;
+            command
+                .arg("--extern")
+                .arg(format!("incan_std_core={}", stdlib.display()));
+            let derive = newest_artifact(&directories, |name| {
+                name.trim_start_matches("lib").starts_with("incan_derive-")
+                    && std::path::Path::new(name)
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        == Some(std::env::consts::DLL_EXTENSION)
+            })?
+            .ok_or("generated-Rust proof requires a compiled incan_derive artifact")?;
+            command
+                .arg("--extern")
+                .arg(format!("incan_derive={}", derive.display()));
+        }
+        let output = directory.path().join("libgenerated_project_fixture.rlib");
+        let result = command.arg(&input).arg("-o").arg(output).output()?;
+        let sources = modules
+            .iter()
+            .map(|(path, code)| format!("// ---- {} ----\n{code}", path.join(".")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            result.status.success(),
+            "{}\n// ---- crate root ----\n{crate_root}\n{sources}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        Ok(())
+    }
 
+    /// Issue #1842: a default evaluated at a caller in another module reads the static projection, and runs the static
+    /// initializer, of the module that declares the callable. The caller may be the crate root or another source
+    /// module, whose IR is emitted on its own; both projects must build.
+    #[test]
+    fn cross_module_default_reading_static_keeps_projection_issue1842() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers =
+            parse_program_result("pub static COUNT: int = 3\n\npub def take(n: int = COUNT) -> int:\n  return n\n")?;
+        let helpers_path = vec!["helpers".to_string()];
+        let static_projection = |helpers_code: &str| {
+            helpers_code
+                .lines()
+                .find_map(|line| {
+                    line.trim_start()
+                        .strip_prefix("pub static __incan_v1_")
+                        .and_then(|tail| tail.split(':').next())
+                        .map(|payload| format!("__incan_v1_{payload}"))
+                })
+                .ok_or("helper static did not emit an incan-v1 projection")
+        };
+
+        // ---- The crate root calls the helper ----
+        let main = parse_program_result("from helpers import take\n\n\ndef main() -> None:\n  println(take())\n")?;
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("helpers", &helpers, helpers_path.clone());
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, std::slice::from_ref(&helpers_path))?;
+        let projection = static_projection(modules.get(&helpers_path).ok_or("missing generated helpers module")?)?;
+        let compact_main = compact_rust(&main_code);
         assert!(
-            generated.contains("fn __incan_original_target("),
-            "the generated decorator original did not retain its private physical name:\n{generated}"
+            compact_main.contains(&format!("crate::helpers::{projection}"))
+                && compact_main.contains("crate::helpers::__incan_init_module_statics()"),
+            "the caller must initialize and read the default's static through its declaring module:\n{main_code}"
         );
+        compile_generated_project(&main_code, &modules)?;
+
+        // ---- Another source module calls the helper ----
+        let caller = parse_program_result("from helpers import take\n\n\npub def run() -> int:\n  return take()\n")?;
+        let main = parse_program_result("from caller import run\n\n\ndef main() -> None:\n  println(run())\n")?;
+        let caller_path = vec!["caller".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("helpers", &helpers, helpers_path.clone());
+        codegen.add_module_with_path_segments("caller", &caller, caller_path.clone());
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[helpers_path.clone(), caller_path.clone()])?;
+        let projection = static_projection(modules.get(&helpers_path).ok_or("missing generated helpers module")?)?;
+        let caller_code = modules.get(&caller_path).ok_or("missing generated caller module")?;
+        let compact_caller = compact_rust(caller_code);
         assert!(
-            generated.matches("__incan_original_target").count() >= 2,
-            "the decorator application did not reference the generated original by its physical name:\n{generated}"
+            compact_caller.contains(&format!("crate::helpers::{projection}"))
+                && compact_caller.contains("crate::helpers::__incan_init_module_statics()"),
+            "a source-module caller must initialize and read the default's static through its declaring module:\n{caller_code}"
         );
-        assert_eq!(
-            public_source_projections.len(),
-            2,
-            "the colliding source declaration and decorated wrapper must retain two distinct public projections:\n{generated}"
-        );
+        compile_generated_project(&main_code, &modules)?;
+        Ok(())
+    }
+
+    /// Generate a crate-root program beside top-level source modules, given as `(name, source)` pairs, and compile the
+    /// generated project with rustc. Returns the crate root's code and each module's code keyed by its path.
+    fn generate_and_compile_project(
+        main_source: &str,
+        module_sources: &[(&str, &str)],
+    ) -> Result<GeneratedProject, Box<dyn std::error::Error>> {
+        let main = parse_program_result(main_source)?;
+        let modules = module_sources
+            .iter()
+            .map(|(name, source)| Ok(((*name).to_string(), parse_program_result(source)?)))
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        let paths = modules.iter().map(|(name, _)| vec![name.clone()]).collect::<Vec<_>>();
+        let mut codegen = IrCodegen::new();
+        for ((name, program), path) in modules.iter().zip(&paths) {
+            codegen.add_module_with_path_segments(name, program, path.clone());
+        }
+        let (main_code, generated) = codegen.try_generate_multi_file_nested(&main, &paths)?;
+        compile_generated_project(&main_code, &generated)?;
+        Ok((main_code, generated))
+    }
+
+    /// A default reads the static of the module that declares its callable, also at a caller that declares a static of
+    /// the same name: the default's read names the declaring module's static by its path, and the caller's own name
+    /// keeps reading the caller's static. The caller may be the crate root or another source module.
+    #[test]
+    fn default_static_read_beside_a_same_named_caller_static_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers = "pub static COUNT: int = 3\n\npub def take(n: int = COUNT) -> int:\n    return n\n";
+        let (main_code, _) = generate_and_compile_project(
+            "from helpers import take\n\nstatic COUNT: int = 7\n\n\ndef main() -> None:\n    println(take())\n    println(COUNT)\n",
+            &[("helpers", helpers)],
+        )?;
         assert!(
-            !generated.contains("@generated/decorator-original"),
-            "the collision-proof registry key leaked into generated Rust:\n{generated}"
+            compact_rust(&main_code).contains("crate::helpers::__incan_init_module_statics()"),
+            "the default must initialize and read the declaring module's static through its path:\n{main_code}"
+        );
+        generate_and_compile_project(
+            "from caller import run\n\n\ndef main() -> None:\n    println(run())\n",
+            &[
+                ("helpers", helpers),
+                (
+                    "caller",
+                    "from helpers import take\n\nstatic COUNT: int = 7\n\n\npub def run() -> int:\n    return take() + COUNT\n",
+                ),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// A default that reads a static list whole, through a method call on it or through a builtin reads the declaring
+    /// module's list at a caller that declares a static list of the same name.
+    #[test]
+    fn default_static_list_reads_beside_a_same_named_caller_static_build() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers = r#"pub static ITEMS: list[int] = [1, 2]
+
+
+pub def first(items: list[int] = ITEMS) -> int:
+    return items[0]
+
+
+pub def has(flag: bool = ITEMS.contains(2)) -> bool:
+    return flag
+
+
+pub def size(n: int = len(ITEMS)) -> int:
+    return n
+"#;
+        let (main_code, _) = generate_and_compile_project(
+            r#"from helpers import first, has, size
+
+static ITEMS: list[str] = ["a"]
+
+
+def main() -> None:
+    println(first())
+    println(has())
+    println(size())
+    println(len(ITEMS))
+"#,
+            &[("helpers", helpers)],
+        )?;
+        assert!(
+            compact_rust(&main_code).contains("crate::helpers::__incan_init_module_statics();crate::helpers::"),
+            "each default must read `helpers`' list, not the caller's:\n{main_code}"
+        );
+        Ok(())
+    }
+
+    /// A method default, a method-partial preset and a static method's default that read a static of the declaring
+    /// module build at a caller in another module, also where the caller imports that static itself or declares its
+    /// own static of the same name.
+    #[test]
+    fn default_static_read_in_method_defaults_across_modules_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers = r#"pub static LIMIT: int = 3
+
+pub class Box:
+    pub v: int
+
+    def get(self, n: int = LIMIT) -> int:
+        return n + self.v
+
+    def add(self, n: int) -> int:
+        return n + self.v
+
+    capped = partial add(n=LIMIT)
+
+    @staticmethod
+    def make(v: int = LIMIT) -> Box:
+        return Box(v=v)
+"#;
+        generate_and_compile_project(
+            "from helpers import Box\n\n\ndef main() -> None:\n    b = Box(v=1)\n    println(b.get())\n    println(b.capped())\n    println(Box.make().v)\n",
+            &[("helpers", helpers)],
+        )?;
+        generate_and_compile_project(
+            "from helpers import Box, LIMIT\n\nstatic OTHER: int = 9\n\n\ndef main() -> None:\n    b = Box(v=1)\n    println(b.get() + LIMIT + OTHER)\n",
+            &[("helpers", helpers)],
+        )?;
+        generate_and_compile_project(
+            "from helpers import Box\n\nstatic LIMIT: int = 5\n\n\ndef main() -> None:\n    println(Box(v=1).get() + LIMIT)\n",
+            &[("helpers", helpers)],
+        )?;
+        Ok(())
+    }
+
+    /// A default that reads a static its module imports, or that calls a function whose own default reads a static,
+    /// reads the module that declares the static at a caller that neither imports that static nor its module, even
+    /// where the caller declares a static of the same name.
+    #[test]
+    fn default_static_read_through_imports_and_nested_defaults_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let (main_code, _) = generate_and_compile_project(
+            "from helpers import take, wrap\n\nstatic LIMIT: int = 5\n\n\ndef main() -> None:\n    println(take() + wrap() + LIMIT)\n",
+            &[
+                ("config", "pub static LIMIT: int = 4\n"),
+                (
+                    "helpers",
+                    "from config import LIMIT\n\n\ndef inner(k: int = LIMIT) -> int:\n    return k\n\n\npub def take(n: int = LIMIT) -> int:\n    return n\n\n\npub def wrap(n: int = inner()) -> int:\n    return n\n",
+                ),
+            ],
+        )?;
+        assert!(
+            compact_rust(&main_code).contains("crate::config::__incan_init_module_statics()"),
+            "the defaults must read `config`'s static rather than the caller's static of the same name:\n{main_code}"
         );
         Ok(())
     }
@@ -4886,6 +6639,61 @@ def same(left: Value, right: Value) -> bool:
             "recoverable __eq__ wrapper must not call a nonexistent inherent method:\n{generated}"
         );
         Ok(())
+    }
+
+    /// The stdlib namespace binding named `serde` must not capture generated serde derive paths.
+    #[test]
+    fn followups_b_serde_derives_are_crate_rooted_when_stdlib_serde_is_imported() {
+        let generated = generate(
+            r#"
+from std import serde
+from std.serde.json import Serialize
+
+@derive(Serialize)
+pub model Derived:
+  value: int
+
+pub model Adopted with Serialize:
+  value: int
+"#,
+        );
+        assert!(
+            generated.contains("::serde::Serialize"),
+            "serde derives must resolve from the crate root despite the local `serde` binding:\n{generated}"
+        );
+        assert!(
+            !generated.contains("derive(Debug, Clone, serde::Serialize)"),
+            "a relative serde derive remains shadowable:\n{generated}"
+        );
+    }
+
+    /// Option identity against `None` must not require equality of the payload type.
+    #[test]
+    fn followups_b_option_none_identity_emits_presence_predicates() {
+        let generated = generate(
+            r#"
+pub model Payload:
+  value: int
+
+pub def absent(value: Option[Payload]) -> bool:
+  return value is None
+
+pub def present(value: Option[Payload]) -> bool:
+  return value is not None
+"#,
+        );
+        assert!(
+            generated.contains("value.is_none()"),
+            "missing `is_none()`:\n{generated}"
+        );
+        assert!(
+            generated.contains("value.is_some()"),
+            "missing `is_some()`:\n{generated}"
+        );
+        assert!(
+            !generated.contains("value == None") && !generated.contains("value != None"),
+            "Option identity must not emit payload equality:\n{generated}"
+        );
     }
 
     #[test]
@@ -5142,7 +6950,7 @@ def main() -> None:
             .ok_or_else(|| std::io::Error::other("missing generated std.io module"))?;
 
         assert!(
-            io_code.contains("impl Error for IoError"),
+            io_code.contains("impl crate::__incan_std::traits::error::Error for IoError"),
             "expected IoError to adopt std.traits.error.Error; got:\n{io_code}"
         );
         assert!(
@@ -5293,6 +7101,8 @@ pub def touch(value: Serialize) -> None:
         assert!(!code.contains("use crate::serde::Serialize;"));
     }
 
+    /// #1766: `..` climbs from the importing file's directory, so `store/json_store.incn` reaches the root's
+    /// `db.schema`, and the import names that module by its crate-absolute path.
     #[test]
     fn test_relative_from_import_uses_super_prefix() {
         let store_code = generate_nested_store_code(
@@ -5303,8 +7113,8 @@ pub def touch(db: Database) -> None:
   return
 "#,
         );
-        assert!(store_code.contains("use super::db::schema::Database;"));
-        assert!(!store_code.contains("use crate::db::schema::Database;"));
+        assert!(store_code.contains("use crate::db::schema::Database;"), "{store_code}");
+        assert!(!store_code.contains("use super::db::schema::Database;"), "{store_code}");
     }
 
     #[test]

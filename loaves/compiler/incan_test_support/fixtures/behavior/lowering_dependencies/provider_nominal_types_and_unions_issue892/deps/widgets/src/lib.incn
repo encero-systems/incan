@@ -1,0 +1,24 @@
+pub model Widget:
+    pub name: str
+
+
+pub model Fallback:
+    pub reason: str
+
+
+pub model Envelope[T]:
+    pub inner: T
+    pub tag: str
+
+
+pub type Shape = Widget | Fallback
+
+
+pub def make(name: str) -> Shape:
+    if name == "":
+        return Fallback(reason="empty name")
+    return Widget(name=name)
+
+
+pub def wrap(name: str) -> Envelope[Widget]:
+    return Envelope[Widget](inner=Widget(name=name), tag="wrapped")

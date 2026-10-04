@@ -1,0 +1,6 @@
+from probe_registry import PROBE_REGISTRY
+
+
+@PROBE_REGISTRY.add("decorated", 1)
+pub def decorated(value: int) -> int:
+    return value

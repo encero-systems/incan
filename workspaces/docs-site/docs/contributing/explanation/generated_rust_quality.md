@@ -132,3 +132,7 @@ Current audit gaps to track from the v0.3 baseline:
 For v0.4, the natural next step is tooling maturity: generated Rust inspection commands, quality gates, or snapshot grouping that make drift easier to review.
 
 For v0.5 and later, the focus shifts toward architectural stability: stable helper crates, caller adapters, generated crate contracts, and compatibility policy on the path to 1.0.
+
+## Stdlib coverage inventory
+
+The [generated Rust stdlib coverage inventory](../reference/generated_rust_stdlib_coverage.md) records the classification for every `std.*` module: snapshot-covered, compile-only-covered, import/user-facing-covered, indirect-only, or missing. It was first built on 2026-05-20 from repository searches over `loaves/stdlib` and the CLI, codegen-snapshot and stdlib runtime test trees. It records test evidence; it is not a claim that the runtime behavior of every exported API is covered. Keeping it current is described in [Auditing generated Rust](../how-to/auditing_generated_rust.md#update-the-stdlib-coverage-inventory).

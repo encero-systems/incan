@@ -1,0 +1,57 @@
+# behavior: map, map_err, and_then, or_else, inspect, inspect_err, unwrap and unwrap_or classify against a Result[int, str] receiver and each transforms or reads the value it names
+# retires: loaves/compiler/incan_ir/src/expr.rs::result_method_kind_for_receiver_classifies_result_surface
+# expect-stdout:
+#   map Ok(4)
+#   map_err Err(bad!)
+#   and_then Ok(3)
+#   and_then Err(zero)
+#   or_else Ok(0)
+#   inspect saw 2
+#   inspect Ok(2)
+#   inspect_err saw bad
+#   inspect_err Err(bad)
+#   unwrap 2
+#   unwrap_or 9
+
+def parse(text: str) -> Result[int, str]:
+    if text == "bad":
+        return Err("bad")
+    return Ok(len(text))
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def shout(message: str) -> str:
+    return f"{message}!"
+
+
+def halve(value: int) -> Result[int, str]:
+    if value == 0:
+        return Err("zero")
+    return Ok(value + 1)
+
+
+def recover(message: str) -> Result[int, str]:
+    return Ok(len(message) - 3)
+
+
+def show(value: Result[int, str]) -> str:
+    match value:
+        case Ok(number):
+            return f"Ok({number})"
+        case Err(message):
+            return f"Err({message})"
+
+
+def main() -> None:
+    println(f"map {show(parse("ab").map(double))}")
+    println(f"map_err {show(parse("bad").map_err(shout))}")
+    println(f"and_then {show(parse("ab").and_then(halve))}")
+    println(f"and_then {show(parse("").and_then(halve))}")
+    println(f"or_else {show(parse("bad").or_else(recover))}")
+    println(f"inspect {show(parse("ab").inspect((value) => println(f"inspect saw {value}")))}")
+    println(f"inspect_err {show(parse("bad").inspect_err((message) => println(f"inspect_err saw {message}")))}")
+    println(f"unwrap {parse("ab").unwrap()}")
+    println(f"unwrap_or {parse("bad").unwrap_or(9)}")

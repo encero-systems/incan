@@ -8,6 +8,9 @@ use super::{
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
 
+/// The file stem of a namespace's own module (`std.async` is `async/prelude.incn`).
+pub const STDLIB_PRELUDE_SEGMENT: &str = "prelude";
+
 /// RFC 023: Rust module namespace for compiled `std.*` modules.
 ///
 /// Compiled stdlib `.incn` files are emitted as submodules under `crate::__incan_std::*` to avoid shadowing Rust's
@@ -16,6 +19,25 @@ pub const INCAN_STD_NAMESPACE: &str = "__incan_std";
 
 /// `std.web` module name.
 pub const STDLIB_WEB: &str = "web";
+
+/// `std.web.routing.route`, the decorator that registers a function as an HTTP route handler.
+///
+/// The checker recognizes the decorator by this name together with its backing crate
+/// ([`STDLIB_WEB_MACROS_CRATE`]) rather than by import spelling, so `@route`, `@web.route` and
+/// `@std.web.routing.route` are one decorator once the import resolves.
+pub const STDLIB_WEB_ROUTE_DECORATOR: &str = "route";
+
+/// The proc-macro crate that backs `std.web.routing.route`.
+///
+/// A `@rust.extern` stdlib function bound to this crate is emitted as a passthrough Rust attribute; the checker uses
+/// the same binding to know which decorated functions are route handlers and to check their signatures.
+pub const STDLIB_WEB_MACROS_CRATE: &str = "incan_web_macros";
+
+/// `std.web.macros.IntoResponse`, the derive that makes a wrapper type usable as a route handler's return type.
+pub const STDLIB_WEB_INTO_RESPONSE_TRAIT: &str = "IntoResponse";
+
+/// `std.web.macros.FromRequestParts`, the derive that makes a wrapper type usable as a route handler parameter.
+pub const STDLIB_WEB_FROM_REQUEST_PARTS_TRAIT: &str = "FromRequestParts";
 
 /// `std.reflection` module name.
 pub const STDLIB_REFLECTION: &str = "reflection";
@@ -140,21 +162,11 @@ pub enum StdlibJsonTraitId {
 const STDLIB_JSON_SERIALIZE_TRAIT_METHODS: &[&str] = &["to_json"];
 const STDLIB_JSON_DESERIALIZE_TRAIT_METHODS: &[&str] = &["from_json"];
 
-const STDLIB_JSON_SERIALIZE_TRAIT_NAMES: &[&str] = &[
-    "Serialize",
-    "JsonSerialize",
-    "json.Serialize",
-    "std.serde.json.Serialize",
-];
+const STDLIB_JSON_SERIALIZE_TRAIT_NAMES: &[&str] = &["Serialize", "json.Serialize", "std.serde.json.Serialize"];
 
 const STDLIB_JSON_CANONICAL_TRAIT_NAMES: &[&str] = &["std.serde.json.Serialize", "std.serde.json.Deserialize"];
 
-const STDLIB_JSON_DESERIALIZE_TRAIT_NAMES: &[&str] = &[
-    "Deserialize",
-    "JsonDeserialize",
-    "json.Deserialize",
-    "std.serde.json.Deserialize",
-];
+const STDLIB_JSON_DESERIALIZE_TRAIT_NAMES: &[&str] = &["Deserialize", "json.Deserialize", "std.serde.json.Deserialize"];
 
 /// Return whether `name` is the canonical dynamic JSON value type.
 #[must_use]
@@ -168,7 +180,11 @@ pub fn is_diverging_rust_error_helper_name(name: &str) -> bool {
     DIVERGING_RUST_ERROR_HELPERS.contains(&name)
 }
 
-/// Return the stdlib JSON trait id for a source, alias, or qualified trait spelling.
+/// Return the stdlib JSON trait id for a source or qualified trait spelling.
+///
+/// The spellings here are the ones a program can write without an import binding of its own: the declaration name
+/// and the module-qualified forms. An import alias (`Serialize as JsonSerialize`) is a binding the frontend proves,
+/// so it is resolved by identity through [`stdlib_json_trait_id_for_identity`], never by its spelling (#1712).
 #[must_use]
 pub fn stdlib_json_trait_id(name: &str) -> Option<StdlibJsonTraitId> {
     if STDLIB_JSON_SERIALIZE_TRAIT_NAMES.contains(&name) {
@@ -199,6 +215,29 @@ pub fn is_stdlib_json_trait_module_path(segments: &[String]) -> bool {
     )
 }
 
+/// Canonical source declaration names of the `std.serde.json` protocol traits, indexed by their id.
+const STDLIB_JSON_TRAIT_SOURCE_NAMES: &[(StdlibJsonTraitId, &str)] = &[
+    (StdlibJsonTraitId::Serialize, "Serialize"),
+    (StdlibJsonTraitId::Deserialize, "Deserialize"),
+];
+
+/// Return the stdlib JSON trait id for a canonical trait identity: the declaring module path plus the source
+/// declaration name.
+///
+/// This is the identity-keyed form of [`stdlib_json_trait_id`]. A trait that merely shares the spelling `Serialize`
+/// or `Deserialize` but is declared anywhere other than `std.serde.json` carries no JSON protocol, so lowering and
+/// emission must consult this form whenever the trait's declaring module is known.
+#[must_use]
+pub fn stdlib_json_trait_id_for_identity(module_path: &[String], source_name: &str) -> Option<StdlibJsonTraitId> {
+    if !is_stdlib_json_trait_module_path(module_path) {
+        return None;
+    }
+    STDLIB_JSON_TRAIT_SOURCE_NAMES
+        .iter()
+        .find(|(_, name)| *name == source_name)
+        .map(|(id, _)| *id)
+}
+
 /// Return the stdlib JSON trait id for a resolved source import path.
 #[must_use]
 pub fn stdlib_json_trait_id_from_path(segments: &[String]) -> Option<StdlibJsonTraitId> {
@@ -222,18 +261,6 @@ pub fn stdlib_json_trait_scope_import_id(name: &str) -> Option<StdlibJsonTraitId
 #[must_use]
 pub fn is_canonical_stdlib_json_trait_name(name: &str) -> bool {
     STDLIB_JSON_CANONICAL_TRAIT_NAMES.contains(&name)
-}
-
-/// Return whether `name` refers to the stdlib JSON serialization trait.
-#[must_use]
-pub fn is_stdlib_json_serialize_trait_name(name: &str) -> bool {
-    stdlib_json_trait_id(name) == Some(StdlibJsonTraitId::Serialize)
-}
-
-/// Return whether `name` refers to the stdlib JSON deserialization trait.
-#[must_use]
-pub fn is_stdlib_json_deserialize_trait_name(name: &str) -> bool {
-    stdlib_json_trait_id(name) == Some(StdlibJsonTraitId::Deserialize)
 }
 
 const STDLIB_GRAPH_CONSTRUCTOR_TYPES: &[&str] = &["DiGraph", "Dag", "MultiDiGraph"];
@@ -409,7 +436,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: Some(facets::WEB),
         extra_crate_deps: &[
             StdlibExtraCrateDep {
-                crate_name: "incan_web_macros",
+                crate_name: STDLIB_WEB_MACROS_CRATE,
                 source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
                 features: &[],
             },
@@ -756,7 +783,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             StdlibExtraCrateDep {
                 crate_name: "xz2",
                 source: StdlibExtraCrateSource::Version("0.1"),
-                features: &[],
+                features: &["static"],
             },
             StdlibExtraCrateDep {
                 crate_name: "snap",
@@ -901,6 +928,20 @@ pub fn is_known_stdlib_module(path: &[String]) -> bool {
     ns.submodules.contains(&submodule.as_str())
 }
 
+/// Return the module a `std.<namespace>...prelude` path names, or `None` for any other path.
+///
+/// A namespace's `prelude` source file is the namespace's own module, the way a directory's `mod` file is, so
+/// `std.async.prelude` and `std.async` name one module: the checker resolves the import through the namespace and a
+/// provider claims it once, as `std.async`. The root-level `std.prelude` is a module of its own and is left alone.
+pub fn stdlib_prelude_module_namespace(path: &[String]) -> Option<&[String]> {
+    match path {
+        [root, .., last] if path.len() >= 3 && root == STDLIB_ROOT && last == STDLIB_PRELUDE_SEGMENT => {
+            Some(&path[..path.len() - 1])
+        }
+        _ => None,
+    }
+}
+
 /// Human-friendly list of known stdlib modules for diagnostics.
 ///
 /// Includes top-level namespaces and registered submodules.
@@ -1036,6 +1077,25 @@ mod tests {
         assert!(is_graph_constructor_type("MultiDiGraph"));
         assert!(!is_graph_constructor_type("NodeId"));
         assert!(!is_graph_constructor_type("EdgeId"));
+    }
+
+    /// #1561: a namespace's `prelude` path names the namespace; `std.prelude` stays a module of its own.
+    #[test]
+    fn a_namespace_prelude_path_names_the_namespace() {
+        assert_eq!(
+            stdlib_prelude_module_namespace(&segs(&["std", "async", "prelude"])),
+            Some(segs(&["std", "async"]).as_slice())
+        );
+        assert_eq!(
+            stdlib_prelude_module_namespace(&segs(&["std", "traits", "prelude"])),
+            Some(segs(&["std", "traits"]).as_slice())
+        );
+        assert_eq!(stdlib_prelude_module_namespace(&segs(&["std", "prelude"])), None);
+        assert_eq!(stdlib_prelude_module_namespace(&segs(&["std", "async", "time"])), None);
+        assert_eq!(
+            stdlib_prelude_module_namespace(&segs(&["app", "models", "prelude"])),
+            None
+        );
     }
 
     #[test]
@@ -1237,27 +1297,24 @@ mod tests {
     }
 
     #[test]
-    fn stdlib_json_trait_lookup_covers_aliases_and_qualified_names() {
-        for name in [
-            "Serialize",
-            "JsonSerialize",
-            "json.Serialize",
-            "std.serde.json.Serialize",
-        ] {
+    fn stdlib_json_trait_lookup_covers_source_and_qualified_names_only() {
+        for name in ["Serialize", "json.Serialize", "std.serde.json.Serialize"] {
             assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Serialize));
-            assert!(is_stdlib_json_serialize_trait_name(name));
         }
 
-        for name in [
-            "Deserialize",
-            "JsonDeserialize",
-            "json.Deserialize",
-            "std.serde.json.Deserialize",
-        ] {
+        for name in ["Deserialize", "json.Deserialize", "std.serde.json.Deserialize"] {
             assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Deserialize));
-            assert!(is_stdlib_json_deserialize_trait_name(name));
         }
 
+        // An import alias is a binding, resolved by identity rather than by spelling (#1712).
+        assert_eq!(stdlib_json_trait_id("JsonSerialize"), None);
+        assert_eq!(stdlib_json_trait_id("JsonDeserialize"), None);
+        let json_module = ["std", "serde", "json"].map(String::from);
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_module, "Serialize"),
+            Some(StdlibJsonTraitId::Serialize)
+        );
+        assert_eq!(stdlib_json_trait_id_for_identity(&json_module, "JsonSerialize"), None);
         assert_eq!(stdlib_json_trait_id("yaml.Serialize"), None);
         assert_eq!(stdlib_json_trait_scope_import_id("Serialize"), None);
         assert_eq!(stdlib_json_trait_scope_import_id("JsonSerialize"), None);
@@ -1267,6 +1324,23 @@ mod tests {
         );
         let json_trait_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
         assert!(is_stdlib_json_trait_module_path(&json_trait_module));
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_trait_module, "Serialize"),
+            Some(StdlibJsonTraitId::Serialize)
+        );
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_trait_module, "Deserialize"),
+            Some(StdlibJsonTraitId::Deserialize)
+        );
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_trait_module, "JsonSerialize"),
+            None
+        );
+        assert_eq!(stdlib_json_trait_id_for_identity(&segs(&["main"]), "Serialize"), None);
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&segs(&["std", "toml"]), "Serialize"),
+            None
+        );
         let serialize_path = vec![
             "std".to_string(),
             "serde".to_string(),

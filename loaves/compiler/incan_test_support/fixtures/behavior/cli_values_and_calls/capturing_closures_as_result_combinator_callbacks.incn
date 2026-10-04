@@ -1,0 +1,29 @@
+# behavior: a closure that captures local values runs as the callback of each Result combinator, which calls it before it returns
+# retires: loaves/compiler/incan_emit/src/tests/capturing_closures.rs::capturing_closures_build_as_result_combinator_callbacks_issue1561
+# expect-stdout:
+#   7
+#   10
+#   3
+#   10
+#   3
+#   x!
+
+def passed() -> Result[int, str]:
+    return Ok(5)
+
+
+def failed() -> Result[int, str]:
+    return Err("x")
+
+
+def main() -> None:
+    n = 2
+    suffix = "!"
+    println(passed().map((x) => x + n).unwrap_or(0))
+    println(passed().and_then((x) => Ok(x * n)).unwrap_or(0))
+    println(failed().or_else((m) => Ok(len(m) + n)).unwrap_or(0))
+    passed().inspect((x) => println(x * n))
+    failed().inspect_err((m) => println(len(m) + n))
+    match failed().map_err((m) => m + suffix):
+        Ok(_) => println("ok")
+        Err(message) => println(message)

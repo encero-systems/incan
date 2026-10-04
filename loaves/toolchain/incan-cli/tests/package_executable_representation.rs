@@ -244,8 +244,11 @@ fn release_failure_after_new_debug_output_restores_both_consumer_routes() -> Res
     use std::os::unix::fs::PermissionsExt;
 
     let temporary = tempfile::tempdir()?;
-    let producer = temporary.path().join("producer");
-    let consumer = temporary.path().join("consumer");
+    // The shim below compares rustc's output arguments, which are canonical paths, with these paths, and macOS puts
+    // `/tmp` behind a symlink, so every path starts from the canonical root.
+    let root = fs::canonicalize(temporary.path())?;
+    let producer = root.join("producer");
+    let consumer = root.join("consumer");
     project(
         &producer,
         "arithmetic",
@@ -286,8 +289,8 @@ fn release_failure_after_new_debug_output_restores_both_consumer_routes() -> Res
         producer.join("src/lib.incn"),
         "pub def answer() -> int:\n    return 42\n",
     )?;
-    let shim = temporary.path().join("release-failing-rustc");
-    let proof = temporary.path().join("new-debug.rlib");
+    let shim = root.join("release-failing-rustc");
+    let proof = root.join("new-debug.rlib");
     fs::write(
         &shim,
         r#"#!/bin/sh

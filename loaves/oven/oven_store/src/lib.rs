@@ -24,6 +24,8 @@ pub mod closure_proof;
 pub use oven_model::compiler_suite_env;
 pub mod process;
 pub mod progress;
+pub mod publisher_execution;
+pub mod publisher_owner;
 pub mod store;
 pub mod store_mirror;
 #[cfg(any(test, feature = "test_support"))]
@@ -95,7 +97,7 @@ pub fn digest_dependency_specs(
 /// The provider facts Oven asks the compiler for instead of reading them itself.
 ///
 /// The compat publisher stages the compiler's SDK provider tree and rewrites the staged providers' dependency
-/// digests; a dependency digest has to recognise a packaged Incan provider by its sealed artifact. Both are facts
+/// digests; a dependency digest has to recognize a packaged Incan provider by its sealed artifact. Both are facts
 /// about Incan packages, so the compiler implements this and hands it in with every request that needs it; the Oven
 /// ring names no compiler crate.
 pub trait OvenProviderHooks: Send + Sync {
@@ -199,24 +201,31 @@ impl OvenProviderHooks for NoProviderHooks {
 
 /// Current wire format for persisted Oven receipts.
 pub const OVEN_RECEIPT_SCHEMA_VERSION: u32 = 3;
+
+/// Build-unit input key that binds one compiler-release root-intent authority to its final receipt.
+pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT: &str = "compiler-support-root-intent";
+/// Build-unit input key that binds the compatibility publisher's selected build-script closure to its capture
+/// receipt, from which the final receipt above is derived.
+pub const OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT: &str = "legacy-cargo-build-script-closure";
 /// Compiler-owned, project-relative destination for a default Oven receipt.
 pub const DEFAULT_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/receipt.json";
 
 /// Default aggregate physical allocation retained by an everyday Alpha Oven store.
 ///
-/// A project bake retains independent debug and release plans. A measured IncQL/DataFusion provider retains about
-/// 4.23 GiB while its consumer's compatibility publisher transiently needs about 3.80 GiB, and a Bevy-scale
-/// debug-plus-release pair retains about 3 GiB. Twelve GiB lets two such projects share one home and still leaves
-/// the publisher's staging floor free, so switching between them reuses rather than re-bakes (#1230); the
-/// publisher's private target stays bounded by that floor and the store prunes to this cap, so it is a ceiling on
-/// what is kept, never a reservation.
+/// A project bake retains independent debug and release plans. A measured IncQL/DataFusion release cohort, its two
+/// project extensions, and the complete project publication reach 9,654,812,672 physical bytes, while a Bevy-scale
+/// debug-plus-release pair retains about 3 GiB. Twelve GiB admits that DataFusion-scale project with practical
+/// headroom and lets smaller projects share one home, so switching between them reuses rather than re-bakes (#1230);
+/// the publisher's private target stays bounded by its staging floor and the store prunes to this cap, so it is a
+/// ceiling on what is kept, never a reservation.
 pub const DEFAULT_OVEN_MAX_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// Default physical allocation cap for one compatibility domain.
 ///
-/// Every project baked by one Incan release shares one compatibility domain, so for the ordinary single-release home
-/// this cap is the aggregate cap under another name; it equals the aggregate so it cannot starve a second project of
-/// staging before the aggregate would. A superseded release's entries are reclaimed at reservation time, which is
-/// what keeps an upgraded home from hoarding; callers may still choose a stricter explicit limit.
+/// Every project baked by one Incan release shares one compatibility domain, including the release-cohort Loafs a
+/// project extension uses as its base. The measured IncQL/DataFusion cohort, project extensions, and complete project
+/// publication reach 9,654,812,672 physical bytes. This cap equals the aggregate so it cannot starve a project before
+/// the aggregate would. A superseded release's entries are reclaimed at reservation time, which keeps an upgraded
+/// home from hoarding; callers may still choose a stricter explicit limit.
 pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// Transient staging the explicit compatibility baker reserves before it runs, reclaiming inactive store entries
 /// oldest-first to reach it.
@@ -228,13 +237,13 @@ pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 pub const DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Default logical artifact-byte cap for one compatibility domain.
 ///
-/// One explicit bake of a project whose closure is not loadable as independently compiled parts retains two extensions
-/// of a compiler Loaf: the library's delta and the test-dependency envelope's, each carrying the unified closure, its
-/// re-rooted copies of shared units, and the extension's own runtime. Measured for IncQL/DataFusion on Linux, each is
-/// 1.5 GiB, so a single debug-profile bake retains 3.0 GiB before its outputs and authority. Six GiB, half the physical
-/// allowance, admits that bake with the release profile or a second project beside it; callers may still choose a
-/// stricter explicit limit.
-pub const DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+/// The domain total includes the active release-cohort Loafs that a project extension names as its bases, not only
+/// the project's delta. A fresh IncQL/DataFusion bake measured those two bases at 3,263,191,117 and 3,034,969,392
+/// logical bytes. Its debug and release extensions added 91,344,058 and 90,877,386 bytes, then the complete project
+/// publication needed another 3,154,797,618 bytes. Manifests and every materialized file contribute to the
+/// 9,635,179,571-byte total. Ten GiB admits it with bounded headroom; callers may still choose a stricter explicit
+/// limit.
+pub const DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 /// Aggregate physical allowance for the complete compiler-suite Loaf and repository-test closure.
 pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 /// Physical allowance for the compiler-suite compatibility domain.
@@ -601,6 +610,9 @@ pub enum OvenError {
     /// A requested receipt transformation named a build-unit input that was not present.
     #[error("Oven receipt has no build-unit input `{input}`")]
     MissingBuildUnitInput { input: String },
+    /// A typed receipt transition would replace an identity input it must add exactly once.
+    #[error("Oven receipt already has build-unit input `{input}`")]
+    ExistingBuildUnitInput { input: String },
     /// A generated source input could not be read or did not satisfy the Alpha regular-file closure rules.
     #[error("invalid Oven generated source {path}: {message}")]
     InvalidGeneratedSource { path: PathBuf, message: String },
@@ -778,6 +790,47 @@ pub fn receipt_with_build_unit_input(
         &selected.sources.build_unit_inputs,
     )?;
     Ok(selected)
+}
+
+/// Derive the final authority receipt after one capture-only compiler-release transaction.
+///
+/// The capture receipt must already verify and must not yet carry compiler-release root intent. This method preserves
+/// its complete project, source, intent, and compatibility evidence, adds exactly the canonical root-intent digest,
+/// then recomputes and verifies both identities. It does not authorize any artifact produced by the capture-only
+/// transaction under the returned receipt; the caller must publish final artifacts only after this transition.
+pub fn receipt_with_compiler_support_root_intent(
+    capture_receipt: &OvenReceipt,
+    root_intent_digest: impl AsRef<str>,
+) -> Result<OvenReceipt, OvenError> {
+    capture_receipt.verify_identity()?;
+    let digest = normalized_value(root_intent_digest.as_ref(), "compiler support root-intent digest")?;
+    if capture_receipt
+        .sources
+        .build_unit_inputs
+        .contains_key(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT)
+    {
+        return Err(OvenError::ExistingBuildUnitInput {
+            input: OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+        });
+    }
+    let mut final_receipt = capture_receipt.clone();
+    final_receipt
+        .sources
+        .build_unit_inputs
+        .insert(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(), digest);
+    final_receipt.identity = receipt_identity(
+        &final_receipt.project,
+        &final_receipt.sources,
+        &final_receipt.intent,
+        &final_receipt.compatibility,
+    )?;
+    final_receipt.build_unit_identity = build_unit_identity(
+        &final_receipt.intent,
+        &final_receipt.compatibility,
+        &final_receipt.sources.build_unit_inputs,
+    )?;
+    final_receipt.verify_identity()?;
+    Ok(final_receipt)
 }
 
 /// Derive a new complete receipt with one selected build-unit input removed.
@@ -1213,7 +1266,7 @@ fn digest_generated_source_file(path: &Path) -> Result<String, OvenError> {
         })
 }
 
-/// Hash the workspace source and fixture closure that determines the repository's native test-suite behaviour.
+/// Hash the workspace source and fixture closure that determines the repository's native test-suite behavior.
 ///
 /// Oven deliberately excludes caller outputs such as `.incan` and `target`: those are neither compiler source nor test
 /// fixtures, and allowing them into the receipt would make a successful test run invalidate its own stored suite. Every
@@ -1690,10 +1743,12 @@ mod tests {
     use oven_model::manifest::{DependencySource, DependencySpec};
 
     use super::{
-        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenImportRequest, OvenProviderHookError,
-        OvenProviderHooks, OvenReceipt, default_receipt_path, digest_bytes, generated_project_source_evidence,
-        import_frozen_project, receipt_generated_project, receipt_generated_project_with_source_evidence,
-        receipt_native_compiler_suite, receipt_with_build_unit_input, receipt_without_build_unit_input, write_receipt,
+        OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OvenCompilerSuiteRequest, OvenError,
+        OvenGeneratedProjectRequest, OvenImportRequest, OvenProviderHookError, OvenProviderHooks, OvenReceipt,
+        default_receipt_path, digest_bytes, generated_project_source_evidence, import_frozen_project,
+        receipt_generated_project, receipt_generated_project_with_source_evidence, receipt_native_compiler_suite,
+        receipt_with_build_unit_input, receipt_with_compiler_support_root_intent, receipt_without_build_unit_input,
+        write_receipt,
     };
 
     /// A hook that fails the way a compiler would, with its own typed error behind the hook error.
@@ -1702,6 +1757,28 @@ mod tests {
     #[derive(Debug, thiserror::Error)]
     #[error("the compiler could not read the manifest")]
     struct CompilerSideFailure;
+
+    /// The default policy admits the measured DataFusion-scale project publication beside both active release Loafs.
+    #[test]
+    fn default_store_budget_admits_a_datafusion_scale_project_beside_release_loafs() {
+        const RELEASE_COHORT_LOGICAL_BYTES: u64 = 3_263_191_117 + 3_034_969_392;
+        const PROJECT_LOGICAL_BYTES: u64 = 91_344_058 + 90_877_386 + 3_154_797_618;
+        const RELEASE_COHORT_PHYSICAL_BYTES: u64 = 3_314_520_064 + 3_091_181_568;
+        const PROJECT_PHYSICAL_BYTES: u64 = 96_194_560 + 95_723_520 + 3_057_192_960;
+
+        assert!(
+            super::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES
+                >= RELEASE_COHORT_LOGICAL_BYTES.saturating_add(PROJECT_LOGICAL_BYTES)
+        );
+        assert!(
+            super::DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES
+                >= RELEASE_COHORT_PHYSICAL_BYTES.saturating_add(PROJECT_PHYSICAL_BYTES)
+        );
+        assert!(
+            super::DEFAULT_OVEN_MAX_PHYSICAL_BYTES
+                >= RELEASE_COHORT_PHYSICAL_BYTES.saturating_add(PROJECT_PHYSICAL_BYTES)
+        );
+    }
 
     impl super::OvenProviderHooks for FailingProviderHooks {
         fn sdk_provider_root(&self, _explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
@@ -2037,6 +2114,59 @@ mod tests {
             Some("sha256:reselected")
         );
         reselected.verify_identity()?;
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_support_final_receipt_adds_only_its_sealed_root_intent() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        write_generated_source_closure(project.path(), "fn main() {}\n")?;
+        let capture = receipt_generated_project(
+            &generated_request(project.path()).with_build_unit_input("runtime-lock", "sha256:runtime"),
+        )?;
+        let final_receipt = receipt_with_compiler_support_root_intent(&capture, "sha256:compiler-root-intent")?;
+
+        assert_ne!(final_receipt.identity, capture.identity);
+        assert_ne!(final_receipt.build_unit_identity, capture.build_unit_identity);
+        assert_eq!(final_receipt.project, capture.project);
+        assert_eq!(final_receipt.intent, capture.intent);
+        assert_eq!(final_receipt.compatibility, capture.compatibility);
+        let mut expected_sources = capture.sources.clone();
+        expected_sources.build_unit_inputs.insert(
+            OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+            "sha256:compiler-root-intent".to_string(),
+        );
+        assert_eq!(final_receipt.sources, expected_sources);
+        assert_eq!(
+            final_receipt.sources.supplemental_digests,
+            capture.sources.supplemental_digests
+        );
+        assert_eq!(
+            final_receipt.sources.build_unit_inputs.get("runtime-lock"),
+            Some(&"sha256:runtime".to_string())
+        );
+        assert_eq!(
+            final_receipt
+                .sources
+                .build_unit_inputs
+                .get(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT),
+            Some(&"sha256:compiler-root-intent".to_string())
+        );
+        final_receipt.verify_identity()?;
+        assert!(matches!(
+            receipt_with_compiler_support_root_intent(&final_receipt, "sha256:other"),
+            Err(OvenError::ExistingBuildUnitInput { .. })
+        ));
+
+        let mut tampered_capture = capture;
+        tampered_capture
+            .sources
+            .build_unit_inputs
+            .insert("unsealed-change".to_string(), "sha256:changed".to_string());
+        assert!(matches!(
+            receipt_with_compiler_support_root_intent(&tampered_capture, "sha256:other"),
+            Err(OvenError::ReceiptIdentityMismatch { .. }) | Err(OvenError::BuildUnitIdentityMismatch { .. })
+        ));
         Ok(())
     }
 

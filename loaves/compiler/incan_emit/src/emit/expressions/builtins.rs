@@ -7,9 +7,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
+use super::format::{float_display_text, renders_as_python_float};
 use super::methods::iterator_methods::emit_iter_receiver;
 use crate::conversions::exact_float_value_validation;
-use crate::ownership::ValueUseSite;
+use crate::ownership::{ValueUseSite, plan_list_constructor_source};
 use incan_ir::expr::{BuiltinFn, IrExprKind, Pattern, TypedExpr};
 use incan_ir::types::{
     IR_UNION_TYPE_NAME, IrType, SetConstructorIteration, isinstance_type_matches, isinstance_union_variant_indices,
@@ -238,8 +239,22 @@ fn emit_len(emitter: &IrEmitter<'_>, arg: &TypedExpr) -> Result<TokenStream, Emi
     if is_string_iterable_type(&arg.ty) || is_frozen_string_iterable_type(&arg.ty) {
         Ok(quote! { incan_std_core::strings::str_len(&(#value)) })
     } else {
-        Ok(quote! { ::std::convert::identity(#value.len() as i64) })
+        // A copied element read (`*list_get(..)`) is grouped so `.len()` applies to the element, not to the read.
+        let receiver = if starts_with_prefix_operator(&value) {
+            quote! { (#value) }
+        } else {
+            value
+        };
+        Ok(quote! { ::std::convert::identity(#receiver.len() as i64) })
     }
+}
+
+/// Whether emitted tokens begin with a prefix operator (`*`, `&`, `-`, `!`) that a method call would bind inside.
+fn starts_with_prefix_operator(tokens: &TokenStream) -> bool {
+    matches!(
+        tokens.clone().into_iter().next(),
+        Some(proc_macro2::TokenTree::Punct(punct)) if matches!(punct.as_char(), '*' | '&' | '-' | '!')
+    )
 }
 
 /// Emit integer `abs` with one checked language behavior in every Rust build profile.
@@ -305,8 +320,14 @@ impl<'a> IrEmitter<'a> {
         let rendered = args
             .iter()
             .map(|arg| {
-                let emitted = self.emit_expr(arg)?;
-                Ok(exact_float_value_validation(&arg.ty).apply(emitted))
+                let emitted = exact_float_value_validation(&arg.ty).apply(self.emit_expr(arg)?);
+                // A `float` prints through the runtime's spelling rather than Rust's `Display`; see
+                // `renders_as_python_float` for the migration note.
+                Ok(if renders_as_python_float(&arg.ty) {
+                    float_display_text(emitted)
+                } else {
+                    emitted
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         // One `{}` per argument, joined by the separator. Built here rather than in `quote!` because the format
@@ -414,14 +435,24 @@ impl<'a> IrEmitter<'a> {
             BuiltinFn::Str => {
                 if let Some(arg) = args.first() {
                     let a = exact_float_value_validation(&arg.ty).apply(self.emit_expr(arg)?);
-                    Ok(quote! { #a.to_string() })
+                    // A `float` renders through the runtime's spelling rather than Rust's `Display`; see
+                    // `renders_as_python_float` for the migration note. Mirrors the string-dispatch arm below.
+                    if renders_as_python_float(&arg.ty) {
+                        Ok(float_display_text(a))
+                    } else {
+                        Ok(quote! { #a.to_string() })
+                    }
                 } else {
                     Ok(quote! { String::new() })
                 }
             }
             BuiltinFn::Int => {
                 if let Some(arg) = args.first() {
-                    let a = self.emit_expr(arg)?;
+                    let a = if matches!(arg.ty, IrType::Bool) {
+                        self.emit_condition_position_expr(arg)?
+                    } else {
+                        self.emit_expr(arg)?
+                    };
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
                             Ok(quote! { incan_std_core::conversions::int_from_str(&#a) })
@@ -550,6 +581,15 @@ impl<'a> IrEmitter<'a> {
             }
             BuiltinFn::JsonStringify => emit_json_stringify(self, args),
             BuiltinFn::CollectionConstructor(CollectionTypeId::Set) => {
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1744 -- `set(generator)` chained `collect::<HashSet<_>>()` onto the runtime
+                //   generator, whose inherent `collect` shadows the `Iterator` trait's on an owned receiver (E0107).
+                // - Behavior evidence: the `set_constructor_over_generator` behavior fixture and the IR test
+                //   `set_constructor_source_plans_a_generator_through_the_iterator_trait_issue1744`.
+                // - Semantic owner: `IrType::set_constructor_source`, which decides the iteration plan from the checked
+                //   source type; this arm only realizes the plan.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR lowers the conversion as
+                //   the same general iteration a `for` statement takes.
                 if args.len() > 1 {
                     return Err(EmitError::InternalInvariant(format!(
                         "Set collection constructor reached emission with {} arguments",
@@ -579,7 +619,48 @@ impl<'a> IrEmitter<'a> {
                     SetConstructorIteration::IntoOwnedItems => Ok(quote! {
                         (#values).into_iter().collect::<std::collections::HashSet<_>>()
                     }),
+                    SetConstructorIteration::CollectOwnedIterator => Ok(quote! {
+                        ::std::iter::Iterator::collect::<std::collections::HashSet<_>>(#values)
+                    }),
                 }
+            }
+            BuiltinFn::CollectionConstructor(CollectionTypeId::List) => {
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1464 -- `list(dict.keys())` typechecked but reached emission as an ordinary
+                //   call to an undefined Rust `list` function.
+                // - Behavior evidence: the `issue1464_list_constructor` codegen snapshot and the Oven-built dict-views
+                //   program in `cli_issue1668_stdlib_gaps_tests`.
+                // - Semantic owner: the checker's recorded collection-constructor fact
+                //   (`resolved_collection_constructor`) and Body IR's aggregate lowering; this arm only realizes the
+                //   plan `plan_list_constructor_source` derives from the checked source type.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR lowers the conversion as
+                //   the same general iteration a `for` statement takes.
+                if args.len() > 1 {
+                    return Err(EmitError::InternalInvariant(format!(
+                        "List collection constructor reached emission with {} arguments",
+                        args.len()
+                    )));
+                }
+                let Some(arg) = args.first() else {
+                    return Ok(quote! { Vec::new() });
+                };
+                // A dict view or an Incan iterator already yields owned items; collect it without materializing the
+                // intermediate list the value-position emission would build.
+                if let Some(iter) = self.emit_direct_dict_view_iter(arg)? {
+                    return Ok(quote! { (#iter).collect::<Vec<_>>() });
+                }
+                if let Some(iter) = self.emit_incan_iterator_source(arg)? {
+                    return Ok(quote! { (#iter).collect::<Vec<_>>() });
+                }
+                let values = self.emit_expr_for_use(
+                    arg,
+                    ValueUseSite::IncanCallArg {
+                        target_ty: Some(&arg.ty),
+                        callee_param: None,
+                        in_return: false,
+                    },
+                )?;
+                Ok(plan_list_constructor_source(&arg.ty).apply(values))
             }
             BuiltinFn::CollectionConstructor(collection) => Err(EmitError::InternalInvariant(format!(
                 "collection constructor `{}` reached emission without a lowering implementation",
@@ -667,14 +748,24 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Str => {
                 if let Some(arg) = args.first() {
                     let a = exact_float_value_validation(&arg.ty).apply(self.emit_expr(arg)?);
-                    Ok(Some(quote! { #a.to_string() }))
+                    // A `float` renders through the runtime's spelling rather than Rust's `Display`; see
+                    // `renders_as_python_float` for the migration note.
+                    if renders_as_python_float(&arg.ty) {
+                        Ok(Some(float_display_text(a)))
+                    } else {
+                        Ok(Some(quote! { #a.to_string() }))
+                    }
                 } else {
                     Ok(None)
                 }
             }
             BuiltinFnId::Int => {
                 if let Some(arg) = args.first() {
-                    let a = self.emit_expr(arg)?;
+                    let a = if matches!(arg.ty, IrType::Bool) {
+                        self.emit_condition_position_expr(arg)?
+                    } else {
+                        self.emit_expr(arg)?
+                    };
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
                             Ok(Some(quote! { incan_std_core::conversions::int_from_str(&#a) }))

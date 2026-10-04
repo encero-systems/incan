@@ -1,0 +1,27 @@
+# behavior: a mut Generator parameter that the callee iterates, directly or through a function it passes the generator to, advances the caller's generator, so each call sees the next item
+# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::generator_parameter_advanced_by_the_callee_reaches_the_caller_issue1561
+# expect-stdout:
+#   0
+#   1
+#   2
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+
+def first(mut g: Generator[int]) -> int:
+    for v in g:
+        return v
+    return -1
+
+
+def outer(mut g: Generator[int]) -> int:
+    return first(g)
+
+
+def main() -> None:
+    mut g = numbers(4)
+    println(first(g))
+    println(outer(g))
+    println(first(g))

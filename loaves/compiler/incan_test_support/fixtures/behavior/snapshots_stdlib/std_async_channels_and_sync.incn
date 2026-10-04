@@ -1,0 +1,57 @@
+# behavior: a bounded channel carries values sent through the sender and a clone to the receiver, drains its buffer after close, and a Mutex guards a counter incremented by two tasks
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_channel_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_sync_compiled_codegen
+# expect-stdout:
+#   sent
+#   received 1
+#   received 2
+#   received 3
+#   closed
+#   counter 6
+
+import std.async
+from std.async.channel import channel
+from std.async.task import spawn
+from std.async.sync import Mutex
+
+
+async def increment(counter: Mutex[int], times: int) -> None:
+    for _ in range(times):
+        guard = await counter.lock()
+        guard.set(guard.get() + 1)
+
+
+async def main() -> None:
+    tx, rx = channel(2)
+    cloned = tx.clone()
+    match await cloned.send(1):
+        Ok(_) => println("sent")
+        Err(err) => println(err.message())
+    match await rx.recv():
+        Some(value) => println(f"received {value}")
+        None => println("closed")
+    match await tx.send(2):
+        Ok(_) => pass
+        Err(err) => println(err.message())
+    match await tx.send(3):
+        Ok(_) => pass
+        Err(err) => println(err.message())
+    _ = rx.close()
+    mut open = true
+    while open:
+        match await rx.recv():
+            Some(value) => println(f"received {value}")
+            None =>
+                println("closed")
+                open = false
+    counter = Mutex.new(0)
+    first = spawn(increment(counter, 3))
+    second = spawn(increment(counter, 3))
+    match await first:
+        Ok(_) => pass
+        Err(error) => println(f"join failed: {error.message()}")
+    match await second:
+        Ok(_) => pass
+        Err(error) => println(f"join failed: {error.message()}")
+    guard = await counter.lock()
+    println(f"counter {guard.get()}")

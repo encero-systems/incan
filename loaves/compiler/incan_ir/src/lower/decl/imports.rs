@@ -4,16 +4,21 @@ use super::super::super::decl::{IrDeclKind, IrRustTraitImport};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use incan_frontend::ast;
-use incan_frontend::module::canonicalize_source_module_segments;
+use incan_frontend::module::{canonicalize_source_module_segments, logical_source_import_candidates};
+use incan_lang::lang::stdlib;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 impl AstLowering {
     /// Lower an import declaration.
+    ///
+    /// Returns `None` for an item import whose every item is derive vocabulary (see
+    /// [`Self::is_derive_vocabulary_trait_import`]): such a declaration binds nothing in generated Rust, and lowering
+    /// it as an item-less import would re-export the stdlib module instead.
     pub(in crate::lower) fn lower_import(
         &self,
         i: &ast::ImportDecl,
         span: ast::Span,
-    ) -> Result<IrDeclKind, LoweringError> {
+    ) -> Result<Option<IrDeclKind>, LoweringError> {
         // The frontend resolves `import module::item` before lowering. Once it proves an item identity, use the
         // same item import route as `from module import item`, including canonical names and alias projections.
         // A genuine module identity must retain module binding semantics even when its path has multiple segments.
@@ -105,9 +110,22 @@ impl AstLowering {
             _ => super::super::super::decl::IrImportQualifier::None,
         };
 
+        // A relative import names its module by where it sits in the source tree, and lowering hands the emitter the
+        // crate-absolute path of the module the checker resolved rather than a count of Rust `super` hops (#1766).
+        let relative_module = match &i.kind {
+            ast::ImportKind::Module(p) => self.resolved_relative_import_module(p),
+            ast::ImportKind::From { module, .. } => self.resolved_relative_import_module(module),
+            _ => None,
+        };
+        let (path, qualifier) = match relative_module {
+            Some(module_path) => (module_path, super::super::super::decl::IrImportQualifier::Crate),
+            None => (path, qualifier),
+        };
+
         // Convert AST import items to IR import items
         let ir_items: Vec<super::super::super::decl::IrImportItem> = ast_items
             .iter()
+            .filter(|item| !self.is_derive_vocabulary_trait_import(item.alias.as_ref().unwrap_or(&item.name)))
             .flat_map(|item| {
                 let binding_name = item.alias.as_ref().unwrap_or(&item.name);
                 let force_reexport = self.overload_alias_reexport_targets.contains(binding_name);
@@ -135,16 +153,19 @@ impl AstLowering {
                             trait_path: import.trait_path.clone(),
                             definition_path: import.definition_path.clone(),
                             methods,
+                            methods_known: import.methods_known,
                         }
                     });
+                let canonical = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_import_identity(binding_name))
+                    .cloned();
+                let (name, alias) = self.projected_import_spelling(item, canonical.as_ref());
                 vec![super::super::super::decl::IrImportItem {
-                    name: item.name.clone(),
-                    alias: item.alias.clone(),
-                    canonical: self
-                        .type_info
-                        .as_ref()
-                        .and_then(|info| info.resolved_import_identity(binding_name))
-                        .cloned(),
+                    name,
+                    alias,
+                    canonical,
                     is_static: self
                         .type_info
                         .as_ref()
@@ -185,14 +206,160 @@ impl AstLowering {
             });
         }
 
-        Ok(IrDeclKind::Import {
+        if ir_items.is_empty() && !ast_items.is_empty() {
+            return Ok(None);
+        }
+
+        // `import std.async.prelude` names the module `std.async` (the path above) but binds the name it spells, as the
+        // checker binds it (#1561).
+        let alias = i.alias.clone().or_else(|| match &i.kind {
+            ast::ImportKind::Module(p)
+                if p.parent_levels == 0
+                    && !p.is_absolute
+                    && stdlib::stdlib_prelude_module_namespace(&p.segments).is_some() =>
+            {
+                p.segments.last().cloned()
+            }
+            _ => None,
+        });
+
+        Ok(Some(IrDeclKind::Import {
             visibility: Self::map_visibility(i.visibility),
             origin,
             qualifier,
             path,
-            alias: i.alias.clone(),
+            alias,
             items: ir_items,
+        }))
+    }
+
+    /// Whether an imported binding names the stdlib declaration stub of a derivable trait.
+    ///
+    /// `Clone`, `Copy`, `Default`, `Debug`, `Display`, `Eq`, `Ord`, `Hash` and their partial forms are declared as
+    /// Incan traits under `std.derives.*` so that `@derive(...)`, `with` clauses and bounds can spell them, but the
+    /// implementation every generated program carries is the Rust trait the derive implements: a `Clone` bound lowers
+    /// to Rust's `Clone` (`incan_lang::lang::trait_bounds`), never to the stub (#1374). Importing the stub into a
+    /// module therefore binds nothing that generated Rust may use. Lowering it as a `use` would bind the stub under the
+    /// Rust trait's own name and shadow the prelude for the whole module, so every bare `Clone` in it -- a written
+    /// bound, an inferred one, or the stdlib trait defaults expanded into an adopter's impl -- would name a trait no
+    /// derived type implements (#1727). The identity is the checked declaring module (a facade re-export and a
+    /// stdlib-provider spelling both resolve to it), matched against the registry of derive-tree stub modules; the
+    /// `std` root, whose import binds the builtin trait itself, is the same vocabulary. A same-named local or
+    /// third-party trait keeps its import.
+    fn is_derive_vocabulary_trait_import(&self, binding_name: &str) -> bool {
+        let (Some(declaring_module), Some(source_name)) = self.canonical_trait_identity(binding_name) else {
+            return false;
+        };
+        let Some(stub_module) = stdlib::trait_method_module_segments(&source_name) else {
+            return false;
+        };
+        stub_module == declaring_module
+            || matches!(declaring_module.as_slice(), [root] if root.as_str() == stdlib::STDLIB_ROOT)
+    }
+
+    /// Lower an alias of a module member (`root = math.sqrt` after `import std.math as math`) as an import of that
+    /// member under the alias's name.
+    ///
+    /// Every reference to an alias lowers to the projection of the declaration it names, so the module must bind that
+    /// projection. An imported target (`root = sqrt` after `from std.math import sqrt`) has its import to do that; a
+    /// member reached through a module binding has no import of its own (#1764). Such an alias says exactly what `from
+    /// std.math import sqrt as root` says, with the alias's own visibility, so it lowers to that import: the member's
+    /// module path from the lowered import of the module binding, the member as the item, the alias as its local name,
+    /// and the target identity the checker proved.
+    ///
+    /// Returns `None`, leaving the alias a [`IrDeclKind::SymbolAlias`], for a single-segment target, a target without a
+    /// projected identity (types, traits, overload sets), and a leading segment that no import binds as a module.
+    pub(in crate::lower) fn module_member_alias_import(
+        &self,
+        alias: &ast::AliasDecl,
+        target_canonical: Option<&incan_semantics_core::CanonicalSymbolId>,
+    ) -> Option<IrDeclKind> {
+        let canonical = target_canonical.filter(|identity| crate::decl::is_projected_source_symbol(identity))?;
+        let [module_binding, rest @ ..] = alias.target.segments.as_slice() else {
+            return None;
+        };
+        let (member, intermediate) = rest.split_last()?;
+        let module = self
+            .imported_module_bindings
+            .get(module_binding)
+            .or_else(|| self.imported_alias_targets.get(module_binding))?;
+        let mut path = module.path.clone();
+        path.extend(intermediate.iter().cloned());
+        let item = super::super::super::decl::IrImportItem {
+            name: member.clone(),
+            alias: (alias.name != *member).then(|| alias.name.clone()),
+            canonical: Some(canonical.clone()),
+            is_static: self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| info.static_binding(&alias.name).is_some()),
+            force_reexport: false,
+            rust_trait_import: None,
+        };
+        Some(IrDeclKind::Import {
+            visibility: Self::map_visibility(alias.visibility),
+            origin: module.origin.clone(),
+            qualifier: module.qualifier,
+            path,
+            alias: None,
+            items: vec![item],
         })
+    }
+
+    /// Resolve a relative source import path to the crate-absolute module path the checker resolved it to.
+    ///
+    /// `..` and `super` climb from the importing file's directory (the language reference's "parent directory"), while
+    /// Rust's `super` climbs from the importing module, which for a file module is that directory itself, so the
+    /// written levels as `super` hops land one level short (#1766). The checker binds a relative import through
+    /// [`logical_source_import_candidates`] against the importing module's logical path, and this asks the same
+    /// question, so the path lowering hands on names the module the checker bound. Returns `None` for a path that is
+    /// not relative, and when the importing module's own path is unknown or too short to climb.
+    pub(in crate::lower) fn resolved_relative_import_module(&self, path: &ast::ImportPath) -> Option<Vec<String>> {
+        if path.parent_levels == 0 || path.is_absolute {
+            return None;
+        }
+        let current_module = self
+            .current_source_module_name
+            .as_deref()?
+            .split('.')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        logical_source_import_candidates(&canonicalize_source_module_segments(&current_module), path)
+            .into_iter()
+            .next()
+    }
+
+    /// Spell a projected source import by the name its declaring module binds the declaration under.
+    ///
+    /// A projected symbol (function, partial, static) is spelled by its identity projection in every module; the
+    /// written item name never reaches the Rust. What the item's `name` still decides is whether this module binds
+    /// the projection itself: an item whose name is the declaration's own spelling does, while an `alias` declaration
+    /// (`pub scale_alias = alias scale`) is a second public name over a projection the declaration's own import binds.
+    /// A facade re-export under a new name (`pub from provider import calculate as facade_calculate`) is neither: a
+    /// consumer of `facade_calculate` binds the projection exactly as a direct import of `calculate` would, so the
+    /// item is spelled `calculate` and the written name becomes the alias this module exposes it under, the shape a
+    /// single-level `pub from … import … as …` already lowers to (#1710). Types and traits keep the written spelling:
+    /// their Rust name is the spelling, and a renamed facade type must stay reachable under its facade name.
+    fn projected_import_spelling(
+        &self,
+        item: &ast::ImportItem,
+        canonical: Option<&incan_semantics_core::CanonicalSymbolId>,
+    ) -> (String, Option<String>) {
+        let written = (item.name.clone(), item.alias.clone());
+        if !canonical.is_some_and(crate::decl::is_projected_source_symbol) {
+            return written;
+        }
+        let binding_name = item.alias.as_deref().unwrap_or(&item.name);
+        let Some(declared_name) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_import_declared_name(binding_name))
+            .filter(|declared_name| *declared_name != item.name)
+        else {
+            return written;
+        };
+        let exposed_as = item.alias.clone().unwrap_or_else(|| item.name.clone());
+        (declared_name.to_string(), Some(exposed_as))
     }
 
     /// Return concrete Rust function names needed to import one overload binding.
@@ -222,5 +389,150 @@ impl AstLowering {
             .find(|overload| overload.info.emitted_name.as_deref() == Some(emitted_name))?
             .identity
             .clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decl::IrImportItem;
+    use incan_frontend::ast::Program;
+    use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+
+    /// Parse one module and keep fixture failures as ordinary test errors.
+    fn parse(source: &str, context: &str) -> Result<Program, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("{context} lex failed: {errors:?}"))?;
+        parser::parse(&tokens).map_err(|errors| format!("{context} parse failed: {errors:?}"))
+    }
+
+    /// Check `module` against its dependencies and return the import items its lowering records.
+    fn lowered_import_items(
+        module_name: &str,
+        module: &Program,
+        dependencies: &[(&str, &Program)],
+    ) -> Result<Vec<IrImportItem>, String> {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec![module_name.to_string()]));
+        checker
+            .check_with_imports(module, dependencies)
+            .map_err(|errors| format!("{module_name} should typecheck: {errors:?}"))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        let ir = lowering
+            .lower_program(module)
+            .map_err(|errors| format!("{module_name} lowering failed: {errors:?}"))?;
+        Ok(ir
+            .declarations
+            .into_iter()
+            .filter_map(|decl| match decl.kind {
+                IrDeclKind::Import { items, .. } => Some(items),
+                _ => None,
+            })
+            .flatten()
+            .collect())
+    }
+
+    /// Return the one import item a module lowers, by the local name it binds.
+    fn item_bound_as(items: &[IrImportItem], local_name: &str) -> Result<IrImportItem, String> {
+        items
+            .iter()
+            .find(|item| item.source_binding_name() == local_name)
+            .cloned()
+            .ok_or_else(|| format!("no import item binds `{local_name}`: {items:?}"))
+    }
+
+    /// The second hop of a renamed re-export chain lowers exactly like the first hop (#1710).
+    ///
+    /// `public_api` imports `facade_calculate`, the facade's rename of `provider.calculate`. Spelled as written, the
+    /// item read as an `alias` declaration and the module bound only the alias name, never the projection the next
+    /// module imports. Spelled by the declaring module's name with the written name as the alias, it is the shape a
+    /// single-level `pub from provider import calculate as facade_calculate` lowers to.
+    #[test]
+    fn renamed_reexport_hop_is_spelled_by_its_declaring_module_issue1710() -> Result<(), String> {
+        let provider = parse(
+            "pub def calculate(value: int) -> int:\n  return value + 1\n",
+            "provider",
+        )?;
+        let facade = parse("pub from provider import calculate as facade_calculate\n", "facade")?;
+        let public_api = parse(
+            "pub from facade import facade_calculate as exported_calculate\n",
+            "public_api",
+        )?;
+
+        let facade_items = lowered_import_items("facade", &facade, &[("provider", &provider)])?;
+        let first_hop = item_bound_as(&facade_items, "facade_calculate")?;
+        assert_eq!(first_hop.name, "calculate");
+        assert_eq!(first_hop.alias.as_deref(), Some("facade_calculate"));
+
+        let public_api_items = lowered_import_items(
+            "public_api",
+            &public_api,
+            &[("provider", &provider), ("facade", &facade)],
+        )?;
+        let second_hop = item_bound_as(&public_api_items, "exported_calculate")?;
+        assert_eq!(
+            second_hop.name, "calculate",
+            "the hop is spelled by the name the provider binds the declaration under"
+        );
+        assert_eq!(second_hop.alias.as_deref(), Some("exported_calculate"));
+        assert_eq!(
+            second_hop
+                .canonical
+                .as_ref()
+                .map(|identity| identity.declaration_name.as_str()),
+            Some("calculate"),
+            "the identity stays the provider's"
+        );
+        assert_eq!(
+            second_hop.emitted_name(),
+            first_hop.emitted_name(),
+            "both hops bind one projection"
+        );
+
+        let consumer = parse(
+            "from public_api import exported_calculate\n\ndef run() -> int:\n  return exported_calculate(41)\n",
+            "consumer",
+        )?;
+        let consumer_items = lowered_import_items(
+            "consumer",
+            &consumer,
+            &[
+                ("provider", &provider),
+                ("facade", &facade),
+                ("public_api", &public_api),
+            ],
+        )?;
+        let unaliased = item_bound_as(&consumer_items, "exported_calculate")?;
+        assert_eq!(unaliased.name, "calculate");
+        assert_eq!(
+            unaliased.alias.as_deref(),
+            Some("exported_calculate"),
+            "an import written without an alias still exposes the written name, never the declaring one"
+        );
+        Ok(())
+    }
+
+    /// An imported `alias` declaration keeps its own spelling: the declaring module binds it under that name.
+    #[test]
+    fn imported_alias_declaration_keeps_its_spelling_issue1710() -> Result<(), String> {
+        let provider = parse(
+            "pub def scale(value: int) -> int:\n  return value * 2\n\npub scale_alias = alias scale\n",
+            "provider",
+        )?;
+        let consumer = parse(
+            "from provider import scale, scale_alias\n\ndef run() -> int:\n  return scale(1) + scale_alias(2)\n",
+            "consumer",
+        )?;
+        let items = lowered_import_items("consumer", &consumer, &[("provider", &provider)])?;
+        let alias = item_bound_as(&items, "scale_alias")?;
+        assert_eq!(alias.name, "scale_alias");
+        assert_eq!(alias.alias, None);
+        assert_eq!(
+            alias
+                .canonical
+                .as_ref()
+                .map(|identity| identity.declaration_name.as_str()),
+            Some("scale")
+        );
+        Ok(())
     }
 }

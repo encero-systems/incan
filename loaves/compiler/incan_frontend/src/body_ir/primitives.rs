@@ -102,7 +102,7 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
 /// swallowing comparisons too. The test is not that a heap container cannot sit under a primitive -- `==` on two
 /// lists does exactly that, faithfully -- but that `determine_binop_plan` routes list `+` to
 /// `incan_std_core::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
-/// therefore agreement with the Rust-emission backend, not a judgement about the operand's representation.
+/// therefore agreement with the Rust-emission backend, not a judgment about the operand's representation.
 pub(super) fn collection_helper_for_binop(
     op: ast::BinaryOp,
     lhs_ty: &IncanType,
@@ -202,12 +202,16 @@ pub(super) fn lower_literal(lit: &ast::Literal) -> bir::Constant {
 
 /// Lower a numeric literal with the canonical type selected by the typechecker.
 ///
-/// Ordinary `int` and `float` keep their compact compatibility variants. Explicit sized numerics and decimals use
-/// [`bir::Constant::TypedNumeric`] so wide integer magnitude, float width/rounding, and decimal scale cannot be lost
-/// before a replacement backend sees them.
+/// Ordinary `int` and `float` keep their compact compatibility variants, and an integer literal the checker typed as
+/// a `float` (which `f64` is, RFC 009) becomes the float constant of the same value. Explicit sized numerics and
+/// decimals use [`bir::Constant::TypedNumeric`] so wide integer magnitude, `f32` rounding, and decimal scale cannot be
+/// lost before a replacement backend sees them.
 pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::Constant {
     use incan_lang::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
 
+    if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Float)) = (lit, ty) {
+        return bir::Constant::Float((value.magnitude as f64).to_string());
+    }
     let typed = match (lit, ty) {
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind))) => {
             match info_for(*kind).family {
@@ -225,29 +229,18 @@ pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::
                             .is_finite()
                             .then_some(bir::TypedNumericConstant::F32 { bits: value.to_bits() })
                     }
-                    NumericTypeId::F64 => {
-                        let value = value.magnitude as f64;
-                        value
-                            .is_finite()
-                            .then_some(bir::TypedNumericConstant::F64 { bits: value.to_bits() })
-                    }
                     _ => None,
                 },
                 NumericFamily::Bool => None,
             }
         }
         (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32))) => {
-            let normalized = value.repr.replace('_', "");
+            let normalized = value.numeric_repr().replace('_', "");
             normalized
                 .parse::<f32>()
                 .ok()
                 .filter(|value| value.is_finite())
                 .map(|value| bir::TypedNumericConstant::F32 { bits: value.to_bits() })
-        }
-        (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F64))) => {
-            value.value.is_finite().then_some(bir::TypedNumericConstant::F64 {
-                bits: value.value.to_bits(),
-            })
         }
         (ast::Literal::Decimal(value), IncanType::Decimal { precision, scale }) => {
             decimal_constant(&value.body, *precision, *scale)
@@ -271,10 +264,14 @@ fn decimal_constant(body: &str, precision: u8, scale: u8) -> Option<bir::TypedNu
 }
 
 /// Fold a checked negative exact-numeric literal into one typed constant without applying a general runtime
-/// negation rule. Ordinary float/int negation remains an operation and keeps its existing replacement boundary.
+/// negation rule, and a negated integer literal the checker typed as a `float` into the float constant of its value.
+/// Every other ordinary float/int negation remains an operation and keeps its existing replacement boundary.
 pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType) -> Option<bir::Constant> {
     use incan_lang::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
 
+    if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Float)) = (lit, ty) {
+        return Some(bir::Constant::Float((-(value.magnitude as f64)).to_string()));
+    }
     let value = match (lit, ty) {
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind)))
             if info_for(*kind).family == NumericFamily::SignedInteger =>
@@ -295,24 +292,12 @@ pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType)
                 .is_finite()
                 .then_some(bir::TypedNumericConstant::F32 { bits: value.to_bits() })?
         }
-        (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F64))) => {
-            let value = -(value.magnitude as f64);
-            value
-                .is_finite()
-                .then_some(bir::TypedNumericConstant::F64 { bits: value.to_bits() })?
-        }
         (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32))) => {
             let normalized = value.repr.replace('_', "");
             let value = -normalized.parse::<f32>().ok()?;
             value
                 .is_finite()
                 .then_some(bir::TypedNumericConstant::F32 { bits: value.to_bits() })?
-        }
-        (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F64))) => {
-            let value = -value.value;
-            value
-                .is_finite()
-                .then_some(bir::TypedNumericConstant::F64 { bits: value.to_bits() })?
         }
         _ => return None,
     };
@@ -336,7 +321,7 @@ pub(super) const RANGE_TYPE_BASE: &str = incan_lang::lang::surface::types::RANGE
 pub(super) const RANGE_UNIT_STEP: i64 = 1;
 /// The element type a checked range value yields per iteration, or `None` when `ty` is not a range value.
 ///
-/// Used to recognise a range-shaped type and recover a checked loop item type. A caller must not use this
+/// Used to recognize a range-shaped type and recover a checked loop item type. A caller must not use this
 /// type-level fact alone as permission to project a range aggregate's fields; see [`RANGE_TYPE_BASE`].
 pub(super) fn range_value_element_type(ty: &IncanType) -> Option<&IncanType> {
     match ty {

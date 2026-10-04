@@ -1,0 +1,16 @@
+# behavior: a for loop that awaits each task handle of a list element is refused at check time, because it can take the handles out of neither the element nor a copy of it
+# expect-diagnostic: INCAN-T0119
+
+from std.async import spawn
+
+
+async def work() -> int:
+    return 1
+
+
+async def main() -> None:
+    groups = [[spawn(work())], [spawn(work())]]
+    for handle in groups[0]:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")

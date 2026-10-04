@@ -1,326 +1,260 @@
-# Derives and Traits
+# Derives and traits (reference)
 
-<!--
-Link index
-
-Use reference-style links like:
-- [Debug][derive-debug]
-- [Error Handling Guide][guide-error-handling]
-
-So we can change the destination in one place if we move/rename sections.
--->
-
-<!-- Built-in derives (anchors in this page) -->
-[derive-debug]: #debug-automatic
-[derive-display]: #display-custom-with-__str__
-[derive-eq]: #eq-equality
-[derive-ord]: #ord-ordering
-[derive-hash]: #hash
-[derive-clone]: #clone
-[derive-copy]: #copy
-[derive-default]: #default
-[derive-serialize]: #serialize
-[derive-deserialize]: #deserialize
-[derive-validate]: #validate-models-only
-
-<!-- Related sections (anchors in this page) -->
-[auto-derives]: #automatic-derives
-
-<!-- Other docs -->
-[traits-doc]: #traits-authoring
-[guide-error-handling]: ../explanation/error_handling.md
-
-This page is a **Reference** for Incan derives, dunder overrides, and trait authoring. For guided learning, use:
-
-- [The Incan Book: Traits and derives](../tutorials/book/11_traits_and_derives.md)
-- [Error Handling Guide][guide-error-handling]
-
----
-
-## Conflicts & precedence
-
-Rules that resolve “derive vs dunder” (these are intentional and strict):
-
-- **Dunder overrides are explicit behavior**: if you write a dunder (`__str__`, `__eq__`, `__lt__`, `__hash__`), that is the behavior for that capability.
-- **Conflicts are errors**: you must not combine a dunder with the corresponding `@derive(...)`.
-- **Auto-added traits are the exception**: some traits are automatically added to `model` / `class` / `enum` / `newtype` (see [Automatic derives][auto-derives]). You don’t need to spell them out.
-
----
+This page specifies derives (the automatic derives, the derive catalog and `@derive(...)`), the method decorators `@staticmethod` and `@classmethod`, generic methods, bounds, the operations a generic body applies to a type parameter, call-site type arguments, and trait authoring: adoption, several instantiations of one generic trait, method-level trait targets, `@requires(...)` and the `mut` parameters of trait methods. Each derive's own contract is on its derive page, listed in the [derive catalog](#derive-catalog).
 
 ## Automatic derives
 
-The compiler automatically adds these derives:
+These derives belong to every declaration of the kind, without `@derive(...)`:
 
-| Construct | Auto-added derives                                             |
-| --------- | -------------------------------------------------------------- |
-| `model`   | `Debug`, `Display`, `Clone`                                    |
-| `class`   | `Debug`, `Display`, `Clone`                                    |
-| `enum`    | `Debug`, `Display`, `Clone`, `Eq`                              |
-| `newtype` | `Debug`, `Display`, `Clone` (and `Copy` if underlying is Copy) |
+| Construct | Automatic derives |
+| --- | --- |
+| `model` | `Debug`, `Clone` |
+| `class` | `Debug`, `Clone` |
+| `enum` | `Debug`, `Clone`; `PartialEq` when every payload type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those |
+| `newtype` | `Debug` when the underlying type implements it; `Clone` as listed below; `Copy` as listed under [Copy](derives/copying_default.md#copy) |
 
-Notes:
-
-- `Debug` and `Display` are always available for these constructs.
-- `Display` has a default representation (like Python’s default `__str__`) unless you define `__str__`.
-
----
-
-## Derive catalog (quick index)
-
-Only the items usable in `@derive(...)` are derives:
-
-| Derive                            | Capability                | Override   | Notes                   |
-| --------------------------------- | ------------------------- | ---------- | ----------------------- |
-| [Debug][derive-debug]             | Debug formatting (`{:?}`) | —          | Auto-added              |
-| [Display][derive-display]         | Display formatting (`{}`) | `__str__`  | Auto-added              |
-| [Eq][derive-eq]                   | `==` / `!=`               | `__eq__`   | Conflicts are errors    |
-| [Ord][derive-ord]                 | Ordering + `sorted(...)`  | `__lt__`   | Conflicts are errors    |
-| [Hash][derive-hash]               | `Set` / `Dict` keys       | `__hash__` | Conflicts are errors    |
-| [Clone][derive-clone]             | `.clone()`                | —          | Auto-added              |
-| [Copy][derive-copy]               | Implicit copy             | —          | Marker trait            |
-| [Default][derive-default]         | `Type.default()`          | —          | Baseline constructor    |
-| [json][derive-serialize]          | JSON stringify/parse      | —          | `std.serde` module      |
-| [Validate][derive-validate]       | Validated construction    | —          | Models only             |
-
-Detailed pages:
-
-**Derives**:
-
-- [String representation](derives/string_representation.md)
-- [Comparison](derives/comparison.md)
-- [Copying/default](derives/copying_default.md)
-- [Serialization](derives/serialization.md)
-- [Validation](derives/validation.md)
-- [Custom behavior](derives/custom_behavior.md)
-
-**Stdlib traits**:
-
-- [Overview](stdlib_traits/index.md)
-- [Collection protocols](stdlib_traits/collection_protocols.md)
-- [Indexing and slicing](stdlib_traits/indexing_and_slicing.md)
-- [Callable objects](stdlib_traits/callable.md)
-- [Awaitable values](stdlib_traits/awaitable.md)
-- [Operator traits](stdlib_traits/operators.md)
-- [Conversion traits](stdlib_traits/conversions.md)
-
----
-
-## Derive dependencies and requirements
-
-Some derives imply prerequisite derives (the compiler adds them automatically):
-
-| If you request | Compiler also adds              |
-| -------------- | ------------------------------- |
-| `Eq`           | `PartialEq`                     |
-| `Ord`          | `Eq`, `PartialEq`, `PartialOrd` |
-
-Note: you may also request `PartialEq` and `PartialOrd` explicitly via `@derive(PartialEq)` / `@derive(PartialOrd)`.
-
-Semantic requirements (not “auto-added”):
-
-- If you derive `Hash`, you almost always also want `Eq`. Prefer `@derive(Eq, Hash)`.
-- If you provide custom equality via `__eq__`, your hashing (derived or custom) must remain consistent.
-
----
-
-## Common compiler diagnostics
-
-### Unknown derive
+- An automatic derive satisfies a generic bound on the same trait.
+- Writing an automatic derive in `@derive(...)` is accepted and adds nothing.
+- A newtype carries `Clone` when its underlying type implements `Clone` or is `Copy`. The newtype's own type parameters count as implementing `Clone`, and the newtype is then `Clone` for the type arguments that are. A newtype over a `rust::` type or a `rusttype` carries `Clone` only through `@derive(Clone)` or `@rust.derive(Clone)`.
+- A `model` or `class` field, or an `enum` payload, whose type does not implement both `Clone` and `Debug` is refused at the declaration (`INCAN-T0113`). `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks, and deriving it on the newtype is refused (`INCAN-T0001`); a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
 
 ```incan
-@derive(Debg)  # Typo
-model User:
-    name: str
+import std.async
+from std.async.task import JoinHandle
+
+type Handle = newtype JoinHandle[int]   # accepted: a newtype carries only the derives its underlying type has
+
+model Pending:
+    handle: JoinHandle[int]   # refused: JoinHandle[int] implements neither Clone nor Debug (INCAN-T0113)
+
+model Wrapped:
+    handle: Handle            # refused: Handle carries neither Clone nor Debug (INCAN-T0113)
 ```
 
-Expected: “unknown derive” with a list of valid derive names.
+## Derive catalog
 
-### Deriving a non-trait
+| Derive | Provides | Dunder | Reference |
+| --- | --- | --- | --- |
+| `Debug` | `{value:?}` | — | [String representation](derives/string_representation.md#debug) |
+| `Display` | `{value}`, `str(value)`, `print(value)`, each showing the value's `{value:?}` structure; implies `Debug` | `__str__` | [String representation](derives/string_representation.md#display) |
+| `Eq` | `==`, `!=`; with `Hash`, use as a `set` element or `dict` key | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#eq) |
+| `PartialEq` | `==`, `!=` | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#partialeq) |
+| `Ord` | `<`, `<=`, `>`, `>=`, `sorted(values)` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#ord) |
+| `PartialOrd` | `<`, `<=`, `>`, `>=` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#partialord) |
+| `Hash` | with `Eq`, use as a `set` element or `dict` key | — | [Comparison](derives/comparison.md#hash) |
+| `Clone` | `.clone()` | — | [Copying and Default](derives/copying_default.md#clone) |
+| `Copy` | copying on assignment and argument passing | — | [Copying and Default](derives/copying_default.md#copy) |
+| `Default` | `Type.default()` | — | [Copying and Default](derives/copying_default.md#default) |
+| `json`, `Serialize`, `Deserialize` | JSON serialization | — | [Serialization](derives/serialization.md) |
+| `Validate` | `Type.new(...)`, validated construction | — | [Validation](derives/validation.md) |
+| `Descriptor` | registry descriptors | — | [Registry](stdlib/registry.md#descriptor-contract) |
+
+`Debug`, `Display`, `Eq`, `Ord`, `Hash`, `Clone`, `Copy` and `Default` are also traits under `std.derives.*` (see [`std.derives`](stdlib/derives.md)). A model or class also provides `__class_name__()` and `__fields__()` without a derive (see [Reflection](reflection.md)).
+
+## `@derive(...)`
+
+- `@derive(...)` names derives from the catalog. `json` needs `from std.serde import json`, and `Serialize` and `Deserialize` need their import from `std.serde.json`.
+- `@derive(...)` also names a trait imported by name that its module lists in `__derives__` (`from codec import Encode`, then `@derive(Encode)`), or a module that declares `__derives__` (`import codec`, then `@derive(codec)`, which names each trait in the module's `__derives__` list). A model or class adopts each such trait as a `with` clause adopts it: the trait's methods, default methods included, are called on the type (`item.tag()`), and the type satisfies a bound on the trait.
+- An `enum` or `newtype` adopts such a trait in the same way.
+- `@derive(...)` also names a derive imported from a Rust crate (`from rust::serde import Serialize`, then `@derive(Serialize)`); it applies to the type as the same name in `@rust.derive(...)` does.
+- A derive on a generic declaration holds for each instantiation whose type arguments implement it. A field, payload or underlying type that is one of the declaration's type parameters meets the derive's **Requires** entry.
+- `Eq` implies `PartialEq`, `Ord` implies `PartialOrd`, `Eq` and `PartialEq`, and `Display` implies `Debug`.
+- `@rust.derive(...)` names Rust derives (see [Decorators](language.md#decorators)).
+- The dunders that define what a derive provides, and the pairs that conflict, are in [Custom behavior](derives/custom_behavior.md).
 
 ```incan
-model User:
-    name: str
+@derive(Eq, Hash)
+model Key[T]:
+    value: T
 
-@derive(User)  # wrong: User is a model, not a derive/trait
-model Admin:
-    level: int
+def main() -> None:
+    a: set[Key[int]] = {Key(value=1)}        # accepted
+    b: set[Key[float]] = {Key(value=1.0)}    # refused: float does not implement Eq and Hash (INCAN-T0114)
 ```
 
-Expected: “cannot derive a model/class” with a hint to use `with TraitName` for trait implementations.
+Each of these is refused (`INCAN-T0001`):
 
----
+| Declaration | Rule |
+| --- | --- |
+| `@derive(Debg)` | The name is not a derive. |
+| `@derive(User)` where `User` is a model, class, enum or function | The name is not a derive. |
+| `@derive(module)` for a module that declares no `__derives__` | The module provides no derives. |
+| `@derive(Encode)` for an imported trait its module's `__derives__` does not list | The name is not a derive. |
+| `@derive(Eq)` on a type that defines `__eq__` | See [Custom behavior](derives/custom_behavior.md). |
+| `@derive(Copy)` on a type with a field that is not `Copy` | See [Copy](derives/copying_default.md#copy). |
+| `@derive(Eq)`, or any derive, on a type with a field, payload or underlying type that does not meet the derive's **Requires** entry, such as a `float` field | See the derive's page in the [catalog](#derive-catalog). A derive's requirements include those of the derives it implies. |
+| `@derive(PartialOrd)` on a type that provides no `PartialEq` | See [PartialOrd](derives/comparison.md#partialord). |
+| `@derive(Default)` on an enum | See [Default](derives/copying_default.md#default). |
+| `@derive(Validate)` on a class, enum or newtype | See [Validate](derives/validation.md#validate). |
 
 ## Decorators (`@staticmethod`, `@classmethod`, `@requires`) {#decorators-staticmethod-requires}
 
-Incan has several built-in decorators with different roles.
-
-- `@derive(...)` is covered [above](#derive-catalog-quick-index).
-- `@rust.extern` and `@rust.allow(...)` belong to Rust interop and are documented in the Rust interop reference.
-- This section covers the method and trait decorators you will use when authoring ordinary Incan types and traits.
-- User-defined function and method decorators are covered in the [language reference](language.md#decorators).
+`@derive(...)` is specified [above](#derive), and `@requires(...)` under [Traits](#requires-adopter-contract). `@rust.extern`, `@rust.allow(...)` and user-defined decorators are in [Decorators](language.md#decorators).
 
 ### `@staticmethod`
 
---8<-- "_snippets/language/decorators/staticmethod.md"
+- Applies to methods of `class`, `model`, `enum` and `newtype` declarations.
+- The method has no `self` or `mut self` parameter; one is refused (`INCAN-T0001`).
+- Its first declared parameter is an ordinary parameter and may use `mut`.
+- It is called on the type, `TypeName.method(...)`. A call through an instance is refused (`INCAN-T0001`).
+- A static method and a field may share a name: `TimeDelta.days(7)` calls the method and `delta.days` reads the field.
+- A generic static method may return `Self`; `Box[int].make(1)` fixes the owner's type arguments.
+- It combines with `@rust.extern` for Rust-backed static methods.
 
-See also: [Classes: Static methods](../explanation/models_and_classes/classes.md#static-methods-staticmethod)
+```incan
+class Temperature:
+    pub celsius: float
+
+    @staticmethod
+    def from_fahrenheit(f: float) -> Temperature:
+        return Temperature(celsius=(f - 32.0) / 1.8)
+
+def main() -> None:
+    t = Temperature.from_fahrenheit(98.6)
+    println(t.celsius)
+```
 
 ### `@classmethod`
 
-Use `@classmethod` for methods that are called on the type rather than on an instance, but still conceptually belong to that type.
-
-This is commonly used for constructor-style APIs:
-
-```incan
-model UserId:
-    value: int
-
-    @classmethod
-    def from(cls, value: str) -> Self:
-        return cls(value=int(value))
-```
-
-Unlike an instance method, a class method does not take `self`. Its first parameter is conventionally named `cls` and can be called like a constructor for the declaring type. Unlike a static method, it is written as a type-associated constructor-style hook and returns `Self` naturally.
-
-For generic types, `Self` keeps the active type arguments at the call site:
+- Applies to methods of `class`, `model`, `enum` and `newtype` declarations.
+- Form: `def name(cls, params) -> Return:` under `@classmethod`. The leading `cls` parameter may be left out.
+- It is called on the type, `TypeName.method(...)`. A call through an instance is refused (`INCAN-T0001`).
+- In a class method of a `model` or `class`, `cls` is the declaring type, and `cls(field=value, ...)` constructs it. In a class method of an `enum` or `newtype`, a use of `cls` is refused (`INCAN-T0001`).
+- `Self` in its signature, and the type `cls(...)` constructs, is the declaring type with the call site's type arguments.
 
 ```incan
 class Box[T with Clone]:
-    value: T
+    pub value: T
 
     @classmethod
     def make(cls, value: T) -> Self:
         return cls(value=value)
 
 def main() -> None:
-    boxed = Box[int].make(1)
+    boxed = Box[int].make(1)   # accepted: Self is Box[int]
     println(str(boxed.value))
+    again = boxed.make(2)      # refused: a class method is called on the type (INCAN-T0001)
 ```
-
-### `@requires(...)`
-
-Covered below in [Traits (authoring)](#requires-adopter-contract).
-
----
 
 ## Generic instance methods
 
-Instance methods on `class`, `model`, `trait`, `enum`, and `newtype` may declare method-level type parameters using the same syntax as top-level generic functions:
-
-```incan
-class Box:
-    def get[T with Clone](self, value: T) -> T:
-        return value
-```
-
-This is method-level polymorphism: method type parameters belong to the method, not to the enclosing type.
-
-This does **not** replace normal method signatures. Non-generic methods still use the standard form:
-
-```incan
-def describe(self, verbose: bool) -> str:
-    ...
-```
-
-Rules to keep in mind:
-
-- Method type parameters appear after the method name: `def name[T, U with Trait](...)`.
-- Method type parameters are scoped to that method only.
-- Enclosing type parameters and method type parameters may both be used in the same signature.
-- Trait methods may also be generic, whether they are required (`...`) or provide a default body.
-
-Examples:
+- A method of a `class`, `model`, `trait`, `enum` or `newtype` may declare type parameters after its name: `def name[T, U with Trait](...)`.
+- A method's type parameters are scoped to that method. The enclosing type's parameters and the method's own may appear in the same signature.
+- A trait method may be generic, whether it is required or has a default body.
 
 ```incan
 model Shelf[U]:
     item: U
 
-    def swap[T with Clone](self, value: T) -> T:
+    def swap[T with Clone](self, value: T) -> T:   # accepted: T is scoped to swap
         return value
-```
 
-```incan
 trait Echo:
     def echo[T with Clone](self, value: T) -> T:
         return value
 ```
 
-```incan
-enum Slot[U]:
-    Filled(U)
-    Empty
+### Bounds of instantiated types
 
-    def echo[T](self, value: T) -> T:
-        return value
-```
+A bound on a type parameter of a model, class, enum or newtype (`model Stream[R with Clone]`) applies to every instantiation of that type. A function, method, model, class, enum or newtype that instantiates it with one of its own type parameters (in a parameter, return, field, payload or underlying type, or in the type of an expression in a body) must declare the same bound on that type parameter, or a bound that implies it (`Copy` implies `Clone`). Otherwise the declaration is refused with `INCAN-T0001`.
 
 ```incan
-type Wrapper[U] = newtype U:
-    def echo[T with Clone](self, value: T) -> T:
-        return value
+model Stream[R with Clone]:
+    item: R
+
+def consume[T with Clone](stream: Stream[T]) -> int:   # accepted
+    return 1
+
+def consume_any[T](stream: Stream[T]) -> int:          # refused: T does not declare Clone (INCAN-T0001)
+    return 1
+
+def wrap[T](value: T) -> int:                           # refused: Stream(item=value) needs T with Clone (INCAN-T0001)
+    stream = Stream(item=value)
+    return 1
 ```
 
-Method generic syntax is additive and aligned with function generics: `def method[T](...)` extends, but does not replace, `def method(...)`.
+### Operations on a type parameter
+
+- A function or method body applies these to values of its own type parameter `T` without a declared bound: `==`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-` and `*`; `{value:?}`; `.clone()`; reading a `T` out of a `list[T]` by index or slice, or out of a `dict[K, T]` by key; using a `T` as a `set` element or `dict` key; and passing a `T` to a generic function or method that does one of these.
+- A call's type argument provides each operation the body applies to its type parameter. A type argument that does not implement `Eq` and `Hash`, for a type parameter used as a set element or dict key, is refused (`INCAN-T0114`, see [Set elements and dict keys](derives/comparison.md#set-elements-and-dict-keys)).
+- Inside the function, method, model, class, enum or newtype that declares it, a type parameter `T` is one type the declaration does not choose. Where a `T` is expected, as a returned, bound, assigned, appended, yielded or passed value, alone or inside a `list[T]`, `dict[K, T]`, `Option[T]` or `Result[T, E]`, a value of a concrete type (`0`, `"s"`) or of another type parameter is refused (`INCAN-T0001`). A value of `T` and a `&T` are accepted. A call binds its callee's own type parameters from its arguments, so `ident(0)` for `def ident[U](x: U) -> U` is accepted in such a body.
+- In the same declaration, a value of `T` is not a value of a concrete type. Where an `int`, a `str`, a model, a collection of another element type, a function type or a union with no `T` member is expected, a value of `T` is refused (`INCAN-T0001`): `return x` for an `int` result of `def f[T](x: T)`. Where a trait is expected, a value of `T` is accepted when a bound of `T` names that trait or a subtrait of it, and refused otherwise (`INCAN-T0001`). A `CallableN` bound does not make it a value of a function type.
+- A method call on a value of `T` calls a method that the trait of one of its bounds, or a supertrait of that trait, declares, or `.clone()`. Any other method call is refused (`INCAN-T0001`), under a builtin trait's bound too: `x.to_string()` for `T with Display`. Under a bound on a Rust trait, a method call is accepted, and the Rust trait decides whether it builds.
+- Displaying a value of a type parameter (`{value}`, `str(value)`, `print(value)`) needs a `Display` bound, an `Error` bound, or a bound whose trait supplies `__str__`. Without one it is refused (`INCAN-T0103`, see [Display](strings.md#display)).
+- `/`, `//`, `%` and `**` on values of a type parameter are specified in [Numeric semantics](numeric_semantics.md#operators).
+- A generic function or method of a compiled library needs of its type arguments the bounds it declares, and `Eq` and `Hash` of a type parameter its body uses as a set element or dict key. A caller in another package that passes its own type parameter to it declares on that parameter what the library function's body needs of it: `def head[T with Clone](items: list[T]) -> T: return first(items)` for a library `first` that returns `items[0]`. A type parameter passed where the library function uses it as a set element or dict key, without `with (Eq, Hash)`, is refused (`INCAN-T0114`).
+
+```incan
+def first[K](items: list[K]) -> K:                   # accepted
+    return items[0]
+
+def rest[K](items: list[K]) -> list[K]:              # accepted
+    return items[1:]
+
+def lookup[V](table: dict[str, V], key: str) -> V:   # accepted
+    return table[key]
+
+def head[T](items: list[T]) -> T:                    # accepted
+    return first(items)
+
+def same[T](a: T, b: T) -> bool:                     # accepted
+    return a == b
+
+def unique[T](items: list[T]) -> set[T]:             # accepted
+    return set(items)
+
+def show[T](value: T) -> str:
+    return f"{value}"                                # refused: T has no Display bound (INCAN-T0103)
+
+model Plain:
+    x: int
+
+def main() -> None:
+    kinds = unique([Plain(x=1)])                     # refused: Plain does not implement Eq and Hash (INCAN-T0114)
+```
 
 ### Call-site type arguments
 
-Generic calls normally infer type parameters from value arguments. You may also provide explicit type arguments at the call site.
-
-Why this feature exists (design rationale):
-
-- [Why call-site type arguments exist](../explanation/call_site_type_arguments.md)
-
-Call-site type arguments go in square brackets immediately after the function or method name and before value arguments.
-
-**Syntax**:
+Type arguments may be written at the call site, in square brackets after the function or method name:
 
 - Function: `callee[type_args](value_args...)`
 - Method: `receiver.method[type_args](value_args...)`
 
-`type_args` is comma-separated. Each entry is either a type expression or `_`. If brackets are present, arity must match the callee's type parameter count, including `_` slots.
+Rules:
 
-**Single type parameter**:
-
-You may call with no brackets (fully inferred) or one explicit type argument:
-
-```incan
-rows_inferred = session.read_csv(str("orders.csv"))         # inferred when context/value args are enough
-rows_typed = session.read_csv[Order](str("orders.csv"))     # explicit row type at the API boundary
-```
-
-**Multiple type parameters**:
-
-For multi-parameter generics, either infer all slots or provide one bracket entry per slot:
+- `type_args` is comma-separated. Each entry is a type or `_`.
+- With brackets, the number of entries equals the callee's number of type parameters; `_` entries count. `decode_rows[Order](...)` is refused for a two-parameter callee; `decode_rows[Order, _](...)` is accepted.
+- An explicit entry fixes its type parameter. A `_` entry is inferred from the value arguments. A type parameter that stays unresolved is refused (`INCAN-T0001`).
+- Without brackets, every type parameter is inferred.
+- The arguments that bind one type parameter bind it to one type. Arguments of numeric types bind it to the type the others widen to (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)), in any order, and the narrower values are widened to it: `pick(small, wide)` for an `i8` value `small` and an `int` value `wide` binds `T` to `int`. Arguments of types that do not widen to one are refused (`INCAN-T0001`): `take(1, "s")` for `def take[T](x: T, y: T)`. The fields of a generic model's or class's constructor follow the same rule.
+- A type parameter that an `Ok(...)` or `Err(...)` argument leaves open, and no other argument fixes, is settled as for a constructor bound to a local: the enclosing function's `Result` side, or `None`. The type parameter's bounds hold of the settled type: `first(Err(3))` for `def first[T with Display](r: Result[T, int])` in a function that returns no `Result` is refused (`INCAN-T0103`).
+- A type parameter with a bound on a source or standard-library trait is fixed by an argument or by the expected type. When the only arguments for parameters that name it are literals that leave it open, or there are none, and the expected type does not name it, the call is refused (`INCAN-T0001`): `show(None)` for `def show[T with Display](o: Option[T])`, and `make()` for `def make[T with Display]() -> list[T]` outside an annotated binding. A bound on a Rust capability marker (`Send`) or a Rust trait does not require it.
+- Brackets are accepted on direct calls of Incan functions and methods, and on a type-associated Rust call `Type.method[T](...)` whose receiver declares only type parameters. They are refused (`INCAN-T0001`) on builtin calls such as `len[int](...)`, on functions imported from Rust, on a callee reached through a variable (`read = session.read_csv; read[Order](...)`), and on a Rust receiver with const parameters.
 
 ```incan
-parsed = decode_rows(str("orders.csv"))                                 # T and E inferred
-parsed_typed = decode_rows[Order, CsvDecodeError](str("orders.csv"))    # both explicit
-parsed_partial = decode_rows[Order, _](str("orders.csv"))               # T explicit, E inferred via `_`
+def pair[A, B](first: A, second: B) -> tuple[A, B]:
+    return (first, second)
+
+def main() -> None:
+    a = pair(1, "x")              # accepted: A and B inferred
+    b = pair[int, str](1, "x")    # accepted
+    c = pair[int, _](1, "x")      # accepted: B inferred
+    d = pair[int](1, "x")         # refused: pair has two type parameters (INCAN-T0001)
+    e = len[int]([1])             # refused: brackets on a builtin call (INCAN-T0001)
 ```
-
-**The `_` placeholder**:
-
-`_` means "infer this slot". It still counts toward arity: `decode_rows[Order](...)` is invalid for a two-parameter generic, while `decode_rows[Order, _](...)` is valid.
-
-**Type checking order**:
-
-Explicit slots are applied first. `_` slots are inferred from value arguments and normal compatibility checks. If a slot remains unresolved, the compiler reports a call-site type error.
-
-**What is not supported**:
-
-Explicit brackets are supported for direct Incan function and method calls. A type-associated Rust call may also use `Type.method[T](...)` when the imported Rust receiver declares type parameters only; this emits Rust's `Type::<T>::method(...)` form. Receiver types containing const parameters are rejected because Incan v0.5 has no const-value call-site argument syntax. Using brackets on other call shapes is an error (not ignored), for example:
-
-- Built-in calls like `len[int](...)`
-- Calls to functions imported from Rust (`from rust::...`)
-- Calling a generic function **through a variable** (e.g. `read = session.read_csv; read[Order](...)`), where the callee is not a direct name or method
-
----
 
 ## Traits (authoring)
 
-Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older `: ...` spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.
-
-Models, classes, enums, newtypes, rusttypes, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
+- A trait declares methods. A required method is a signature with no body (`def render(self) -> str`, or with `: ...`); a default method has a body.
+- A `model`, `class`, `enum`, `newtype` or `rusttype` adopts a trait with `with TraitName`, and declares in its body each required method that no default method supplies. An adopter without one is refused (`INCAN-T0001`).
+- A trait adopts other traits the same way, and adoption is transitive: an adopter of `OrderedCollection[T]` also adopts `Collection[T]`.
+- A trait is never constructed: `TraitName(...)` is refused (`INCAN-T0001`).
+- A trait used as a type (`values: Collection[int]`) accepts any adopter of that trait instantiation.
+- A bound `T with Trait[...]` is satisfied by a type that adopts that trait instantiation, directly or through a supertrait.
+- A default method's body resolves the names it uses in the trait's module: a type, an enum variant or a function that the trait's module declares or imports, private functions included, whether or not the adopting module imports it.
+- A trait imported through a module that re-exports it (`pub from shapes import Measured` in `geometry`, then `from geometry import Measured`) is the trait its declaring module declares: `with Measured` adopts `shapes.Measured`, its default methods included.
+- A subtrait may give a compatible default body to a method its supertrait requires. An adopter of the subtrait satisfies the supertrait requirement with that default, and has one method of that name.
+- An adopter of a trait that a `pub::` package declares, in another package, declares each method the trait gives a default body: a package publishes its traits' method signatures, not their default bodies. An adopter without one is refused (`INCAN-T0001`).
 
 ```incan
 trait Describable:
@@ -330,26 +264,6 @@ trait Describable:
 class Product with Describable:
     name: str
 
-def main() -> None:
-    p = Product(name="Laptop")
-    println(p.describe())
-```
-
-```incan
-trait Renderable:
-    def render(self) -> str
-
-enum Token with Renderable:
-    Text(str)
-    Break
-
-    def render(self) -> str:
-        match self:
-            Token.Text(value) => return value
-            Token.Break => return "\n"
-```
-
-```incan
 trait Collection[T]:
     def first(self) -> T
 
@@ -358,38 +272,23 @@ trait OrderedCollection[T] with Collection[T]:
 
 def first_item(values: Collection[int]) -> int:
     return values.first()
-```
 
-Rules to keep in mind:
-
-- Traits are abstract and must not be constructed directly with `TraitName(...)`.
-- A value annotated as `Collection[int]` may be any concrete adopter of that trait instantiation.
-- Enum trait adoption uses the same `with TraitName` clause as model and class adoption.
-- For enum adopters, required trait methods must be declared in the enum body.
-- Enum adopters should satisfy behavior through methods; `@requires(...)` field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.
-- Newtype and rusttype adopters declare the same `with TraitName` clause. When multiple adopted traits require the same method name, target each concrete method with `for TraitName` before the return arrow.
-- Supertrait relationships are transitive: if `OrderedCollection[T]` adopts `Collection[T]`, adopters of `OrderedCollection[T]` also satisfy `Collection[T]`.
-
-When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:
-
-```incan
 def require_ordering[T with OrderedCollection[int]](values: T) -> T:
     return values
 ```
 
-The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.
-
 ### Multiple instantiations of one generic trait
 
-Models, classes, enums, newtypes, and rusttypes may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into multiple result types, or serializing through a generic format trait.
-
-The repeated adoptions must be distinct:
+- A type may adopt one generic trait several times with different type arguments: `with Convert[int], Convert[float]`.
+- Each method that shares a name satisfies a different instantiation.
+- Two identical instantiations are refused (`INCAN-T0001`).
+- Two methods with the same name are refused (`INCAN-T0001`) unless each satisfies a distinct instantiation of one generic trait, or names its trait with `for TraitName`.
 
 ```incan
 trait Convert[T]:
     def convert(self) -> T: ...
 
-model Reading with Convert[int], Convert[float]:  # OK
+model Reading with Convert[int], Convert[float]:   # accepted
     value: int
 
     def convert(self) -> int:
@@ -399,11 +298,9 @@ model Reading with Convert[int], Convert[float]:  # OK
         return 1.0
 ```
 
-This is trait dispatch, not general-purpose method overloading. The same method name is allowed here because each `convert` method satisfies a different `Convert[T]` adoption on the same type. Two ordinary methods with the same name are still rejected when they are not backed by distinct trait instantiations.
-
 #### Dispatch from argument types
 
-When the same trait method takes different value parameter types, the compiler selects the matching instantiation from the call arguments:
+A call selects the instantiation whose method parameter types match the argument types, named arguments included.
 
 ```incan
 trait Reader[T]:
@@ -418,45 +315,28 @@ model Source with Reader[str], Reader[int]:
     def read(self, key: int) -> str:
         return str(key)
 
-source = Source(name="events")
-by_name = source.read("latest")  # Reader[str]
-by_index = source.read(0)        # Reader[int]
+def main() -> None:
+    source = Source(name="events")
+    by_name = source.read("latest")   # accepted: selects Reader[str]
+    by_index = source.read(0)         # accepted: selects Reader[int]
+    by_key = source.read(key=0)       # accepted: selects Reader[int]
 ```
-
-Named arguments participate in the same selection. `source.read(key=0)` selects the `Reader[int]` method because the named `key` argument has type `int`.
 
 #### Dispatch from an expected return type
 
-When the value arguments do not distinguish the candidates, the compiler may use an explicit expected return type. A typed binding is the most direct way to provide that context:
+When the arguments do not select one instantiation, the expected result type does: an annotated binding, a parameter the result is passed to, or an annotated return. With no expected type, the call is refused as ambiguous (`INCAN-T0001`).
 
 ```incan
-trait Convert[T]:
-    def convert(self) -> T: ...
-
-model Reading with Convert[int], Convert[float]:
-    value: int
-
-    def convert(self) -> int:
-        return self.value
-
-    def convert(self) -> float:
-        return 1.0
-
-reading = Reading(value=1)
-as_float: float = reading.convert()
-as_int: int = reading.convert()
-```
-
-Expected return type context can also come from a function argument, an annotated return position, or equivalent explicit type context. If no rule selects exactly one candidate, the call is ambiguous:
-
-```incan
-reading = Reading(value=1)
-value = reading.convert()  # error: the expected result type is not known
+def main() -> None:
+    reading = Reading(value=1)
+    as_float: float = reading.convert()   # accepted: selects Convert[float]
+    as_int: int = reading.convert()       # accepted: selects Convert[int]
+    value = reading.convert()             # refused: no expected result type (INCAN-T0001)
 ```
 
 #### Generic bounds with trait type arguments
 
-Generic bounds may carry trait type arguments. This lets a generic function say that a receiver type `T` must support a trait instantiation chosen by another type parameter:
+A bound may carry trait type arguments. `T with Serializable[F]` requires `T` to adopt `Serializable` instantiated with `F`.
 
 ```incan
 trait Serializable[F]:
@@ -474,14 +354,13 @@ model Event with Serializable[JsonFormat]:
 def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
     return value.serialize(format)
 
-bytes = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))
+def main() -> None:
+    encoded = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))   # accepted
 ```
-
-The bound `T with Serializable[F]` is not just a trait-name check. If `F` is `JsonFormat`, then `T` must adopt `Serializable[JsonFormat]`; adopting `Serializable[YamlFormat]` alone would not satisfy the bound.
 
 #### Enum adopters
 
-Enum declarations use the same rules as models and classes. Each repeated generic-trait adoption must use distinct type arguments, and each same-name method must satisfy a distinct adopted trait instantiation:
+An enum adopts generic traits under the same rules as a model or class.
 
 ```incan
 trait Label[T]:
@@ -497,14 +376,15 @@ enum Token with Label[str], Label[int]:
     def label(self) -> int:
         return 1
 
-token: Token = Token.Number(1)
-text: str = token.label()
-code: int = token.label()
+def main() -> None:
+    token: Token = Token.Number(1)
+    text: str = token.label()   # accepted
+    code: int = token.label()   # accepted
 ```
 
 #### Method-level trait targets
 
-When two adopted traits require the same method name, put the target trait after the parameter list and before the return arrow:
+`def name(params) for TraitName -> Return:` declares which adopted trait the method satisfies. The target is not part of the return type.
 
 ```incan
 trait ToInt:
@@ -521,28 +401,19 @@ type Value = newtype int with ToInt, ToStr:
         return str(self.0)
 ```
 
-The `for ToInt` qualifier belongs to the method declaration. It means this method body satisfies the adopted `ToInt` trait. It does not modify the return type.
-
 #### Rejected cases
 
-The compiler rejects repeated identical trait instantiations:
-
 ```incan
-model BadReading with Convert[int], Convert[int]:  # error
+model BadReading with Convert[int], Convert[int]:   # refused: identical instantiations (INCAN-T0001)
     value: int
-```
 
-The compiler also rejects same-name methods that are not backed by distinct trait instantiations:
-
-```incan
 model Parser:
-    def parse(self, value: str) -> str: ...
-    def parse(self, value: int) -> str: ...  # error
-```
+    def parse(self, value: str) -> str:
+        return value
 
-Same-name methods from unrelated trait families are rejected unless the concrete method declarations explicitly target adopted traits with `for TraitName`. Return-type and argument-type disambiguation only applies within one generic trait family:
+    def parse(self, value: int) -> str:              # refused: same name without distinct instantiations (INCAN-T0001)
+        return str(value)
 
-```incan
 trait ReadsInt:
     def read(self, value: int) -> int: ...
 
@@ -550,32 +421,21 @@ trait ReadsStr:
     def read(self, value: str) -> str: ...
 
 model Source with ReadsInt, ReadsStr:
-    def read(self, value: int) -> int: ...
-    def read(self, value: str) -> str: ...  # error: unrelated trait families use the same method name
-```
+    def read(self, value: int) -> int:
+        return value
 
-Add method-level targets when both declarations are trait implementations, or use distinct method names when they are ordinary inherent methods. General call-site explicit qualification and aliasing are future language design work.
+    def read(self, value: str) -> str:               # refused: unrelated traits share the name without `for` targets (INCAN-T0001)
+        return value
+```
 
 ### `@requires(...)` (adopter contract)
 
-`@requires(...)` is a decorator you can put on a `trait` to declare **which adopter fields must exist** (and what types they must have).
+`@requires(field_a: TypeA, field_b: TypeB)` on a trait names fields that every model or class adopter declares, with compatible types.
 
-Syntax:
-
-```incan
-@requires(field_a: TypeA, field_b: TypeB)
-trait MyTrait:
-    ...
-```
-
-What the compiler enforces:
-
-- When a `class`/`model` adopts a trait (`with MyTrait`), it must provide **all required fields** with compatible types.
-- Trait default methods may access adopter fields like `self.field` **only if** that field is declared in `@requires(...)`.
-- Mutating adopter fields still requires `mut self` (same as normal methods).
-- Required fields propagate through trait hierarchies: if `Sub` adopts `Base`, adopters of `Sub` must also satisfy `Base`'s `@requires(...)` contract.
-
-Example:
+- An adopter that lacks a required field, or declares it with an incompatible type, is refused (`INCAN-T0001`).
+- An `enum` or `newtype` that adopts a trait with `@requires(...)` is refused (`INCAN-T0001`).
+- A default method of the trait reads `self.field` only for a field named in `@requires(...)`; another field is refused (`INCAN-T0001`). Changing a field needs `mut self`; a change through `self` is refused (`INCAN-T0102`).
+- An adopter of a subtrait meets the `@requires(...)` of every supertrait.
 
 ```incan
 @requires(name: str)
@@ -583,330 +443,54 @@ trait Loggable:
     def log(self, msg: str) -> None:
         println(f"[{self.name}] {msg}")
 
-class Service with Loggable:
+class Service with Loggable:   # accepted: declares name: str
     name: str
-```
 
-Example (mutation):
-
-```incan
 @requires(count: int)
 trait Counter:
     def bump(mut self) -> None:
         self.count += 1
 ```
 
-See also: [Traits (authoring)][traits-doc].
+### `mut` parameters of trait methods
 
----
+A `mut` parameter of a trait method, required or default, and of each method that implements it, follows the rules of [`mut` parameters](functions.md#mut-parameters):
 
-## Debug (Automatic)
-
-**Format**: `{value:?}` (Debug)
-
-**Override**: not supported (Debug is compiler-generated).
+- A parameter of type `int`, `float` or `bool`, or an alias of one, is the method's own copy.
+- A parameter of any other type, except a Rust type, `*args` and `**kwargs`, shows the method's changes to the caller. The body does not rebind it or hold it in another name or value (`INCAN-T0001`). The argument of a call that changes it is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary; another argument is refused (`INCAN-T0117`).
+- A method call through a type parameter's bound, on `self` in a default method, or on a trait-typed value changes such a parameter, whichever method runs.
 
 ```incan
-model Point:
-    x: int
-    y: int
+trait Grower:
+    def grow(self, mut items: list[int]) -> int:
+        items.append(1)
+        return len(items)
 
-def main() -> None:
-    p = Point(x=10, y=20)
-    println(f"{p:?}")  # Point { x: 10, y: 20 }
-```
+    def size(self, mut items: list[int]) -> int:
+        return len(items)
 
----
-
-## Display (Custom with `__str__`)
-
-**Format**: `{value}` (Display)
-
-**Default behavior**: custom types have a default Display representation.
-
-**Custom behavior**: define `__str__(self) -> str`.
-
-> Conflict rule: if you define `__str__`, you must not also `@derive(Display)`.
-
-```incan
-model User:
-    name: str
-    email: str
-
-    def __str__(self) -> str:
-        return f"{self.name} <{self.email}>"
-
-def main() -> None:
-    u = User(name="Alice", email="alice@example.com")
-    println(f"{u}")    # Alice <alice@example.com>
-    println(f"{u:?}")  # User { name: "Alice", email: "alice@example.com" }
-```
-
----
-
-## Eq (Equality)
-
-**What it does**: enables `==` / `!=`.
-
-**Custom behavior**: define `__eq__(self, other: Self) -> bool`.
-
-> Conflict rule: if you define `__eq__`, you must not also `@derive(Eq)`.
-
-```incan
-model User:
+model Plant with Grower:
     id: int
-    name: str
 
-    def __eq__(self, other: User) -> bool:
-        return self.id == other.id
-```
-
----
-
-## Ord (ordering)
-
-**What it does**: enables ordering operators and `sorted(...)`.
-
-**Custom behavior**: define `__lt__(self, other: Self) -> bool`.
-
-> Conflict rule: if you define `__lt__`, you must not also `@derive(Ord)`.
-
-```incan
-model Task:
-    priority: int
-    name: str
-
-    def __lt__(self, other: Task) -> bool:
-        return self.priority < other.priority
-```
-
----
-
-## Hash
-
-**What it does**: enables use as `Set` members and `Dict` keys.
-
-**Custom behavior**: define `__hash__(self) -> int`.
-
-> Conflict rule: if you define `__hash__`, you must not also `@derive(Hash)`.
->
-> Consistency rule: if `a == b`, then `a.__hash__() == b.__hash__()`.
-
-```incan
-@derive(Eq, Hash)
-model UserId:
-    id: int
-```
-
----
-
-## Clone
-
-**What it does**: enables `.clone()` (deep copy).
-
-Auto-added for `model`/`class`/`enum`/`newtype`.
-
----
-
-## Copy
-
-**What it does**: enables implicit copying (marker trait).
-
-Use only for small value types; all fields must be Copy.
-
----
-
-## Default
-
-**What it does**: provides `Type.default()` baseline construction.
-
-**Field defaults vs `Default`**:
-
-- Field defaults (`field: T = expr`) are used by normal constructors when omitted.
-- `@derive(Default)` adds `Type.default()`; it uses field defaults when present, otherwise type defaults.
-
-Constructor rule:
-
-- If a field has **no default**, it must be provided when constructing the type.
-
-```incan
-@derive(Default)
-model Settings:
-    theme: str = "dark"
-    font_size: int = 14
+def run[T with Grower](grower: T, items: list[int]) -> int:
+    return grower.size(items)            # refused: a call through a bound changes the parameter (INCAN-T0117)
 
 def main() -> None:
-    a = Settings()               # OK: all omitted fields have defaults
-    b = Settings(font_size=16)   # OK
-    c = Settings.default()       # OK
+    plant = Plant(id=1)
+    mut kept: list[int] = [1, 2]
+    fixed: list[int] = [1, 2]
+    println(plant.grow(kept))            # accepted
+    println(plant.grow([5]))             # accepted
+    println(plant.grow(fixed))           # refused: fixed is not declared mut (INCAN-T0117)
+    println(plant.size(fixed))           # accepted: size does not change the parameter
 ```
 
----
+## See also
 
-## Serialize
-
-**What it does**: enables JSON serialization.
-
-**API**:
-
-- `json_stringify(value)` → `str`
-- `value.to_json()` → `str` when the type imports and adopts `std.serde.json.Serialize`
-
-```incan
-from std.serde.json import Serialize
-
-@derive(Serialize)
-model User:
-    name: str
-    age: int
-
-def main() -> None:
-    u = User(name="Alice", age=30)
-    println(json_stringify(u))
-```
-
-```incan
-from std.serde.json import Serialize
-
-model User with Serialize:
-    name: str
-    age: int
-
-def main() -> None:
-    println(User(name="Alice", age=30).to_json())
-```
-
-Use the RFC 024 module derive when a model should adopt both JSON traits and expose module-qualified bounds:
-
-```incan
-from std.serde import json
-
-@derive(json)
-model User:
-    name: str
-    age: int
-
-def encode[T with json.Serialize](value: T) -> str:
-    return value.to_json()
-```
-
----
-
-## Deserialize
-
-**What it does**: enables JSON parsing into a type.
-
-**API**:
-
-- `T.from_json(input: str)` → `Result[T, str]`
-
-Note: explicit `with Deserialize` adoption still needs either an imported `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
-
-```incan
-from std.serde.json import Deserialize
-
-@derive(Deserialize)
-model User:
-    name: str
-    age: int
-
-def main() -> None:
-    result: Result[User, str] = User.from_json("{\"name\":\"Alice\",\"age\":30}")
-```
-
----
-
-## Validate (Models only)
-
-**What it does**: enables validated construction for models.
-
-**API**:
-
-- `TypeName.new(...)` → `Result[TypeName, E]`
-
-Rule:
-
-- If a `model` derives `Validate`, you must construct it via `TypeName.new(...)`. Raw construction via `TypeName(...)` is a compile-time error.
-
-```incan
-@derive(Validate)
-model EmailUser:
-    email: str
-
-    def validate(self) -> Result[EmailUser, str]:
-        if "@" not in self.email:
-            return Err("invalid email")
-        return Ok(self)
-
-def make_user(email: str) -> Result[EmailUser, str]:
-    return EmailUser.new(email=email)
-```
-
-See: [Derives: Validation](derives/validation.md)
-
----
-
-## Compiler errors (reference)
-
-### Unknown derive (example)
-
-```incan
-@derive(Debg)
-model User:
-    name: str
-```
-
-```bash
-type error: Unknown derive 'Debg'
-```
-
-### Deriving a non-trait (example)
-
-```incan
-model User:
-    name: str
-
-@derive(User)
-model Admin:
-    email: str
-```
-
-```bash
-type error: Cannot derive 'User' - it is a model, not a trait
-```
-
----
-
-## Reflection (automatic)
-
-Models and classes provide:
-
-- `__fields__() -> FrozenList[FieldInfo]`
-- `__class_name__() -> str`
-
-Note:
-
-- Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**. For `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
-- `u.__fields__()` is typed as `FrozenList[FieldInfo]` directly by the compiler. Import `FieldInfo` only when you need to spell that type in an annotation.
-
-See [Reflection (Reference)](reflection.md) for `FieldInfo` structure details.
-
-```incan
-model User:
-    name: str
-
-def main() -> None:
-    u = User(name="Alice")
-    println(u.__class_name__())
-    println([f.name for f in u.__fields__()])
-```
-
-## Stdlib derive boundaries
-
-Traits under `std.derives.*` are source-defined capability contracts.
-
-- `Clone`, `Default`, `Debug`, `Eq`, `Ord`, and `Hash` are declared in `.incn` source.
-- Implementations for adopting types come from ordinary Rust `#[derive(...)]` expansion during codegen.
-- These traits are not modeled as runtime helper calls through `incan_std_core::derives::*`.
-
-For the curated stdlib-family view, see [Standard library reference: `std.derives.*`](stdlib/derives.md).
+- [The Incan Book: Traits and derives](../tutorials/book/11_traits_and_derives.md)
+- [Derives and traits (explanation)](../explanation/derives_and_traits.md)
+- [How derives work](../explanation/how_derives_work.md)
+- [Classes: Class methods](../explanation/models_and_classes/classes.md#class-methods-classmethod)
+- [Trait dispatch is not overloading](../explanation/derives_and_traits.md#trait-dispatch-is-not-overloading)
+- [Why call-site type arguments exist](../explanation/call_site_type_arguments.md)
+- [Error handling (explanation)](../explanation/error_handling.md)

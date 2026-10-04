@@ -1,0 +1,9 @@
+# behavior: a consumer that imports a dependency's feature-gated export while that package feature is off is refused at check time with the package-feature remedy
+# retires: loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs::path_dependency_artifact_rebuilds_for_a_b_a_feature_projections
+# expect-diagnostic: INCAN-I0103
+
+from pub::feature_library import alpha_value
+
+
+def main() -> None:
+    println(alpha_value())

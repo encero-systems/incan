@@ -1,0 +1,29 @@
+# behavior: an empty inner list beside str-typed siblings is a list of str: the literal passes where list[list[str]] is expected and its str elements iterate (#1471)
+# retires: loaves/compiler/incan_emit/tests/nested_list_loop_tests.rs::nested_list_empty_holes_retain_checked_string_types
+# expect-stdout:
+#   0
+#   1
+#   x
+#   x!
+#   2
+#   0
+
+def count_rows(rows: list[list[str]]) -> int:
+    return len(rows)
+
+
+def run() -> None:
+    rows = [[], ["x"]]
+    println(len(rows[0]))
+    println(len(rows[1]))
+    for values in [["x"], []]:
+        for value in values:
+            println(value)
+            println(value + "!")
+    println(count_rows([[], ["x"]]))
+    deep = [[[]], [["x"]]]
+    println(len(deep[0][0]))
+
+
+def main() -> None:
+    run()

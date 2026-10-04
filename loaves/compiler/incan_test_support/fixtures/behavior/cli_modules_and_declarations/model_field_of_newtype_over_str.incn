@@ -1,0 +1,19 @@
+# behavior: a model holding a newtype over str builds and reads it back, since a newtype carries Clone and Debug when its underlying type does
+# retires: loaves/compiler/incan_ir/src/lower/tests/newtype_automatic_derives.rs::newtype_automatic_derives_follow_the_underlying_type_issue1754
+# expect-stdout:
+#   ada@example.com
+#   2
+
+type Email = newtype str
+
+
+model User:
+    email: Email
+
+
+def main() -> None:
+    user = User(email=Email("ada@example.com"))
+    mut users: list[User] = [user]
+    users.append(User(email=Email("bo@example.com")))
+    println(users[0].email.0)
+    println(len(users))

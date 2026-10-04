@@ -1,0 +1,12 @@
+# behavior: reassigning a binding introduced without mut is refused at check time
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_inferred_reassign_immutable_error
+# expect-diagnostic: INCAN-T0001
+
+def test() -> int:
+    x = 1
+    x = 2
+    return x
+
+
+def main() -> None:
+    println(test())

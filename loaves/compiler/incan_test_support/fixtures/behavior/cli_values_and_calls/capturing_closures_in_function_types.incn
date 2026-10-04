@@ -1,0 +1,80 @@
+# behavior: a closure that captures local values runs as an annotated local called and passed twice, as an argument for a function and a method that only call their parameter, and as the closure a function and a method return; a named function, a closure that captures nothing and a returned closure that captures nothing still run from a list and a field
+# retires: loaves/compiler/incan_emit/src/tests/capturing_closures.rs::capturing_closures_build_where_their_own_type_is_kept_issue1561
+# expect-stdout:
+#   6
+#   6
+#   11
+#   5
+#   -2
+#   4
+#   11
+#   8
+#   4
+#   6
+#   8
+#   0
+#   2
+
+model Op:
+    step: (int) -> int
+
+
+class Acc:
+    pub base: int
+
+    def run(self, f: (int) -> int) -> int:
+        return f(self.base)
+
+    def adder(self) -> (int) -> int:
+        base = self.base
+        return (x) => x + base
+
+    def scaled(self) -> int:
+        g: (int) -> int = (x) => x * self.base
+        return g(2)
+
+
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+
+def twice(f: (int) -> int, x: int) -> int:
+    return f(f(x))
+
+
+def make_adder(n: int) -> (int) -> int:
+    return (x) => x + n
+
+
+def double(x: int) -> int:
+    return x * 2
+
+
+def size_of() -> (list[int]) -> int:
+    return (xs) => len(xs)
+
+
+def main() -> None:
+    n = 5
+    g: (int) -> int = (x) => x + n
+    println(g(1))
+    println(apply(g, 1))
+    println(twice(g, 1))
+    println(g(0))
+    println(apply((x) => x - n, 3))
+    add = make_adder(3)
+    println(add(1))
+    println(apply(make_adder(10), 1))
+    a = Acc(base=3)
+    println(a.run((x) => x + n))
+    println(a.adder()(1))
+    println(a.scaled())
+    ops: list[(int) -> int] = [double, (x) => x + 1]
+    first = ops[0]
+    println(first(4))
+    op = Op(step=(x) => x - 1)
+    step = op.step
+    println(step(1))
+    sizes: list[(list[int]) -> int] = [size_of()]
+    size = sizes[0]
+    println(size([1, 2]))

@@ -1,0 +1,18 @@
+# behavior: a module function named len shadows the builtin while std.builtins.len still reaches the builtin (#1116)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1116_builtin_len_shadowing_codegen
+# expect-stdout:
+#   5
+#   3
+
+"""Issue #1116: module bindings shadow ambient builtins, with an explicit builtin escape hatch."""
+
+
+def len(value: int) -> int:
+    """Return a source-defined length-like value."""
+    return value + 1
+
+
+def main() -> None:
+    """Exercise both the shadowed and explicit builtin calls."""
+    println(len(4))
+    println(std.builtins.len([10, 20, 30]))

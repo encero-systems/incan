@@ -1,0 +1,5 @@
+pub def build(size: int, label: str = "flat") -> str:
+    return f"{label} of size {size}"
+
+
+pub default_build = partial build(size=3)

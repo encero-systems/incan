@@ -1,0 +1,6 @@
+"""A top-level module whose name is a keyword of the host language."""
+
+
+pub def launch() -> str:
+    """Return the line the entrypoint prints for the top-level module."""
+    return "launched"

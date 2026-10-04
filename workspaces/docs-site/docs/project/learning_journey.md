@@ -40,10 +40,10 @@ This implementation walkthrough tests the published navigation as each audience 
 | Rust evaluator | Coming from Rust | 1 | Build and consume an Incan library | 2 | Pass |
 | TypeScript/JavaScript developer | Coming from TypeScript or JavaScript | 1 | Your first project or library package | 2 | Pass |
 | Automation/data-tool developer | Pipelines and automation | 1 | Pipeline mini-project or failed-build diagnosis | 2 | Pass |
-| Technical evaluator | What Incan is for | 1 | Representative executable project or an explicitly labelled packaging preview | 2 | Pass |
+| Technical evaluator | What Incan is for | 1 | Representative executable project or an explicitly labeled packaging preview | 2 | Pass |
 | Contributor | Contributor documentation | Outside minimum onboarding | Contributor Book | Outside minimum onboarding | Intentionally separate |
 
-The walkthrough found no dead route or extra taxonomy decision before a recommended executable project. Web, typed-serde, async, library, and scoped crate-interoperability work is executable in the completed 0.5 envelope; hosted-delivery packaging remains explicitly labelled as a preview. The walkthrough did not test comprehension, terminology, or confidence with external readers; record those observations before adding further tutorial categories.
+The walkthrough found no dead route or extra taxonomy decision before a recommended executable project. Web, typed-serde, async, library, and scoped crate-interoperability work is executable in the completed 0.5 envelope; hosted-delivery packaging remains explicitly labeled as a preview. The walkthrough did not test comprehension, terminology, or confidence with external readers; record those observations before adding further tutorial categories.
 
 ## Manual test
 

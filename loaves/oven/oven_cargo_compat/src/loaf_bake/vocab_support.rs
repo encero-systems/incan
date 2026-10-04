@@ -11,13 +11,19 @@ use std::{fs, thread};
 use oven_rustc::loaf::{LOAF_TEMP_SEQUENCE, OvenLoafError, OvenSourceCompilerVocabSupportRequest};
 use oven_rustc::rustc::{
     OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcAuxiliaryTarget, OvenRustcSupportingArtifact,
-    clear_inherited_cargo_environment,
+    clear_inherited_cargo_environment_for_cargo,
 };
 use oven_store::digest_bytes;
 use oven_store::process::{isolate_process_group, terminate_process_group};
 
 use super::OvenLoafBakerContext;
 use crate::publisher_capacity_probe_delay;
+
+/// Target and host artifacts emitted by one auxiliary-target publisher invocation.
+struct AuxiliaryArtifactSets {
+    target: BTreeMap<String, String>,
+    host: BTreeMap<String, String>,
+}
 
 /// Run one baker-owned Cargo child while enforcing the aggregate transient physical allowance.
 fn run_bounded_loaf_cargo(
@@ -119,6 +125,7 @@ pub(super) fn bake_compiler_vocab_support(
         compiler_root: context.compiler_root,
         cargo: context.cargo,
         rustc: context.rustc,
+        auxiliary_target_rustc: context.auxiliary_target_rustc,
         cargo_target: context.compiler_support_target,
         capacity_roots: &context.capacity_roots,
         transient_limit: context.transient_limit,
@@ -140,6 +147,7 @@ pub fn bake_source_compiler_vocab_support(
         compiler_root,
         cargo,
         rustc,
+        auxiliary_target_rustc,
         cargo_target,
         capacity_roots,
         transient_limit,
@@ -197,7 +205,7 @@ pub fn bake_source_compiler_vocab_support(
     if plan.intent.profile == "release" {
         command.arg("--release");
     }
-    clear_inherited_cargo_environment(&mut command);
+    clear_inherited_cargo_environment_for_cargo(&mut command);
     command.env("RUSTC", rustc).env("CARGO_NET_OFFLINE", "true");
     if plan.intent.profile == "debug" {
         command.env("CARGO_PROFILE_DEV_DEBUG", "0");
@@ -230,8 +238,13 @@ pub fn bake_source_compiler_vocab_support(
     if plan.intent.profile == "release" {
         wasm_command.arg("--release");
     }
-    clear_inherited_cargo_environment(&mut wasm_command);
-    wasm_command.env("RUSTC", rustc).env("CARGO_NET_OFFLINE", "true");
+    clear_inherited_cargo_environment_for_cargo(&mut wasm_command);
+    // This invocation retains both the target units and their host-side compiler plugins as one isolated cohort, so
+    // it can use the caller's compiler that actually carries the auxiliary target without mixing in the staged
+    // compiler's independently built host closure.
+    wasm_command
+        .env("RUSTC", auxiliary_target_rustc)
+        .env("CARGO_NET_OFFLINE", "true");
     if plan.intent.profile == "debug" {
         wasm_command.env("CARGO_PROFILE_DEV_DEBUG", "0");
     }
@@ -284,13 +297,15 @@ pub fn bake_source_compiler_vocab_support(
         INCAN_VOCAB,
         &wasm_primary_artifact_directory,
         "native vocabulary Wasm support",
-    )?
-    .into_iter()
-    .filter(|artifact| artifact.starts_with(&wasm_primary_artifact_directory_canonical))
-    .collect::<Vec<_>>();
+    )?;
     copy_compiler_vocab_auxiliary_target_artifacts(
         &wasm_artifacts,
-        &support_root.join(VOCAB_DESUGARER_TARGET).join("deps"),
+        &wasm_primary_artifact_directory_canonical,
+        &fs::canonicalize(&wasm_host_artifact_directory).map_err(|source| OvenLoafError::Io {
+            path: wasm_host_artifact_directory.clone(),
+            source,
+        })?,
+        &support_root.join(VOCAB_DESUGARER_TARGET),
         VOCAB_DESUGARER_TARGET,
         plan,
     )?;
@@ -607,17 +622,111 @@ fn compiler_artifact_paths_from_cargo_output(
 /// of the same crate from occupying one ambiguous direct-Rustc search directory.
 fn copy_compiler_vocab_auxiliary_target_artifacts(
     source_artifacts: &[PathBuf],
+    target_artifact_directory: &Path,
+    host_artifact_directory: &Path,
     loaf_directory: &Path,
     target: &str,
     plan: &mut OvenRustcArtifactManifest,
 ) -> Result<(), OvenLoafError> {
     const INCAN_VOCAB: &str = "incan_vocab";
     const SERDE_JSON: &str = "serde_json";
-    fs::create_dir_all(loaf_directory).map_err(|source| OvenLoafError::Io {
-        path: loaf_directory.to_path_buf(),
+    let target_loaf_directory = loaf_directory.join("target/deps");
+    let host_loaf_directory = loaf_directory.join("host/deps");
+    fs::create_dir_all(&target_loaf_directory).map_err(|source| OvenLoafError::Io {
+        path: target_loaf_directory.clone(),
         source,
     })?;
-    let mut artifacts = BTreeMap::new();
+    fs::create_dir_all(&host_loaf_directory).map_err(|source| OvenLoafError::Io {
+        path: host_loaf_directory.clone(),
+        source,
+    })?;
+    let AuxiliaryArtifactSets {
+        target: target_artifacts,
+        host: host_artifacts,
+    } = copy_auxiliary_artifact_sets(
+        source_artifacts,
+        target_artifact_directory,
+        host_artifact_directory,
+        &target_loaf_directory,
+        &host_loaf_directory,
+        target,
+    )?;
+    if target_artifacts.is_empty() {
+        return Err(OvenLoafError::Preparation {
+            message: format!("native vocabulary publisher retained no target artifacts from the {target} build"),
+        });
+    }
+    let cohort = format!("auxiliary-target:{target}");
+    validate_auxiliary_closure_cohort(
+        target_artifacts.keys().map(|name| (name.as_str(), cohort.as_str())),
+        host_artifacts.keys().map(|name| (name.as_str(), cohort.as_str())),
+    )?;
+    let target_relative_directory = format!("compiler-support/{target}/target/deps");
+    let host_relative_directory = format!("compiler-support/{target}/host/deps");
+    let mut externs = Vec::new();
+    for crate_name in [INCAN_VOCAB, SERDE_JSON] {
+        let matches = target_artifacts
+            .iter()
+            .filter(|(file_name, _)| is_named_rlib(file_name, crate_name))
+            .collect::<Vec<_>>();
+        let [(file_name, digest)] = matches.as_slice() else {
+            return Err(OvenLoafError::Preparation {
+                message: format!(
+                    "native vocabulary {target} publisher must retain exactly one `{crate_name}` rlib; found {}",
+                    matches.len()
+                ),
+            });
+        };
+        externs.push(OvenRustcArtifactExtern {
+            crate_name: crate_name.to_string(),
+            relative_path: format!("{target_relative_directory}/{file_name}"),
+            digest: digest.to_string(),
+        });
+    }
+    for (file_name, digest) in target_artifacts {
+        let relative_path = format!("{target_relative_directory}/{file_name}");
+        if externs.iter().any(|artifact| artifact.relative_path == relative_path) {
+            continue;
+        }
+        plan.supporting_artifacts
+            .push(OvenRustcSupportingArtifact { relative_path, digest });
+    }
+    let has_host_artifacts = !host_artifacts.is_empty();
+    for (file_name, digest) in host_artifacts {
+        plan.supporting_artifacts.push(OvenRustcSupportingArtifact {
+            relative_path: format!("{host_relative_directory}/{file_name}"),
+            digest,
+        });
+    }
+    // Target libraries and their host-side compiler plugins come from this one Cargo invocation. Never borrow the
+    // native auxiliary closure: a same-named proc macro rebuilt through a different compiler path has a different
+    // crate hash, and target metadata compiled against the original cannot load through that substitute.
+    let mut dependency_search_paths = vec![target_relative_directory];
+    if has_host_artifacts {
+        dependency_search_paths.push(host_relative_directory);
+    }
+    dependency_search_paths.sort();
+    plan.vocab_auxiliary_targets.push(OvenRustcAuxiliaryTarget {
+        target: target.to_string(),
+        dependency_search_paths,
+        externs,
+    });
+    plan.vocab_auxiliary_targets
+        .sort_by(|left, right| left.target.cmp(&right.target));
+    Ok(())
+}
+
+/// Copy compiler artifacts into disjoint target and host directories while retaining their exact digests.
+fn copy_auxiliary_artifact_sets(
+    source_artifacts: &[PathBuf],
+    target_artifact_directory: &Path,
+    host_artifact_directory: &Path,
+    target_loaf_directory: &Path,
+    host_loaf_directory: &Path,
+    target: &str,
+) -> Result<AuxiliaryArtifactSets, OvenLoafError> {
+    let mut target_artifacts = BTreeMap::new();
+    let mut host_artifacts = BTreeMap::new();
     for source in source_artifacts {
         let metadata = fs::symlink_metadata(source).map_err(|source_error| OvenLoafError::Io {
             path: source.clone(),
@@ -631,6 +740,18 @@ fn copy_compiler_vocab_auxiliary_target_artifacts(
                 ),
             });
         }
+        let (artifacts, destination_root, domain) = if source.starts_with(target_artifact_directory) {
+            (&mut target_artifacts, &target_loaf_directory, "target")
+        } else if source.starts_with(host_artifact_directory) {
+            (&mut host_artifacts, &host_loaf_directory, "host")
+        } else {
+            return Err(OvenLoafError::Preparation {
+                message: format!(
+                    "native vocabulary {target} compiler-artifact escaped its target and host build roots: {}",
+                    source.display()
+                ),
+            });
+        };
         let file_name = source
             .file_name()
             .ok_or_else(|| OvenLoafError::Preparation {
@@ -645,59 +766,42 @@ fn copy_compiler_vocab_auxiliary_target_artifacts(
         let digest = digest_bytes(&bytes);
         if artifacts.insert(file_name.clone(), digest.clone()).is_some() {
             return Err(OvenLoafError::Preparation {
-                message: format!("native vocabulary {target} closure duplicates artifact `{file_name}`"),
+                message: format!("native vocabulary {target} {domain} closure duplicates artifact `{file_name}`"),
             });
         }
-        let destination = loaf_directory.join(&file_name);
+        let destination = destination_root.join(&file_name);
         fs::write(&destination, bytes).map_err(|source_error| OvenLoafError::Io {
             path: destination,
             source: source_error,
         })?;
     }
-    if artifacts.is_empty() {
-        return Err(OvenLoafError::Preparation {
-            message: format!("native vocabulary publisher retained no declared {target} Rust artifacts"),
-        });
-    }
-    let relative_directory = format!("compiler-support/{target}/deps");
-    let mut externs = Vec::new();
-    for crate_name in [INCAN_VOCAB, SERDE_JSON] {
-        let matches = artifacts
-            .iter()
-            .filter(|(file_name, _)| is_named_rlib(file_name, crate_name))
-            .collect::<Vec<_>>();
-        let [(file_name, digest)] = matches.as_slice() else {
-            return Err(OvenLoafError::Preparation {
-                message: format!(
-                    "native vocabulary {target} publisher must retain exactly one `{crate_name}` rlib; found {}",
-                    matches.len()
-                ),
-            });
-        };
-        externs.push(OvenRustcArtifactExtern {
-            crate_name: crate_name.to_string(),
-            relative_path: format!("{relative_directory}/{file_name}"),
-            digest: digest.to_string(),
-        });
-    }
-    for (file_name, digest) in artifacts {
-        let relative_path = format!("{relative_directory}/{file_name}");
-        if externs.iter().any(|artifact| artifact.relative_path == relative_path) {
-            continue;
+    Ok(AuxiliaryArtifactSets {
+        target: target_artifacts,
+        host: host_artifacts,
+    })
+}
+
+/// Refuse an auxiliary-target unit paired with a host dependency from another publisher build cohort.
+///
+/// Rust metadata binds target libraries to the exact crate hashes of proc macros and other host-side compiler
+/// inputs. Treating an independently rebuilt same-named host artifact as interchangeable is therefore unsound even
+/// when both files have valid digests. The vocabulary publisher conservatively treats every retained target member
+/// as dependent on every retained host member from its Cargo invocation, so a mixed cohort cannot be sealed.
+fn validate_auxiliary_closure_cohort<'a>(
+    target_units: impl Iterator<Item = (&'a str, &'a str)>,
+    host_units: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+) -> Result<(), OvenLoafError> {
+    for (unit, unit_cohort) in target_units {
+        for (dependent, dependent_cohort) in host_units.clone() {
+            if unit_cohort != dependent_cohort {
+                return Err(OvenLoafError::Preparation {
+                    message: format!(
+                        "auxiliary-target unit `{unit}` from build cohort `{unit_cohort}` depends on host unit `{dependent}` from build cohort `{dependent_cohort}`"
+                    ),
+                });
+            }
         }
-        plan.supporting_artifacts
-            .push(OvenRustcSupportingArtifact { relative_path, digest });
     }
-    // `compiler-support/deps` holds host proc macros that Rustc may load while expanding the target closure.
-    let mut dependency_search_paths = vec![relative_directory, "compiler-support/deps".to_string()];
-    dependency_search_paths.sort();
-    plan.vocab_auxiliary_targets.push(OvenRustcAuxiliaryTarget {
-        target: target.to_string(),
-        dependency_search_paths,
-        externs,
-    });
-    plan.vocab_auxiliary_targets
-        .sort_by(|left, right| left.target.cmp(&right.target));
     Ok(())
 }
 
@@ -1017,6 +1121,83 @@ mod tests {
         };
 
         assert!(error.to_string().contains("escaped its declared artifact roots"));
+        Ok(())
+    }
+
+    #[test]
+    fn auxiliary_target_closure_refuses_a_stale_dependent_from_another_build() {
+        let target = [("target-unit", "auxiliary-build")];
+        let stale_host = [("host-proc-macro", "publisher-rebuild")];
+        let error = validate_auxiliary_closure_cohort(target.into_iter(), stale_host.into_iter())
+            .err()
+            .map(|error| error.to_string());
+
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "failed to prepare Oven Loaf: auxiliary-target unit `target-unit` from build cohort `auxiliary-build` depends on host unit `host-proc-macro` from build cohort `publisher-rebuild`"
+            )
+        );
+    }
+
+    #[test]
+    fn auxiliary_target_copy_keeps_its_host_dependencies_in_the_same_build_cohort()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let publisher = tempfile::tempdir()?;
+        let target = publisher.path().join("target/release");
+        let host = publisher.path().join("host/release");
+        fs::create_dir_all(&target)?;
+        fs::create_dir_all(&host)?;
+        let target_artifacts = [
+            target.join("libincan_vocab.rlib"),
+            target.join("libserde_json-fixture.rlib"),
+            target.join("libserde-fixture.rlib"),
+        ];
+        let host_macro = host.join(format!("libderive-fixture.{}", std::env::consts::DLL_EXTENSION));
+        for artifact in target_artifacts.iter().chain(std::iter::once(&host_macro)) {
+            fs::write(artifact, artifact.to_string_lossy().as_bytes())?;
+        }
+        let receipt = runtime_receipt_for_plan()?;
+        let mut plan = empty_manifest(&receipt);
+        let loaf = tempfile::tempdir()?;
+        let artifacts = target_artifacts
+            .iter()
+            .chain(std::iter::once(&host_macro))
+            .map(fs::canonicalize)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        super::copy_compiler_vocab_auxiliary_target_artifacts(
+            &artifacts,
+            &fs::canonicalize(&target)?,
+            &fs::canonicalize(&host)?,
+            &loaf.path().join("compiler-support/fixture-target"),
+            "fixture-target",
+            &mut plan,
+        )?;
+
+        let auxiliary = plan
+            .vocab_auxiliary_targets
+            .iter()
+            .find(|auxiliary| auxiliary.target == "fixture-target")
+            .ok_or("missing fixture auxiliary target")?;
+        assert_eq!(
+            auxiliary.dependency_search_paths,
+            vec![
+                "compiler-support/fixture-target/host/deps".to_string(),
+                "compiler-support/fixture-target/target/deps".to_string(),
+            ]
+        );
+        assert!(plan.supporting_artifacts.iter().any(|artifact| {
+            artifact.relative_path.ends_with("libderive-fixture.dylib")
+                || artifact.relative_path.ends_with("libderive-fixture.so")
+                || artifact.relative_path.ends_with("libderive-fixture.dll")
+        }));
+        assert!(
+            auxiliary
+                .dependency_search_paths
+                .iter()
+                .all(|path| path.starts_with("compiler-support/fixture-target/"))
+        );
         Ok(())
     }
 }

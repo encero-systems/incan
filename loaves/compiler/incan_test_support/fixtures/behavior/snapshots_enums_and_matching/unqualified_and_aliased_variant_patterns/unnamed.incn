@@ -1,0 +1,7 @@
+from shapes import make
+
+
+pub def first(n: int) -> int:
+    if let Filled(value) = make(n):
+        return value
+    return 0

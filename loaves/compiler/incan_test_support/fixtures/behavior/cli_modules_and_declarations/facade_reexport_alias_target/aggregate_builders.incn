@@ -1,0 +1,15 @@
+from projection_builders import ColumnExpr, ScalarFunctionExpr
+
+
+pub model AggregateMeasure:
+    pub has_expr: bool
+
+
+pub def col(name: str) -> ColumnExpr:
+    return ScalarFunctionExpr(name=name)
+
+
+pub def count(expr: Option[ColumnExpr] = None) -> AggregateMeasure:
+    if let Some(_) = expr:
+        return AggregateMeasure(has_expr=true)
+    return AggregateMeasure(has_expr=false)

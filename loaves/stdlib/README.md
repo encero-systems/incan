@@ -12,7 +12,7 @@ The Incan standard library as SDK components, one directory per component, each 
 | `codecs/` | `std.checksum`, `std.encoding` | — | crc32fast |
 | `compression/` | `std.compression` | — | flate2, zstd, bzip2, xz2, snap |
 | `data/` | `std.collections`, `std.graph`, `std.hash`, `std.json`, `std.toml`, `std.math`, `std.uuid`, `std.datetime`, `std.regex`, `std.serde` | `incan_std_data` (JSON traits and value, the `std.serde` facade, the ordinal-map key helpers) | serde, serde_json, toml, toml_edit, serde_path_to_error, xxhash-rust, libm, rand, regex, the eight hash crates |
-| `async/` | `std.async` | `incan_std_async` (tasks, timers, races, channels, synchronisation) | tokio (rt-multi-thread, macros, time, sync, net) |
+| `async/` | `std.async` | `incan_std_async` (tasks, timers, races, channels, synchronization) | tokio (rt-multi-thread, macros, time, sync, net) |
 | `observability/` | `std.logging`, `std.telemetry` | — | — |
 | `web/` | `std.web` | `incan_std_web` (route registry, `App`, responses) | axum, inventory, incan_web_macros |
 | `testing/` | `std.testing` | `incan_std_testing` (marker and assertion host functions) | — |
@@ -24,6 +24,6 @@ Each component directory holds its Incan sources under `src/` — the `.incn` mo
 
 Rust requires procedural macros to live in a crate with `proc-macro = true`, and such a crate can export only macros — no traits, no structs. So the traits generated code implements (`HasFieldInfo`, `ToJson`, `FromJson`, …) live in the facets, and the macros that implement them (`#[derive(FieldInfo)]`, `#[derive(IncanJson)]`, `#[route(...)]`) live in `derive/incan_derive` and `derive/incan_web_macros`. It is the `serde` + `serde_derive` pattern. Generated code names both sides by path; the compiler's project generator adds every facet the program links and the derive crates to the generated `Cargo.toml`, and the ring version gate keeps the facets and the macro crates on one version line.
 
-To add a derive-backed feature: define the trait in the owning facet, implement the macro in `derive/incan_derive/src/lib.rs`, teach lowering to recognise the decorator, and add a codegen snapshot test.
+To add a derive-backed feature: define the trait in the owning facet, implement the macro in `derive/incan_derive/src/lib.rs`, teach lowering to recognize the decorator, and add a codegen snapshot test.
 
 The ring rules live in *Repository layout* in `workspaces/docs-site/docs/contributing/explanation/architecture.md`.

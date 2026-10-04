@@ -1,0 +1,19 @@
+"""Issue #1494: string literals passed to collection methods become owned strings."""
+
+from std.collections import Deque
+
+def probe(requested: list[str]) -> int:
+    mut pending = Deque[str].from_iter(requested)
+    pending.append("default")
+    pending.appendleft("first")
+    mut names: list[str] = []
+    names.append("default")
+    mut seen: set[str] = set()
+    seen.add("default")
+    mut labels: Dict[str, str] = {}
+    labels["default"] = "value"
+    labels.insert("first", "value")
+    return len(pending) + len(names) + len(seen) + len(labels)
+
+def main() -> None:
+    println(probe(["a"]))

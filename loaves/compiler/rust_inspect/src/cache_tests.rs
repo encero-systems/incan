@@ -511,10 +511,12 @@ fn direct_workspace_reads_the_sealed_build_unit_of_the_inspected_version() -> Re
     let root = tmp.path().join("generated_lock");
     let inner = tmp.path().join("inner-0.1.0");
     let wrong_out = tmp.path().join("plan/target/debug/build/inner-0000000000000000/out");
+    let unknown_out = tmp.path().join("plan/target/debug/build/inner-1111111111111111/out");
     let right_out = tmp.path().join("plan/target/debug/build/inner-ffffffffffffffff/out");
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(inner.join("src"))?;
     fs::create_dir_all(&wrong_out)?;
+    fs::create_dir_all(&unknown_out)?;
     fs::create_dir_all(&right_out)?;
     fs::write(
         root.join("Cargo.toml"),
@@ -541,12 +543,20 @@ fn direct_workspace_reads_the_sealed_build_unit_of_the_inspected_version() -> Re
         right_out.join("gen.rs"),
         "pub struct Node;\npub mod kind {\n    pub enum Kind {\n        Node(::prost::alloc::boxed::Box<super::Node>),\n        Empty,\n    }\n}\n",
     )?;
+    fs::write(
+        unknown_out.join("gen.rs"),
+        "pub mod kind {\n    pub enum Kind {\n        UnknownUnit,\n    }\n}\n",
+    )?;
     crate::loader::write_oven_generated_out_dirs(
         &root,
         &[
             crate::loader::SealedGeneratedOutDir {
                 out_dir: wrong_out,
                 version: Some("0.2.0".to_string()),
+            },
+            crate::loader::SealedGeneratedOutDir {
+                out_dir: unknown_out,
+                version: None,
             },
             crate::loader::SealedGeneratedOutDir {
                 out_dir: right_out,
@@ -2037,9 +2047,22 @@ mod writer {
             let _ = header;
         }
     }
+
+    /// A trait whose methods declare every receiver mode.
+    pub trait Sink {
+        /// Consume bytes through an exclusive receiver.
+        fn update(&mut self, data: &[u8]);
+        /// Report readiness through a shared receiver.
+        fn is_ready(&self) -> bool;
+        /// Finish by value.
+        fn finish(self) -> Vec<u8>;
+        /// Finish a boxed receiver.
+        fn finish_boxed(self: Box<Self>) -> Vec<u8>;
+    }
 }
 
 pub use writer::Builder;
+pub use writer::Sink;
 "#,
     )?;
 
@@ -2082,11 +2105,38 @@ pub use writer::Builder;
         .find(|method| method.name == "append_data")
         .ok_or("expected append_data method metadata")?;
     assert_eq!(append_data.signature.params[1].type_display, "&mut source_dep::Header");
+    assert_eq!(
+        append_data.signature.params[0].type_display, "&mut self",
+        "the receiver keeps its declared mutability on the complete route"
+    );
     let repeated = complete_cache.get_or_extract_complete(&root, "source_dep::Builder", &|_| ())?;
     assert!(
         std::sync::Arc::ptr_eq(&metadata, &repeated),
         "a second complete lookup must reuse the complete in-memory type record"
     );
+
+    // The trait's own items are what a trait-qualified call reads its receiver mode from (#1375); every declared
+    // receiver mode must survive the rust-analyzer route as written.
+    let sink = complete_cache.get_or_extract_complete(&root, "source_dep::Sink", &|_| ())?;
+    let RustItemKind::Trait(sink_info) = &sink.kind else {
+        return Err("expected complete source dependency Sink trait metadata".into());
+    };
+    let receiver_display = |method: &str| -> Result<String, Box<dyn std::error::Error>> {
+        sink_info
+            .items
+            .iter()
+            .find_map(|item| match item {
+                RustTraitAssoc::Function { name, signature } if name == method => {
+                    signature.params.first().map(|param| param.type_display.clone())
+                }
+                _ => None,
+            })
+            .ok_or_else(|| format!("expected `{method}` trait method metadata").into())
+    };
+    assert_eq!(receiver_display("update")?, "&mut self");
+    assert_eq!(receiver_display("is_ready")?, "&self");
+    assert_eq!(receiver_display("finish")?, "self");
+    assert_eq!(receiver_display("finish_boxed")?, "Box<Self>");
     Ok(())
 }
 

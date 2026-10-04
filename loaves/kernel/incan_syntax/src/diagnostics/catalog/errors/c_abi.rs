@@ -15,3 +15,21 @@ pub fn public_checked_c_call_requires_private_bridge(function: &str, span: Span)
     .with_hint("Move the `unsafe:` C call into a private bridge and expose an ordinary public Incan facade")
     .with_note("This is advisory: intentionally low-level checked binding packages remain supported")
 }
+
+/// A scoped C text view is used as an ordinary value (RFC 116).
+///
+/// The result of a symbol that returns `c.ConstPtr[c.c_char]` points into memory the C library owns, so it lives only
+/// until the next call into that library. It may be bound to a local and then only be the receiver of
+/// `copy_utf8(max_bytes=...)`; returning it, storing it, capturing it, passing it on or reading it any other way would
+/// let it outlive that memory.
+pub fn scoped_c_string_view_escapes(span: Span) -> CompileError {
+    CompileError::type_error(
+        "a scoped C text view cannot be returned, stored, captured or passed on; copy it with copy_utf8(max_bytes=...)"
+            .to_string(),
+        span,
+    )
+    .with_hint(
+        "Bind the symbol's result to a local and call copy_utf8(max_bytes=n) on that local in the same `unsafe:` block",
+    )
+    .with_note("The view points into memory the C library owns; copy_utf8 is its only owning conversion")
+}

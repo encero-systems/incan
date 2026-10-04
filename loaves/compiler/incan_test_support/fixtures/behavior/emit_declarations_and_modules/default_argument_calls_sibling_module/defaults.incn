@@ -1,0 +1,2 @@
+pub def fallback() -> int:
+    return 7

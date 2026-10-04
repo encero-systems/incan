@@ -1,0 +1,23 @@
+# behavior: set() over a generator collects the values the generator yields, keeping one of each distinct value
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::set_constructor_over_a_generator_plans_the_iterator_trait_issue1744
+# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::set_constructor_over_a_generator_collects_through_the_iterator_trait_issue1744
+# expect-stdout:
+#   3
+#   true
+#   2
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+
+def parities(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value % 2
+
+
+def main() -> None:
+    unique = set(numbers(3))
+    println(len(unique))
+    println(2 in unique)
+    println(len(set(parities(6))))

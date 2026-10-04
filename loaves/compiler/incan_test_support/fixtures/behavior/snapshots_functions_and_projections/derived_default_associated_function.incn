@@ -1,0 +1,13 @@
+# behavior: a model deriving Default is constructible through its default() associated function with its field defaults
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::a_derived_method_keeps_its_source_spelling_instead_of_a_wrapper_that_does_not_exist
+# expect-stdout:
+#   0
+
+@derive(Default)
+model Point:
+    x: int = 0
+
+
+def main() -> None:
+    p = Point.default()
+    println(p.x)

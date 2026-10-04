@@ -1,7 +1,7 @@
 """
 Typed declaration registries.
 
-`std.registry` owns the runtime projection of compiler-checked declaration catalogues. `loaded_entries()` only reports
+`std.registry` owns the runtime projection of compiler-checked declaration catalogs. `loaded_entries()` only reports
 descriptions from modules that have been loaded by the current process; use `incan inspect registry` when tooling needs
 the complete checked package projection without executing user code.
 """
@@ -29,7 +29,7 @@ pub model RegistrySubject:
         Return the explicit compilation-unit subject placeholder.
 
         The compiler replaces this placeholder with the defining compilation-unit identity in checked registry facts.
-        Runtime code keeps the marker so it never claims to have discovered a package-wide catalogue.
+        Runtime code keeps the marker so it never claims to have discovered a package-wide catalog.
         """
         return RegistrySubject(kind=SubjectKind.CompilationUnit, qualified_name="<current-unit>")
 

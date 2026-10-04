@@ -54,6 +54,7 @@ pub fn substitute_resolved_type(ty: &ResolvedType, map: &HashMap<String, Resolve
                     kind: p.kind,
                     has_default: p.has_default,
                     is_partial_preset: p.is_partial_preset,
+                    is_mut: p.is_mut,
                 })
                 .collect(),
             Box::new(substitute_resolved_type(ret, map)),
@@ -113,6 +114,7 @@ pub fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedT
                                 &bound.implementation_type_params,
                                 map,
                             ),
+                            inferred: bound.inferred,
                         })
                         .collect(),
                 )
@@ -129,6 +131,7 @@ pub fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedT
                 kind: p.kind,
                 has_default: p.has_default,
                 is_partial_preset: p.is_partial_preset,
+                is_mut: p.is_mut,
             })
             .collect(),
         return_type: substitute_resolved_type(&info.return_type, map),
@@ -187,6 +190,7 @@ mod tests {
                 ],
                 module_path: Some(vec!["std".to_string(), "traits".to_string(), "callable".to_string()]),
                 implementation_type_params: Vec::new(),
+                inferred: false,
             }],
         );
         let method = MethodInfo {

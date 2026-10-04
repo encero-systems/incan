@@ -1,0 +1,24 @@
+# behavior: a package's model, function and const import by name and through the package module, a package module alias calls the same function, and a package static list is shared through a live alias (RFC 031, RFC 052)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_pub_import_expressions_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_pub_import_module_alias_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc052_pub_static_codegen
+# expect-stdout:
+#   default
+#   default
+#   default
+#   2
+
+from pub::widgets import Widget, make_widget, DEFAULT_NAME, SHARED_ITEMS
+import pub::widgets
+import pub::widgets as w
+
+
+def main() -> None:
+    mut first: Widget = make_widget(DEFAULT_NAME)
+    println(first.name)
+    println(widgets.make_widget(DEFAULT_NAME).name)
+    println(w.make_widget(DEFAULT_NAME).name)
+    SHARED_ITEMS.append(1)
+    let live = SHARED_ITEMS
+    live.append(2)
+    println(len(SHARED_ITEMS))

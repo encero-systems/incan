@@ -46,7 +46,7 @@ Skills (`.agents/skills/`) and learnings (`.agents/learnings.md`) live under **t
 
 ## v0.6 execution ledger
 
-For every implementation issue in the `0.6 Release` milestone, [#1074](https://github.com/encero-systems/incan/issues/1074) is the central execution ledger. The RFC and owning issue remain the semantic authority; the ledger records delivery state, dependencies, and evidence across the programme.
+For every implementation issue in the `0.6 Release` milestone, [#1074](https://github.com/encero-systems/incan/issues/1074) is the central execution ledger. The RFC and owning issue remain the semantic authority; the ledger records delivery state, dependencies, and evidence across the program.
 
 - Post a structured `Active` update on #1074 once the work has a branch or PR, identifying the issue, intended scope, dependencies, and verification plan. Posting it is not a gate on starting: begin the work, then record it.
 - Post another update when the work is blocked, ready for integration, materially rescaled, or completed. Do not call v0.6 work ready to merge or complete without its ledger evidence.
@@ -110,7 +110,7 @@ Classify the root cause before editing: lifetime/borrow across boundary, trait b
 When making changes under `workspaces/docs-site/`:
 
 - **Apply Divio intent before writing**: choose the reader's task and the matching page type. Tutorials teach through a guided learning exercise; how-to guides solve a concrete task; references provide factual lookup; explanations develop understanding and rationale. Content must match its type, not merely live in the matching directory.
-- **References document the public contract**: inventory the relevant public surface and include exact signatures, parameter and return types, defaults, errors, constraints, and observable behavior. Organize by API or concept so a reader can look up one item independently. Small syntax examples are welcome, but a walkthrough, feature overview, or implementation narrative is not a substitute for a reference.
+- **References document the public contract**: inventory the relevant public surface and include exact signatures, parameter and return types, defaults, errors, constraints, and observable behavior. Organize by API or concept so a reader can look up one item independently. Small syntax examples are welcome, but a walkthrough, feature overview, or implementation narrative is not a substitute for a reference. A reference also states nothing beyond that contract; the checklist reviewers apply is *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`, and `make reference-contract-check` enforces its lexical part. Touching a reference page means bringing the whole page to contract, and a true sentence taken off it moves to its how-to or explanation page in the same change.
 - **Separate mixed intents with links**: move task procedures to how-to guides and design rationale to explanations when those need their own treatment. Do not create all four page types mechanically for every feature. Check the actual source and same-kind precedents; an existing page is not proof that its organization is correct.
 - **Build docs locally**: run `mkdocs build --strict` from `workspaces/docs-site` to catch broken links/anchors early.
 - **Review intent separately from the build**: a successful MkDocs build checks rendering and links, not Divio placement or reference completeness. Verify both before checking off documentation in a PR.
@@ -119,6 +119,23 @@ When making changes under `workspaces/docs-site/`:
 ## Code Style
 
 Read and follow [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] for the project's Rust coding conventions.
+
+Spell everything in US English -- identifiers, comments, docstrings, diagnostics and docs (`color`, `behavior`, `initialize`, `catalog`; the owner keeps `cancelled`); `make us-english-check` (part of `make pre-commit-fast` and CI) rejects UK spellings, `make us-english-fix` rewrites them, and `scripts/check_us_english.allow` records the upstream names and quoted text that keep theirs.
+
+**No Python in production logic.** Product and tooling behavior is written in Rust or Incan, never Python:
+
+- the compiler and the Oven;
+- the Loaf registry side;
+- the CI evidence and release pipeline that decides what an artifact or a test result is.
+
+New evidence operations belong beside the existing ones as `incan oven` subcommands. Python remains only for:
+
+- the repository-hygiene `check_*` gates and the test-inventory generator;
+- the benchmarks' Python baselines;
+- the pip installer shim;
+- agent hooks and research scripts.
+
+A change that adds a production `.py` file is refused in review.
 
 ### Inline section headers
 
@@ -141,7 +158,7 @@ Guidelines:
 - Keep a blank line **before** each header for visual breathing room.
 - The label after `----` should describe *what* or *when*, not *how*.
 - Don't overuse: if a function has only one or two simple blocks, a plain `//` comment is enough.
-- These are for **intra-function** organisation. For module-level sections, use `// ============` banners.
+- These are for **intra-function** organization. For module-level sections, use `// ============` banners.
 
 ### Formatting
 

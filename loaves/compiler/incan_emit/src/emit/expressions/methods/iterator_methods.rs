@@ -109,13 +109,24 @@ pub fn emit_iterator_method(
             })
         }
         IteratorMethodKind::FlatMap => {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- the adapter collected each expansion into a `list` before yielding from
+            //   it, so `flat_map(f).take(1)` ran a generator expansion to its end and an unbounded expansion never
+            //   yielded. `FlatMapIterator` now keeps the nested iterator and polls it; with no list of items left to
+            //   name the item type, the literal seeds its `marker` in place of the list cursor `index`.
+            // - Behavior evidence: the behavior fixture `iterator_flat_map_draws_expansions_lazily` and the lowering
+            //   test `flat_map_callbacks_hand_the_adapter_a_nested_iterator`.
+            // - Semantic owner: `FlatMapIterator` in `std.derives.collection`, whose fields this literal spells, and
+            //   lowering, which hands it a callback that returns the nested iterator.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR constructs the adapter from
+            //   the source model.
             let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { std::convert::identity });
             Ok(quote! {
                 crate::__incan_std::derives::collection::FlatMapIterator {
                     source: (#r),
                     f: #callback,
-                    current: Vec::new(),
-                    index: 0i64,
+                    current: None,
+                    marker: None,
                 }
             })
         }

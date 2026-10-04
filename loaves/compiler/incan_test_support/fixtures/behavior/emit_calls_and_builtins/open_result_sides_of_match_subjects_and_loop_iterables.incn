@@ -1,0 +1,55 @@
+# behavior: Ok and Err used as a match subject or in a loop's iterable leave their open side None outside a Result function, where an arm ignoring it runs, and take the function's Result side inside one
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::open_result_sides_of_match_subjects_and_loop_iterables_build_issue1561
+# expect-stdout:
+#   1
+#   2
+#   only
+#   3
+#   bad
+#   5
+#   x
+#   6
+#   A
+#   2
+#   b
+#   done
+
+def run() -> Result[str, int]:
+    match Ok("a"):
+        Ok(v) => println(v.upper())
+        Err(e) => println(e + 1)
+    for x in [Err(2), Ok("b")]:
+        match x:
+            Ok(v) => println(v)
+            Err(e) => println(e)
+    return Ok("done")
+
+
+def main() -> None:
+    match Ok(1):
+        Ok(v) => println(v)
+        Err(_) => println("e")
+    match (Ok(2)):
+        Ok(v) => println(v)
+        Err(_) => println("e")
+    match Err("only"):
+        Ok(_) => println("ok")
+        Err(m) => println(m)
+    for x in [Ok(3), Err("bad")]:
+        match x:
+            Ok(v) => println(v)
+            Err(m) => println(m)
+    for r, n in [(Ok(4), 1)]:
+        match r:
+            Ok(v) => println(v + n)
+            Err(_) => println("e")
+    for row in [[Err("x")]]:
+        for r in row:
+            match r:
+                Ok(_) => println("ok")
+                Err(m) => println(m)
+    for s in {Ok(6)}:
+        match s:
+            Ok(v) => println(v)
+            Err(_) => println("e")
+    println(run().unwrap_or("none"))

@@ -1,0 +1,33 @@
+# behavior: the members of a list or dict literal share one type, so a Result side one Ok(...) or Err(...) leaves open takes the type another member gives it, at any depth, as does an Option payload a None leaves open, and a side no member fixes is None
+# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::collection_literals_of_constructors_share_one_result_type_issue1561
+# expect-stdout:
+#   2
+#   X
+#   15
+#   2
+#   2
+#   0
+#   4
+#   5
+
+def main() -> None:
+    xs = [Ok(1), Err("x")]
+    for x in xs:
+        match x:
+            Ok(v) => println(v + 1)
+            Err(m) => println(m.upper())
+    firsts = [Err("a"), Ok(2), Ok(3)]
+    mut total = 0
+    for x in firsts:
+        total += x.unwrap_or(10)
+    println(total)
+    nested = [[Ok(1)], [Err("y")]]
+    println(len(nested))
+    d = {"a": Ok(1), "b": Err("z")}
+    println(len(d))
+    maybes = [None, Some(4)]
+    for maybe in maybes:
+        println(maybe.unwrap_or(0))
+    single = [Ok(5)]
+    for s in single:
+        println(s.unwrap_or(0))

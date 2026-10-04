@@ -1,0 +1,10 @@
+[project]
+name = "provider_nominal_types_and_unions_issue892"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+widgets = { path = "deps/widgets" }
+other = { path = "deps/other" }

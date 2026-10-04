@@ -1,0 +1,25 @@
+# behavior: a public class keeps a private backing field readable through its own method beside a public field readable directly
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue246_class_field_visibility_codegen
+# expect-stdout:
+#   3
+#   id:int
+
+"""Class field visibility should preserve private backing state."""
+
+
+pub class LazyFrame:
+    _cursor: int
+    pub schema: str
+
+    def cursor(self) -> int:
+        return self._cursor
+
+
+def schema(frame: LazyFrame) -> str:
+    return frame.schema
+
+
+def main() -> None:
+    frame = LazyFrame(_cursor=3, schema="id:int")
+    println(frame.cursor())
+    println(schema(frame))

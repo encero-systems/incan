@@ -1,0 +1,57 @@
+# behavior: a model's own map, join, split, replace, count and index methods dispatch to the model while str join/split/replace and mut-list swap/extend reach the builtins
+# retires: loaves/compiler/incan_ir/src/expr.rs::iterator_method_kind_for_receiver_does_not_capture_iterable_or_plain_structs
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::method_kind_for_receiver
+# expect-stdout:
+#   Dataset.map(3)
+#   Dataset.join(rows)
+#   Dataset.split(2)
+#   Dataset.replace(a->b)
+#   Dataset.count()
+#   Dataset.index(7)
+#   a-b-c
+#   [x, y]
+#   hexo
+#   [2, 1, 3, 4, 5]
+
+model Dataset:
+    name: str
+
+    def map(self, factor: int) -> str:
+        return f"Dataset.map({factor})"
+
+    def join(self, other: str) -> str:
+        return f"Dataset.join({other})"
+
+    def split(self, parts: int) -> str:
+        return f"Dataset.split({parts})"
+
+    def replace(self, old: str, new: str) -> str:
+        return f"Dataset.replace({old}->{new})"
+
+    def count(self) -> str:
+        return "Dataset.count()"
+
+    def index(self, value: int) -> str:
+        return f"Dataset.index({value})"
+
+
+def render(items: list[int]) -> str:
+    return ", ".join([str(item) for item in items])
+
+
+def main() -> None:
+    dataset = Dataset(name="rows")
+    println(dataset.map(3))
+    println(dataset.join("rows"))
+    println(dataset.split(2))
+    println(dataset.replace("a", "b"))
+    println(dataset.count())
+    println(dataset.index(7))
+    println("-".join(["a", "b", "c"]))
+    parts = "x y".split(" ")
+    println(f"[{parts[0]}, {parts[1]}]")
+    println("hello".replace("ll", "x"))
+    mut items = [1, 2, 3]
+    items.swap(0, 1)
+    items.extend([4, 5])
+    println(f"[{render(items)}]")

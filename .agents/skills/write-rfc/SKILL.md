@@ -106,7 +106,7 @@ Allowed:
 - Describing the user-facing surface (syntax, semantics, type rules, error messages)
 - Sharing motivating research, prior art, or design alternatives
 - Defining normative rules a future implementer must satisfy
-- Non-normative architecture notes that describe a *recommended shape* (clearly labelled as such)
+- Non-normative architecture notes that describe a *recommended shape* (clearly labeled as such)
 
 Not allowed:
 

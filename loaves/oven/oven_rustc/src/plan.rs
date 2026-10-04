@@ -10,13 +10,15 @@
 pub mod composition;
 pub mod selection;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::loaf::OvenToolchainLoaf;
 use crate::native_contract::OvenProjectExtensionPayload;
 use crate::rustc::{
     OvenRegistryLeafAuthority, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError,
-    OvenRustcSupportingArtifact, trusted_artifact_plan_for_source_evidence,
+    OvenRustcMaterializedArtifact, OvenRustcSupportingArtifact, trusted_artifact_plan_for_source_evidence,
+    validate_project_extension_payload_against_base,
 };
 use composition::retain_packaged_provider_fragment_dependency_search_paths;
 use oven_store::OvenReceipt;
@@ -213,6 +215,88 @@ impl OvenDirectRustcPlanSelection {
             Self::PackagedProvider(packages) => packages.registry_leaf_authority(),
         }
     }
+
+    /// Return the release-base registry authority when this selection links its compiler runtime cohort.
+    ///
+    /// Project extensions can retain their Cargo-built runtime in the conservative composition regime. Only an
+    /// extension whose selected compiler-runtime externs all come from its exact base may canonicalize overlapping
+    /// registry dependencies onto that base. Stored direct plans and source-free package compositions keep their own
+    /// already-selected authority.
+    pub fn compiler_runtime_registry_leaf_authority(
+        &self,
+    ) -> Result<Option<OvenRegistryLeafAuthority>, OvenRustcError> {
+        match self {
+            Self::ToolchainLoaf(native) => Ok(compiler_runtime_registry_leaf_authority(
+                &native.artifacts,
+                &native.artifact_root,
+                &native.artifact_plan,
+            )),
+            Self::ProjectExtension(extension) => {
+                let runtime_names = extension.base.artifacts.compiler_runtime_crate_names()?;
+                let selected_runtime_externs = extension
+                    .artifact_plan
+                    .externs
+                    .iter()
+                    .filter(|(crate_name, _)| runtime_names.contains(crate_name))
+                    .collect::<Vec<_>>();
+                if selected_runtime_externs.is_empty() {
+                    return Ok(None);
+                }
+                let uses_release_base = selected_runtime_externs.iter().all(|(crate_name, selected_path)| {
+                    extension
+                        .base
+                        .artifact_plan
+                        .externs
+                        .iter()
+                        .any(|(base_name, base_path)| base_name == crate_name && base_path == selected_path)
+                });
+                Ok(uses_release_base
+                    .then(|| {
+                        compiler_runtime_registry_leaf_authority(
+                            &extension.base.artifacts,
+                            &extension.base.artifact_root,
+                            &extension.base.artifact_plan,
+                        )
+                    })
+                    .flatten())
+            }
+            Self::Stored(_) | Self::PackagedProvider(_) => Ok(None),
+        }
+    }
+}
+
+/// Restrict release registry authority to crates exposed to generated standard-library roots.
+fn compiler_runtime_registry_leaf_authority(
+    artifacts: &OvenRustcArtifactManifest,
+    artifact_root: &Path,
+    artifact_plan: &OvenRustcArtifactPlan,
+) -> Option<OvenRegistryLeafAuthority> {
+    let generated_root_externs = artifacts
+        .entrypoint_externs
+        .get("generated-root")
+        .cloned()
+        .unwrap_or_else(|| {
+            artifacts
+                .externs
+                .iter()
+                .map(|artifact| artifact.crate_name.clone())
+                .collect()
+        })
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let leaves = artifacts
+        .registry_leaves
+        .iter()
+        .filter(|leaf| generated_root_externs.contains(&leaf.crate_name))
+        .cloned()
+        .collect::<Vec<_>>();
+    (!leaves.is_empty()).then(|| {
+        OvenRegistryLeafAuthority::new_with_trusted_dependency_search_paths(
+            artifact_root.to_path_buf(),
+            leaves,
+            artifact_plan.dependency_search_paths.clone(),
+        )
+    })
 }
 
 /// Receipt-validated stored direct-Rustc inputs held under a caller-owned lease.
@@ -247,6 +331,34 @@ pub struct OvenProjectExtensionExecutionPlan {
     pub registry_leaf_authority: Option<OvenRegistryLeafAuthority>,
     pub vocab_artifact_root: Option<PathBuf>,
     pub source_payload: OvenProjectExtensionPayload,
+}
+
+impl OvenProjectExtensionExecutionPlan {
+    /// Verify the physical files a publisher copies from this exact base-plus-extension closure.
+    ///
+    /// Each file is resolved under its declared partition root and hashed before publication. The caller must retain
+    /// this selection until copying finishes so both the installed base lock and the extension lease remain held.
+    pub fn materialized_artifacts(&self) -> Result<Vec<OvenRustcMaterializedArtifact>, OvenRustcError> {
+        let partition = validate_project_extension_payload_against_base(
+            &self.source_payload,
+            &self.base.loaf_identity,
+            &self.base.loaf_build_unit_identity,
+            &self.base.artifacts,
+        )?;
+        let mut files = Vec::new();
+        for (paths, root) in [
+            (&partition.base_paths, &self.base.artifact_root),
+            (&partition.extension_paths, &self.extension.artifact_root),
+        ] {
+            files.extend(
+                self.source_payload
+                    .complete_plan
+                    .artifact_fragment(paths)?
+                    .materialized_artifacts(root, &self.source_payload.complete_plan.intent)?,
+            );
+        }
+        Ok(files)
+    }
 }
 
 /// One package-owned project-extension fragment retained while a consumer uses the composed closure.

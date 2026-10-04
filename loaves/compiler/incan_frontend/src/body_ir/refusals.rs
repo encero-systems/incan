@@ -250,7 +250,7 @@ pub(super) fn match_pattern_is_supported(pattern: &ast::Pattern) -> bool {
 ///
 /// **Type agreement.** A tuple pattern can only take elements from a tuple. Without this check, `for a, b in
 /// items` over a `list[int]` would lower `.0`/`.1` projections out of an `int` -- structurally valid Body IR
-/// describing something that does not exist. The typechecker rejects that program first, so this is defence in
+/// describing something that does not exist. The typechecker rejects that program first, so this is defense in
 /// depth for hand-built ASTs and for lowering that runs despite type errors, not the primary diagnostic.
 ///
 /// Two item types are exempt from the tuple requirement, mirroring `TypeChecker::define_for_pattern_bindings` exactly

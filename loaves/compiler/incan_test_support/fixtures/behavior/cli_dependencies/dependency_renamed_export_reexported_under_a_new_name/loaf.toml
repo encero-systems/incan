@@ -1,0 +1,9 @@
+[project]
+name = "dependency_renamed_export_reexported_under_a_new_name"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+calc_lib = { path = "deps/calc_lib" }

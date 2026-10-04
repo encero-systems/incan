@@ -7,19 +7,21 @@ This example demonstrates:
 """
 
 
-# In `const` declarations, container/string annotations are frozen by default:
-# - `str` → `FrozenStr`
-# - `bytes` → `FrozenBytes`
-# - `List[T]` → `FrozenList[T]`
-# - `Dict[K, V]` → `FrozenDict[K, V]`
-# - `Set[T]` → `FrozenSet[T]`
+# A `const` is deeply immutable. `str` and `bytes` annotations freeze silently
+# (`FrozenStr` / `FrozenBytes` read wherever `str` / `bytes` is expected), while a
+# collection must be spelled as the frozen type it actually has -- or left
+# unannotated to infer it -- because `list[T]` and `FrozenList[T]` are different
+# types at every use site:
+# - `FrozenList[T]`
+# - `FrozenDict[K, V]`
+# - `FrozenSet[T]`
 const MAX_RETRIES: int = 5
 const BASE: int = 10
 const LIMIT: int = BASE * 2
 const GREETING: str = "hello"
 const WELCOME: str = "hi " + "there"  # string concatenation is allowed in consts
-const NUMS: List[int] = [1, 2, 3]
-const HEADERS: Dict[str, str] = {"User-Agent": "incan"}
+const NUMS: FrozenList[int] = [1, 2, 3]
+const HEADERS: FrozenDict[str, str] = {"User-Agent": "incan"}
 const DATA: bytes = b"\x00\x01"
 const FULL_GREETING: str = GREETING + " world"
 

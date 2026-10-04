@@ -9,21 +9,23 @@ use quote::{format_ident, quote};
 use super::super::{EmitError, IrEmitter};
 use crate::ownership::{
     ArgumentPassingPlan, AssociatedFunctionArgumentContext, RegularMethodArgumentContext, ValueUseSite,
-    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_read_by_ref_receiver,
-    regular_method_argument_use_site,
+    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_consumed_option_receiver,
+    plan_consumed_receiver, plan_read_by_ref_receiver, regular_method_argument_use_site,
+    result_unwrap_or_default_use_site,
 };
 use crate::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
 use incan_ir::FunctionSignature;
 use incan_ir::decl::{FunctionParam, FunctionParamDefault};
 use incan_ir::expr::{
-    CollectionMethodKind, InternalMethodKind, IrCallArg, IrCallArgKind, IrExprKind, IrMethodDispatch,
-    MethodCallArgPolicy, MethodKind, TypedExpr, VarAccess, VarRefKind,
+    CollectionMethodKind, InternalMethodKind, IrCallArg, IrCallArgKind, IrExprKind, IrInteropCoercionKind,
+    IrMethodDispatch, MethodCallArgPolicy, MethodKind, TypedExpr, VarAccess, VarRefKind,
 };
 use incan_ir::types::IrType;
 use incan_lang::interop::{
     METADATA_FREE_METHOD_BORROW_RULES, MetadataFreeArgClass, MetadataFreeMethodArgBorrowPolicy,
     MetadataFreeReceiverClass, RustCollectionFamily,
 };
+use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
 use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
 use incan_lang::lang::{magic_methods, stdlib, trait_bounds::rust as tb};
 
@@ -35,7 +37,7 @@ mod string_methods;
 use collection_methods::emit_collection_method;
 use fast_paths::emit_registered_method_fast_path;
 use iterator_methods::emit_iterator_method;
-use string_methods::emit_string_method;
+use string_methods::{emit_bytes_method, emit_string_method};
 
 /// Shared settings for emitting one method call's argument list.
 #[derive(Clone, Copy)]
@@ -91,6 +93,15 @@ impl ReceiverInfo {
     }
 }
 
+/// Whether emitted place tokens are a bare path (`items`, `self.items`) that takes a method call without grouping.
+fn is_plain_place(tokens: &TokenStream) -> bool {
+    tokens.clone().into_iter().all(|token| match token {
+        proc_macro2::TokenTree::Ident(_) => true,
+        proc_macro2::TokenTree::Punct(punct) => punct.as_char() == '.',
+        proc_macro2::TokenTree::Group(_) | proc_macro2::TokenTree::Literal(_) => false,
+    })
+}
+
 /// Classify an IR type as a Rust collection family.
 fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamily> {
     match ty {
@@ -103,6 +114,18 @@ fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamil
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Whether `callback` is a closure literal, alone or after the snapshots of the locals it captures.
+    ///
+    /// Passed straight to a combinator, the closure takes its parameter types from the combinator's signature; called
+    /// through a wrapper it would need them written out.
+    fn is_closure_literal(callback: &TypedExpr) -> bool {
+        match &callback.kind {
+            IrExprKind::Closure { .. } => true,
+            IrExprKind::Block { value: Some(value), .. } => matches!(value.kind, IrExprKind::Closure { .. }),
+            _ => false,
+        }
+    }
+
     /// Emit a one-argument callback invocation for a `Result` combinator payload.
     fn emit_result_callback_call(
         &self,
@@ -160,13 +183,31 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit the callback argument passed to an Incan-authored `inspect` / `inspect_err` helper.
+    ///
+    /// The helper's observer parameter is a borrowed function pointer (`fn(&T)`) for every payload type, because
+    /// the helper reads the payload again after observing it. A named function over a non-Copy payload is passed
+    /// as its generated borrowed adapter; over a Copy payload it is passed as a non-capturing closure that reads the
+    /// payload through the borrow, which coerces to the same pointer type without an adapter item.
+    ///
+    /// Migration note (rust_source_backend_deprecation.md):
+    /// - Compatibility issue: #1718 -- `result.inspect(observe_int)` over a Copy payload passed the fn item `fn(i64)`
+    ///   where the helper wants `fn(&i64)` (E0308); the pre-emission analysis and the adapter generator both skip Copy
+    ///   payloads by design, so no recorded fact reached this site.
+    /// - Behavior evidence: `result_inspect_named_observer_copy_payload` (behavior fixture, `snapshots_stdlib`),
+    ///   `copy_payload_named_observer_is_borrowed_through_a_closure_issue1718` below, and the untouched non-Copy
+    ///   adapter test `test_rfc070_result_inspect_non_copy_observer_borrows_payload`.
+    /// - Semantic owner: the RFC 070 combinator's callable fact (the observer takes the payload by borrow); Body IR
+    ///   passes the observer in the borrow shape the helper declares.
+    /// - Retirement condition: the Rust-source backend is deleted (#654); the replacement route emits the helper call
+    ///   from the recorded borrow shape and needs no Copy special case.
     fn emit_result_observer_stdlib_callback_arg(
         &self,
         callback: &TypedExpr,
         observed_ty: &IrType,
     ) -> Result<TokenStream, EmitError> {
         if observed_ty.is_copy() {
-            return self.emit_expr(callback);
+            let callback_tokens = self.emit_expr(callback)?;
+            return Ok(quote! { |__incan_result_value: &_| (#callback_tokens)(*__incan_result_value) });
         }
         if let IrExprKind::Var {
             name,
@@ -215,7 +256,7 @@ impl<'a> IrEmitter<'a> {
                         #helper_path(#receiver_tokens, #callback_tokens)
                     });
                 }
-                if matches!(callback.kind, IrExprKind::Closure { .. }) {
+                if Self::is_closure_literal(callback) {
                     let callback_tokens = self.emit_expr(callback)?;
                     return Ok(quote! {
                         #receiver_tokens.#method_ident(#callback_tokens)
@@ -479,9 +520,6 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     None
                 };
-                let direct_mut_trait_receiver = external_method_shape
-                    && idx == 0
-                    && Self::external_trait_first_arg_needs_mut_borrow(receiver, method);
                 let target_arg_plan = ArgumentPassingPlan::for_use_site(arg, arg_use_site);
                 let metadata_free_policy = if (external_method_shape || !has_incan_receiver_signature)
                     && !target_arg_plan.has_external_value_adapter()
@@ -502,22 +540,15 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     target_arg_plan
                 };
-                let emitted = if direct_mut_trait_receiver {
-                    self.emit_expr(arg)
-                } else {
-                    self.emit_expr_for_use_with_union_qualifier(
-                        arg,
-                        effective_arg_use_site,
-                        receiver_union_qualifier.as_deref(),
-                    )
-                };
+                let emitted = self.emit_expr_for_use_with_union_qualifier(
+                    arg,
+                    effective_arg_use_site,
+                    receiver_union_qualifier.as_deref(),
+                );
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
                 let mut emitted = emitted?;
-                if direct_mut_trait_receiver {
-                    return Ok(quote! { &mut #emitted });
-                }
                 if Self::is_std_path_new_call(receiver, method)
                     && matches!(arg.ty, IrType::String)
                     && !Self::static_string_source_shape(arg)
@@ -541,7 +572,11 @@ impl<'a> IrEmitter<'a> {
                         }
                     };
                 }
-                if idx == 0 && method == "by_ref" {
+                // A receiver borrow the typechecker recorded from the trait's declared receiver is already in
+                // `emitted`, and it is the single source of that argument's shape (#1375). The `by_ref` plan is the
+                // compatibility shape for receivers with no such fact, where a `RefMut` guard still needs its
+                // dereferenced reborrow; stacking it on a recorded borrow spelled `&mut *&mut input`.
+                if idx == 0 && method == "by_ref" && !Self::expr_carries_recorded_rust_borrow(arg) {
                     emitted = plan_read_by_ref_receiver(&arg.ty).apply(emitted);
                 }
                 if idx == 0
@@ -646,18 +681,17 @@ impl<'a> IrEmitter<'a> {
         !Self::expr_is_type_like(receiver) && !Self::receiver_type_matches_any(receiver, &["BytesIO", "_BytesIO"])
     }
 
-    /// Return whether an external Rust trait-style associated call needs `&mut` for its first argument.
-    fn external_trait_first_arg_needs_mut_borrow(receiver: &TypedExpr, method: &str) -> bool {
-        if !matches!(method, "update" | "finalize_xof_reset") {
-            return false;
-        }
+    /// Return whether an argument already carries the Rust borrow the typechecker recorded for it.
+    ///
+    /// Lowering wraps such an argument in an `InteropCoerce` whose kind is a Rust boundary borrow; the emitter then
+    /// spells exactly that borrow and must not reshape the receiver a second time from a method name or type shape.
+    fn expr_carries_recorded_rust_borrow(arg: &TypedExpr) -> bool {
         matches!(
-            &receiver.kind,
-            IrExprKind::Var {
-                name,
-                ref_kind: VarRefKind::ExternalRustName,
+            &arg.kind,
+            IrExprKind::InteropCoerce {
+                kind: IrInteropCoercionKind::RustBorrow { .. } | IrInteropCoercionKind::TraitObjectBorrow { .. },
                 ..
-            } if matches!(name.as_str(), "Digest" | "Update" | "ExtendableOutputReset")
+            }
         )
     }
 
@@ -702,12 +736,15 @@ impl<'a> IrEmitter<'a> {
 
     /// Materialize method-call arguments before entering a static storage lock.
     ///
-    /// This prevents lock reentry when argument expressions also read/write static-backed values.
+    /// This prevents lock reentry when argument expressions also read/write static-backed values. `probe_args` leading
+    /// arguments are lookup probes (the key of a dict `get`), which the lookup only borrows: they are materialized as
+    /// membership probes, so a place such as a local `str` is borrowed rather than moved out before a later use.
     fn materialize_storage_rooted_args<'site>(
         &self,
         args: &[IrCallArg],
         callable_signature: Option<&'site FunctionSignature>,
         base_use_site: ValueUseSite<'site>,
+        probe_args: usize,
     ) -> Result<(Vec<TokenStream>, Vec<IrCallArg>), EmitError> {
         let mut bindings = Vec::with_capacity(args.len());
         let mut rewritten = Vec::with_capacity(args.len());
@@ -715,7 +752,11 @@ impl<'a> IrEmitter<'a> {
             let name = format!("__incan_static_arg_{idx}");
             let ident = format_ident!("{}", name);
             let param = Self::signature_param_for_original_call_arg(args, idx, callable_signature);
-            let materialize_site = Self::storage_arg_materialization_use_site(base_use_site, param);
+            let materialize_site = if idx < probe_args {
+                ValueUseSite::MembershipProbe
+            } else {
+                Self::storage_arg_materialization_use_site(base_use_site, param)
+            };
             let emitted = self.emit_expr_for_use(&arg.expr, materialize_site)?;
             let mutable = param.is_some_and(|param| matches!(param.mutability, incan_ir::types::Mutability::Mutable));
             let binding = if mutable {
@@ -888,8 +929,18 @@ impl<'a> IrEmitter<'a> {
         args: &[IrCallArg],
     ) -> Result<TokenStream, EmitError> {
         if Self::expr_is_storage_rooted(receiver) {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `counts[name] = counts.get(name, 0) + 1` on a static dict moved `name`
+            //   into the lookup's pre-lock binding before the assignment's key read it again (E0382).
+            // - Behavior evidence: the `dict_get_with_default` behavior fixture and the emission test
+            //   `dict_get_with_default_reads_the_value`.
+            // - Semantic owner: the membership-probe ownership plan (`ValueUseSite::MembershipProbe`), which already
+            //   decides how a borrowed lookup probe is bound; this site only selects it for the `get` key.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the lookup from the
+            //   same checked facts.
+            let probe_args = usize::from(matches!(kind, MethodKind::Collection(CollectionMethodKind::Get)));
             let (arg_bindings, rewritten_args) =
-                self.materialize_storage_rooted_args(args, None, ValueUseSite::MethodArg)?;
+                self.materialize_storage_rooted_args(args, None, ValueUseSite::MethodArg, probe_args)?;
             if matches!(kind, MethodKind::Collection(CollectionMethodKind::Get)) {
                 let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
                 let arg_exprs: Vec<TypedExpr> = rewritten_args.iter().map(|a| a.expr.clone()).collect();
@@ -913,11 +964,32 @@ impl<'a> IrEmitter<'a> {
             return Ok(Self::storage_rooted_method_expr(arg_bindings, wrapped));
         }
 
-        let r0 = self.emit_expr(receiver)?;
+        let r0 = if super::method_kind_uses_mutable_receiver(kind) {
+            let receiver = self.emit_lvalue_expr(receiver)?;
+            if is_plain_place(&receiver) {
+                receiver
+            } else {
+                quote! { (#receiver) }
+            }
+        } else if matches!(kind, MethodKind::Result(_)) {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `r.map(f)` then `r.and_then(g)` on one `Result` local moved `r` into the
+            //   first call (E0382): every Rust `Result` method takes its receiver by value.
+            // - Behavior evidence: `result_receivers_stay_usable_after_a_method_call_issue1561` and the behavior
+            //   fixture `result_methods_leave_their_receiver_usable`.
+            // - Semantic owner: the ownership planner's consumed-receiver plan (`plan_consumed_receiver`); this site
+            //   only applies it.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR plans the receiver copy from
+            //   the same use facts.
+            plan_consumed_receiver(receiver).apply(self.emit_expr(receiver)?)
+        } else {
+            self.emit_expr(receiver)?
+        };
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let arg_exprs: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
         match kind {
-            MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs),
+            MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs, args),
+            MethodKind::Bytes(kind) => emit_bytes_method(self, &info, kind, args),
             MethodKind::Collection(kind) => emit_collection_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Iterator(kind) => emit_iterator_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Result(ResultMethodId::Unwrap) => {
@@ -938,7 +1010,17 @@ impl<'a> IrEmitter<'a> {
                         "Result.unwrap_or expects one default argument".to_string(),
                     ));
                 };
-                let default_tokens = self.emit_expr(default)?;
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1561 -- `r.unwrap_or("z")` on a `Result[str, str]` passed a `&str` where
+                //   Rust's `unwrap_or` takes the `String` payload (E0308), and a default local read again was moved.
+                // - Behavior evidence: `option_and_result_unwrap_or_keep_their_values_issue1561` and the behavior
+                //   fixture `unwrap_or_keeps_its_receiver_and_default`.
+                // - Semantic owner: the ownership planner's default use site (`result_unwrap_or_default_use_site`);
+                //   this site only applies it.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR passes the default from
+                //   the same use facts.
+                let default_tokens =
+                    self.emit_expr_for_use(default, result_unwrap_or_default_use_site(&receiver.ty))?;
                 let receiver_tokens = &info.r;
                 Ok(quote! { #receiver_tokens.unwrap_or(#default_tokens) })
             }
@@ -1062,7 +1144,7 @@ impl<'a> IrEmitter<'a> {
                 None,
             );
             let (arg_bindings, rewritten_args) =
-                self.materialize_storage_rooted_args(args, callable_signature, base_use_site)?;
+                self.materialize_storage_rooted_args(args, callable_signature, base_use_site, 0)?;
             let inner = self.emit_method_call_expr_with_result_use(
                 &rewritten_receiver,
                 method,
@@ -1083,7 +1165,23 @@ impl<'a> IrEmitter<'a> {
 
         let inferred_receiver = self.receiver_with_known_field_type(receiver);
         let receiver = inferred_receiver.as_ref().unwrap_or(receiver);
-        let r0 = self.emit_expr(receiver)?;
+        let option_mut_receiver =
+            matches!(receiver.ty, IrType::Option(_)) && option_methods::from_str(method) == Some(OptionMethodId::AsMut);
+        let r0 = if option_mut_receiver {
+            self.emit_lvalue_expr(receiver)?
+        } else {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `o.unwrap_or("b")` twice on one `Option[str]` local moved `o` into the
+            //   first call (E0382), and `self.o.unwrap()` moved out of a borrowed `self` (E0507): Rust's `unwrap` and
+            //   `unwrap_or` take their receiver by value.
+            // - Behavior evidence: `option_and_result_unwrap_or_keep_their_values_issue1561` and the behavior fixture
+            //   `unwrap_or_keeps_its_receiver_and_default`.
+            // - Semantic owner: the ownership planner's consumed-receiver plan (`plan_consumed_option_receiver`); this
+            //   site only applies it.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR plans the receiver copy from
+            //   the same use facts.
+            plan_consumed_option_receiver(receiver, method).apply(self.emit_expr(receiver)?)
+        };
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
         if let Some(call) = emit_registered_method_fast_path(self, receiver, method, args, r)? {
@@ -1092,7 +1190,7 @@ impl<'a> IrEmitter<'a> {
         if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
             let predicate = self.emit_expr(&args[0].expr)?;
             return Ok(quote! {
-                #r.filter(move |__incan_gen_item| #predicate((*__incan_gen_item).clone()))
+                #r.filter(move |__incan_gen_item| (#predicate)((*__incan_gen_item).clone()))
             });
         }
         let method_turbofish = if type_args.is_empty() {
@@ -1353,6 +1451,8 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! { incan_std_core::strings::str_slice(#r_borrow, #start_tokens, #end_tokens, None) })
     }
 
+    /// Emit `get` on a static collection read inside its storage closure: the entry, owned, or the value itself when
+    /// the call names a default.
     fn emit_static_collection_get(&self, receiver: &TypedExpr, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
         let r = self.emit_expr(receiver)?;
         let Some(arg) = args.first() else {
@@ -1362,11 +1462,30 @@ impl<'a> IrEmitter<'a> {
         match &receiver.ty {
             IrType::Dict(_, value_ty) => {
                 let key = collection_methods::emit_dict_lookup_key(receiver, arg, emitted_arg);
-                if value_ty.is_copy() {
-                    Ok(quote! { #r.get(#key).copied() })
+                let entry = if value_ty.is_copy() {
+                    quote! { #r.get(#key).copied() }
                 } else {
-                    Ok(quote! { #r.get(#key).cloned() })
+                    quote! { #r.get(#key).cloned() }
+                };
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1561 -- `counts.get(name, 0)` on a static dict dropped its default and read
+                //   the `Option` entry, so `counts.get(name, 0) + 1` in `static_storage.md` failed the build.
+                // - Behavior evidence: the `dict_get_with_default` behavior fixture and the emission test
+                //   `dict_get_with_default_reads_the_value`.
+                // - Semantic owner: the checked call (`Dict.get(k, default)` is `V`); this arm only spells the read
+                //   inside the static's storage closure.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the read from
+                //   the same checked facts.
+                if let Some(default) = args.get(1) {
+                    let default = self.emit_expr_for_use(
+                        default,
+                        ValueUseSite::CollectionElement {
+                            target_ty: Some(value_ty),
+                        },
+                    )?;
+                    return Ok(quote! { #entry.unwrap_or(#default) });
                 }
+                Ok(entry)
             }
             IrType::List(elem_ty) => {
                 if elem_ty.is_copy() {
@@ -1445,8 +1564,8 @@ impl<'a> IrEmitter<'a> {
                 .collect::<Result<_, _>>()?
         };
 
-        let type_ident = format_ident!("{}", type_name);
-        let m = format_ident!("{}", variant);
+        let type_ident = Self::rust_ident(type_name);
+        let m = Self::rust_ident(variant);
         Ok(quote! { #type_ident::#m(#(#arg_tokens),*) })
     }
 
@@ -1455,5 +1574,66 @@ impl<'a> IrEmitter<'a> {
         matches!(&receiver.ty, IrType::NamedGeneric(name, _)
             if incan_lang::lang::types::collections::from_str(name.as_str())
                 == Some(incan_lang::lang::types::collections::CollectionTypeId::Generator))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incan_ir::FunctionRegistry;
+
+    fn render(tokens: TokenStream) -> String {
+        tokens.to_string().replace(' ', "")
+    }
+
+    /// A named source function passed as an observer: a plain value reference with a function type.
+    fn named_observer(name: &str, param: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Function {
+                params: vec![param],
+                ret: Box::new(IrType::Unit),
+            },
+        )
+    }
+
+    /// Regression for #1718: the helper's observer parameter is `fn(&T)` for every payload type, so a named function
+    /// over a Copy payload is passed as a non-capturing closure reading the payload through the borrow, not as the
+    /// by-value fn item.
+    #[test]
+    fn copy_payload_named_observer_is_borrowed_through_a_closure_issue1718() -> Result<(), EmitError> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let observer = named_observer("observe_int", IrType::Int);
+
+        let tokens = emitter.emit_result_observer_stdlib_callback_arg(&observer, &IrType::Int)?;
+
+        assert_eq!(
+            render(tokens),
+            "|__incan_result_value:&_|(observe_int)(*__incan_result_value)"
+        );
+        Ok(())
+    }
+
+    /// A non-Copy payload keeps the generated borrowed adapter when the pre-emission analysis recorded one, and the
+    /// bare item otherwise; neither shape is the Copy closure.
+    #[test]
+    fn non_copy_payload_named_observer_keeps_the_adapter_route() -> Result<(), EmitError> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let payload = IrType::Struct("Payload".to_string());
+        let observer = named_observer("observe_payload", payload.clone());
+
+        let bare = emitter.emit_result_observer_stdlib_callback_arg(&observer, &payload)?;
+        assert_eq!(render(bare), "observe_payload");
+
+        emitter.set_borrowed_function_adapters(std::iter::once(("observe_payload".to_string(), vec![0])).collect());
+        let adapted = emitter.emit_result_observer_stdlib_callback_arg(&observer, &payload)?;
+        assert_eq!(render(adapted), "__incan_borrow_adapter_observe_payload_0");
+        Ok(())
     }
 }

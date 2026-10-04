@@ -124,6 +124,114 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Type-check call arguments against a generic callee's parameters, each closure argument after the others, so a
+    /// closure written for a parameter whose function type names one of the callee's type parameters takes the types
+    /// the other arguments bind them to: `apply_twice((x) => x + 1, 3)` for `apply_twice[T](f: (T) -> T, value: T)`
+    /// checks `x` as `int`.
+    ///
+    /// `bindings` are the type parameters the call already fixes (brackets, the expected result). A call with an
+    /// unpacked argument, or whose closures leave no type parameter open, is checked in order by
+    /// [`Self::check_call_arg_types_for_params`].
+    pub(in crate::typechecker::check_expr) fn check_call_arg_types_binding_closures_last(
+        &mut self,
+        args: &[CallArg],
+        params: &[CallableParam],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) -> Vec<ResolvedType> {
+        let Some(slots) = Self::call_arg_parameter_slots(args, params) else {
+            return self.check_call_arg_types_for_params(args, params);
+        };
+        let is_closure = |arg: &CallArg| matches!(Self::call_arg_expr(arg).node, Expr::Closure(_, _));
+        let open_closure = args
+            .iter()
+            .zip(&slots)
+            .any(|(arg, slot)| is_closure(arg) && slot.as_ref().is_some_and(Self::mentions_type_variable));
+        if !open_closure {
+            return self.check_call_arg_types_for_params(args, params);
+        }
+        let mut bindings = bindings.clone();
+        let mut arg_types = vec![ResolvedType::Unknown; args.len()];
+        for (index, (arg, slot)) in args.iter().zip(&slots).enumerate() {
+            if is_closure(arg) {
+                continue;
+            }
+            self.call_argument_depth += 1;
+            let ty = self.check_expr_with_expected(Self::call_arg_expr(arg), slot.as_ref());
+            self.call_argument_depth -= 1;
+            if let Some(slot) = slot {
+                self.infer_type_param_bindings(slot, &ty, &mut bindings);
+            }
+            arg_types[index] = ty;
+        }
+        for (index, (arg, slot)) in args.iter().zip(&slots).enumerate() {
+            if !is_closure(arg) {
+                continue;
+            }
+            let expected = slot
+                .as_ref()
+                .map(|slot| crate::resolved_type_subst::substitute_resolved_type(slot, &bindings));
+            self.call_argument_depth += 1;
+            arg_types[index] = self.check_expr_with_expected(Self::call_arg_expr(arg), expected.as_ref());
+            self.call_argument_depth -= 1;
+        }
+        arg_types
+    }
+
+    /// Return the parameter type each positional or named argument binds to, as
+    /// [`Self::check_call_arg_types_for_params`] binds them, or `None` when an argument is unpacked.
+    fn call_arg_parameter_slots(args: &[CallArg], params: &[CallableParam]) -> Option<Vec<Option<ResolvedType>>> {
+        let normal_params: Vec<&CallableParam> =
+            params.iter().filter(|param| param.kind == ParamKind::Normal).collect();
+        let positional_params: Vec<&CallableParam> = normal_params
+            .iter()
+            .copied()
+            .filter(|param| !param.is_partial_preset)
+            .collect();
+        let rest_positional = params.iter().find(|param| param.kind == ParamKind::RestPositional);
+        let rest_keyword = params.iter().find(|param| param.kind == ParamKind::RestKeyword);
+        let mut positional_index = 0usize;
+        args.iter()
+            .map(|arg| match arg {
+                CallArg::Positional(_) => {
+                    let slot = positional_params
+                        .get(positional_index)
+                        .map(|param| param.ty.clone())
+                        .or_else(|| rest_positional.map(|param| param.ty.clone()));
+                    positional_index += 1;
+                    Some(slot)
+                }
+                CallArg::Named(name, _) => Some(
+                    normal_params
+                        .iter()
+                        .find(|param| param.name() == Some(name.node.as_str()))
+                        .map(|param| param.ty.clone())
+                        .or_else(|| rest_keyword.map(|param| param.ty.clone())),
+                ),
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => None,
+            })
+            .collect()
+    }
+
+    /// Return whether a type names a type variable anywhere in its structure.
+    fn mentions_type_variable(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::TypeVar(_) => true,
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => args.iter().any(Self::mentions_type_variable),
+            ResolvedType::Function(params, ret) => {
+                params.iter().any(|param| Self::mentions_type_variable(&param.ty)) || Self::mentions_type_variable(ret)
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => Self::mentions_type_variable(inner),
+            ResolvedType::FrozenDict(key, value) => {
+                Self::mentions_type_variable(key) || Self::mentions_type_variable(value)
+            }
+            _ => false,
+        }
+    }
+
     /// Type-check call arguments while threading parameter types into contextual-expression checks when available.
     pub(in crate::typechecker::check_expr) fn check_call_arg_types_for_params(
         &mut self,

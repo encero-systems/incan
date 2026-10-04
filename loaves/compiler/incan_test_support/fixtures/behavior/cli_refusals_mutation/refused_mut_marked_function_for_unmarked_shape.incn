@@ -1,0 +1,18 @@
+# behavior: a function whose parameter is `mut` is refused where a function type without the `mut` marker is expected
+# expect-diagnostic: INCAN-T0001
+
+class Counter:
+    pub value: int
+
+
+def grow(mut counter: Counter) -> int:
+    counter.value += 1
+    return counter.value
+
+
+def run(step: (Counter) -> int, counter: Counter) -> int:
+    return step(counter)
+
+
+def main() -> None:
+    println(run(grow, Counter(value=1)))

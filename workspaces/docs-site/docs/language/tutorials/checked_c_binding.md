@@ -70,7 +70,7 @@ def main() -> None:
 
 ## Model an owned handle and an output position
 
-Many native APIs create a handle through an output pointer and require one matching release function. Keep both facts in the binding instead of modelling the pointer as an `int` or exposing it from a public façade:
+Many native APIs create a handle through an output pointer and require one matching release function. Keep both facts in the binding instead of modeling the pointer as an `int` or exposing it from a public façade:
 
 ```incan
 binding Fixture:

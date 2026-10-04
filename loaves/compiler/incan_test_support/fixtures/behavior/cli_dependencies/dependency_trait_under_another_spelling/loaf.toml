@@ -1,0 +1,9 @@
+[project]
+name = "dependency_trait_under_another_spelling"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+tags = { path = "deps/tags" }

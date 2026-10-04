@@ -1,0 +1,46 @@
+# behavior: arguments that bind one type parameter to an i8 and an int, or to an f32 and a float literal, bind it to the type the other widens to, in either order, for a function, a generic method and a generic model's constructor
+# retires: loaves/compiler/incan_emit/src/tests/generic_call_arguments.rs::arguments_binding_one_type_parameter_build_with_the_type_they_widen_to_issue1561
+# expect-stdout:
+#   5
+#   3
+#   3
+#   2.5
+#   2.5
+#   2.5
+#   5
+#   8
+
+model Pair[T]:
+    first: T
+    second: T
+
+
+class Picker:
+    count: int
+
+    def pick[T](self, a: T, b: T) -> T:
+        return b
+
+
+def pick[T](a: T, b: T) -> T:
+    return b
+
+
+def last[T](a: T, b: T, c: T) -> T:
+    return c
+
+
+def main() -> None:
+    small: i8 = 3
+    wide: int = 5
+    println(pick(small, wide))
+    println(pick(wide, small))
+    println(last(small, wide, small))
+    single: f32 = 1.5
+    println(pick(single, 2.5))
+    println(pick(1, 2.5))
+    picker = Picker(count=1)
+    println(picker.pick(1, 2.5))
+    println(picker.pick(small, wide))
+    pair = Pair(first=small, second=wide)
+    println(pair.first + pair.second)

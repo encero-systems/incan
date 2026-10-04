@@ -1146,7 +1146,7 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// Write Incan source to a temp file with a `test_` prefix so discovery recognises it.
+    /// Write Incan source to a temp file with a `test_` prefix so discovery recognizes it.
     fn write_test_file(source: &str) -> Result<tempfile::NamedTempFile, Box<dyn std::error::Error>> {
         let mut file = tempfile::Builder::new().prefix("test_").suffix(".incn").tempfile()?;
         file.write_all(source.as_bytes())?;
@@ -1346,8 +1346,8 @@ module tests:
 module tests:
     from std.testing import mark
 
-    const TEST_MARKERS: List[str] = ["smoke"]
-    const TEST_MARKS: List[str] = ["smoke"]
+    const TEST_MARKERS: FrozenList[str] = ["smoke"]
+    const TEST_MARKS: FrozenList[str] = ["smoke"]
 
     @mark("smoke")
     def test_inline_marker() -> None:

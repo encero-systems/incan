@@ -70,7 +70,7 @@ A package **may** publish an executable representation of its public surface. A 
 
 A published representation **must** identify every declaration it covers by the canonical identity that declaration carries in the package's own manifest. A representation **must not** identify a declaration by source spelling, by module path, or by any generated Rust name.
 
-A representation **must** be produced by the compilation that declares the symbols it covers. A consumer **must not** synthesise a representation for a dependency, including when that dependency's source is available to it.
+A representation **must** be produced by the compilation that declares the symbols it covers. A consumer **must not** synthesize a representation for a dependency, including when that dependency's source is available to it.
 
 A representation **must** carry a version distinct from the manifest's. A consumer **must** refuse a representation whose version it does not support, and that refusal **must not** invalidate the manifest or the package.
 

@@ -1,0 +1,9 @@
+# behavior: an unwrap_or default that is not the type parameter a Result[T, int] payload is, here the int 0 inside the generic function, is refused
+# expect-diagnostic: INCAN-T0001
+
+def pick[T](r: Result[T, int]) -> T:
+    return r.unwrap_or(0)
+
+
+def main() -> None:
+    println(pick(Ok(1)))

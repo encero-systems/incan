@@ -1,0 +1,23 @@
+# behavior: a change through a parameter not marked mut, by a changing method, a mut self method or a loop that changes its items, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+class Counter:
+    pub count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+
+def extend(items: list[int], counter: Counter, rows: list[list[int]]) -> None:
+    items.append(1)
+    counter.bump()
+    for row in rows:
+        row.append(2)
+
+
+def main() -> None:
+    mut items: list[int] = []
+    mut counter = Counter(count=0)
+    mut rows: list[list[int]] = [[]]
+    extend(items, counter, rows)
+    println(len(items))

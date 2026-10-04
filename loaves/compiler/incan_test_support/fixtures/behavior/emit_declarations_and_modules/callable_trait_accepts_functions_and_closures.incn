@@ -1,0 +1,23 @@
+# behavior: a Callable[int, int] parameter accepts a named function and a closure and calls either
+# retires: loaves/compiler/incan_emit/src/emit/decls/functions.rs::canonical_source_callable_emits_native_function_blanket_impl
+# expect-stdout:
+#   8
+#   5
+#   14
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def apply(f: Callable[int, int], value: int) -> int:
+    return f(value)
+
+
+def apply_twice(f: Callable[int, int], value: int) -> int:
+    return f(f(value))
+
+
+def main() -> None:
+    println(apply(double, 4))
+    println(apply((value) => value + 1, 4))
+    println(apply_twice((value) => value + 5, 4))

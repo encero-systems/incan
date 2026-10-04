@@ -1,0 +1,19 @@
+"""Dispatch the sealed Oven engine's versioned request schemas without weakening their individual decoders."""
+
+from std.json import JsonValue, parse
+from plan_json import evaluate as evaluate_selection
+from rust_policy_exchange import evaluate as evaluate_rust_policy
+
+const RUST_POLICY_SCHEMA: str = "incan.oven.rust-policy-exchange/5"
+
+
+pub def evaluate(source: str) -> JsonValue:
+    """Route only the recognized Rust policy schema; existing selection schemas retain their original decoder."""
+    if let Ok(document) = parse(source):
+        if let Some(schema) = document.get("schema"):
+            match schema.as_str():
+                Some(name) =>
+                    if name == RUST_POLICY_SCHEMA:
+                        return evaluate_rust_policy(source)
+                None => pass
+    return evaluate_selection(source)

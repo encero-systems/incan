@@ -66,10 +66,11 @@ use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
 pub enum StorageRoot {
-    /// A module-level static storage slot.
+    /// A module-level static storage slot, named through its declaring module when `owner_module_path` is set.
     Static {
         name: String,
         reference_kind: IrStaticReferenceKind,
+        owner_module_path: Option<Vec<String>>,
     },
     /// A local alias that wraps static storage in the current emitted statement slice.
     Binding(String),
@@ -902,15 +903,70 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the scrutinee expression for a match statement.
     pub fn emit_match_scrutinee(&self, scrutinee: &TypedExpr) -> Result<TokenStream, EmitError> {
-        if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
-            return self.emit_expr(scrutinee);
+        let emitted = if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
+            self.emit_expr(scrutinee)?
+        } else {
+            self.emit_expr_for_use(
+                scrutinee,
+                ValueUseSite::MatchScrutinee {
+                    target_ty: Some(&scrutinee.ty),
+                },
+            )?
+        };
+        Ok(self.parenthesize_condition_position(scrutinee, emitted))
+    }
+
+    /// Emit an expression for a Rust condition position, grouping a top-level path from a struct literal.
+    ///
+    /// Rust requires parentheses when a struct literal remains reachable from the expression root without crossing a
+    /// delimiter in an `if`, `while`, `match`, or `for` header. Calls, collections, tuples, blocks, and already-grouped
+    /// constructs form delimiters, so they stop the traversal and retain their normal emission.
+    pub(in crate::emit) fn emit_condition_position_expr(&self, expr: &TypedExpr) -> Result<TokenStream, EmitError> {
+        let emitted = self.emit_expr(expr)?;
+        Ok(self.parenthesize_condition_position(expr, emitted))
+    }
+
+    /// Parenthesize emitted condition-position tokens exactly when their IR exposes a struct literal at the root.
+    pub(in crate::emit) fn parenthesize_condition_position(
+        &self,
+        expr: &TypedExpr,
+        emitted: TokenStream,
+    ) -> TokenStream {
+        if self.condition_position_exposes_struct_literal(expr) {
+            quote! { (#emitted) }
+        } else {
+            emitted
         }
-        self.emit_expr_for_use(
-            scrutinee,
-            ValueUseSite::MatchScrutinee {
-                target_ty: Some(&scrutinee.ty),
-            },
-        )
+    }
+
+    /// Return whether an expression exposes a struct literal without crossing an emitted delimiter.
+    fn condition_position_exposes_struct_literal(&self, expr: &TypedExpr) -> bool {
+        match &expr.kind {
+            IrExprKind::Struct { name, fields, .. } => {
+                fields.iter().all(|(field, _)| !field.is_empty())
+                    && self
+                        .struct_constructor_metadata_for_fields(name, fields)
+                        .is_none_or(|metadata| !metadata.uses_constructor_function())
+            }
+            IrExprKind::BinOp { left, right, .. } => {
+                self.condition_position_exposes_struct_literal(left)
+                    || self.condition_position_exposes_struct_literal(right)
+            }
+            IrExprKind::UnaryOp { operand, .. } => self.condition_position_exposes_struct_literal(operand),
+            // The method-call emitter already groups a struct-literal receiver, `(Reader {}).identity(..)`, so only a
+            // receiver that reaches a struct literal through another step exposes one.
+            IrExprKind::MethodCall { receiver, .. } => {
+                !matches!(receiver.kind, IrExprKind::Struct { .. })
+                    && self.condition_position_exposes_struct_literal(receiver)
+            }
+            IrExprKind::KnownMethodCall { receiver, .. } => self.condition_position_exposes_struct_literal(receiver),
+            IrExprKind::Field { object, .. } | IrExprKind::Index { object, .. } => {
+                self.condition_position_exposes_struct_literal(object)
+            }
+            IrExprKind::Slice { target, .. } => self.condition_position_exposes_struct_literal(target),
+            IrExprKind::Cast { expr, .. } => self.condition_position_exposes_struct_literal(expr),
+            _ => false,
+        }
     }
 
     /// Check whether an expression is a type-like identifier that should use Rust path syntax.
@@ -931,9 +987,14 @@ impl<'a> IrEmitter<'a> {
     /// Recover the source static or local binding at the root of an assignable expression.
     pub fn expr_storage_root(expr: &TypedExpr) -> Option<StorageRoot> {
         match &expr.kind {
-            IrExprKind::StaticRead { name, reference_kind } => Some(StorageRoot::Static {
+            IrExprKind::StaticRead {
+                name,
+                reference_kind,
+                owner_module_path,
+            } => Some(StorageRoot::Static {
                 name: name.clone(),
                 reference_kind: *reference_kind,
+                owner_module_path: owner_module_path.clone(),
             }),
             IrExprKind::Var {
                 name,
@@ -1005,11 +1066,45 @@ impl<'a> IrEmitter<'a> {
         rewritten
     }
 
+    /// Return the Rust path of a static named through its declaring module, with the call that initializes that
+    /// module's statics before the read.
+    ///
+    /// Lowering names a static this way when a parameter default reads it: the default is evaluated at callers that
+    /// may have no binding of the static, or a static of the same name of their own. The module's initializer guards
+    /// against re-entry, so the call is also sound inside that module's own static initializers.
+    fn owner_module_static_access(owner_module_path: &[String], projection: &str) -> (TokenStream, TokenStream) {
+        let segments = owner_module_path
+            .iter()
+            .map(|segment| Self::rust_ident(segment))
+            .collect::<Vec<_>>();
+        let static_ident = Self::rust_ident(projection);
+        let init_fn = Self::rust_ident("__incan_init_module_statics");
+        (
+            quote! { crate #(:: #segments)* :: #static_ident },
+            quote! { crate #(:: #segments)* :: #init_fn(); },
+        )
+    }
+
     /// Emit storage access while preserving a shared reference.
     pub fn emit_storage_with_ref(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
-            Some(StorageRoot::Static { name, reference_kind }) => {
+            Some(StorageRoot::Static {
+                name,
+                owner_module_path: Some(owner_module_path),
+                ..
+            }) => {
+                let (path, init_call) = Self::owner_module_static_access(&owner_module_path, &name);
+                Ok(quote! {{
+                    #init_call
+                    #path.with_ref(|#local_name| { #body })
+                }})
+            }
+            Some(StorageRoot::Static {
+                name,
+                reference_kind,
+                owner_module_path: None,
+            }) => {
                 let ident = self.rust_static_reference_ident(&name, reference_kind)?;
                 let init_call = if *self.in_static_initializer.borrow()
                     && !self.static_reference_needs_imported_init_call(&name, reference_kind)
@@ -1035,7 +1130,22 @@ impl<'a> IrEmitter<'a> {
     pub fn emit_storage_with_mut(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
-            Some(StorageRoot::Static { name, reference_kind }) => {
+            Some(StorageRoot::Static {
+                name,
+                owner_module_path: Some(owner_module_path),
+                ..
+            }) => {
+                let (path, init_call) = Self::owner_module_static_access(&owner_module_path, &name);
+                Ok(quote! {{
+                    #init_call
+                    #path.with_mut(|#local_name| { #body })
+                }})
+            }
+            Some(StorageRoot::Static {
+                name,
+                reference_kind,
+                owner_module_path: None,
+            }) => {
                 let ident = self.rust_static_reference_ident(&name, reference_kind)?;
                 let init_call = if *self.in_static_initializer.borrow()
                     && !self.static_reference_needs_imported_init_call(&name, reference_kind)
@@ -1148,7 +1258,23 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { incan_std_core::reflection::TypeToken::<#token_ty>::new() })
             }
 
-            IrExprKind::StaticRead { name, reference_kind } => {
+            IrExprKind::StaticRead {
+                name,
+                owner_module_path: Some(owner_module_path),
+                ..
+            } => {
+                let (path, init_call) = Self::owner_module_static_access(owner_module_path, name);
+                Ok(quote! {{
+                    #init_call
+                    #path.get()
+                }})
+            }
+
+            IrExprKind::StaticRead {
+                name,
+                reference_kind,
+                owner_module_path: None,
+            } => {
                 let n = self.rust_static_reference_ident(name, *reference_kind)?;
                 if *self.in_static_initializer.borrow()
                     && !self.static_reference_needs_imported_init_call(name, *reference_kind)
@@ -1214,6 +1340,15 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::BinOp { op, left, right } => self.emit_binop_expr(op, left, right),
 
+            // A mutable borrow borrows its operand as a place, so a list element is reached through `list_get_mut`
+            // rather than read out (#1561).
+            IrExprKind::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } => {
+                let o = self.emit_lvalue_expr(operand)?;
+                Ok(quote! { (&mut #o) })
+            }
             IrExprKind::UnaryOp { op, operand } => {
                 let o = self.emit_expr(operand)?;
                 match op {
@@ -1359,16 +1494,17 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::Struct {
                 name,
+                type_args,
                 fields,
                 fill_defaults,
-            } => self.emit_struct_expr(name, fields, *fill_defaults),
+            } => self.emit_struct_expr(name, type_args, fields, *fill_defaults),
 
             IrExprKind::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                let c = self.emit_expr(condition)?;
+                let c = self.emit_condition_position_expr(condition)?;
                 let t = self.emit_expr(then_branch)?;
                 if let Some(e) = else_branch {
                     let ee = self.emit_expr(e)?;
@@ -1383,7 +1519,10 @@ impl<'a> IrEmitter<'a> {
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {
-                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
+                        let mutable_bindings =
+                            crate::emit::statements::pattern_mutated_bindings_in_expr(&arm.pattern, &arm.body);
+                        let (pat, pattern_guard) =
+                            self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty, &mutable_bindings);
                         let body = self.emit_match_arm_body(arm, Some(&expr.ty))?;
                         let guard = self.emit_match_arm_guard(arm, pattern_guard)?;
                         if let Some(guard) = guard {
@@ -1465,7 +1604,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Race { binding, arms } => {
-                let binding_ident = format_ident!("{}", binding);
+                let binding_ident = Self::rust_ident(binding);
                 let mut branch_tokens = Vec::with_capacity(arms.len());
                 for arm in arms {
                     let awaitable = self.emit_expr(&arm.awaitable)?;
@@ -1586,7 +1725,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::SerdeFromJson(type_name) => {
-                let type_ident = format_ident!("{}", type_name);
+                let type_ident = Self::rust_ident(type_name);
                 Ok(quote! {
                     incan_std_data::json::__private::parse_or_error::<#type_ident>(&s)
                 })
@@ -1704,6 +1843,40 @@ mod tests {
             .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
 
         assert_eq!(emitted.to_string(), ":: std :: boxed :: Box :: new (list)");
+        Ok(())
+    }
+
+    /// A receiver whose borrow the typechecker recorded is emitted with that borrow and nothing else (#1375).
+    ///
+    /// The lowered argument is the `InteropCoerce` wrapper around the owned reader; its IR type is already `&mut
+    /// Stdin`, which the guard-reborrow shape would otherwise read as a `&mut`-typed binding to reborrow.
+    #[test]
+    fn read_by_ref_receiver_with_recorded_borrow_is_not_reborrowed_again() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let reader_ty = IrType::Struct("std::io::Stdin".to_string());
+        let mut call = read_by_ref_call("input", reader_ty.clone());
+        let IrExprKind::MethodCall { args, .. } = &mut call.kind else {
+            return Err("read_by_ref_call must build a method call".to_string());
+        };
+        let Some(receiver_arg) = args.first_mut() else {
+            return Err("read_by_ref_call must pass the receiver as its first argument".to_string());
+        };
+        let owned = receiver_arg.expr.clone();
+        receiver_arg.expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(owned),
+                from_ty: reader_ty.clone(),
+                to_ty: IrType::RefMut(Box::new(reader_ty.clone())),
+                kind: IrInteropCoercionKind::RustBorrow { mutable: true },
+            },
+            IrType::RefMut(Box::new(reader_ty)),
+        );
+        let emitted = emitter
+            .emit_expr(&call)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+
+        assert_eq!(emitted.to_string(), "Read :: by_ref (& mut input)");
         Ok(())
     }
 
@@ -3952,8 +4125,7 @@ mod tests {
 
         let flat_map_rendered = render(IteratorMethodKind::FlatMap, callback())?;
         assert!(
-            flat_map_rendered.contains("collection :: FlatMapIterator")
-                && flat_map_rendered.contains("current : Vec :: new ()"),
+            flat_map_rendered.contains("collection :: FlatMapIterator") && flat_map_rendered.contains("current : None"),
             "unexpected flat_map emission: {flat_map_rendered}"
         );
 

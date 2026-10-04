@@ -1,0 +1,21 @@
+# behavior: a generic list comprehension consumes a last-use source without Clone, while a reused source with Clone is copied and remains available
+# retires: loaves/compiler/incan_emit/src/tests/comprehension_item_places.rs::generic_list_comprehension_consumes_its_parameter_issue1983
+# retires: loaves/compiler/incan_emit/src/tests/comprehension_item_places.rs::generic_list_comprehension_copies_bounded_items_issue1983
+# expect-stdout:
+#   3
+#   3
+#   3
+
+def copy_all[T](items: list[T]) -> list[T]:
+    return [item for item in items]
+
+
+def copy_and_keep[T with Clone](items: list[T]) -> list[T]:
+    copied = [item for item in items]
+    println(len(copied))
+    return items
+
+
+def main() -> None:
+    println(len(copy_all([1, 2, 3])))
+    println(len(copy_and_keep([1, 2, 3])))

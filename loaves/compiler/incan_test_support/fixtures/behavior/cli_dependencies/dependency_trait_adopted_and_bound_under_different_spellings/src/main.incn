@@ -1,0 +1,74 @@
+# behavior: a consumer's model that adopts a dependency's trait under one spelling meets a bound that names the trait under another: the trait, an import alias, the dependency's alias and a module-bound spelling are one trait
+# retires: loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs::consumer_adopter_meets_a_bound_on_another_spelling_of_the_dependency_trait_issue1561
+# expect-stdout:
+#   mine
+#   YOURS
+#   mine
+#   OURS
+#   theirs
+#   theirs
+
+import pub::tags as t
+from pub::tags import Tag, Tagging
+from pub::tags import Tag as Tagged
+
+
+def name_of[T with Tagging](value: T) -> str:
+    return value.tag()
+
+
+def shout[T with Tagged](value: T) -> str:
+    return value.loud()
+
+
+def quiet[T with t.Tag](value: T) -> str:
+    return value.tag()
+
+
+model Mine with Tagged:
+    id: int
+
+    def tag(self) -> str:
+        return "mine"
+
+    def loud(self) -> str:
+        return "MINE"
+
+
+model Yours with Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "yours"
+
+    def loud(self) -> str:
+        return "YOURS"
+
+
+model Ours with t.Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "ours"
+
+    def loud(self) -> str:
+        return "OURS"
+
+
+model Theirs with Tag:
+    id: int
+
+    def tag(self) -> str:
+        return "theirs"
+
+    def loud(self) -> str:
+        return "THEIRS"
+
+
+def main() -> None:
+    println(name_of(Mine(id=1)))
+    println(shout(Yours(id=2)))
+    println(quiet(Mine(id=1)))
+    println(shout(Ours(id=3)))
+    println(name_of(Theirs(id=4)))
+    println(quiet(Theirs(id=4)))

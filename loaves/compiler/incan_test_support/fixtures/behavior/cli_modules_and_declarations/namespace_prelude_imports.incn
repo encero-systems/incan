@@ -1,0 +1,28 @@
+# behavior: std.async.prelude and std.traits.prelude name the std.async and std.traits modules, so names import through them and import std.async.prelude binds prelude to std.async; a task spawned through that binding sleeps and joins with its value, and an Error adopter reports its message
+# retires: loaves/compiler/incan_ir/src/lower/tests/import_paths.rs::namespace_prelude_module_import_binds_the_name_it_spells_issue1561
+# expect-stdout:
+#   1
+#   broken: disk
+
+import std.async.prelude
+from std.async.prelude import sleep
+from std.traits.prelude import Error
+
+
+model Broken with Error:
+    part: str
+
+    def message(self) -> str:
+        return f"broken: {self.part}"
+
+
+async def work() -> int:
+    await sleep(0.01)
+    return 1
+
+
+async def main() -> None:
+    match await prelude.spawn(work()):
+        Ok(value) => println(value)
+        Err(_) => println("failed")
+    println(Broken(part="disk").message())

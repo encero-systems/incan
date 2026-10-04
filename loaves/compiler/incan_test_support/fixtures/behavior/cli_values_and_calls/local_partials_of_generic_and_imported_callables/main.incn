@@ -1,0 +1,62 @@
+# behavior: a local partial of a generic function or of a generic model or class constructor is instantiated by its presets or its written type arguments, and a local partial of a function imported by name or read through its module passes every argument to it
+# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::local_partials_of_generic_callables_compile
+# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::local_partials_of_another_modules_functions_pass_every_argument
+# expect-stdout:
+#   [1, 2] [1, 3] [5, 4]
+#   no.4
+#   5 five
+#   six named
+#   s 7
+#   [8, 9] 12 14
+#   orders delta csv
+
+import helpers
+from helpers import add
+
+
+def couple[T](a: T, b: T) -> list[T]:
+    return [a, b]
+
+
+def tagged[T with Display](value: T, prefix: str) -> str:
+    return f"{prefix}{value}"
+
+
+model Box[T]:
+    value: T
+    label: str
+
+
+class Slot[T]:
+    pub item: T
+    pub count: int
+
+
+model Reader:
+    layer: str
+    format: str
+    path: str
+
+
+def main() -> None:
+    first = partial couple(a=1)
+    println(f"{first(b=2)} {first(3)} {first(b=4, a=5)}")
+    hash_tag = partial tagged[int](prefix="no.")
+    println(hash_tag(value=4))
+    boxed = partial Box(value=5)
+    b = boxed(label="five")
+    println(f"{b.value} {b.label}")
+    labeled = partial Box[str](label="named")
+    c = labeled(value="six")
+    println(f"{c.value} {c.label}")
+    slot = partial Slot(item="s")
+    s = slot(count=7)
+    println(f"{s.item} {s.count}")
+    listed = partial helpers.pair(a=8)
+    summed = partial helpers.add(a=2)
+    added = partial add(b=3)
+    println(f"{listed(b=9)} {summed(b=10)} {added(a=11)}")
+    reader = partial Reader(layer="bronze", format="delta")
+    orders = reader("orders")
+    csv = reader("orders", format="csv")
+    println(f"{orders.path} {orders.format} {csv.format}")

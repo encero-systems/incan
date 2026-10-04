@@ -1,0 +1,15 @@
+pub class ValidationError:
+    pub field: str
+    pub reason: str
+
+
+pub model FieldInfo:
+    pub label: str
+
+
+pub def bad_age() -> ValidationError:
+    return ValidationError(field="age", reason="negative")
+
+
+pub def info(label: str) -> FieldInfo:
+    return FieldInfo(label=label)

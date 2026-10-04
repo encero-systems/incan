@@ -65,6 +65,18 @@ pub fn invalid_compound_assignment_target(span: Span) -> CompileError {
     CompileError::syntax("Invalid compound assignment target".to_string(), span)
 }
 
+/// Report a type annotation on a chained assignment, `x: T = y = value` (#1806).
+///
+/// An annotation declares the type of one binding, so an annotated assignment has one target; the chain's other
+/// targets would take the value without the declared type.
+pub fn annotated_chained_assignment(span: Span) -> CompileError {
+    CompileError::syntax(
+        "A type annotation applies to one assignment target; `x: T = y = value` is not allowed".to_string(),
+        span,
+    )
+    .with_hint("Annotate the target in its own statement, `x: T = value`, and assign the other targets from it")
+}
+
 pub fn invalid_tuple_assignment_target(span: Span) -> CompileError {
     CompileError::syntax("Invalid assignment target in tuple assignment".to_string(), span)
 }
@@ -342,6 +354,14 @@ pub fn unmatched_right_brace_in_fstring(span: Span) -> CompileError {
 
 pub fn unterminated_fstring_escape(span: Span) -> CompileError {
     CompileError::new("Unterminated escape in f-string".to_string(), span)
+}
+
+/// Refuse an f-string format specifier other than `:?`, the one specifier an interpolation accepts.
+pub fn unsupported_fstring_format_specifier(spec: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Unsupported f-string format specifier '{spec}'; only ':?' is supported"),
+        span,
+    )
 }
 
 pub fn invalid_float_literal(value: &str, span: Span) -> CompileError {

@@ -1,0 +1,96 @@
+# behavior: an Eq or Ord adopter named through an import alias or its module, an enum, a newtype and a class among them, calls the dunders the trait supplies, and in a program module a type parameter bounded by an unimported Display, Eq or Ord calls __str__, __ne__ and __lt__ as the display and the operators
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::comparison_dunders_through_every_spelling_build_in_a_project_module_issue1561
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_local_adopters_ord_default_keeps_its_projection_under_an_sdk_identity_issue1561
+# expect-stdout:
+#   true
+#   false
+#   true
+#   false
+#   true
+#   3
+#   Point { x: 1 }
+#   true
+#   true
+
+from std.derives import comparison
+from std.derives.comparison import Ord as Ordered
+
+
+model Aliased with Ordered:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+model Qualified with comparison.Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+enum Level with Ordered:
+    Low
+    High
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+
+type Rank = newtype int with comparison.Ord:
+    def __eq__(self, other: Self) -> bool:
+        return self.0 == other.0
+
+    def __lt__(self, other: Self) -> bool:
+        return self.0 < other.0
+
+
+class Account with comparison.Eq:
+    pub id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.id == other.id
+
+
+@derive(Display)
+model Point:
+    x: int
+
+
+def text[T with Display](value: T) -> str:
+    return value.__str__()
+
+
+def differ[T with Eq](a: T, b: T) -> bool:
+    return a.__ne__(b)
+
+
+def less[T with Ord](a: T, b: T) -> bool:
+    return a.__lt__(b)
+
+
+def main() -> None:
+    println(Aliased(v=2).__ge__(Aliased(v=1)))
+    println(Qualified(v=2).__le__(Qualified(v=1)))
+    println(Level.High.__gt__(Level.Low))
+    println(Rank(1).__ge__(Rank(2)))
+    println(Account(id=1).__ne__(Account(id=2)))
+    println(text(3))
+    println(text(Point(x=1)))
+    println(differ(1, 2))
+    println(less("a", "b"))

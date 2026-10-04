@@ -3,13 +3,14 @@
 //! This module contains helper functions for converting AST types, operators, and performing variable lookups during
 //! the lowering pass.
 //!
-//! Numeric semantics follow Python-like rules (via `incan_lang`):
+//! Numeric semantics follow RFC 009 and Python's division rules (via `incan_lang`):
+//! - Same-type integer arithmetic yields that type (`i8 + i8` is an `i8`)
 //! - `/` always yields `Float` (even `int / int`)
 //! - `%` supports floats with Python remainder semantics
-//! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
+//! - `**` keeps an integer base's type only for non-negative int literal exponents; otherwise `Float`
 
 use super::super::expr::BinOp;
-use super::super::types::{IR_UNION_TYPE_NAME, IrType, same_exact_binary_float_type};
+use super::super::types::{IR_UNION_TYPE_NAME, IrType, exact_integer_arithmetic_type, same_exact_binary_float_type};
 use super::errors::LoweringError;
 use super::{AstLowering, FunctionSignature};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
@@ -22,10 +23,13 @@ use incan_frontend::symbols::ResolvedType;
 use incan_frontend::typechecker::split_canonical_public_library_type_name;
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
+use incan_lang::lang::types::numerics;
 use incan_lang::lang::types::stringlike::{self, StringLikeId};
 use incan_lang::{NumericTy, PowExponentKind, result_numeric_type};
+use incan_semantics_core::SemanticSourceTargetKind;
 
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
@@ -283,7 +287,7 @@ impl AstLowering {
                 }
                 self.expand_pub_manifest_type_refs(library, return_type, expanding);
             }
-            TypeRef::Ref { inner } | TypeRef::TypeToken { inner } => {
+            TypeRef::Ref { inner } | TypeRef::TypeToken { inner } | TypeRef::MutParam { inner } => {
                 self.expand_pub_manifest_type_refs(library, inner, expanding)
             }
             // Native descriptors already describe final emitted members, not source aliases.
@@ -477,6 +481,7 @@ impl AstLowering {
                         kind: param.kind,
                         has_default: param.has_default,
                         is_partial_preset: param.is_partial_preset,
+                        is_mut: param.is_mut,
                     })
                     .collect(),
                 Box::new(self.expand_pub_manifest_type_aliases(library, *ret, expanding)),
@@ -630,9 +635,37 @@ impl AstLowering {
     /// The caller must already have joined the declaration through its selected binding. This does not compare names,
     /// select overloads, or change ordinary inferred leaves; it restores only admitted native unions at matching typed
     /// positions after frontend alias expansion erased their representation.
-    pub fn retain_native_union_representation(mut inferred: IrType, declared: &IrType) -> IrType {
+    pub fn retain_native_union_representation(inferred: IrType, declared: &IrType) -> IrType {
+        Self::retain_declared_union_carriers(inferred, declared, &|declared: &IrType| {
+            matches!(declared, IrType::ExternalUnion { native: Some(_), .. })
+        })
+    }
+
+    /// Retain every provider-owned union carrier a dependency's declaration names onto the checked type of a value.
+    ///
+    /// The checker types a value read through a dependency-owned declaration (a `pub model` field, for instance) with
+    /// the provider's union alias expanded to its members, which spells the union as a structural, consumer-local
+    /// wrapper. The declaration lowered in the provider's context names the owning crate for every union position,
+    /// whether or not the provider published a native representation for it, so both `ExternalUnion` forms are
+    /// admitted here. Every other position keeps the checked inference, which already carries call-site and generic
+    /// substitutions the declaration cannot.
+    pub fn retain_provider_owned_union_representation(inferred: IrType, declared: &IrType) -> IrType {
+        Self::retain_declared_union_carriers(inferred, declared, &|declared: &IrType| {
+            matches!(declared, IrType::ExternalUnion { .. })
+        })
+    }
+
+    /// Walk an inferred and a declared type in parallel, replacing each union position whose declared carrier `admits`.
+    ///
+    /// Only positions where the inferred type is a union and the declared type passes `admits` change; a structural
+    /// mismatch between the two shapes stops the walk at that position and leaves the inferred type as it was.
+    fn retain_declared_union_carriers(
+        mut inferred: IrType,
+        declared: &IrType,
+        admits: &dyn Fn(&IrType) -> bool,
+    ) -> IrType {
         match (&mut inferred, declared) {
-            (target, IrType::ExternalUnion { native: Some(_), .. }) if target.is_union() => {
+            (target, carrier) if target.is_union() && admits(carrier) => {
                 *target = declared.clone();
             }
             (IrType::List(left), IrType::List(right))
@@ -641,23 +674,23 @@ impl AstLowering {
             | (IrType::Ref(left), IrType::Ref(right))
             | (IrType::RefMut(left), IrType::RefMut(right))
             | (IrType::TypeToken(left), IrType::TypeToken(right)) => {
-                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
+                **left = Self::retain_declared_union_carriers(std::mem::take(left.as_mut()), right, admits);
             }
             (IrType::Dict(left, value), IrType::Dict(right, other))
             | (IrType::Result(left, value), IrType::Result(right, other)) => {
-                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
-                **value = Self::retain_native_union_representation(std::mem::take(value.as_mut()), other);
+                **left = Self::retain_declared_union_carriers(std::mem::take(left.as_mut()), right, admits);
+                **value = Self::retain_declared_union_carriers(std::mem::take(value.as_mut()), other, admits);
             }
             (IrType::Tuple(left), IrType::Tuple(right)) if left.len() == right.len() => {
                 for (left, right) in left.iter_mut().zip(right) {
-                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                    *left = Self::retain_declared_union_carriers(std::mem::take(left), right, admits);
                 }
             }
             (IrType::NamedGeneric(left_name, left), IrType::NamedGeneric(right_name, right))
                 if left_name == right_name && left.len() == right.len() =>
             {
                 for (left, right) in left.iter_mut().zip(right) {
-                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                    *left = Self::retain_declared_union_carriers(std::mem::take(left), right, admits);
                 }
             }
             (
@@ -668,9 +701,9 @@ impl AstLowering {
                 },
             ) if params.len() == declared_params.len() => {
                 for (param, declared) in params.iter_mut().zip(declared_params) {
-                    *param = Self::retain_native_union_representation(std::mem::take(param), declared);
+                    *param = Self::retain_declared_union_carriers(std::mem::take(param), declared, admits);
                 }
-                **ret = Self::retain_native_union_representation(std::mem::take(ret.as_mut()), declared_ret);
+                **ret = Self::retain_declared_union_carriers(std::mem::take(ret.as_mut()), declared_ret, admits);
             }
             _ => {}
         }
@@ -679,9 +712,14 @@ impl AstLowering {
 
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
     /// placeholders that the typechecker may have normalized to nominal names.
+    ///
+    /// A value lowering bound to the owner of the impl it lowers (`self`, a `Self` parameter) keeps that owner where
+    /// the typechecker says `Self`: inside the impl the two name the same type, and only the owner lets a method call
+    /// on the value and an argument passed from it resolve as they do for the owner's other values (#1561).
     pub fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
         match (existing, inferred) {
             (existing, IrType::Unknown) => existing.clone(),
+            (IrType::Struct(_) | IrType::NamedGeneric(_, _), IrType::SelfType) => existing.clone(),
             (IrType::Generic(existing_name), IrType::Struct(inferred_name)) if existing_name == &inferred_name => {
                 existing.clone()
             }
@@ -784,15 +822,7 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return match n {
-                        "int" => IrType::Int,
-                        "float" => IrType::Float,
-                        "bool" => IrType::Bool,
-                        _ => match id {
-                            NumericTypeId::Bool => IrType::Bool,
-                            _ => IrType::Numeric(id),
-                        },
-                    };
+                    return IrType::from_numeric_id(id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -851,7 +881,7 @@ impl AstLowering {
                         };
                         IrType::NamedGeneric(collections::as_str(id).to_string(), params_lowered)
                     }
-                    _ if base == IR_UNION_TYPE_NAME => union_ir_type(params_lowered),
+                    _ if base == IR_UNION_TYPE_NAME => self.lower_union_members(params_lowered),
                     _ => IrType::NamedGeneric(base.clone(), params.iter().map(|p| self.lower_type(&p.node)).collect()),
                 }
             }
@@ -889,6 +919,27 @@ impl AstLowering {
         {
             return IrType::Struct(format!("{library}::{public_name}"));
         }
+        // A union member the checker spelled by its declaring module, and an import alias this module writes as a
+        // union member, name their declaration (#1796).
+        if let ResolvedType::Named(name) = ty
+            && let Some(spelled) = self
+                .lower_module_qualified_nominal(name)
+                .or_else(|| self.union_member_import_alias(name).map(str::to_string))
+        {
+            return IrType::Struct(spelled);
+        }
+        if let ResolvedType::Generic(name, args) = ty
+            && let Some(spelled) = self
+                .lower_module_qualified_nominal(name)
+                .or_else(|| self.union_member_import_alias(name).map(str::to_string))
+        {
+            return IrType::NamedGeneric(
+                spelled,
+                args.iter()
+                    .map(|arg| self.lower_resolved_type_with_rust_path_mode(arg, rust_path_mode))
+                    .collect(),
+            );
+        }
         if let ResolvedType::Generic(name, args) = ty
             && let Some((library, public_name)) = split_canonical_public_library_type_name(name)
         {
@@ -905,7 +956,7 @@ impl AstLowering {
             ResolvedType::Never => IrType::Unknown,
             ResolvedType::Int => IrType::Int,
             ResolvedType::Float => IrType::Float,
-            ResolvedType::Numeric(id) => IrType::Numeric(*id),
+            ResolvedType::Numeric(id) => IrType::from_numeric_id(*id),
             ResolvedType::Bool => IrType::Bool,
             ResolvedType::Str => IrType::String,
             ResolvedType::Bytes => IrType::Bytes,
@@ -953,7 +1004,9 @@ impl AstLowering {
                 .active_trait_type_substitution(name)
                 .unwrap_or_else(|| IrType::Generic(name.clone())),
             ResolvedType::Named(name) if self.is_active_callable_type_param(name) => IrType::Generic(name.clone()),
-            ResolvedType::Named(name) => IrType::Struct(name.clone()),
+            ResolvedType::Named(name) => self
+                .std_web_html_type(name)
+                .unwrap_or_else(|| IrType::Struct(name.clone())),
             ResolvedType::Ref(inner) => IrType::Ref(Box::new(
                 self.lower_resolved_type_with_rust_path_mode(inner, rust_path_mode),
             )),
@@ -1043,7 +1096,7 @@ impl AstLowering {
                         .map(|ty| self.lower_resolved_type_with_rust_path_mode(ty, rust_path_mode))
                         .collect::<Vec<_>>();
                     if name == IR_UNION_TYPE_NAME {
-                        return union_ir_type(lowered_args);
+                        return self.lower_union_members(lowered_args);
                     }
                     if lowered_args.is_empty() {
                         IrType::Struct(name.clone())
@@ -1055,7 +1108,15 @@ impl AstLowering {
             ResolvedType::Function(params, ret) => IrType::Function {
                 params: params
                     .iter()
-                    .map(|param| self.lower_resolved_type_with_rust_path_mode(&param.ty, rust_path_mode))
+                    .map(|param| {
+                        let param_ty = self.lower_resolved_type_with_rust_path_mode(&param.ty, rust_path_mode);
+                        // A `mut`-marked callable parameter is passed so the caller sees the callee's changes (#1790).
+                        if param.is_mut {
+                            IrType::RefMut(Box::new(param_ty))
+                        } else {
+                            param_ty
+                        }
+                    })
                     .collect(),
                 ret: Box::new(self.lower_resolved_type_with_rust_path_mode(ret, rust_path_mode)),
             },
@@ -1168,6 +1229,10 @@ impl AstLowering {
     }
 
     /// Lower an AST type while preserving names that are in-scope type parameters.
+    ///
+    /// While an imported trait default is being expanded into an adopter, a nominal name the trait's defining module
+    /// declares lowers to that module's path, bare or generic, so the expansion never depends on what the adopter
+    /// happens to import.
     pub fn lower_type_with_type_params(
         &self,
         ty: &ast::Type,
@@ -1175,7 +1240,7 @@ impl AstLowering {
     ) -> IrType {
         match ty {
             ast::Type::Qualified(segments) => IrType::Struct(segments.join("::")),
-            ast::Type::Dotted(segments) => IrType::Struct(segments.join(".")),
+            ast::Type::Dotted(segments) => self.lower_qualified_type_reference(segments, Vec::new()),
             ast::Type::Simple(name) => {
                 let n = name.as_str();
 
@@ -1191,20 +1256,20 @@ impl AstLowering {
                     return imported_alias;
                 }
 
+                if let Some(target) = self.lower_shared_imported_type_alias(n) {
+                    return target;
+                }
+
+                if let Some(declaration) = self.union_member_import_alias(n) {
+                    return IrType::Struct(declaration.to_string());
+                }
+
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
                     return IrType::Unit;
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return match n {
-                        "int" => IrType::Int,
-                        "float" => IrType::Float,
-                        "bool" => IrType::Bool,
-                        _ => match id {
-                            NumericTypeId::Bool => IrType::Bool,
-                            _ => IrType::Numeric(id),
-                        },
-                    };
+                    return IrType::from_numeric_id(id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -1218,6 +1283,11 @@ impl AstLowering {
 
                 if let Some(enum_ty) = self.enum_names.get(name) {
                     enum_ty.clone()
+                } else if let Some(path) = self.active_trait_default_type_path(n) {
+                    // An expanded imported trait default names its own module's types, not the adopter's (#1759).
+                    IrType::Struct(path.join("::"))
+                } else if let Some(html) = self.std_web_html_type(n) {
+                    html
                 } else {
                     IrType::Struct(name.clone())
                 }
@@ -1267,21 +1337,26 @@ impl AstLowering {
                         collections::as_str(CollectionTypeId::Generator).to_string(),
                         lowered_params,
                     ),
-                    GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => union_ir_type(lowered_params),
+                    GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => self.lower_union_members(lowered_params),
                     GenericBaseKind::Other => IrType::NamedGeneric(
-                        self.active_trait_default_type_path(base)
-                            .map_or_else(|| base.clone(), |path| path.join("::")),
+                        self.active_trait_default_type_path(base).map_or_else(
+                            || {
+                                self.union_member_import_alias(base)
+                                    .map_or_else(|| base.clone(), str::to_string)
+                            },
+                            |path| path.join("::"),
+                        ),
                         lowered_params,
                     ),
                 }
             }
-            ast::Type::DottedGeneric(segments, params) => IrType::NamedGeneric(
-                segments.join("."),
-                params
+            ast::Type::DottedGeneric(segments, params) => {
+                let args = params
                     .iter()
                     .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                    .collect(),
-            ),
+                    .collect();
+                self.lower_qualified_type_reference(segments, args)
+            }
             ast::Type::Function(params, ret) => IrType::Function {
                 params: params
                     .iter()
@@ -1295,6 +1370,10 @@ impl AstLowering {
             ast::Type::RefMut(inner) => IrType::RefMut(Box::new(
                 self.lower_type_with_type_params(&inner.node, type_param_names),
             )),
+            // A `mut`-marked callable parameter is passed so the caller sees the callee's changes (#1790).
+            ast::Type::MutParam(inner) => IrType::RefMut(Box::new(
+                self.lower_type_with_type_params(&inner.node, type_param_names),
+            )),
             ast::Type::Unit => IrType::Unit,
             ast::Type::Tuple(items) => IrType::Tuple(
                 items
@@ -1306,6 +1385,67 @@ impl AstLowering {
             ast::Type::IntLiteral(_) => IrType::Unknown,
             ast::Type::Infer => IrType::Unknown,
         }
+    }
+
+    /// Lower a module-qualified type spelling (`mod.Type`, `mod.Box[T]`) to the nominal type at the module it names.
+    ///
+    /// The checker proved which declaration the spelling selects and recorded that proof under the spelling
+    /// ([`incan_frontend::typechecker::TypeCheckInfo::qualified_type_reference`]); this reads the proof and never
+    /// rebuilds a placement from the written segments. A public-library type already resolves to its
+    /// provider-qualified spelling, so it lowers like any other checked type. A source or stdlib module type has no
+    /// import binding of its own name in this module, so it is placed at the module the spelling walked --
+    /// `crate::<module>::<Type>` -- the path a call through the same module binding is emitted against, with the
+    /// stdlib's public root mapped to the generated `__incan_std` module exactly as `std.*` imports are. A spelling
+    /// without a proof was refused by the checker; lowering an unchecked program yields `Unknown` rather than a
+    /// dotted name the Rust emitter cannot spell (#1437).
+    fn lower_qualified_type_reference(&self, segments: &[String], args: Vec<IrType>) -> IrType {
+        let Some((member, reference)) = segments.last().and_then(|member| {
+            let reference = self.type_info.as_ref()?.qualified_type_reference(&segments.join("."))?;
+            Some((member, reference))
+        }) else {
+            return IrType::Unknown;
+        };
+        let has_args = !args.is_empty();
+        let apply_args = |nominal: IrType, args: Vec<IrType>| match (nominal, args.is_empty()) {
+            (nominal, true) => nominal,
+            (IrType::Struct(name), false) => IrType::NamedGeneric(name, args),
+            (other, false) => other,
+        };
+        if reference.module_path.first().map(String::as_str) == Some("pub") {
+            return apply_args(self.lower_resolved_type(&reference.resolved), args);
+        }
+        // A module-qualified source type alias (`first.Answer`) whose target holds a union lowers to that target: the
+        // emitter resolves an alias only by its bare name, so a value returned or passed into the alias was never
+        // wrapped into the union (#1796). A generic alias keeps its name; the checker resolved no target for it.
+        if !has_args
+            && matches!(reference.identity.kind, SemanticSourceTargetKind::TypeAlias)
+            && !matches!(reference.resolved, ResolvedType::Named(_))
+        {
+            let target = self.lower_resolved_type(&reference.resolved);
+            if super::union_identity::ir_type_contains_union(&target) {
+                return target;
+            }
+        }
+        let mut path = vec!["crate".to_string()];
+        path.extend(reference.module_path.iter().enumerate().map(|(index, segment)| {
+            if index == 0 && segment == stdlib::STDLIB_ROOT {
+                stdlib::INCAN_STD_NAMESPACE.to_string()
+            } else {
+                segment.clone()
+            }
+        }));
+        // The member is spelled the way the module exports it, which is the name the generated module binds; a
+        // facade may export a declaration under another name, so the declaration's own name is not the one to use.
+        path.push(member.clone());
+        let nominal = path.join("::");
+        if args.is_empty()
+            && surface_types::from_str(member) == Some(SurfaceTypeId::Html)
+            && surface_types::stdlib_module_path(SurfaceTypeId::Html)
+                .is_some_and(|owner| owner == reference.module_path.join("."))
+        {
+            return IrType::NamedGeneric(nominal, vec![IrType::String]);
+        }
+        apply_args(IrType::Struct(nominal), args)
     }
 
     /// Lower an AST type to an IR type.
@@ -1364,15 +1504,18 @@ impl AstLowering {
         Ok(binop)
     }
 
-    /// Determine the result type of a binary operation using Python-like numeric semantics.
+    /// Determine the result type of a binary operation using the language's numeric result table.
+    ///
+    /// Integer arithmetic keeps its operands' one integer type (RFC 009), `f32` arithmetic keeps `f32`, and every
+    /// other numeric operation yields `float`, `/` always among them.
     ///
     /// ## Parameters
     ///
     /// - `left`: The type of the left operand
     /// - `right`: The type of the right operand
     /// - `op`: The binary operator
-    /// - `pow_exp_kind`: For `Pow` operations, describes whether the exponent is a non-negative int literal (yields
-    ///   `Int`) or something else (yields `Float`)
+    /// - `pow_exp_kind`: For `Pow` operations, describes whether the exponent is a non-negative int literal (keeps the
+    ///   integer base's type) or something else (yields `Float`)
     ///
     /// ## Returns
     ///
@@ -1397,15 +1540,19 @@ impl AstLowering {
             | ast::BinaryOp::NotIn
             | ast::BinaryOp::Is
             | ast::BinaryOp::IsNot => IrType::Bool,
-            ast::BinaryOp::BitAnd
-            | ast::BinaryOp::BitOr
-            | ast::BinaryOp::BitXor
-            | ast::BinaryOp::Shl
-            | ast::BinaryOp::Shr => {
-                if matches!((left, right), (IrType::Int, IrType::Int)) {
-                    IrType::Int
-                } else {
-                    IrType::Unknown
+            // RFC 009: bit arithmetic keeps its operands' one integer type, and a shift its left operand's type.
+            ast::BinaryOp::BitAnd | ast::BinaryOp::BitOr | ast::BinaryOp::BitXor => {
+                match (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) {
+                    (Some(NumericTy::Int), Some(NumericTy::Int)) => {
+                        exact_integer_arithmetic_type(left, right).unwrap_or(IrType::Int)
+                    }
+                    _ => IrType::Unknown,
+                }
+            }
+            ast::BinaryOp::Shl | ast::BinaryOp::Shr => {
+                match (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) {
+                    (Some(NumericTy::Int), Some(NumericTy::Int)) => left.clone(),
+                    _ => IrType::Unknown,
                 }
             }
             ast::BinaryOp::MatMul | ast::BinaryOp::PipeForward | ast::BinaryOp::PipeBackward => IrType::Unknown,
@@ -1419,38 +1566,19 @@ impl AstLowering {
                 if let Some(exact_float) = same_exact_binary_float_type(left, right) {
                     return exact_float;
                 }
-                if matches!(op, ast::BinaryOp::FloorDiv | ast::BinaryOp::Mod) {
-                    if let IrType::Numeric(id) = left
-                        && numerics::info_for(*id).family == NumericFamily::UnsignedInteger
-                        && (matches!(right, IrType::Int) || left == right)
-                    {
-                        return left.clone();
+                let (Some(lhs), Some(rhs)) = (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) else {
+                    return left.clone();
+                };
+                let Some(num_op) = numeric_op_from_ast(op) else {
+                    return IrType::Unknown;
+                };
+                match result_numeric_type(num_op, lhs, rhs, pow_exp_kind) {
+                    // RFC 009: same-type integer arithmetic yields that type, and `**` keeps its base's type.
+                    NumericTy::Int if matches!(op, ast::BinaryOp::Pow) => {
+                        exact_integer_arithmetic_type(left, &IrType::Int).unwrap_or(IrType::Int)
                     }
-                    if let IrType::Numeric(id) = right
-                        && numerics::info_for(*id).family == NumericFamily::UnsignedInteger
-                        && matches!(left, IrType::Int)
-                    {
-                        return right.clone();
-                    }
-                }
-
-                // Convert to NumericTy
-                let lhs_num = ir_type_to_numeric_ty(left);
-                let rhs_num = ir_type_to_numeric_ty(right);
-
-                match (lhs_num, rhs_num) {
-                    (Some(lhs), Some(rhs)) => {
-                        if let Some(num_op) = numeric_op_from_ast(op) {
-                            let result = result_numeric_type(num_op, lhs, rhs, pow_exp_kind);
-                            match result {
-                                NumericTy::Int => IrType::Int,
-                                NumericTy::Float => IrType::Float,
-                            }
-                        } else {
-                            IrType::Unknown
-                        }
-                    }
-                    _ => left.clone(),
+                    NumericTy::Int => exact_integer_arithmetic_type(left, right).unwrap_or(IrType::Int),
+                    NumericTy::Float => IrType::Float,
                 }
             }
         }
@@ -1484,6 +1612,7 @@ mod tests {
     use incan_frontend::ast;
     use incan_frontend::symbols::ResolvedType;
     use incan_frontend::typechecker::canonical_public_library_type_name;
+    use incan_lang::PowExponentKind;
     use incan_lang::lang::types::numerics::NumericTypeId;
 
     /// Ordinary manifest signatures, including nested callable leaves, consume checked native bridge routes.
@@ -1548,24 +1677,96 @@ mod tests {
     #[test]
     fn exact_binary_float_arithmetic_keeps_its_native_ir_width() {
         let lowering = AstLowering::new();
-        for kind in [NumericTypeId::F32, NumericTypeId::F64] {
+        let exact = IrType::Numeric(NumericTypeId::F32);
+        for op in [
+            ast::BinaryOp::Add,
+            ast::BinaryOp::Sub,
+            ast::BinaryOp::Mul,
+            ast::BinaryOp::Div,
+            ast::BinaryOp::FloorDiv,
+            ast::BinaryOp::Mod,
+            ast::BinaryOp::Pow,
+        ] {
+            assert_eq!(
+                lowering.binary_result_type(&exact, &exact, &op, None),
+                exact,
+                "f32 arithmetic lost its exact width for {op:?}"
+            );
+        }
+    }
+
+    /// RFC 009: same-type integer arithmetic keeps its type, beside an `int` literal operand too, and `**` with a
+    /// non-negative literal exponent keeps its base's type; `/` still divides into `float`.
+    #[test]
+    fn exact_integer_arithmetic_keeps_its_operand_type() {
+        let lowering = AstLowering::new();
+        for kind in [
+            NumericTypeId::I8,
+            NumericTypeId::U16,
+            NumericTypeId::I128,
+            NumericTypeId::USize,
+        ] {
             let exact = IrType::Numeric(kind);
             for op in [
                 ast::BinaryOp::Add,
                 ast::BinaryOp::Sub,
                 ast::BinaryOp::Mul,
-                ast::BinaryOp::Div,
                 ast::BinaryOp::FloorDiv,
                 ast::BinaryOp::Mod,
-                ast::BinaryOp::Pow,
             ] {
                 assert_eq!(
                     lowering.binary_result_type(&exact, &exact, &op, None),
                     exact,
-                    "{kind:?} arithmetic lost its exact width for {op:?}"
+                    "{kind:?} {op:?}"
+                );
+                assert_eq!(
+                    lowering.binary_result_type(&exact, &IrType::Int, &op, None),
+                    exact,
+                    "{kind:?} {op:?}"
+                );
+                assert_eq!(
+                    lowering.binary_result_type(&IrType::Int, &exact, &op, None),
+                    exact,
+                    "{kind:?} {op:?}"
                 );
             }
+            assert_eq!(
+                lowering.binary_result_type(
+                    &exact,
+                    &IrType::Int,
+                    &ast::BinaryOp::Pow,
+                    Some(PowExponentKind::NonNegativeIntLiteral)
+                ),
+                exact,
+                "{kind:?} **"
+            );
+            assert_eq!(
+                lowering.binary_result_type(&exact, &exact, &ast::BinaryOp::Div, None),
+                IrType::Float,
+                "{kind:?} /"
+            );
         }
+        assert_eq!(
+            lowering.binary_result_type(&IrType::Int, &IrType::Int, &ast::BinaryOp::Add, None),
+            IrType::Int
+        );
+    }
+
+    /// RFC 009: `float` is an alias of `f64`, so every `f64` spelling lowers to the one `float` type.
+    #[test]
+    fn every_f64_spelling_lowers_to_float() {
+        let lowering = AstLowering::new();
+        for spelling in ["f64", "float", "double", "fp64"] {
+            assert_eq!(
+                lowering.lower_const_annotation_type(&ast::Type::Simple(spelling.to_string())),
+                IrType::Float,
+                "{spelling}"
+            );
+        }
+        assert_eq!(
+            lowering.lower_resolved_type(&ResolvedType::Numeric(NumericTypeId::F64)),
+            IrType::Float
+        );
     }
 
     /// Imported trait defaults are expanded in the adopter's module, but their annotations still name types from the

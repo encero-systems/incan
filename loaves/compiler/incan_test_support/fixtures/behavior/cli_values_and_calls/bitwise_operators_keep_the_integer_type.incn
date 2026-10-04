@@ -1,0 +1,29 @@
+# behavior: bit arithmetic over two values of one integer type keeps that type, a shift keeps its left operand's type whatever integer type it counts with, `~` keeps its operand's type, and every compound bit assignment on a u8 binding keeps a u8
+# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::bitwise_operators_keep_the_integer_type_build
+# expect-stdout:
+#   8 14 6 245
+#   40 2 4096
+#   3
+
+def main() -> None:
+    a: u8 = 12
+    b: u8 = 10
+    both: u8 = a & b
+    either: u8 = a | b
+    differ: u8 = a ^ b
+    flipped: u8 = ~b
+    println(f"{both} {either} {differ} {flipped}")
+    small: i16 = 10
+    count: int = 2
+    wide: int = small << 2
+    narrow: i16 = small >> count
+    byte: u8 = 12
+    shifted: int = 1 << byte
+    println(f"{wide} {narrow} {shifted}")
+    mut flags: u8 = 0
+    flags |= 3
+    flags &= b
+    flags ^= 1
+    flags <<= 2
+    flags >>= count
+    println(flags)

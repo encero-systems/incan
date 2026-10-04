@@ -1,0 +1,30 @@
+# behavior: named constructor arguments are evaluated in the order written, then fill the declared fields (#1462)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1462_named_constructor_evaluation_order_codegen
+# expect-stdout:
+#   inspect intent
+#   inspect evidence
+#   manifest
+#   manifest
+
+"""Issue #1462: named constructor arguments evaluate in written order, then fill declared fields."""
+
+
+model Evidence:
+    source: str
+
+
+model Document:
+    evidence: Evidence
+    intent: str
+
+
+def inspect(label: str, source: str) -> str:
+    println(f"inspect {label}")
+    return source
+
+
+def main() -> None:
+    source = "manifest"
+    result = Document(intent=inspect("intent", source), evidence=Evidence(source=inspect("evidence", source)))
+    println(result.intent)
+    println(result.evidence.source)

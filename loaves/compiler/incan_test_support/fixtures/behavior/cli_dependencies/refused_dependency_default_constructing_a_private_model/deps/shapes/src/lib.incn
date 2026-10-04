@@ -1,0 +1,6 @@
+model _Limits:
+    pub size: int = 16
+
+
+pub def limit(limits: _Limits = _Limits()) -> int:
+    return limits.size

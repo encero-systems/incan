@@ -1,0 +1,24 @@
+# behavior: a public model's static factory, instance method and public property are callable from the same module with their declared results
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::public_inherent_methods_keep_source_spelled_rust_forwarders
+# expect-stdout:
+#   42
+#   41
+
+pub model Counter:
+    value: int
+
+    @staticmethod
+    def make(value: int) -> Counter:
+        return Counter(value=value)
+
+    def next(self) -> int:
+        return self.value + 1
+
+    pub property current -> int:
+        return self.value
+
+
+def main() -> None:
+    counter = Counter.make(41)
+    println(counter.next())
+    println(counter.current)

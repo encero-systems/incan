@@ -29,6 +29,18 @@ pub fn unknown_stdlib_module(module: &str, span: Span) -> CompileError {
         .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// `import python "package"` names no module the compiler can provide (#1561).
+///
+/// The grammar reserves the form, but no Python interop exists behind it: the import would bind a name that nothing
+/// resolves and the build would fail on it, so the check refuses it.
+pub fn python_import_unsupported(package: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("`import python \"{package}\"` is not supported: Incan has no Python interop"),
+        span,
+    )
+    .with_hint("Import an Incan module (`import pkg`, `from pub::pkg import item`) or a Rust crate (`from rust::crate import item`)")
+}
+
 /// A known SDK provider owns this module, but the project did not enable its component.
 pub fn sdk_component_disabled(module: &str, component: &str, span: Span) -> CompileError {
     CompileError::new(
@@ -64,6 +76,75 @@ pub fn stdlib_import_not_exported(name: &str, module: &str, span: Span) -> Compi
     )
     .with_hint("Use a supported stdlib import name from this module")
     .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
+}
+
+/// An item of `from std import …` names something other than a standard-library submodule.
+///
+/// The standard-library root binds its submodules (`from std import toml`) and nothing else. The traits the root's own
+/// source imports (`Debug`, `Eq`, `Clone`, `From`, `Add`, `Error`, `Index`, `Callable1`, …) are not members of the
+/// root: each is declared in a `std.*` module, which `declaring_module` names when the compiler knows it. Without one,
+/// the hint lists the modules the root does bind.
+pub fn std_root_member_not_exported(name: &str, declaring_module: Option<&str>, span: Span) -> CompileError {
+    let error = CompileError::new(
+        format!("Cannot import `{name}` from `std`: the standard-library root exports only its submodules"),
+        span,
+    );
+    match declaring_module {
+        Some(module) => error.with_hint(format!(
+            "`{name}` is declared in `{module}`: `from {module} import {name}`"
+        )),
+        None => error.with_hint(format!(
+            "Known stdlib modules: {}",
+            stdlib::known_stdlib_modules_for_hint().join(", ")
+        )),
+    }
+}
+
+/// A module-qualified type annotation (`mod.Type`) named a member the module does not declare as a type.
+///
+/// The root resolved to a module binding, so the spelling was a real module walk; it is the tail that fails. Naming
+/// the module keeps the message about the declaration the author was after rather than about the syntax. `module`
+/// is the import spelling of the module the root is bound to (`beta`, `std.toml`, `pub::widgets.catalog`), not the
+/// local alias, so the hint's `from ... import` line is one the author can paste.
+pub fn qualified_type_not_declared(spelling: &str, module: &str, member: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`{spelling}` is not a type: module `{module}` declares no type or trait named `{member}`"),
+        span,
+    )
+    .with_hint(format!(
+        "Check the module's public declarations, or import the type directly with `from {module} import {member}`"
+    ))
+}
+
+/// A module-qualified type annotation (`web.Html`) named a built-in type its module provides.
+///
+/// The module does provide the member -- `from std.web import Html` binds it -- but as a compiler-owned type backed by
+/// a Rust re-export rather than as a declaration, and a module-qualified annotation resolves only a type or trait the
+/// module declares. `module` is the import spelling of the module, so the hint's `from ... import` line is one the
+/// author can paste.
+pub fn qualified_type_names_surface_type(spelling: &str, module: &str, member: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "`{spelling}` cannot be written through its module: `{module}` provides `{member}` as a built-in type, \
+             which a module-qualified annotation cannot name"
+        ),
+        span,
+    )
+    .with_hint(format!("Import the type directly with `from {module} import {member}`"))
+    .with_note("A module-qualified annotation resolves only a type or trait the module declares")
+}
+
+/// A module-qualified type annotation (`name.Type`) has a root that is bound to something other than a module.
+///
+/// Only a module binding can qualify a type name. A value, type, or trait in root position is a different construct
+/// that type position has no meaning for, so it is refused here instead of reaching a later stage that would have to
+/// guess -- the previous behavior was an emitter panic on the dotted spelling (#1437).
+pub fn qualified_type_root_not_a_module(spelling: &str, root: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`{spelling}` is not a type: `{root}` is not a module binding"),
+        span,
+    )
+    .with_hint("Qualify a type with an imported module (`import pkg.mod` then `mod.Type`), or import the type directly")
 }
 
 /// A crate-root `import rust::crate_name` binding was used in type position.

@@ -1,0 +1,17 @@
+# behavior: a list parameter that is only read is summed by a loop with a locally mutable accumulator
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_param_mut_unused_codegen
+# expect-stdout:
+#   6
+
+"""Ensure parameters are not marked mut when never mutated."""
+
+
+def energy(bodies: list[int]) -> int:
+    mut total: int = 0
+    for b in bodies:
+        total += b
+    return total
+
+
+def main() -> None:
+    println(energy([1, 2, 3]))

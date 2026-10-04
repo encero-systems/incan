@@ -1,0 +1,25 @@
+# behavior: loops that pass each channel sender and each lock of a list to a function copy them out and leave both lists readable after the loop
+# retires: loaves/compiler/incan_ir/src/lower/tests/for_item_taking.rs::channel_ends_and_locks_keep_their_list_issue1844
+# expect-stdout:
+#   2
+
+from std.async import channel, Sender, Mutex
+
+
+def forward(tx: Sender[int]) -> None:
+    pass
+
+
+def hold(lock: Mutex[int]) -> None:
+    pass
+
+
+async def main() -> None:
+    tx, rx = channel(4)
+    senders: list[Sender[int]] = [tx]
+    for sender in senders:
+        forward(sender)
+    locks: list[Mutex[int]] = [Mutex.new(1)]
+    for lock in locks:
+        hold(lock)
+    println(len(senders) + len(locks))

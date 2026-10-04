@@ -1,0 +1,18 @@
+# behavior: assert value is Some(inner) binds inner to the payload for the statements after it (RFC 018)
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_rfc018_assert_is_some_binding_to_helper_let
+# expect-stdout:
+#   42
+#   43
+
+import std.testing
+
+
+def unwrap_value(value: Option[int]) -> int:
+    assert value is Some(inner)
+    return inner
+
+
+def main() -> None:
+    println(unwrap_value(Some(42)))
+    assert Some(43) is Some(found)
+    println(found)

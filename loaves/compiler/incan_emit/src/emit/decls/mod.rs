@@ -669,7 +669,10 @@ impl<'a> IrEmitter<'a> {
                         || self.should_emit_import_binding(&binding)
                         || self.should_emit_extension_trait_import(&binding)
                         || (preserve_metadata_missing_trait_candidate
-                            && item.rust_trait_import.is_none()
+                            && item
+                                .rust_trait_import
+                                .as_ref()
+                                .is_none_or(|import| !import.methods_known)
                             && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {

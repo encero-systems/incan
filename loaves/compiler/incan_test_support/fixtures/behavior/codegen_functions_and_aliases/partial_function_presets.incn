@@ -1,0 +1,49 @@
+# behavior: a top-level partial presets one parameter and a local partial's preset can be overridden or left to a trailing default
+# retires: loaves/compiler/incan_emit/src/codegen.rs::partial_function_codegen_emits_wrapper_with_defaulted_preset
+# retires: loaves/compiler/incan_emit/src/codegen.rs::local_partial_codegen_captures_a_defaulted_overrideable_preset
+# retires: loaves/compiler/incan_emit/src/codegen.rs::local_partial_codegen_materializes_a_trailing_residual_default
+# expect-stdout:
+#   GET
+#   GET/health
+#   POST/x
+#   GET/healthtext
+
+pub def route(method: str, path: str) -> str:
+    return method
+
+
+pub get = partial route(method="GET")
+
+
+def join(method: str, path: str) -> str:
+    return method + path
+
+
+def join3(method: str, path: str, content_type: str = "text") -> str:
+    return method + path + content_type
+
+
+pub def use_top_level() -> str:
+    return get(path="/health")
+
+
+pub def use_local() -> str:
+    join_get = partial join(method="GET")
+    return join_get(path="/health")
+
+
+pub def use_override() -> str:
+    join_get = partial join(method="GET")
+    return join_get(method="POST", path="/x")
+
+
+pub def use_residual() -> str:
+    join_get = partial join3(method="GET")
+    return join_get("/health")
+
+
+def main() -> None:
+    println(use_top_level())
+    println(use_local())
+    println(use_override())
+    println(use_residual())

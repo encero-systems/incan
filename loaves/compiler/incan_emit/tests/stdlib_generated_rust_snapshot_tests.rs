@@ -7,6 +7,8 @@
 use incan_emit::IrCodegen;
 use incan_frontend::{lexer, parser};
 use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use incan_test_support as support;
 
@@ -76,10 +78,62 @@ fn assert_import_snapshot(snapshot_name: &str, source: &str) -> TestResult {
     Ok(())
 }
 
+/// Copy one complete stdlib tree without changing the checkout source used by other tests.
+fn copy_stdlib_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let file_name = entry.file_name();
+        if matches!(file_name.to_str(), Some("target" | ".incan" | ".git")) {
+            continue;
+        }
+        let destination_path = destination.join(file_name);
+        if entry.file_type()?.is_dir() {
+            copy_stdlib_tree(&source_path, &destination_path)?;
+        } else {
+            fs::copy(source_path, destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Generate normalized `std.io` Rust in a fresh process whose stdlib source authority is `stdlib_root`.
+fn generate_std_io_from_root(stdlib_root: &Path, output_path: &Path) -> TestResult {
+    const CHILD_MODE: &str = "INCAN_TEST_1592_CHILD";
+    let output = Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "issue_1592_std_io_is_invariant_to_collection_comment",
+            "--nocapture",
+        ])
+        .env(CHILD_MODE, "1")
+        .env("INCAN_STDLIB", stdlib_root)
+        .env("INCAN_STDLIB_DIR", stdlib_root)
+        .env("INCAN_TEST_1592_OUTPUT", output_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(err_box(format!(
+            "#1592 codegen child failed for {}:\n{}\n{}",
+            stdlib_root.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        )));
+    }
+    Ok(())
+}
+
+/// Return the child-process output path used by the #1592 replay, when this invocation is a child.
+fn issue_1592_child_output() -> Option<PathBuf> {
+    std::env::var_os("INCAN_TEST_1592_CHILD")?;
+    std::env::var_os("INCAN_TEST_1592_OUTPUT").map(PathBuf::from)
+}
+
+/// #1767: the std root exports only its submodules, so importing a prelude trait from it is refused before any Rust is
+/// generated, and each refusal names the trait it could not import.
 #[test]
-fn std_root_prelude_import_snapshot() -> TestResult {
-    assert_import_snapshot(
-        "std_root_prelude_import",
+fn std_root_prelude_trait_import_is_refused() -> TestResult {
+    let Err(error) = generate_rust(
         r#"
 from std import Debug, Eq, Clone, From, Add, Error, Index, Callable1
 
@@ -107,7 +161,18 @@ def touch_index(value: Index[int, str]) -> None:
 def touch_callable(value: Callable1[int, str]) -> None:
     return
 "#,
-    )
+        "std_root_prelude_import",
+    ) else {
+        return Err(err_box("importing prelude traits from the std root must be refused"));
+    };
+    let message = error.to_string();
+    for name in ["Debug", "Eq", "Clone", "From", "Add", "Error", "Index", "Callable1"] {
+        assert!(
+            message.contains(&format!("Cannot import `{name}` from `std`")),
+            "the refusal must name `{name}`: {message}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -129,7 +194,7 @@ def touch_lock(lock: Mutex[int]) -> None:
     return
 
 def launch() -> JoinHandle[int]:
-    return spawn(work)
+    return spawn(work())
 
 def touch_arm(arm_value: RaceArm[int]) -> None:
     return
@@ -233,6 +298,7 @@ def touch_span_context(context: SpanContext) -> None:
     )
 }
 
+/// The route payload derives `json`: a `Query[T]` or `Json[T]` payload without it is refused (`INCAN-T0112`, #1768).
 #[test]
 fn std_web_prelude_import_snapshot() -> TestResult {
     assert_import_snapshot(
@@ -240,7 +306,9 @@ fn std_web_prelude_import_snapshot() -> TestResult {
         r#"
 import std.async
 from std.web import App, Json, Html, Response, Query, Path, route, GET
+from std.serde import json
 
+@derive(json)
 model Search:
     q: str
 
@@ -265,9 +333,94 @@ fn std_result_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot("std_result_source", "loaves/stdlib/core/src/result.incn")
 }
 
+/// `std.environ` reads the argument vector through `std::env::args` (#1668); the snapshot pins that host call.
+#[test]
+fn std_environ_source_snapshot() -> TestResult {
+    assert_stdlib_source_snapshot("std_environ_source", "loaves/stdlib/system/src/environ.incn")
+}
+
 #[test]
 fn std_io_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot("std_io_source", "loaves/stdlib/system/src/io.incn")
+}
+
+#[test]
+/// Generated `std.io` must not depend on an imported trait default's absolute source position.
+fn issue_1592_std_io_is_invariant_to_collection_comment() -> TestResult {
+    if let Some(output_path) = issue_1592_child_output() {
+        let stdlib_root = PathBuf::from(std::env::var_os("INCAN_STDLIB").ok_or("#1592 child needs INCAN_STDLIB")?);
+        let source_path = stdlib_root.join("system/src/io.incn");
+        let source = fs::read_to_string(&source_path)?;
+        let context = source_path.display().to_string();
+        let generated = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+            generate_rust(&source, &context).map_err(|error| error.to_string())
+        })
+        .map_err(err_box)?;
+        fs::write(output_path, generated)?;
+        return Ok(());
+    }
+
+    let workspace = tempfile::tempdir()?;
+    let checkout_stdlib = support::repo_root().join("loaves/stdlib");
+    let baseline_root = workspace.path().join("baseline-stdlib");
+    copy_stdlib_tree(&checkout_stdlib, &baseline_root)?;
+    let baseline_output = workspace.path().join("baseline.rs");
+    generate_std_io_from_root(&baseline_root, &baseline_output)?;
+    let baseline = fs::read_to_string(baseline_output)?;
+
+    // Two inert edits, each moving every `FallibleIterator` default method by a few bytes: a comment line ahead of
+    // the trait, and the issue's own reproduction, a trailing comment on the `raise_value_error` import line.
+    let shifts: [(&str, &str, &str); 2] = [
+        (
+            "comment-before-trait",
+            "\npub trait FallibleIterator[T, E]:",
+            "\n# Issue 1592 inert source-location shift.\npub trait FallibleIterator[T, E]:",
+        ),
+        (
+            "comment-on-import-line",
+            "import raise_value_error\n",
+            "import raise_value_error  # x\n",
+        ),
+    ];
+    // Every shift is generated and compared before any verdict, so a failure names each edit that moved the output
+    // rather than only the first one tried.
+    let mut changed = Vec::new();
+    for (label, needle, replacement) in shifts {
+        let shifted_root = workspace.path().join(format!("{label}-stdlib"));
+        copy_stdlib_tree(&checkout_stdlib, &shifted_root)?;
+        let collection_path = shifted_root.join("core/src/derives/collection.incn");
+        let collection = fs::read_to_string(&collection_path)?;
+        let shifted = collection.replacen(needle, replacement, 1);
+        if shifted == collection {
+            return Err(err_box(format!(
+                "#1592 fixture `{label}` could not find its insertion point"
+            )));
+        }
+        fs::write(collection_path, shifted)?;
+
+        let shifted_output = workspace.path().join(format!("{label}.rs"));
+        generate_std_io_from_root(&shifted_root, &shifted_output)?;
+        let shifted = fs::read_to_string(shifted_output)?;
+        if shifted != baseline {
+            let mut differing_lines: Vec<String> = baseline
+                .lines()
+                .zip(shifted.lines())
+                .filter(|(before, after)| before != after)
+                .map(|(before, after)| format!("-{before}\n+{after}"))
+                .collect();
+            let (baseline_lines, shifted_lines) = (baseline.lines().count(), shifted.lines().count());
+            if baseline_lines != shifted_lines {
+                differing_lines.push(format!("line count {baseline_lines} -> {shifted_lines}"));
+            }
+            changed.push(format!("{label}:\n{}", differing_lines.join("\n")));
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "inert collection.incn edits changed generated std.io Rust:\n{}",
+        changed.join("\n")
+    );
+    Ok(())
 }
 
 #[test]

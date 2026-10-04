@@ -68,9 +68,14 @@ pub fn baked_project_owner_identity(project_root: &Path) -> CliResult<String> {
         .as_ref()
         .and_then(|project| project.name.as_deref())
         .unwrap_or("unnamed-incan-project");
-    Ok(digest_bytes(
-        format!("incan_oven_project_output_owner/1\\0{project_name}").as_bytes(),
-    ))
+    Ok(baked_project_owner_identity_for_name(project_name))
+}
+
+/// Derive the portable completed-output owner for a declared project name.
+///
+/// Publishers use the same derivation when checking a retained output without reopening its source checkout.
+pub fn baked_project_owner_identity_for_name(project_name: &str) -> String {
+    digest_bytes(format!("incan_oven_project_output_owner/1\\0{project_name}").as_bytes())
 }
 
 /// Whether this local project has a previously baked completed output whose source authority is no longer exact.
@@ -915,6 +920,7 @@ mod tests {
                     relative_path: file.output_relative_path.clone(),
                 })
                 .collect(),
+            materialized_directories: Vec::new(),
         })?;
         assert!(
             select_baked_project_output(

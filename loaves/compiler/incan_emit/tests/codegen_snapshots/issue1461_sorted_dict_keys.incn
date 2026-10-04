@@ -1,0 +1,16 @@
+def ordered_keys(values: Dict[str, int]) -> list[str]:
+    return sorted(values.keys())
+
+
+def ordered_values(values: Dict[str, int]) -> list[int]:
+    return sorted(values.values())
+
+
+def main() -> None:
+    values: Dict[str, int] = {"b": 2, "a": 1, "c": 3}
+    for key in sorted(values.keys()):
+        println(key)
+    for value in sorted(values.values()):
+        println(value)
+    println(",".join(ordered_keys(values)))
+    println(len(ordered_values(values)))

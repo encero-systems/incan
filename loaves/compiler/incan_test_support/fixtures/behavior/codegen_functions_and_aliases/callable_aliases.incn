@@ -1,0 +1,39 @@
+# behavior: a plain binding and a public alias of a function both call the target, an alias spelled like a Rust keyword is callable, and a function spelled like a Rust keyword is callable directly and through an alias
+# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_callable_alias_lowers_calls_to_target_and_public_reexport
+# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_keyword_named_callable_alias_uses_raw_identifier_reexport
+# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_alias_to_keyword_named_callable_uses_raw_identifier_target_path
+# expect-stdout:
+#   10
+#   5
+#   11
+#   12
+#   13
+
+pub def avg(x: int) -> int:
+    return x
+
+
+mean = avg
+pub average = alias avg
+
+
+pub def modulo_value(value: int) -> int:
+    return value + 1
+
+
+pub impl = alias modulo_value
+
+
+pub def mod(value: int) -> int:
+    return value + 2
+
+
+pub modulo = alias mod
+
+
+def main() -> None:
+    println(mean(10))
+    println(average(5))
+    println(impl(10))
+    println(modulo(10))
+    println(mod(11))

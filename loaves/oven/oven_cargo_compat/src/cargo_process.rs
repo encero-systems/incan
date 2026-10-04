@@ -109,7 +109,7 @@ pub fn cargo_command() -> Command {
 /// dependency graph and fails late with "found crate `x` compiled by an incompatible version of rustc", naming a
 /// dependency rather than the toolchain split that caused it.
 ///
-/// An explicit `RUSTC` still wins, matching how `CARGO` is honoured above.
+/// An explicit `RUSTC` still wins, matching how `CARGO` is honored above.
 fn pin_incan_owned_rustc(command: &mut Command) {
     if let Some(rustc) = rustc_pin_for_incan_owned_cargo(env::var_os("RUSTC"), oven_rustc::rustc::incan_owned_rustc()) {
         command.env("RUSTC", rustc);
@@ -140,6 +140,77 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    const OFFLINE_CARGO_HOME_FIXTURE: &str = "INCAN_OFFLINE_CARGO_HOME_FIXTURE";
+
+    /// Write a version-only dependency whose only source is the supplied Cargo home's directory registry.
+    fn write_offline_cargo_home_fixture(root: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+        let cargo_home = root.join("cargo-home");
+        let vendored_package = cargo_home.join("vendor/publisher-cache-fixture");
+        let project = root.join("publisher-project");
+        fs::create_dir_all(vendored_package.join("src"))?;
+        fs::create_dir_all(project.join("src"))?;
+        fs::write(
+            cargo_home.join("config.toml"),
+            format!(
+                "[source.crates-io]\nreplace-with = \"fixture-cache\"\n\n[source.fixture-cache]\ndirectory = {:?}\n",
+                cargo_home.join("vendor")
+            ),
+        )?;
+        fs::write(
+            vendored_package.join("Cargo.toml"),
+            "[package]\nname = \"publisher-cache-fixture\"\nversion = \"1.0.0\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(
+            vendored_package.join("src/lib.rs"),
+            "pub fn cached() -> bool { true }\n",
+        )?;
+        fs::write(
+            vendored_package.join(".cargo-checksum.json"),
+            "{\"files\":{},\"package\":null}\n",
+        )?;
+        fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname = \"publisher-project\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\npublisher-cache-fixture = \"=1.0.0\"\n",
+        )?;
+        fs::write(
+            project.join("src/main.rs"),
+            "fn main() { assert!(publisher_cache_fixture::cached()); }\n",
+        )?;
+        Ok((cargo_home, project))
+    }
+
+    /// Resolve and build the fixture through Cargo commands cleaned by the publisher environment contract.
+    fn run_offline_publisher_fixture(project: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let cargo = resolved_cargo_executable()?;
+        let mut lock_command = Command::new(&cargo);
+        lock_command
+            .current_dir(project)
+            .args(["generate-lockfile", "--offline"]);
+        oven_rustc::rustc::clear_inherited_cargo_environment_for_cargo(&mut lock_command);
+        let lock_output = lock_command.output()?;
+        if !lock_output.status.success() {
+            return Err(format!(
+                "offline publisher lock resolution did not use the custom Cargo home:\n{}",
+                String::from_utf8_lossy(&lock_output.stderr)
+            )
+            .into());
+        }
+
+        let mut command = Command::new(cargo);
+        command.current_dir(project).args(["build", "--offline", "--locked"]);
+        oven_rustc::rustc::clear_inherited_cargo_environment_for_cargo(&mut command);
+        command.env("CARGO_TARGET_DIR", project.join("target"));
+        let output = command.output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "offline publisher Cargo launch did not use the custom Cargo home:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
 
     #[test]
     fn resolved_cargo_executable_finds_a_bare_name_on_the_supplied_path() -> Result<(), Box<dyn std::error::Error>> {
@@ -172,6 +243,32 @@ mod tests {
             environment.get(std::ffi::OsStr::new("CARGO_BUILD_BUILD_DIR")),
             Some(&target.as_os_str())
         );
+    }
+
+    #[test]
+    fn offline_publisher_cargo_launch_keeps_its_custom_cargo_home() -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(project) = env::var_os(OFFLINE_CARGO_HOME_FIXTURE) {
+            return run_offline_publisher_fixture(Path::new(&project));
+        }
+
+        let fixture = tempfile::tempdir()?;
+        let (cargo_home, project) = write_offline_cargo_home_fixture(fixture.path())?;
+        let output = Command::new(env::current_exe()?)
+            .args([
+                "--exact",
+                "cargo_process::tests::offline_publisher_cargo_launch_keeps_its_custom_cargo_home",
+                "--nocapture",
+            ])
+            .env(OFFLINE_CARGO_HOME_FIXTURE, &project)
+            .env("CARGO_HOME", cargo_home)
+            .env("HOME", fixture.path().join("empty-default-home"))
+            .output()?;
+        assert!(
+            output.status.success(),
+            "isolated offline publisher fixture failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
     }
 
     /// Selecting Incan's Cargo must also select Incan's compiler.

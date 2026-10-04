@@ -148,9 +148,9 @@ Use this only when the feature is genuinely syntactic/control-flow.
 !!! note "Word-operators (special case)"
     If the new “keyword” is meant to behave like an operator (it participates in expression precedence like `and`, `or`, `not`, `in`, `is`), treat it as a **word-operator**:
 
-    - Add it to `loaves/kernel/incan_lang/src/lang/operators.rs` (precedence/fixity source of truth)
+    - Add it to `loaves/kernel/incan_lang/src/lang/operators.rs` (the precedence, associativity and fixity the generated reference documents)
     - Add a corresponding `KeywordId` + `KEYWORDS` entry in `loaves/kernel/incan_lang/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
-    - Update expression parsing in `loaves/kernel/incan_syntax/src/parser/expr.rs` to place it at the right precedence level
+    - Update expression parsing in `loaves/kernel/incan_syntax/src/parser/expr.rs` to place it at the right precedence level. The parser's ladder does not read the registry's numbers, so add a case to `loaves/kernel/incan_syntax/src/parser/tests/operator_precedence.rs`, which fails when the two disagree
 
 **Parser**: `loaves/kernel/incan_syntax/src/parser/*`
 

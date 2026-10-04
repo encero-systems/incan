@@ -1,8 +1,6 @@
 # `std.registry`
 
-`std.registry` defines typed declaration catalogues. A registry associates a typed key and descriptor with a function, concrete method, compilation unit, or package. The compiler validates one source-owned catalogue and exposes it as both process-local runtime state and complete checked metadata.
-
-Use `loaded_entries()` when application code needs entries from modules loaded in the current process. Use `incan inspect registry` when tooling needs the complete checked package projection without executing user code.
+`std.registry` declares typed catalogs. A registry associates a typed key and a descriptor with a function, a method, a compilation unit or a package. Each registry has a loaded view, `loaded_entries()`, and a checked view, `incan inspect registry`.
 
 ## Imports
 
@@ -14,11 +12,11 @@ from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind, 
 
 | Symbol | Kind | Purpose |
 | --- | --- | --- |
-| `SubjectKind` | Enum | Declares which source subject categories a registry accepts. |
-| `RegistrySubject` | Model | Carries the resolved kind and qualified identity of a loaded entry. |
-| `RegistryEntry[K, T]` | Model | Holds one typed key, descriptor, and subject. |
-| `Registry[K, T]` | Class | Defines a typed catalogue and its loaded runtime projection. |
-| `describe[K, T, F]` | Decorator factory | Marks a function or concrete method as an entry without wrapping the callable. |
+| `SubjectKind` | Enum | The subject kinds a registry accepts. |
+| `RegistrySubject` | Model | The kind and qualified name of an entry's subject. |
+| `RegistryEntry[K, T]` | Model | One key, descriptor and subject. |
+| `Registry[K, T]` | Class | A typed catalog and its loaded entries. |
+| `describe[K, T, F]` | Function | The `@describe` decorator, which makes a function or method an entry. |
 
 ## `SubjectKind`
 
@@ -30,7 +28,12 @@ pub enum SubjectKind:
     Package
 ```
 
-The `subjects` passed to `Registry.define` are an allow-list. Describing a subject that the registry did not declare is a type-checking error.
+| Variant | Subject | Entry form |
+| --- | --- | --- |
+| `Function` | A function | `@describe` on the function. |
+| `Method` | A method of a class, model, enum or newtype | `@describe` on the method. |
+| `CompilationUnit` | The module that declares the entry | A `RegistryEntry` static with `RegistrySubject.current_unit()`. |
+| `Package` | The package that declares the entry | A `RegistryEntry` static with `RegistrySubject.package()`. |
 
 ## `RegistrySubject`
 
@@ -44,20 +47,22 @@ pub model RegistrySubject:
 ### `RegistrySubject.current_unit()`
 
 ```incan
-RegistrySubject.current_unit() -> RegistrySubject
+@staticmethod
+def current_unit() -> RegistrySubject
 ```
 
-Returns the explicit placeholder for the compilation unit containing a static `RegistryEntry`. The compiler replaces the placeholder with the checked module identity during lowering.
+As the `subject` argument of `registry.entry(...)` in a `RegistryEntry` static, the entry's subject is the declaring module: `kind` is `SubjectKind.CompilationUnit` and `qualified_name` is the declaring module's name. Elsewhere, returns `RegistrySubject(kind=SubjectKind.CompilationUnit, qualified_name="<current-unit>")`.
 
 ### `RegistrySubject.package()`
 
 ```incan
-RegistrySubject.package() -> RegistrySubject
+@staticmethod
+def package() -> RegistrySubject
 ```
 
-Returns the explicit placeholder for the defining package. The compiler supplies the manifest package identity during lowering and checked metadata generation.
+As the `subject` argument of `registry.entry(...)` in a `RegistryEntry` static, the entry's subject is the declaring package: `kind` is `SubjectKind.Package` and `qualified_name` is the package's name. Elsewhere, returns `RegistrySubject(kind=SubjectKind.Package, qualified_name="<package>")`.
 
-The underscore-prefixed checked constructors are compiler implementation surfaces and are not application APIs.
+A call from source to `RegistrySubject._checked_current_unit(...)` or `RegistrySubject._checked_package(...)` is refused (`INCAN-T0001`).
 
 ## `RegistryEntry[K, T]`
 
@@ -69,19 +74,28 @@ pub model RegistryEntry[K, T]:
     pub subject: RegistrySubject
 ```
 
-An entry is the runtime representation of one checked association. Function and method entries are emitted from `@describe` sites. Compilation-unit and package entries are declared explicitly as statics.
+A `RegistryEntry` is one entry of a registry: from an `@describe` declaration (`Function` and `Method` subjects), or a `RegistryEntry` static initialized by [`registry.entry(...)`](#registryentry) (`CompilationUnit` and `Package` subjects).
 
 ## `Registry[K, T]`
 
-`K` is the domain-owned structural key type and `T` is the descriptor type. The registry binding supplies the catalogue identity.
+```incan
+@derive(Clone)
+pub class Registry[K, T]:
+    pub subjects: list[SubjectKind]
+```
+
+`K` is the key type and `T` is the descriptor type, a model with [`@derive(Descriptor)`](#descriptor-contract). A registry is a module static; the static's module and binding name form its [identity](#checked-identities). `subjects` holds the subject kinds passed to `Registry.define`.
+
+A call from source to `Registry._describe(...)`, `Registry._describe_function(...)` or `Registry._describe_method(...)` is refused (`INCAN-T0001`).
 
 ### `Registry.define`
 
 ```incan
-Registry.define(subjects: list[SubjectKind]) -> Registry[K, T]
+@staticmethod
+def define(subjects: list[SubjectKind]) -> Registry[K, T]
 ```
 
-Defines a declarative registry with the permitted subject kinds:
+A static of type `Registry[K, T]` is initialized by `Registry.define(...)`:
 
 ```incan
 pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
@@ -89,109 +103,124 @@ pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
 )
 ```
 
-The compiler recognizes this form only in a typed registry static. It validates registry identity and subject constraints; it is not a general mutable-container constructor.
+- `subjects`, positional or named, is a list literal of `SubjectKind.<Variant>` values.
+- Refused (`INCAN-T0001`): a `Registry[K, T]` static with another initializer; no `subjects` argument or more than one argument; a `subjects` value that is not a list literal of `SubjectKind` variants; a list spread; a repeated kind; and an empty list.
 
 ### `Registry.loaded_entries`
 
 ```incan
-registry.loaded_entries() -> list[RegistryEntry[K, T]]
+def loaded_entries(self) -> list[RegistryEntry[K, T]]
 ```
 
-Returns entries contributed by modules initialized in the current process. The result is not a complete package inventory.
+Returns the registry's entries from the modules initialized in the current process.
 
 ### `Registry.entry`
 
 ```incan
-registry.entry(
-    key: K,
-    subject: RegistrySubject,
-    descriptor: T,
-) -> RegistryEntry[K, T]
+def entry(mut self, key: K, subject: RegistrySubject, descriptor: T) -> RegistryEntry[K, T]
 ```
 
-Constructs an explicit compilation-unit or package entry. The call must initialize a deterministic static declaration, and the subject kind must be allowed by the registry.
+Declares a `CompilationUnit` or `Package` entry. The call is the initializer of a module static of type `RegistryEntry[K, T]`, and its receiver is a registry static of the same module. The registry static is not required to be `mut`.
 
 ```incan
 pub static package_entry: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
-    key=CapabilityId("catalogue"),
+    key=CapabilityId("catalog"),
     subject=RegistrySubject.package(),
-    descriptor=CapabilitySpec(summary="Package catalogue"),
+    descriptor=CapabilitySpec(summary="Package catalog"),
 )
 ```
+
+- `key`, `subject` and `descriptor` are named arguments. `subject` is `RegistrySubject.current_unit()` or `RegistrySubject.package()`. `key` and `descriptor` are [structural values](#structural-values).
+- Refused (`INCAN-T0001`): a call that is not the initializer of a `RegistryEntry` static; a receiver that is not a registry static of the module; a `RegistryEntry[K, T]` whose `K` or `T` differs from the registry's; a positional, unknown, repeated or missing argument; another `subject` expression; a subject kind the registry's `subjects` does not list; a key or descriptor of the wrong type; a value that is not structural; and a key that the registry already has.
 
 ## `@describe`
 
 ```incan
+def describe[K, T, F](registry: Registry[K, T], key: K, descriptor: T) -> (F) -> F
+```
+
+```text
 @describe(registry, key, descriptor)
 ```
 
-`@describe` is valid on functions and concrete methods. It preserves the declaration's callable type and runtime behavior; the compiler records the registry fact independently of ordinary decorator application.
+`@describe` makes a function or a method an entry of `registry`, with `key` and `descriptor`. The declaration keeps its type and behavior. `@describe` stacks with other decorators, and each `@describe` adds one entry.
 
 ```incan
-@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize a label", stable=True))
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize a label", stable=True, input_type=str))
 pub def normalize(label: str) -> str:
     return label.strip().lower()
 ```
 
-Ordinary decorators may be stacked with `@describe`. Placement does not transfer source ownership, create a wrapper signature, or create an additional entry.
+- The subject of a function is `SubjectKind.Function`; the subject of a method of a class, model, enum or newtype is `SubjectKind.Method`.
+- `registry` is the name of a module static of type `Registry[K, T]` initialized by `Registry.define`, in the same module or imported. `key` and `descriptor` are [structural values](#structural-values).
+- Refused (`INCAN-T0001`): other than three positional arguments; a `registry` that is not such a static; a subject kind the registry's `subjects` does not list; a key or descriptor of the wrong type; a value that is not structural; a key that the registry already has; and `@describe` on a model, class, enum, newtype, trait, trait method or capability declaration.
+- An import of a registry that is not `pub` is refused (`INCAN-I0001`).
 
 ## Descriptor contract
 
-Descriptor models opt into immutable structural snapshots with `@derive(Descriptor)`:
+`@derive(Descriptor)` on a model makes it a descriptor type:
 
 ```incan
 @derive(Descriptor)
 pub model FunctionSpec:
     pub summary: str
     pub stable: bool
-    pub input_type: type
+    pub input_type: Type[str]
 ```
 
-| Accepted structural value | Notes |
+| Field type | Condition |
 | --- | --- |
-| `int`, `float`, `bool`, `str`, `bytes`, `None` | Captured directly. |
-| Concrete Incan type tokens | Open or unresolved types are rejected. |
-| Validated newtypes | Preserve the newtype name and validated underlying value. |
-| Fieldless enums | Preserve the typed variant identity. |
-| Nested `@derive(Descriptor)` models | Every field must also satisfy the contract. |
-| `Option[T]` | The contained value must be structural. |
-| `FrozenList[T]` and `FrozenDict[K, V]` | Captured deterministically as immutable values. |
-| References to structural `const` values | Expanded into their checked value. |
+| `int`, `float`, exact-width numeric types, `bool`, `str`, `bytes`, `FrozenStr`, `FrozenBytes`, `None` | |
+| `Type[T]` | `T` is a concrete type: not a type parameter, a function type or a `rust::` type. |
+| A newtype | Not generic and not `rusttype`; its underlying type is a field type. |
+| An enum | Every variant has no fields. |
+| A model | Has `@derive(Descriptor)` and is not generic. |
+| `Option[T]` | `T` is a field type. |
+| `FrozenList[T]` | `T` is a field type. |
+| `FrozenDict[K, V]` | `K` is `int`, `float`, an exact-width numeric type, `bool`, `str`, `bytes`, `FrozenStr`, `FrozenBytes`, a fieldless enum or a newtype that is a field type; `V` is a field type. |
 
-Mutable containers, functions, Rust handles, open generics, dynamic calls, and recursive descriptor graphs are rejected. Descriptor expressions are checked at the declaration site and are never evaluated by inspection.
+- Refused (`INCAN-T0001`): `@derive(Descriptor)` on a class, enum or newtype; a generic descriptor model; and a field of another type, including `list`, `dict`, `set`, `FrozenSet`, tuples, `Result`, functions, classes, type parameters, Rust types, and a model that contains itself.
 
-Keys follow the same structural principle. A registry rejects duplicate checked keys in its checked declaration scope.
+### Structural values
+
+A key or descriptor expression in `@describe` or `registry.entry(...)` is one of:
+
+- an `int`, `float`, `str`, `bytes`, `bool` or `None` literal;
+- a list or dict literal of structural values, without spreads;
+- `Some(value)`;
+- the name of a `const` whose value is structural, recorded as that value;
+- a qualified name that starts with a `const` or an enum, such as an enum variant, recorded as a `const_ref`;
+- a type name;
+- a newtype call with one positional structural value;
+- a model call with named structural values.
+
+Any other expression is refused (`INCAN-T0001`), as is a `const` that refers to itself. A descriptor value is not evaluated by inspection.
 
 ## Checked identities
 
-A registry definition has a module-local canonical identity:
+A registry's identity is its module and binding:
 
 ```text
 <module>::<binding>
 ```
 
-For example, a public `functions` static in `src/catalog.incn` has identity `catalog::functions`. The checked package identity is carried separately in metadata.
+A public `functions` static in `src/catalog.incn` has identity `catalog::functions`. The package identity is a separate field of the checked metadata.
 
-CLI selection accepts either double-colon or dotted module-local spelling:
+A registry selector is the identity, with `::` or `.` between segments, optionally prefixed by the package name:
+
+```text
+<module>::<binding>
+<module>.<binding>
+<package>::<module>::<binding>
+```
 
 ```console
 incan inspect registry catalog::functions --project . --format json
 incan inspect registry catalog.functions --project . --format json
-```
-
-When two resolved packages publish the same module-local identity, qualify the selector:
-
-```text
-<package>::<module>::<binding>
-```
-
-For example:
-
-```console
 incan inspect registry analytics-kit::catalog::functions --project . --format json
 ```
 
-The package-qualified spelling selects a candidate; it does not rewrite the source-owned `registry.identity` field.
+A package-qualified selector selects a candidate; the selected registry's `identity` field is `<module>::<binding>`.
 
 ## Checked inspection
 
@@ -201,11 +230,13 @@ incan inspect registry IDENTITY [--project PATH] [--format json]
 
 | Argument | Contract |
 | --- | --- |
-| `IDENTITY` | Module-local or package-qualified registry selector. |
+| `IDENTITY` | A registry selector. |
 | `--project PATH` | Project root or source entry. Defaults to the current directory. |
-| `--format json` | Emits the versioned checked JSON projection. JSON is the only v0.5 format. |
+| `--format json` | The checked JSON projection. `json` is the only value and the default. |
 
-Inspection analyzes the source graph through one `CompilationSession`. It does not initialize user modules. Compatible dependency registries are read from their `.incnlib` metadata rather than reconstructed from dependency source.
+- Inspection reads the source package and the `.incnlib` metadata of each resolved dependency, and runs no user code.
+- A selector that matches no registry fails the command, and the failure lists the available selectors and each dependency whose registry metadata is missing, unreadable or of an unsupported schema version.
+- A selector that matches more than one registry fails the command, and the failure lists the matching selectors.
 
 ### JSON shape
 
@@ -213,60 +244,28 @@ The top-level object contains:
 
 | Field | Meaning |
 | --- | --- |
-| `schema_version` | Checked registry wire-schema version. |
-| `provenance` | `"checked"` for this command. |
-| `package` | Optional package `name` and `version`. |
-| `registry` | Selected definition: identity, binding, visibility, key type, descriptor type, accepted subjects, and registry facade paths. |
-| `entries` | Deterministically ordered checked entries belonging to the selected registry. |
+| `schema_version` | The checked registry schema version, `1`. |
+| `provenance` | `"checked"`. |
+| `package` | The package's `name` and optional `version`, or `null`. |
+| `registry` | The selected definition: `identity`, `binding`, `public`, `key_type`, `descriptor_type`, `subjects`, and `reexport_paths` when non-empty. |
+| `entries` | The registry's entries, in a deterministic order. |
 
-Each entry contains `registry_identity`, `registry_public`, `key`, `descriptor`, `subject_kind`, `subject_identity`, `registration_anchor`, `subject_anchor`, `provenance`, and optional `reexport_paths`.
+Each entry contains `registry_identity`, `registry_public`, `key`, `descriptor`, `subject_kind`, `subject_identity`, `registration_anchor`, `subject_anchor` and `provenance`, and `reexport_paths` when non-empty. A subject kind is `function`, `method`, `compilation_unit` or `package`.
 
-Structural values use a tagged `kind` representation. The v0.5 kinds are `int`, `float`, `bool`, `string`, `bytes`, `none`, `type`, `option`, `list`, `dict`, `const_ref`, `newtype`, and `model`.
+A structural value is an object with a `kind` and, except for `none`, a `value`. The kinds are `int`, `float`, `bool`, `string`, `bytes`, `none`, `type`, `option`, `list`, `dict`, `const_ref`, `newtype` and `model`.
 
-Entry provenance is one of `checked_declaration`, `checked_compilation_unit_entry`, or `checked_package_entry`.
+Entry provenance is one of `checked_declaration`, `checked_compilation_unit_entry` or `checked_package_entry`.
 
-## Visibility, packages, and reexports
+## Visibility, packages and reexports
 
-Source-package inspection may select private registries owned by that package. A built library publishes only public registry definitions and public entries. Consumers therefore cannot inspect a producer's private catalogue through its dependency artifact.
-
-Public reexports add paths to `reexport_paths` with facade source anchors. They never change the canonical registry or subject identity and never create duplicate entries.
-
-If a dependency artifact predates the checked registry schema, inspection reports that the dependency does not publish compatible registry metadata. Rebuild the dependency with a compatible SDK.
-
-## Tooling projections
-
-- `incan inspect codegraph --format jsonl` emits checked registry records and facade paths under codegraph schema v2.
-- The LSP uses the checked facts for registry membership hover and navigation.
-- Library builds embed public registry metadata in the generated `.incnlib`.
-- The generated Incan feature inventory is sourced from the checked `std.capabilities` registry.
-
-All of these projections originate from the same compilation analysis. A tooling consumer must not infer registry meaning by scanning `@describe` syntax or loading runtime state.
-
-## Diagnostics
-
-The compiler reports source-anchored errors for:
-
-- a registry argument that does not resolve to `Registry[K, T]`;
-- a key or descriptor whose type does not match `K` or `T`;
-- a descriptor type without the structural descriptor contract;
-- a dynamic or unsupported structural value;
-- a subject kind not declared by the registry;
-- a duplicate key;
-- an inaccessible registry or declaration;
-- an unsupported trait-method or named-module subject;
-- an ambiguous or missing inspection selector;
-- an incompatible dependency metadata schema.
-
-## Current boundaries
-
-The v0.5 surface supports functions, concrete methods, compilation units, and packages. It does not define a general named-module declaration, dynamic runtime-only registration, remote registry service, dependency injection container, event bus, or authority/capability grant.
-
-Use a custom runtime registry when entries genuinely depend on runtime data and accept that it has no complete checked projection.
+- Inspecting a source package includes its private registries.
+- `incan build --lib` publishes the public registry definitions and their public entries in the library's `.incnlib`. A consumer inspects a dependency's public registries only.
+- A public reexport adds a path to `reexport_paths`, with the facade's source anchor. The registry identity, the subject identity and the entries are unchanged.
 
 ## See also
 
-- [Build a typed function catalogue](../../tutorials/typed_registries.md)
+- [Build a typed function catalog](../../tutorials/typed_registries.md)
 - [Work with typed registries](../../how-to/typed_registries.md)
-- [Checked catalogues and loaded registries](../../explanation/checked_and_loaded_registries.md)
-- [RFC 113: `std.registry` and declaration descriptors](../../../RFCs/closed/implemented/113_std_registry_and_declaration_descriptors.md)
+- [Checked catalogs and loaded registries](../../explanation/checked_and_loaded_registries.md)
 - [Codegraph inspection](../../../tooling/reference/codegraph_inspection.md)
+- [`incan inspect registry` in the CLI reference](../../../tooling/reference/cli_reference.md#incan-inspect-registry)

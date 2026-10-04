@@ -1,0 +1,2 @@
+pub def logged[S](name: str) -> ((S, int) -> str) -> (S, int) -> str:
+    return (func) => func

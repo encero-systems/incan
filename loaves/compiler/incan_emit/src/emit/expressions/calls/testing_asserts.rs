@@ -50,7 +50,7 @@ impl<'a> IrEmitter<'a> {
                 if Self::constant_bool(condition) == Some(true) {
                     return Ok(Some(failure));
                 }
-                let condition_tokens = self.emit_expr(condition)?;
+                let condition_tokens = self.emit_condition_position_expr(condition)?;
                 Ok(Some(quote! {
                     if #condition_tokens {
                         #failure
@@ -123,6 +123,18 @@ impl<'a> IrEmitter<'a> {
             return None;
         }
         args.first().map(|arg| &arg.expr)
+    }
+
+    /// Return the declared payload type of a `Result` constructor expression for the side `constructor` builds.
+    ///
+    /// The `Ok` side reads the result's success type and the `Err` side its error type; a result whose type is not a
+    /// recorded `Result` yields `Unknown`, which the payload plan treats as "no target" rather than as a type.
+    fn result_payload_type(expr: &TypedExpr, constructor: ConstructorId) -> &IrType {
+        match (&expr.ty, constructor) {
+            (IrType::Result(ok_ty, _), ConstructorId::Ok) => ok_ty,
+            (IrType::Result(_, err_ty), ConstructorId::Err) => err_ty,
+            _ => &IrType::Unknown,
+        }
     }
 
     /// Emit a generated assertion failure.
@@ -205,6 +217,13 @@ impl<'a> IrEmitter<'a> {
             BinOp::Eq
         };
         let failure_condition = self.emit_binop_expr(&failure_op, left, right)?;
+        let failure_condition = if self.condition_position_exposes_struct_literal(left)
+            || self.condition_position_exposes_struct_literal(right)
+        {
+            quote! { (#failure_condition) }
+        } else {
+            failure_condition
+        };
         let failure = self.emit_assert_comparison_failure(failure_kind, message)?;
         Ok(quote! {
             if #failure_condition {
@@ -255,7 +274,8 @@ impl<'a> IrEmitter<'a> {
     fn emit_assert_result_ok(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let result = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsOk, args, 0)?;
         if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Ok) {
-            let payload_tokens = Self::emit_result_payload_tokens(payload, self.emit_expr(payload)?);
+            let payload_tokens =
+                self.emit_result_payload(payload, Self::result_payload_type(result, ConstructorId::Ok))?;
             return Ok(quote! { #payload_tokens });
         }
         let result_tokens = self.emit_expr(result)?;
@@ -278,7 +298,8 @@ impl<'a> IrEmitter<'a> {
     fn emit_assert_result_err(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let result = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsErr, args, 0)?;
         if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Err) {
-            let payload_tokens = Self::emit_result_payload_tokens(payload, self.emit_expr(payload)?);
+            let payload_tokens =
+                self.emit_result_payload(payload, Self::result_payload_type(result, ConstructorId::Err))?;
             return Ok(quote! { #payload_tokens });
         }
         let result_tokens = self.emit_expr(result)?;

@@ -6,7 +6,7 @@ use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_lang::lang::types::stringlike::{self, StringLikeId};
 
 use super::TypeRef;
-use crate::symbols::{CallableParam, ResolvedType};
+use crate::symbols::{CallableParam, ResolvedType, split_module_qualified_nominal_name};
 
 /// Convert a frontend semantic [`ResolvedType`] into the stable manifest-level [`TypeRef`] surface.
 ///
@@ -41,14 +41,26 @@ pub fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
             args: vec![type_ref_from_resolved(inner)],
         },
         ResolvedType::Unit => named_type_ref(conventions::UNIT_TYPE_NAME),
-        ResolvedType::Named(name) => named_type_ref(name.clone()),
+        // A module-qualified union member publishes under its declaration name, the name the publication binds to its
+        // checked declaration (#1796).
+        ResolvedType::Named(name) => named_type_ref(published_nominal_name(name)),
         ResolvedType::Generic(name, args) => TypeRef::Applied {
             origin: None,
-            name: name.clone(),
+            name: published_nominal_name(name),
             args: args.iter().map(type_ref_from_resolved).collect(),
         },
         ResolvedType::Function(params, return_type) => TypeRef::Function {
-            params: params.iter().map(|param| type_ref_from_resolved(&param.ty)).collect(),
+            params: params
+                .iter()
+                .map(|param| {
+                    let ty = type_ref_from_resolved(&param.ty);
+                    if param.is_mut {
+                        TypeRef::MutParam { inner: Box::new(ty) }
+                    } else {
+                        ty
+                    }
+                })
+                .collect(),
             return_type: Box::new(type_ref_from_resolved(return_type)),
         },
         ResolvedType::TypeToken(inner) => TypeRef::TypeToken {
@@ -70,6 +82,13 @@ pub fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
         ResolvedType::CallSiteInfer => TypeRef::Unknown,
         ResolvedType::Unknown => TypeRef::Unknown,
     }
+}
+
+/// Return the name a nominal type publishes under: its declaration name when the checker spelled it by its module.
+fn published_nominal_name(name: &str) -> String {
+    split_module_qualified_nominal_name(name)
+        .map_or(name, |(_, declaration_name)| declaration_name)
+        .to_string()
 }
 
 /// Convert a manifest-level [`TypeRef`] into frontend semantic [`ResolvedType`].
@@ -107,7 +126,12 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::Function { params, return_type } => ResolvedType::Function(
             params
                 .iter()
-                .map(|param| CallableParam::positional(resolved_type_from_manifest_type_ref(param)))
+                .map(|param| match param {
+                    TypeRef::MutParam { inner } => {
+                        CallableParam::positional(resolved_type_from_manifest_type_ref(inner)).with_mut(true)
+                    }
+                    other => CallableParam::positional(resolved_type_from_manifest_type_ref(other)),
+                })
                 .collect(),
             Box::new(resolved_type_from_manifest_type_ref(return_type)),
         ),
@@ -118,6 +142,8 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
         TypeRef::SelfType => ResolvedType::SelfType,
         TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        // The marker belongs to a function type's parameter, decoded above; anywhere else it names its type.
+        TypeRef::MutParam { inner } => resolved_type_from_manifest_type_ref(inner),
         TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),
         TypeRef::Unknown => ResolvedType::Unknown,
         TypeRef::NativeUnion(native) => ResolvedType::Generic(
@@ -131,18 +157,10 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
     }
 }
 
-/// Resolve a manifest simple type name, preserving ordinary int/float/bool spellings.
+/// Resolve a manifest simple type name: every `i64` spelling is `int` and every `f64` spelling is `float`.
 fn resolved_named_type_from_manifest(name: &str) -> ResolvedType {
     if let Some(id) = numerics::from_str(name) {
-        return match name {
-            "int" => ResolvedType::Int,
-            "float" => ResolvedType::Float,
-            "bool" => ResolvedType::Bool,
-            _ => match id {
-                NumericTypeId::Bool => ResolvedType::Bool,
-                _ => ResolvedType::Numeric(id),
-            },
-        };
+        return ResolvedType::from_numeric_id(id);
     }
     if let Some(id) = stringlike::from_str(name) {
         return match id {

@@ -1,6 +1,7 @@
 """Constrained Rust declarations retain all slots before any source or feature selection."""
 
 from rust_source import (
+    extern_crate_name,
     read_dependency_catalog,
     RustDependencyRole,
     RustDependencySource,
@@ -126,6 +127,25 @@ pub def test_omitted_flags_and_feature_expansions_remain_explicit() -> None:
             assert catalog.dependencies[1].default_features == None
             assert catalog.features["activate"] == ["dep:optional"]
             assert catalog.features["forward"] == ["optional?/std", "plain/std"]
+
+
+pub def test_extern_crate_names_follow_cargo_not_the_manifest_key() -> None:
+    """A raw edge alias is the `--extern` name: a hyphenated key as an identifier, a child's `[lib] name`, or a rename."""
+    source = "[dependencies]\naxum-core='0.5'\nrustls-webpki='0.102'\nlibc_errno={package='errno', version='0.3'}\n"
+    match read_dependency_catalog(source, "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert extern_crate_name(catalog.dependencies[0], None) == "axum_core"
+            assert extern_crate_name(catalog.dependencies[2], Some("webpki")) == "webpki"
+            assert extern_crate_name(catalog.dependencies[1], Some("webpki")) == "libc_errno"
+    match read_dependency_catalog("[package]\nname='rustls-webpki'\n[lib]\nname='webpki'\n", "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert catalog.library_name == Some("webpki")
+    match read_dependency_catalog("[package]\nname='plain'\n", "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert catalog.library_name == None
 
 
 pub def test_unknown_dependency_semantics_refuse_at_the_original_key() -> None:

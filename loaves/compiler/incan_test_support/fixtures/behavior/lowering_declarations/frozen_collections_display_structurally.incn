@@ -1,0 +1,16 @@
+# behavior: frozen list, set and dict values display through the same structural forms as their mutable collection counterparts
+# retires: loaves/compiler/incan_ir/src/expr.rs::frozen_collections_use_structured_display_issue1838
+# expect-stdout:
+#   [1, 2]
+#   {3}
+#   {"x": 4}
+
+const NUMBERS: FrozenList[int] = [1, 2]
+const TAGS: FrozenSet[int] = {3}
+const VALUES: FrozenDict[str, int] = {"x": 4}
+
+
+def main() -> None:
+    println(NUMBERS)
+    println(TAGS)
+    println(VALUES)

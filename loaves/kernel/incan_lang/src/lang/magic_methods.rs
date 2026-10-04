@@ -151,3 +151,76 @@ const fn info(
         examples: &[],
     }
 }
+
+/// Stable identifier for a comparison dunder: the source method that defines one comparison operator.
+///
+/// A comparison dunder is a method a type or trait declares, not a member the compiler provides, so these entries are
+/// kept apart from [`MAGIC_METHODS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ComparisonDunderId {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+/// Metadata entry for a comparison dunder.
+pub type ComparisonDunderInfo = LangItemInfo<ComparisonDunderId>;
+
+/// Registry of the comparison dunders, one per comparison operator.
+pub const COMPARISON_DUNDERS: &[ComparisonDunderInfo] = &[
+    comparison(ComparisonDunderId::Eq, "__eq__", "Define `==`."),
+    comparison(ComparisonDunderId::Ne, "__ne__", "Define `!=`."),
+    comparison(ComparisonDunderId::Lt, "__lt__", "Define `<`."),
+    comparison(ComparisonDunderId::Le, "__le__", "Define `<=`."),
+    comparison(ComparisonDunderId::Gt, "__gt__", "Define `>`."),
+    comparison(ComparisonDunderId::Ge, "__ge__", "Define `>=`."),
+];
+
+/// Resolve a comparison dunder name to its stable id.
+pub fn comparison_from_str(name: &str) -> Option<ComparisonDunderId> {
+    COMPARISON_DUNDERS
+        .iter()
+        .find(|info| info.canonical == name)
+        .map(|info| info.id)
+}
+
+/// Return the canonical spelling for a comparison dunder.
+pub fn comparison_as_str(id: ComparisonDunderId) -> &'static str {
+    comparison_info_for(id).canonical
+}
+
+/// Return the metadata entry for a comparison dunder.
+///
+/// The lookup is exhaustive over the closed enum, so adding a comparison dunder requires updating this match at
+/// compile time.
+pub fn comparison_info_for(id: ComparisonDunderId) -> ComparisonDunderInfo {
+    match id {
+        ComparisonDunderId::Eq => COMPARISON_DUNDERS[0],
+        ComparisonDunderId::Ne => COMPARISON_DUNDERS[1],
+        ComparisonDunderId::Lt => COMPARISON_DUNDERS[2],
+        ComparisonDunderId::Le => COMPARISON_DUNDERS[3],
+        ComparisonDunderId::Gt => COMPARISON_DUNDERS[4],
+        ComparisonDunderId::Ge => COMPARISON_DUNDERS[5],
+    }
+}
+
+/// Build a comparison dunder entry: every comparison dunder is a stable RFC 000 spelling with no aliases.
+const fn comparison(
+    id: ComparisonDunderId,
+    canonical: &'static str,
+    description: &'static str,
+) -> ComparisonDunderInfo {
+    LangItemInfo {
+        id,
+        canonical,
+        aliases: &[],
+        description,
+        introduced_in_rfc: RFC::_000,
+        since: Since(0, 1),
+        stability: Stability::Stable,
+        examples: &[],
+    }
+}

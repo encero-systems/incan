@@ -1,0 +1,41 @@
+# behavior: an instance method, a classmethod, a staticmethod and a computed property each return their declared value when called through the matching receiver
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::ordinary_method_declaration_and_call_share_one_projection
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::classmethod_and_staticmethod_declarations_and_calls_share_their_projections
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::computed_property_getter_and_access_share_one_projection
+# expect-stdout:
+#   42
+#   42
+#   42
+#   100
+
+class Counter:
+    value: int
+
+    def next(self) -> int:
+        return self.value + 1
+
+
+class Factory:
+    @classmethod
+    def answer(cls) -> int:
+        return 42
+
+    @staticmethod
+    def twice(value: int) -> int:
+        return value * 2
+
+
+model Account:
+    cents: int
+
+    property dollars -> int:
+        return self.cents
+
+
+def main() -> None:
+    counter: Counter = Counter(value=41)
+    println(counter.next())
+    println(Factory.answer())
+    println(Factory.twice(21))
+    account: Account = Account(cents=100)
+    println(account.dollars)

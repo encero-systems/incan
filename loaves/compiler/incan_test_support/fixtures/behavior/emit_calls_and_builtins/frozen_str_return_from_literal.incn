@@ -1,0 +1,15 @@
+# behavior: a str literal returned where a FrozenStr is expected is the frozen value with that text and length
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::target_aware_emission_materializes_spanless_frozen_str_literals
+# expect-stdout:
+#   policy
+#   6
+#   policy-v2
+
+def policy() -> FrozenStr:
+    return "policy"
+
+
+def main() -> None:
+    println(policy())
+    println(len(policy()))
+    println(f"{policy()}-v2")

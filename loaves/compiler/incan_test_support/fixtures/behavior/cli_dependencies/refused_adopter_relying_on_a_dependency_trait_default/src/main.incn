@@ -1,0 +1,16 @@
+# behavior: a consumer's model that adopts a dependency's trait without defining the trait's default method is refused at check time, since a package publishes its traits' method signatures without their default bodies
+# retires: loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs::adopter_relying_on_a_dependency_trait_default_is_refused_issue1561
+# expect-diagnostic: INCAN-T0001
+
+from pub::tags import Tag
+
+
+model Mine with Tag:
+    id: int
+
+    def tag(self) -> str:
+        return "mine"
+
+
+def main() -> None:
+    println(Mine(id=1).loud())

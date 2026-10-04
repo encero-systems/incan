@@ -1,0 +1,20 @@
+# behavior: clone() on a derived model dispatches natively while Clone is imported from std.derives.copying, and the copy is independent of the original
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::rust_native_trait_dispatch_keeps_native_method_lookup
+# expect-stdout:
+#   original 1
+#   copy 5
+
+from std.derives.copying import Clone
+
+
+@derive(Clone)
+model Counter:
+    value: int
+
+
+def main() -> None:
+    original = Counter(value=1)
+    mut copy = original.clone()
+    copy.value = 5
+    println(f"original {original.value}")
+    println(f"copy {copy.value}")

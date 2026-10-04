@@ -97,6 +97,29 @@ match lookup_port(raw):
 
 Alternatives that bind names must bind the same names with the same types. `Cached(port) | Fresh(port)` is valid because both payloads have the same type; `Some(value) | None` is rejected because only one alternative binds `value`.
 
+An alternative is any pattern the arm could use on its own, so literals nest inside alternatives the same way they nest inside a single pattern, and an alternation can sit inside a larger pattern:
+
+```incan
+def classify(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, "a") | (1, "b") => return "known"    # (0, "a") and (1, "b") only; (0, "b") is "other"
+        _ => return "other"
+
+def describe_tag(pair: tuple[int, Option[str]]) -> str:
+    match pair:
+        (n, Some("a") | None) => return f"{n}: a or nothing"
+        (n, _) => return f"{n}: something else"
+```
+
+Alternatives are tried in order, and the first one that matches binds the names. A guard after an alternation runs once, for that alternative: when it is false, the arm is skipped and matching continues with the next arm. Later alternatives of the same arm are not tried.
+
+```incan
+def first_match(pair: tuple[str, str]) -> str:
+    match pair:
+        (x, "a") | ("b", x) if x == "a" => return "a"   # ("b", "a"): the first alternative binds x = "b", the guard is false, the arm is skipped
+        _ => return "other"                             # ("b", "a") returns "other"
+```
+
 ### Guards, and the two ways to write an arm
 
 Add `if <condition>` after a pattern when the pattern alone does not decide the arm. The guard runs only if the pattern matched, and the arm is taken only if the guard is also true; when it is false, matching continues with the next arm.
@@ -120,6 +143,8 @@ def classify(n: int) -> str:
 ```
 
 These are two spellings of one arm, not two kinds of arm. Anything you can write in one you can write in the other, guards included; pick whichever reads better for the arm at hand. A guard sits between the pattern and the arm's `:` or `=>` in both.
+
+A `match` over a number or a string needs an arm that matches any value, such as `_` or a name, because literal arms never cover every value there; the `_` arm in `classify` is that arm. The full coverage rules are in [Match patterns](../reference/match_patterns.md#coverage).
 
 ## Looping while a pattern keeps matching with `while let`
 
@@ -168,6 +193,46 @@ for name in items:
         break
 ```
 
+### Loops that take their items
+
+A `for` loop over a list normally reads each item where it stays, and the list keeps its items. A task handle can be neither copied nor cloned, and awaiting it uses it up, so a loop that awaits the handles of a list has to take them out of it:
+
+```incan
+from std.async import spawn
+
+async def work() -> int:
+    return 1
+
+async def main() -> None:
+    handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+```
+
+The compiler takes a list's items when three things hold. The list is a local binding, the binding of an enclosing `for` loop that owns its items (it takes them out of its own list, or iterates a list literal, a comprehension or a call result), or a parameter not marked `mut`. Each item is a handle, or a tuple or collection that contains one. And the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, or puts it in a new tuple, list or set, or as a value in a new dict. A binding that holds a list of handles, as in a list of lists of handles, is also used by value when a nested `for` loop over it takes its items, so each group is emptied in turn:
+
+```incan
+async def main() -> None:
+    groups = [[spawn(work())], [spawn(work())]]
+    for group in groups:
+        for handle in group:
+            match await handle:
+                Ok(value) => println(value)
+                Err(_) => println("join failed")
+```
+
+A loop over a list literal, a list comprehension or the result of a call receives each handle by value already: nothing else holds that list. Any other iterable can give up neither its handles nor copies of them. A list element or a field stays where it is stored, `values()`, `enumerate(...)` and `zip(...)` read the collection in place, a `mut` parameter's items belong to the caller, and the variable of a loop that reads its items in place is one of those items. The compiler refuses such a loop (`INCAN-T0119`); iterate a local list that holds the handles instead, or take them out one at a time with `pop()`.
+
+Once the loop has taken the items, the list is empty, so the compiler refuses whatever could still see it (`INCAN-T0119`):
+
+- a read of the list inside or after the loop, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it;
+- a closure that captured the list before the loop, since the closure could read it later;
+- an enclosing loop that repeats the loop over a list defined outside it, unless each pass assigns the list a new one before the loop and before any read of the list in that pass.
+
+Loops over any other item type keep reading their items in place.
+
 ## Looping with `while`
 
 Use `while` when the loop condition should be checked before each iteration:
@@ -199,4 +264,5 @@ def find_value(flag: bool) -> int:
 
 - Book chapter: [4. Control flow](../tutorials/book/04_control_flow.md)
 - Enums and `match`: [Enums](enums.md)
+- Pattern rules and coverage: [Match patterns](../reference/match_patterns.md)
 - Error-driven control flow (`Result`/`Option`): [Error Handling](error_handling.md)

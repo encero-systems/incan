@@ -1,0 +1,80 @@
+# behavior: list() builds a list from dict views, lists, sets, a mutable parameter, a dict, a str, nothing, bytes, a range, frozen lists, an iterator, a reused source and the process arguments (#1464)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1464_list_constructor_codegen
+# expect-stdout-contains:
+#   2 2 2 3 2 2 3 0 2 3 1 1 4 2
+#   1
+
+from rust::std::env import args
+
+const FROZEN_NUMBERS: FrozenList[int] = [7]
+const FROZEN_TEXT: FrozenList[str] = ["x"]
+
+
+def key_list(values: Dict[str, int]) -> list[str]:
+    return list(values.keys())
+
+
+def value_list(values: Dict[str, int]) -> list[int]:
+    return list(values.values())
+
+
+def copied(items: list[str]) -> list[str]:
+    return list(items)
+
+
+def from_set(items: set[int]) -> list[int]:
+    return list(items)
+
+
+def from_mut_param(mut items: list[str]) -> list[str]:
+    items.append("z")
+    return list(items)
+
+
+def keys_of(values: Dict[str, int]) -> list[str]:
+    return list(values)
+
+
+def characters(text: str) -> list[str]:
+    return list(text)
+
+
+def empty_names() -> list[str]:
+    names: list[str] = list()
+    return names
+
+
+def byte_values(payload: bytes) -> list[int]:
+    return list(payload)
+
+
+def counted() -> list[int]:
+    return list(range(3))
+
+
+def thawed(frozen: FrozenList[int]) -> list[int]:
+    return list(frozen)
+
+
+def thawed_text(frozen: FrozenList[str]) -> list[str]:
+    return list(frozen)
+
+
+def from_iterator(pairs: Iterator[(int, str)]) -> list[(int, str)]:
+    return list(pairs)
+
+
+def reused(words: list[str]) -> int:
+    first = list(words)
+    second = list(words)
+    return len(first) + len(second)
+
+
+def main() -> None:
+    values: Dict[str, int] = {"b": 2, "a": 1}
+    for key in sorted(list(values.keys())):
+        println(key)
+    summary = f"{len(key_list(values))} {len(value_list(values))} {len(copied(["x", "y"]))} {len(from_set({1, 2, 3}))} {len(from_mut_param(["q"]))} {len(keys_of(values))} {len(characters("abc"))} {len(empty_names())} {len(byte_values(b"ab"))} {len(counted())} {len(thawed(FROZEN_NUMBERS))} {len(thawed_text(FROZEN_TEXT))} {reused(["p", "q"])} {len(from_iterator(zip([1, 2], ["a", "b"])))}"
+    println(summary)
+    arguments = list(args())
+    println(len(arguments))

@@ -42,19 +42,19 @@ fn consteval_vs_runtime_numeric_policy() {
 }
 
 #[test]
-#[should_panic(expected = "ZeroDivisionError: float division by zero")]
+#[should_panic(expected = "ZeroDivisionError: division by zero")]
 fn runtime_div_zero_matches_policy_error() {
     let _ = py_div(1_i64, 0_i64);
 }
 
 #[test]
-#[should_panic(expected = "ZeroDivisionError: float division by zero")]
+#[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
 fn runtime_mod_zero_matches_policy_error() {
     let _ = py_mod(1_i64, 0_i64);
 }
 
 #[test]
-#[should_panic(expected = "ZeroDivisionError: float division by zero")]
+#[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
 fn runtime_floordiv_zero_matches_policy_error() {
     let _ = py_floor_div(1_i64, 0_i64);
 }

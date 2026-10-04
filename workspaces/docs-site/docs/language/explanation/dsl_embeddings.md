@@ -14,9 +14,9 @@ This page explains what that actually is, because the honest answer is narrower 
 
 ## It is not the language it resembles
 
-`<h1>{title}</h1>` is not HTML. Incan has a fixed catalogue of six **submodes** — small grammars owned by the compiler — and a library chooses which one its block claims. `Markup` happens to accept tags, attributes, text, entity references and comments, which covers a useful subset of HTML-shaped syntax and stops there. Namespaces, doctypes and unquoted attribute values are not accepted, and never will be as part of that submode.
+`<h1>{title}</h1>` is not HTML. Incan has a fixed catalog of six **submodes** — small grammars owned by the compiler — and a library chooses which one its block claims. `Markup` happens to accept tags, attributes, text, entity references and comments, which covers a useful subset of HTML-shaped syntax and stops there. Namespaces, doctypes and unquoted attribute values are not accepted, and never will be as part of that submode.
 
-The same applies to every other submode. Here is the whole catalogue, with what each one refuses:
+The same applies to every other submode. Here is the whole catalog, with what each one refuses:
 
 | Submode | Accepts | Does not accept |
 | --- | --- | --- |
@@ -66,13 +66,13 @@ A library that has not yet supplied that step still gives you a fragment that pa
 
 ## Formatting
 
-`incan fmt` has exactly two behaviours inside a fragment, and the library picks which one applies to its blocks.
+`incan fmt` has exactly two behaviors inside a fragment, and the library picks which one applies to its blocks.
 
 By default it reformats the fragment from the structure it parsed: elements, rules, declarations and values are laid out consistently, and the whitespace you happened to write between them is not preserved. Expression holes are formatted by the same code that formats that expression anywhere else.
 
 A library can instead declare a block layout-sensitive, and then `incan fmt` reproduces the fragment's original text exactly. That is the right choice when the whitespace is content — indentation-significant templates, for instance. It is the library's declaration, not a per-file setting, so if you need it and your library has not declared it, that is a request to make to the library.
 
-There is no third behaviour. A fragment is either reformatted from its structure or preserved verbatim; the compiler never falls back to leaving a fragment half-handled.
+There is no third behavior. A fragment is either reformatted from its structure or preserved verbatim; the compiler never falls back to leaving a fragment half-handled.
 
 ## What editors do inside a fragment
 
@@ -86,5 +86,5 @@ Diagnostics follow the same split. A construct the submode rejects is reported w
 
 ## See also
 
-- [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md) — the library-author side, including the full submode catalogue
+- [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md) — the library-author side, including the full submode catalog
 - [RFC 081](../../RFCs/closed/implemented/081_language_shaped_dsl_embeddings.md) — the specification

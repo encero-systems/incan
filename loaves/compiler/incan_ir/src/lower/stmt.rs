@@ -3,17 +3,17 @@
 //! This module handles lowering of all statement types: let bindings, assignments, control flow (if/while/for), and
 //! returns.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::expr::{
-    IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern as IrPattern,
-    VarAccess, VarRefKind,
+    BuiltinFn, IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy,
+    Pattern as IrPattern, VarAccess, VarRefKind,
 };
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::{IrType, isinstance_type_matches, isinstance_union_variant_indices};
 use super::super::{IrSpan, Mutability, TypedExpr};
-use super::AstLowering;
 use super::errors::LoweringError;
+use super::{AstLowering, OwnedLoopItems, ReturnOperandContext};
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::typechecker::ResolvedOperatorKind;
 use incan_lang::lang::builtins::BuiltinFnId;
@@ -82,7 +82,7 @@ struct IndependentIsInstanceChain {
 
 impl AstLowering {
     /// Resolve a named assignment to the nearest local, static binding, or source static target.
-    fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
+    pub(super) fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
         let direct_static = self
             .type_info
             .as_ref()
@@ -121,6 +121,34 @@ impl AstLowering {
         }
     }
 
+    /// Lower the place `object.field` that an assignment writes.
+    ///
+    /// A field of a Rust-interop type is written under the Rust field name the checker recorded for the place's span;
+    /// every other field keeps its source spelling.
+    pub(super) fn field_assign_target(
+        &mut self,
+        object: &Spanned<ast::Expr>,
+        field: &str,
+        target_span: ast::Span,
+    ) -> Result<AssignTarget, LoweringError> {
+        let ty = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(target_span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .unwrap_or(IrType::Unknown);
+        Ok(AssignTarget::Field {
+            object: Box::new(self.lower_expr_spanned(object)?),
+            field: self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.rust_field_access_name(target_span))
+                .unwrap_or(field)
+                .to_string(),
+            ty,
+        })
+    }
+
     /// Build a typed read of a source static binding.
     fn make_static_binding_expr(&self, name: String, ty: IrType) -> TypedExpr {
         TypedExpr::new(
@@ -130,6 +158,82 @@ impl AstLowering {
             },
             ty,
         )
+    }
+
+    /// Lower the operand of a `return` statement.
+    ///
+    /// The operand is lowered with its own read counters so that the final read of an owned local inside it is
+    /// recognized as that local's last use on the path (see
+    /// [`AstLowering::select_var_access_for_ident`](super::AstLowering::select_var_access_for_ident) and
+    /// [`ReturnOperandContext`]); the enclosing block counters stay in step because nested reads were already
+    /// counted there. A `Some(member)` the operand returns takes the provider-owned union the callable's declared
+    /// return type names (#1743).
+    fn lower_return_operand(&mut self, expr: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
+        let mut read_counts = HashMap::new();
+        self.count_expr_ident_reads(&expr.node, &mut read_counts);
+        let frame = self.remaining_ident_reads.len();
+        self.remaining_ident_reads.push(read_counts);
+        let enclosing = self.return_operand.replace(ReturnOperandContext {
+            frame,
+            depth: self.non_linear_context_depth,
+        });
+        let lowered = self.lower_expr_spanned(expr);
+        self.return_operand = enclosing;
+        let _ = self.remaining_ident_reads.pop();
+        let mut value = lowered?;
+        if let Some(return_type) = self.callable_return_types.last() {
+            Self::retain_union_owners_at(&mut value, return_type);
+        }
+        Ok(self.coerce_checked_c_return_value(expr, value))
+    }
+
+    /// Collect every name a `for` pattern binds, at any nesting depth.
+    fn collect_pattern_binding_names(pattern: &ast::Pattern, names: &mut HashSet<String>) {
+        match pattern {
+            ast::Pattern::Binding(name) => {
+                names.insert(name.clone());
+            }
+            ast::Pattern::Tuple(items) => {
+                for item in items {
+                    Self::collect_pattern_binding_names(&item.node, names);
+                }
+            }
+            ast::Pattern::Wildcard
+            | ast::Pattern::Literal(_)
+            | ast::Pattern::Constructor(_, _)
+            | ast::Pattern::Group(_)
+            | ast::Pattern::Or(_) => {}
+        }
+    }
+
+    /// Hand a `for` loop that takes the items of its list the list itself, iterated by value (#1844).
+    ///
+    /// The checker proved that the loop body hands each item on by value, that the item can be neither copied nor
+    /// cloned, and that nothing reads the list again. The list variable therefore moves into the loop and is iterated
+    /// through `into_iter()`, so each pass binds an owned item. The emitter iterates a named place (a variable, field
+    /// or element) through `.iter()`, but a call result as it is, which is why the loop receives the call. An iterable
+    /// that is not a variable is returned unchanged.
+    fn list_iterated_by_value(mut list: TypedExpr) -> TypedExpr {
+        if let IrExprKind::Var { access, .. } = &mut list.kind {
+            *access = VarAccess::Move;
+        } else {
+            return list;
+        }
+        let ty = list.ty.clone();
+        let span = list.span;
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(list),
+                method: "into_iter".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            ty,
+        )
+        .with_span(span)
     }
 
     /// Register all loop bindings before lowering the loop body so body reads resolve to local variables.
@@ -177,6 +281,23 @@ impl AstLowering {
             },
             IrType::Unit,
         ))
+    }
+
+    /// Lower the body of an `if let` or `while let` arm, with the source names of an in-place pattern (see
+    /// `expr::in_place_matches`) defined as the body sees them.
+    fn lower_let_arm_body(
+        &mut self,
+        stmts: &[Spanned<ast::Statement>],
+        in_place_bindings: Option<&super::expr::InPlaceArmBindings>,
+    ) -> Result<TypedExpr, LoweringError> {
+        let Some(bindings) = in_place_bindings else {
+            return self.lower_block_expr(stmts, true);
+        };
+        self.push_scope();
+        self.define_in_place_arm_bindings(bindings);
+        let body = self.lower_block_expr(stmts, true);
+        self.pop_scope();
+        body
     }
 
     /// Lower `elif` / `else` branches into nested IR `if` statements.
@@ -231,6 +352,26 @@ impl AstLowering {
         }
     }
 
+    /// Return the type a narrowing condition tests its subject binding against.
+    ///
+    /// That is the binding's lowered type, unless that type names a transparent alias the binding does not expand,
+    /// such as a parameter annotated `answer: Answer` with `type Answer = Item | int`: narrowing then reads the type
+    /// the checker proved for the subject expression, which is the alias's union or option. Without that, an
+    /// `isinstance` over an alias-typed union fell back to a plain test and read the narrowed member's fields from
+    /// the wrapper itself (#1796).
+    fn narrowing_subject_type(&self, binding: &str, subject: &Spanned<ast::Expr>) -> IrType {
+        let declared = self.lookup_var(binding);
+        if declared.is_union() || matches!(declared, IrType::Option(_)) {
+            return declared;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(subject.span))
+            .map(|checked| self.lower_resolved_type(checked))
+            .filter(|checked| checked.is_union() || matches!(checked, IrType::Option(_)))
+            .unwrap_or(declared)
+    }
+
     /// Return whether a known concrete value can satisfy an `isinstance(..., T)` target.
     fn isinstance_member_matches(member: &IrType, target_ty: &IrType) -> bool {
         isinstance_type_matches(member, target_ty)
@@ -255,7 +396,7 @@ impl AstLowering {
             _ => return None,
         }
         let target_ty = self.resolved_isinstance_target_type(condition)?;
-        let union_ty = self.lookup_var(binding);
+        let union_ty = self.narrowing_subject_type(binding, value);
         let variant_indices = isinstance_union_variant_indices(&union_ty, &target_ty)?;
         let members = union_ty.union_members()?;
         let matching_variants = variant_indices
@@ -409,7 +550,7 @@ impl AstLowering {
         let ast::Expr::Ident(binding) = &value.node else {
             return None;
         };
-        let IrType::Option(inner_ty) = self.lookup_var(binding) else {
+        let IrType::Option(inner_ty) = self.narrowing_subject_type(binding, value) else {
             return None;
         };
 
@@ -440,7 +581,7 @@ impl AstLowering {
             _ => return None,
         }
         let target_ty = self.resolved_isinstance_target_type(condition)?;
-        let IrType::Option(inner_ty) = self.lookup_var(binding) else {
+        let IrType::Option(inner_ty) = self.narrowing_subject_type(binding, value) else {
             return None;
         };
 
@@ -953,6 +1094,39 @@ impl AstLowering {
         })
     }
 
+    /// Whether the checked annotation of a new binding names the type of the value it is bound to.
+    ///
+    /// The checker records both types with transparent type aliases expanded, so `items: Ints = ITEMS` under
+    /// `type Ints = list[int]` names the type of `static ITEMS: list[int]` as `items: list[int] = ITEMS` does (#1777).
+    /// Without the checker's facts the lowered types are compared as written.
+    fn annotation_names_value_type(
+        &self,
+        stmt_span: ast::Span,
+        value: &Spanned<ast::Expr>,
+        annotated: &IrType,
+        value_ty: &IrType,
+    ) -> bool {
+        let checked = self
+            .type_info
+            .as_ref()
+            .and_then(|info| Some((info.assignment_binding_type(stmt_span)?, info.expr_type(value.span)?)));
+        match checked {
+            Some((binding_ty, checked_value_ty)) => binding_ty == checked_value_ty,
+            None => annotated == value_ty,
+        }
+    }
+
+    /// Make the closure `value` evaluates to spell its parameter types, through the block that snapshots its captures.
+    fn spell_closure_param_types(value: &mut TypedExpr) {
+        match &mut value.kind {
+            IrExprKind::Closure {
+                annotate_param_types, ..
+            } => *annotate_param_types = true,
+            IrExprKind::Block { value: Some(inner), .. } => Self::spell_closure_param_types(inner),
+            _ => {}
+        }
+    }
+
     /// Lower a single statement to IR.
     ///
     /// Handles all statement types including:
@@ -989,7 +1163,7 @@ impl AstLowering {
 
             ast::Statement::Assignment(a) => {
                 let rhs_direct_static = self.is_direct_static_ident(&a.value);
-                let lowered_value = self.lower_expr_spanned(&a.value)?;
+                let mut lowered_value = self.lower_expr_spanned(&a.value)?;
                 let local_callable_signature = self.partial_expr_signature_for_span(a.value.span).or_else(|| {
                     if let ast::Expr::Ident(source_name) = &a.value.node {
                         self.lookup_local_callable_signature(source_name)
@@ -998,7 +1172,40 @@ impl AstLowering {
                     }
                 });
                 let type_annotation = a.ty.as_ref().map(|t| self.lower_type(&t.node));
-                let ty = type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone());
+                if let Some(annotation) = &type_annotation {
+                    Self::retain_union_owners_at(&mut lowered_value, annotation);
+                }
+                Self::give_literal_its_annotated_type_parameters(&mut lowered_value, type_annotation.as_ref());
+                // A new binding read straight from a module static aliases the static's storage, so reads and
+                // mutations through the local stay live. The alias is the static's storage binding, not a value of
+                // the annotated type, so a checked annotation that names the static's own type is not spelled on
+                // the binding, and the binding takes the static's type as the unannotated form does; one that names
+                // another type asks for a conversion, so that binding reads the value instead (#1777).
+                let new_binding_static_alias = rhs_direct_static.clone().filter(|_| {
+                    type_annotation.as_ref().is_none_or(|annotated| {
+                        self.annotation_names_value_type(stmt_span, &a.value, annotated, &lowered_value.ty)
+                    })
+                });
+                let (ty, new_binding_annotation) = if new_binding_static_alias.is_some() {
+                    (lowered_value.ty.clone(), None)
+                } else {
+                    (
+                        type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone()),
+                        type_annotation,
+                    )
+                };
+                // A new local bound to a closure that captures local values takes the closure's own type, which no
+                // function-type annotation spells, so the closure spells its parameter types instead (#1561).
+                let new_binding_annotation = if self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.binds_capturing_callable(stmt_span))
+                {
+                    Self::spell_closure_param_types(&mut lowered_value);
+                    None
+                } else {
+                    new_binding_annotation
+                };
 
                 match a.binding {
                     ast::BindingKind::Reassign => {
@@ -1006,6 +1213,9 @@ impl AstLowering {
                         let value = match (&target, rhs_direct_static.clone()) {
                             (AssignTarget::StaticBinding(_), Some(static_name)) => {
                                 self.make_static_binding_expr(static_name, ty.clone())
+                            }
+                            (AssignTarget::Var { ty: binding_ty, .. }, _) => {
+                                Self::adapt_value_to_binding(lowered_value.clone(), binding_ty)
                             }
                             _ => lowered_value.clone(),
                         };
@@ -1032,6 +1242,9 @@ impl AstLowering {
                                     (AssignTarget::StaticBinding(_), Some(static_name)) => {
                                         self.make_static_binding_expr(static_name, ty.clone())
                                     }
+                                    (AssignTarget::Var { ty: binding_ty, .. }, _) => {
+                                        Self::adapt_value_to_binding(lowered_value.clone(), binding_ty)
+                                    }
                                     _ => lowered_value.clone(),
                                 };
                                 self.update_local_callable_signature(&a.name, local_callable_signature);
@@ -1043,22 +1256,18 @@ impl AstLowering {
                                 });
                             }
                         }
-                        if rhs_direct_static.is_some() {
-                            self.define_local_binding(a.name.clone(), ty.clone(), true);
-                        } else {
-                            self.define_local_binding(a.name.clone(), ty.clone(), false);
-                        }
+                        self.define_local_binding(a.name.clone(), ty.clone(), new_binding_static_alias.is_some());
                         self.define_local_callable_signature(a.name.clone(), local_callable_signature);
-                        let value = if let Some(static_name) = rhs_direct_static.clone() {
+                        let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            lowered_value.clone()
+                            Self::adapt_value_to_binding(lowered_value.clone(), &ty)
                         };
                         // Otherwise, create a new immutable binding in the current scope.
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
-                            type_annotation,
+                            type_annotation: new_binding_annotation,
                             mutability: Mutability::Immutable,
                             value,
                         }
@@ -1066,34 +1275,34 @@ impl AstLowering {
                     ast::BindingKind::Mutable => {
                         // New mutable binding
                         self.mutable_vars.insert(a.name.clone(), true);
-                        self.define_local_binding(a.name.clone(), ty.clone(), rhs_direct_static.is_some());
+                        self.define_local_binding(a.name.clone(), ty.clone(), new_binding_static_alias.is_some());
                         self.define_local_callable_signature(a.name.clone(), local_callable_signature);
-                        let value = if let Some(static_name) = rhs_direct_static.clone() {
+                        let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            lowered_value.clone()
+                            Self::adapt_value_to_binding(lowered_value.clone(), &ty)
                         };
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
-                            type_annotation,
+                            type_annotation: new_binding_annotation,
                             mutability: Mutability::Mutable,
                             value,
                         }
                     }
                     ast::BindingKind::Let => {
                         // New immutable binding
-                        self.define_local_binding(a.name.clone(), ty.clone(), rhs_direct_static.is_some());
+                        self.define_local_binding(a.name.clone(), ty.clone(), new_binding_static_alias.is_some());
                         self.define_local_callable_signature(a.name.clone(), local_callable_signature);
-                        let value = if let Some(static_name) = rhs_direct_static.clone() {
+                        let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            lowered_value
+                            Self::adapt_value_to_binding(lowered_value, &ty)
                         };
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
-                            type_annotation,
+                            type_annotation: new_binding_annotation,
                             mutability: Mutability::Immutable,
                             value,
                         }
@@ -1101,30 +1310,58 @@ impl AstLowering {
                 }
             }
 
-            ast::Statement::FieldAssignment(fa) => IrStmtKind::Assign {
-                target: AssignTarget::Field {
-                    object: Box::new(self.lower_expr_spanned(&fa.object)?),
-                    field: self
-                        .type_info
-                        .as_ref()
-                        .and_then(|info| info.rust_field_access_name(fa.target_span))
-                        .unwrap_or(fa.field.as_str())
-                        .to_string(),
-                },
-                value: self.lower_expr_spanned(&fa.value)?,
-            },
+            ast::Statement::FieldAssignment(fa) => {
+                // Through static storage the value is evaluated before the path (see `ast_path_reads_static_storage`),
+                // so its reads are counted first.
+                let early_value = if self.ast_path_reads_static_storage(&fa.object) {
+                    Some(self.lower_expr_spanned(&fa.value)?)
+                } else {
+                    None
+                };
+                let target = self.field_assign_target(&fa.object, &fa.field, fa.target_span)?;
+                let mut value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&fa.value)?,
+                };
+                if matches!(value.kind, IrExprKind::String(_)) && value.ty == IrType::String {
+                    value = TypedExpr::new(
+                        IrExprKind::BuiltinCall {
+                            func: BuiltinFn::Str,
+                            args: vec![value],
+                        },
+                        IrType::String,
+                    );
+                }
+                // A `Some(member)` stored in a dependency model's field takes the union the provider declares (#1743).
+                if let AssignTarget::Field { object, .. } = &target {
+                    self.retain_field_assignment_union_owner(object, &fa.field, &mut value);
+                }
+                IrStmtKind::Assign { target, value }
+            }
 
             ast::Statement::IndexAssignment(ia) => {
-                let object = self.lower_expr_spanned(&ia.object)?;
-                let index = self.lower_expr_spanned(&ia.index)?;
-                let value = self.lower_expr_spanned(&ia.value)?;
-
-                if let Some(resolved_operator) = self
+                let resolved_index_assign = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
-                    && resolved_operator.kind == ResolvedOperatorKind::IndexAssign
-                {
+                    .filter(|resolved_operator| resolved_operator.kind == ResolvedOperatorKind::IndexAssign);
+                // A plain assignment through static storage evaluates the value before the path and the index (see
+                // `ast_path_reads_static_storage`), so its reads are counted first: `counts[name] =
+                // counts.get(name).unwrap_or(0) + 1` reads `name` last as the key (#1793). An `__setitem__` call
+                // evaluates its arguments in order.
+                let early_value = if resolved_index_assign.is_none() && self.ast_path_reads_static_storage(&ia.object) {
+                    Some(self.lower_expr_spanned(&ia.value)?)
+                } else {
+                    None
+                };
+                let object = self.lower_expr_spanned(&ia.object)?;
+                let index = self.lower_expr_spanned(&ia.index)?;
+                let value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&ia.value)?,
+                };
+
+                if let Some(resolved_operator) = resolved_index_assign {
                     let dispatch = self
                         .type_info
                         .as_ref()
@@ -1167,13 +1404,7 @@ impl AstLowering {
             }
 
             ast::Statement::Return(opt) => {
-                let value = opt
-                    .as_ref()
-                    .map(|expr| {
-                        self.lower_expr_spanned(expr)
-                            .map(|value| self.coerce_checked_c_return_value(expr, value))
-                    })
-                    .transpose()?;
+                let value = opt.as_ref().map(|expr| self.lower_return_operand(expr)).transpose()?;
                 IrStmtKind::Return(value)
             }
 
@@ -1189,7 +1420,15 @@ impl AstLowering {
                         ast::Condition::Let { pattern, value } => {
                             let else_branch = self.lower_if_else_chain(&i.elif_branches, i.else_body.as_deref())?;
                             let scrutinee = self.lower_expr_spanned(value)?;
-                            let then_body = self.lower_block_expr(&i.then_body, true)?;
+                            let in_place_bindings = self
+                                .match_is_in_place(value.span, &scrutinee)
+                                .then(|| self.in_place_arm_bindings(pattern));
+                            let scrutinee = if in_place_bindings.is_some() {
+                                Self::in_place_scrutinee(scrutinee)
+                            } else {
+                                scrutinee
+                            };
+                            let then_body = self.lower_let_arm_body(&i.then_body, in_place_bindings.as_ref())?;
                             let fallback_body = TypedExpr::new(
                                 IrExprKind::Block {
                                     stmts: else_branch.unwrap_or_default(),
@@ -1198,23 +1437,19 @@ impl AstLowering {
                                 IrType::Unit,
                             );
 
-                            Ok(IrStmtKind::Match {
-                                scrutinee,
-                                arms: vec![
-                                    MatchArm {
-                                        pattern: self.lower_pattern(&pattern.node),
-                                        bindings: Vec::new(),
-                                        guard: None,
-                                        body: then_body,
-                                    },
-                                    MatchArm {
-                                        pattern: IrPattern::Wildcard,
-                                        bindings: Vec::new(),
-                                        guard: None,
-                                        body: fallback_body,
-                                    },
-                                ],
-                            })
+                            let alternatives =
+                                Self::plan_arm_alternatives(self.lower_pattern(&pattern.node), false, &scrutinee);
+                            let mut arms = Self::match_arms_for_alternatives(alternatives, None, then_body);
+                            if let Some(bindings) = &in_place_bindings {
+                                bindings.apply(&mut arms);
+                            }
+                            arms.push(MatchArm {
+                                pattern: IrPattern::Wildcard,
+                                bindings: Vec::new(),
+                                guard: None,
+                                body: fallback_body,
+                            });
+                            Ok(IrStmtKind::Match { scrutinee, arms })
                         }
                     }
                 })();
@@ -1242,7 +1477,15 @@ impl AstLowering {
                         }
                         ast::Condition::Let { pattern, value } => {
                             let scrutinee = self.lower_expr_spanned(value)?;
-                            let body_expr = self.lower_block_expr(&w.body, true)?;
+                            let in_place_bindings = self
+                                .match_is_in_place(value.span, &scrutinee)
+                                .then(|| self.in_place_arm_bindings(pattern));
+                            let scrutinee = if in_place_bindings.is_some() {
+                                Self::in_place_scrutinee(scrutinee)
+                            } else {
+                                scrutinee
+                            };
+                            let body_expr = self.lower_let_arm_body(&w.body, in_place_bindings.as_ref())?;
                             let break_expr = TypedExpr::new(
                                 IrExprKind::Block {
                                     stmts: vec![IrStmt::new(IrStmtKind::Break {
@@ -1254,25 +1497,21 @@ impl AstLowering {
                                 IrType::Unit,
                             );
 
+                            let alternatives =
+                                Self::plan_arm_alternatives(self.lower_pattern(&pattern.node), false, &scrutinee);
+                            let mut arms = Self::match_arms_for_alternatives(alternatives, None, body_expr);
+                            if let Some(bindings) = &in_place_bindings {
+                                bindings.apply(&mut arms);
+                            }
+                            arms.push(MatchArm {
+                                pattern: IrPattern::Wildcard,
+                                bindings: Vec::new(),
+                                guard: None,
+                                body: break_expr,
+                            });
                             Ok(IrStmtKind::Loop {
                                 label: None,
-                                body: vec![IrStmt::new(IrStmtKind::Match {
-                                    scrutinee,
-                                    arms: vec![
-                                        MatchArm {
-                                            pattern: self.lower_pattern(&pattern.node),
-                                            bindings: Vec::new(),
-                                            guard: None,
-                                            body: body_expr,
-                                        },
-                                        MatchArm {
-                                            pattern: IrPattern::Wildcard,
-                                            bindings: Vec::new(),
-                                            guard: None,
-                                            body: break_expr,
-                                        },
-                                    ],
-                                })],
+                                body: vec![IrStmt::new(IrStmtKind::Match { scrutinee, arms })],
                             })
                         }
                     }
@@ -1303,7 +1542,24 @@ impl AstLowering {
                     .and_then(|protocol| protocol.fallible_error_type.as_ref());
                 let iterable = match (&f.iter.node, fallible_protocol) {
                     (ast::Expr::Try(inner), Some(_)) => self.lower_expr_spanned(inner)?,
-                    _ => self.lower_expr_spanned(&f.iter)?,
+                    _ => {
+                        let mut iterable = self.lower_expr_spanned(&f.iter)?;
+                        self.pin_settled_in_place_result_constructors(f.iter.span, &mut iterable);
+                        iterable
+                    }
+                };
+                // The checker decided whether this loop takes the items of the list it iterates (#1844).
+                let takes_items = protocol_iteration.is_none()
+                    && matches!(iterable.kind, IrExprKind::Var { .. })
+                    && matches!(iterable.ty, IrType::List(_))
+                    && self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| info.for_loop_takes_items(f.iter.span));
+                let iterable = if takes_items {
+                    Self::list_iterated_by_value(iterable)
+                } else {
+                    iterable
                 };
 
                 // Push a new scope for the for-loop body
@@ -1323,9 +1579,25 @@ impl AstLowering {
                     }
                 };
                 self.define_for_pattern_bindings(&f.pattern.node, &loop_var_ty);
+                let mut loop_bindings = HashSet::new();
+                Self::collect_pattern_binding_names(&f.pattern.node, &mut loop_bindings);
 
                 self.non_linear_context_depth += 1;
+                if takes_items {
+                    self.owned_loop_binding_scopes.push(OwnedLoopItems {
+                        frame: self.remaining_ident_reads.len(),
+                        depth: self.non_linear_context_depth,
+                        names: loop_bindings,
+                    });
+                } else {
+                    self.loop_pattern_bindings.push(loop_bindings);
+                }
                 let body_result = self.lower_statements(&f.body);
+                if takes_items {
+                    let _ = self.owned_loop_binding_scopes.pop();
+                } else {
+                    let _ = self.loop_pattern_bindings.pop();
+                }
                 self.non_linear_context_depth -= 1;
                 let body = body_result?;
                 self.pop_scope();
@@ -1337,6 +1609,8 @@ impl AstLowering {
                     let iter_dispatch = protocol
                         .iter_dispatch
                         .map(|dispatch| self.lower_resolved_method_dispatch(dispatch, &iterable));
+                    // `__iter__` takes no arguments, so its call has no call-site signature. The one recorded at the
+                    // iterable's span is the iterable's own call's (`source.items(count)`), not the hook's (#1561).
                     let iter_value = TypedExpr::new(
                         IrExprKind::MethodCall {
                             receiver: Box::new(iterable),
@@ -1344,7 +1618,7 @@ impl AstLowering {
                             dispatch: iter_dispatch,
                             type_args: Vec::new(),
                             args: Vec::new(),
-                            callable_signature: self.callable_signature_for_call_span(f.iter.span),
+                            callable_signature: None,
                             arg_policy: MethodCallArgPolicy::Default,
                         },
                         iterator_ty.clone(),
@@ -1469,9 +1743,18 @@ impl AstLowering {
             }
 
             ast::Statement::Pass => IrStmtKind::Expr(TypedExpr::new(IrExprKind::Unit, IrType::Unit)),
+            // A `loop:` value's `break` builds its `Ok(...)` or `Err(...)` with the `Result` type the checker gave the
+            // `break` values of that loop together, a side none of them fixes included (#1561).
             ast::Statement::Break(value) => IrStmtKind::Break {
                 label: None,
-                value: value.as_ref().map(|value| self.lower_expr_spanned(value)).transpose()?,
+                value: value
+                    .as_ref()
+                    .map(|value| {
+                        let mut lowered = self.lower_expr_spanned(value)?;
+                        self.pin_settled_in_place_result_constructors(value.span, &mut lowered);
+                        Ok::<_, LoweringError>(lowered)
+                    })
+                    .transpose()?,
             },
             ast::Statement::Continue => IrStmtKind::Continue(None),
 
@@ -1484,6 +1767,7 @@ impl AstLowering {
                         IrExprKind::StaticRead {
                             name: ca.name.clone(),
                             reference_kind: *reference_kind,
+                            owner_module_path: None,
                         },
                         lhs_ty.clone(),
                     ),
@@ -1575,137 +1859,11 @@ impl AstLowering {
                 }
             }
 
-            ast::Statement::TupleUnpack(tu) => {
-                let value = self.lower_expr_spanned(&tu.value)?;
-                let value_ty = value.ty.clone();
-                let temp_name = format!("__incan_tuple_unpack_{}", tu.names.join("_"));
-                let mutability = match tu.binding {
-                    ast::BindingKind::Mutable => Mutability::Mutable,
-                    _ => Mutability::Immutable,
-                };
+            ast::Statement::TupleUnpack(tu) => return self.lower_tuple_unpack(tu),
 
-                self.define_local_binding(temp_name.clone(), value_ty.clone(), false);
+            ast::Statement::TupleAssign(ta) => return self.lower_tuple_assign(ta),
 
-                let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
-                    name: temp_name.clone(),
-                    ty: value_ty.clone(),
-                    type_annotation: None,
-                    mutability: Mutability::Immutable,
-                    value,
-                })];
-                let element_types = match &value_ty {
-                    IrType::Tuple(items) => items.clone(),
-                    _ => vec![IrType::Unknown; tu.names.len()],
-                };
-
-                for (idx, name) in tu.names.iter().enumerate() {
-                    let field_ty = element_types.get(idx).cloned().unwrap_or(IrType::Unknown);
-                    let field_expr = TypedExpr::new(
-                        IrExprKind::Field {
-                            object: Box::new(TypedExpr::new(
-                                IrExprKind::Var {
-                                    name: temp_name.clone(),
-                                    access: VarAccess::Move,
-                                    ref_kind: VarRefKind::Value,
-                                },
-                                self.lookup_var(&temp_name),
-                            )),
-                            field: idx.to_string(),
-                        },
-                        field_ty.clone(),
-                    );
-
-                    self.define_local_binding(name.clone(), field_ty.clone(), false);
-                    if matches!(mutability, Mutability::Mutable) {
-                        self.mutable_vars.insert(name.clone(), true);
-                    }
-
-                    stmts.push(IrStmt::new(IrStmtKind::Let {
-                        name: name.clone(),
-                        ty: field_ty,
-                        type_annotation: None,
-                        mutability,
-                        value: field_expr,
-                    }));
-                }
-
-                return Ok(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
-                    IrExprKind::Block { stmts, value: None },
-                    IrType::Unit,
-                ))));
-            }
-
-            ast::Statement::TupleAssign(_) => {
-                return Err(LoweringError {
-                    message: "TupleAssign not yet implemented".to_string(),
-                    span: IrSpan::default(),
-                });
-            }
-
-            ast::Statement::ChainedAssignment(ca) => {
-                // Lower chained assignment x = y = z = 5 into: let z = 5; let y = z; let x = y; We return a block
-                // expression that does all the assignments
-                let value = self.lower_expr_spanned(&ca.value)?;
-                let ty = value.ty.clone();
-
-                // Assign to last target first (rightmost)
-                let last_target = match ca.targets.last() {
-                    Some(t) => t,
-                    None => {
-                        return Err(LoweringError {
-                            message: "empty chained assignment".to_string(),
-                            span: IrSpan::default(),
-                        });
-                    }
-                };
-                let mutability = match ca.binding {
-                    ast::BindingKind::Mutable => Mutability::Mutable,
-                    _ => Mutability::Immutable,
-                };
-
-                // Record the last target in scope
-                self.define_local_binding(last_target.clone(), ty.clone(), false);
-
-                // Create the first assignment statement
-                let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
-                    name: last_target.clone(),
-                    ty: ty.clone(),
-                    type_annotation: None,
-                    mutability,
-                    value,
-                })];
-
-                // Now assign to each previous target from the next one
-                for i in (0..ca.targets.len() - 1).rev() {
-                    let target = &ca.targets[i];
-                    let source = &ca.targets[i + 1];
-
-                    self.define_local_binding(target.clone(), ty.clone(), false);
-
-                    let source_expr = TypedExpr::new(
-                        IrExprKind::Var {
-                            name: source.clone(),
-                            access: if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move },
-                            ref_kind: VarRefKind::Value,
-                        },
-                        ty.clone(),
-                    );
-
-                    stmts.push(IrStmt::new(IrStmtKind::Let {
-                        name: target.clone(),
-                        ty: ty.clone(),
-                        type_annotation: None,
-                        mutability,
-                        value: source_expr,
-                    }));
-                }
-
-                // Return a block that does all the assignments and returns unit
-                return Ok(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
-                    IrExprKind::Block { stmts, value: None },
-                    IrType::Unit,
-                ))));
-            }
+            ast::Statement::ChainedAssignment(ca) => return self.lower_chained_assignment(ca),
         };
         Ok(IrStmt::new(kind))
     }

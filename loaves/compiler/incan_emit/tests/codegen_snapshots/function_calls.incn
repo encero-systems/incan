@@ -38,7 +38,7 @@ def test_function_calls() -> None:
     result: str = "hello world".upper().strip()
     
     # List methods
-    numbers: List[int] = [1, 2, 3]
+    mut numbers: List[int] = [1, 2, 3]
     numbers.append(4)
     popped: int = numbers.pop()
     

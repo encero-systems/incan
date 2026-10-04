@@ -26,6 +26,7 @@ pub fn request(
         kind: OvenArtifactKind::Engine,
         payload: payload.to_vec(),
         materialized_files: Vec::new(),
+        materialized_directories: Vec::new(),
     })
 }
 

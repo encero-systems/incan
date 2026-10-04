@@ -1,0 +1,71 @@
+# behavior: a changing method, an element or field assignment, a mut self method and a loop reach a dict value in place, under a literal, a variable and an int key, through a tuple in the value, a nested dict, a list of dicts, a field of self and a mut dict parameter
+# retires: loaves/compiler/incan_emit/src/tests/dict_value_places.rs::dict_value_changes_in_place_through_a_mut_dict_issue1561
+# retires: loaves/compiler/incan_emit/src/tests/dict_value_places.rs::dict_value_of_a_model_changes_in_place_issue1561
+# expect-stdout:
+#   [11, 2, 3]
+#   [4, 5]
+#   [6]
+#   [7]
+#   [8]
+#   [9, 10]
+#   [[11], [11]]
+#   17
+#   1
+
+class Counter:
+    pub count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+
+class Registry:
+    pub groups: dict[str, list[int]]
+
+    def add(mut self, value: int) -> None:
+        self.groups["a"].append(value)
+
+
+def bump_all(mut counters: dict[str, Counter]) -> None:
+    counters["a"].bump()
+    counters["a"].count += 10
+
+
+def main() -> None:
+    mut d: dict[str, list[int]] = {"a": [1]}
+    d["a"].append(2)
+    key = "a"
+    d[key].append(3)
+    d["a"][0] = 10
+    d["a"][0] += 1
+    mut by_id: dict[int, list[int]] = {1: []}
+    id = 1
+    by_id[id].append(4)
+    by_id[1].append(5)
+    mut paired: dict[str, tuple[list[int], int]] = {"a": ([], 0)}
+    paired["a"][0].append(6)
+    mut nested: dict[str, dict[str, list[int]]] = {"a": {"b": []}}
+    nested["a"]["b"].append(7)
+    mut rows: list[dict[str, list[int]]] = [{"a": []}]
+    rows[0]["a"].append(8)
+    mut registry = Registry(groups={"a": []})
+    registry.add(9)
+    registry.groups["a"].append(10)
+    mut grid: dict[str, list[list[int]]] = {"a": [[], []]}
+    for row in grid["a"]:
+        row.append(11)
+    mut counters: dict[str, Counter] = {"a": Counter(count=0)}
+    counters["a"].bump()
+    counters["a"].count = counters["a"].count + 5
+    bump_all(counters)
+    mut held: dict[str, tuple[Counter, int]] = {"a": (Counter(count=0), 1)}
+    held["a"][0].bump()
+    println(d["a"])
+    println(by_id[1])
+    println(paired["a"][0])
+    println(nested["a"]["b"])
+    println(rows[0]["a"])
+    println(registry.groups["a"])
+    println(grid["a"])
+    println(counters["a"].count)
+    println(held["a"][0].count)

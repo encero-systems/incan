@@ -1,0 +1,33 @@
+# behavior: map_err closures over a Result see the concrete error's methods and may return a str literal as the new error
+# retires: loaves/compiler/incan_emit/src/codegen.rs::result_map_err_closure_keeps_concrete_member_identity
+# retires: loaves/compiler/incan_emit/src/codegen.rs::result_map_err_string_literal_closure_owns_its_checked_return
+# expect-stdout:
+#   ok:7
+#   err:disk full
+#   err:malformed
+
+pub model Failure:
+    pub detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+
+pub def describe(result: Result[int, Failure]) -> Result[int, str]:
+    return result.map_err((error) => error.message())
+
+
+pub def normalize(result: Result[int, int]) -> Result[int, str]:
+    return result.map_err((_error) => "malformed")
+
+
+def show(result: Result[int, str]) -> str:
+    match result:
+        Ok(value) => return f"ok:{value}"
+        Err(message) => return f"err:{message}"
+
+
+def main() -> None:
+    println(show(describe(Ok(7))))
+    println(show(describe(Err(Failure(detail="disk full")))))
+    println(show(normalize(Err(1))))
