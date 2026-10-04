@@ -6219,8 +6219,7 @@ impl TypeChecker {
             } else {
                 self.resolve_imported_module_function_member_with_source(&module_path, method)
                     .map(|(kind, source_module_path)| {
-                        let canonical =
-                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), method);
+                        let canonical = self.imported_module_callable_identity(&module_path, method);
                         (kind, canonical, source_module_path, method.to_string(), None)
                     })
             };

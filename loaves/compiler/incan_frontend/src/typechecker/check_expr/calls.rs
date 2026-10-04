@@ -3,7 +3,7 @@
 //! This module keeps the call-expression coordinator (`foo(...)`) thin and delegates argument binding, constructor
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
-use crate::ast::{CallArg, Expr, ImportPath, ParamKind, Span, Spanned, Type};
+use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::TypeArgumentOrigin;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::substitute_resolved_type;
@@ -228,8 +228,7 @@ impl TypeChecker {
             } else {
                 self.resolve_imported_module_function_member_with_source(&module_path, method.as_str())
                     .map(|(kind, source_module_path)| {
-                        let canonical =
-                            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), method);
+                        let canonical = self.imported_module_callable_identity(&module_path, method);
                         (kind, canonical, source_module_path, method.clone(), None)
                     })
             };
