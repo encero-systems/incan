@@ -32,6 +32,9 @@ pub(super) struct DeclaredSlot {
     pub(super) is_partial_preset: bool,
     /// Whether this slot is a `*args`/`**kwargs` rest parameter, which this planner refuses.
     pub(super) is_rest: bool,
+    /// Whether the parameter is declared `mut`, so a non-`Copy` argument is borrowed mutably rather than copied
+    /// (#2022).
+    pub(super) is_mut: bool,
 }
 impl DeclaredSlot {
     /// Narrow a semantic callable parameter (a local callable value's signature) to its binding-relevant facts.
@@ -41,6 +44,9 @@ impl DeclaredSlot {
             has_default: param.has_default,
             is_partial_preset: param.is_partial_preset,
             is_rest: param.kind != IncanCallableParamKind::Normal,
+            // A callable value's semantic signature does not carry the `mut` marker yet; its arguments keep their
+            // facts.
+            is_mut: false,
         }
     }
 
@@ -51,6 +57,7 @@ impl DeclaredSlot {
             has_default: param.has_default,
             is_partial_preset: param.is_partial_preset,
             is_rest: param.kind != ast::ParamKind::Normal,
+            is_mut: param.is_mut,
         }
     }
 }

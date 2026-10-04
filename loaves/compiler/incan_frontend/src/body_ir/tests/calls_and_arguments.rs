@@ -993,3 +993,81 @@ fn set_literals_have_no_spread_spelling_to_represent() -> Result<(), Box<dyn std
     }
     Ok(())
 }
+
+/// The ownership fact of the first argument of the first call to `callee` in `body`.
+fn first_argument_fact(body: &bir::Body, callee: &str) -> Option<bir::OwnershipFact> {
+    body.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            args,
+            ..
+        } if target.name == callee => match args.first() {
+            Some(bir::ArgumentElement::One(bir::Operand::Place(place))) => Some(place.fact),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+#[test]
+fn a_mut_parameter_of_a_model_is_borrowed_mutably_not_copied_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // A `mut` parameter of a non-`Copy` type writes through to the caller, as the emitted route's `&mut Counter` does:
+    // the call borrows the argument mutably, the callee does not own or drop it, and the caller still does.
+    let source = "model Counter:\n  value: int\n\n\
+                  def bump(mut c: Counter) -> None:\n  c.value = c.value + 1\n\n\
+                  def main() -> None:\n  mut c = Counter(value=1)\n  bump(c)\n  println(c.value)\n";
+    let module = build(source, &["m", "mut_params"])?;
+    let main = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing main")?;
+    assert_eq!(
+        first_argument_fact(main, "bump"),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{}",
+        module.render_snapshot()
+    );
+    let bump = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "bump")
+        .ok_or("missing bump")?;
+    assert!(
+        bump.params.first().is_some_and(|param| param.mutable),
+        "{}",
+        module.render_snapshot()
+    );
+    let param_local = bump.param_locals.first().copied().ok_or("missing parameter")?;
+    let drops_param = bump
+        .block
+        .stmts
+        .iter()
+        .any(|stmt| matches!(stmt.kind, bir::StatementKind::Drop { local } if local == param_local));
+    assert!(
+        !drops_param,
+        "the callee must not drop a parameter it only borrows: {}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mut_scalar_parameter_stays_a_copy_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // A `mut` scalar is a mutable local copy, as the emitted route's `mut n: i64` is: the caller's value is unchanged.
+    let source =
+        "def inc(mut n: int) -> None:\n  n = n + 1\n\ndef main() -> None:\n  mut n = 1\n  inc(n)\n  println(n)\n";
+    let module = build(source, &["m", "mut_scalar"])?;
+    let main = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing main")?;
+    assert_eq!(
+        first_argument_fact(main, "inc"),
+        Some(bir::OwnershipFact::Copy),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
