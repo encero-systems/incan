@@ -15,6 +15,21 @@ pub struct CallerFacetSelection {
     pub exports: Vec<String>,
 }
 
+/// Generation inputs for one checked caller facet of an Incan library.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallerFacetRequest {
+    /// Source names selected from checked public exports.
+    pub exports: BTreeSet<String>,
+    /// Stable digest of the selected caller surface.
+    pub facet_id: String,
+    /// Receipt path the generated identity record points to.
+    pub receipt_reference: String,
+    /// Target triple of the consuming Rust unit.
+    pub target: String,
+    /// Build profile of the consuming Rust unit.
+    pub profile: String,
+}
+
 /// Find `<library>::caller::incan::<export>` paths without interpreting generated Rust.
 ///
 /// The scanner recognizes Rust identifiers and `::` punctuation while skipping comments and string/character

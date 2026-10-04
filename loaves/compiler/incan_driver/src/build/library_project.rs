@@ -12,6 +12,7 @@ use sha2::Sha256;
 use crate::backend::selection::digest_output;
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::build::backend_selection::{finalize_backend_receipt, select_build_backend};
+use crate::build::caller_facet::CallerFacetRequest;
 use crate::build::caller_owned::{append_oven_interop_execution_build_inputs, oven_caller_owned_libraries};
 use crate::build::library_exports::{
     LibraryReexportResolver, collect_library_rust_abi, collect_library_rust_abi_query_paths, module_key,
@@ -71,6 +72,7 @@ use crate::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths;
 use crate::session::CompilationSession;
 #[cfg(feature = "rust_inspect")]
 use ::rust_inspect::RustMetadataCache;
+use incan_emit::CallerIdentity;
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     collect_checked_api_alias_metadata, collect_checked_api_metadata, materialize_api_alias_projections,
@@ -85,6 +87,7 @@ use incan_frontend::registry_metadata::{
 };
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{ParsedModule, diagnostics, typechecker};
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::compiled_sdk::CompiledSdkModules;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
 use incan_provider::inventory::extend_requirements_with_provider_plan;
@@ -135,6 +138,42 @@ pub fn prepare_library_project(
     include_interop_execution: bool,
     oven_plan_mode: OvenProjectPlanMode,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+) -> CliResult<PreparedLibraryProject> {
+    prepare_library_project_with_caller_facet(
+        file_path,
+        output_dir,
+        cargo_policy,
+        package_features,
+        sdk_profile_override,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+        generated_cargo_target_dir,
+        normal_oven,
+        include_interop_execution,
+        oven_plan_mode,
+        authority_context,
+        None,
+    )
+}
+
+/// Prepare a library while emitting one usage-derived Rust caller projection.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_library_project_with_caller_facet(
+    file_path: Option<&str>,
+    output_dir: Option<&str>,
+    cargo_policy: CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    generated_cargo_target_dir: Option<&Path>,
+    normal_oven: bool,
+    include_interop_execution: bool,
+    oven_plan_mode: OvenProjectPlanMode,
+    authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+    caller_facet: Option<&CallerFacetRequest>,
 ) -> CliResult<PreparedLibraryProject> {
     let prepare_start = Instant::now();
     let mut timings_ms = BTreeMap::new();
@@ -775,6 +814,20 @@ pub fn prepare_library_project(
         project_name.as_str(),
         &selected_exports,
     ));
+    if let Some(caller_facet) = caller_facet {
+        let identity = CallerIdentity {
+            package_name: project_name.clone(),
+            package_version: project_version.clone(),
+            caller_facet_id: caller_facet.facet_id.clone(),
+            caller_abi_version: "1".to_string(),
+            compiler_version_range: format!("={INCAN_VERSION}"),
+            manifest_schema_version: library_manifest.manifest_format,
+            target: caller_facet.target.clone(),
+            profile: caller_facet.profile.clone(),
+            receipt_reference: caller_facet.receipt_reference.clone(),
+        };
+        codegen = codegen.with_caller_facet(caller_facet.exports.iter().cloned(), identity);
+    }
     for module in dep_modules
         .iter()
         .filter(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments))
