@@ -205,7 +205,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         let inputs = self.provider_operation_inputs(&planned);
-        let (operands, _binding) = match self.lower_planned_args(&planned, slots.len(), scope, out) {
+        let (operands, _binding) = match self.lower_planned_args(&planned, slots.len(), &[], scope, out) {
             Ok(bound) => bound,
             Err(description) => {
                 return self.unsupported_operand(format!("{callee_label}: {description}"), scope, hir_span_value, out);
