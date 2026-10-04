@@ -334,6 +334,7 @@ Incan dependency table fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `loaf` | string | Sibling-Loaf package name for a Rust-authored consumer edge. It must match the dependency key. |
 | `path` | string | Local library project path, relative to `loaf.toml`. |
 | `optional` | bool | Keep the dependency edge inactive until a package feature selects `dep:<name>`. |
 | `default-features` | bool | Select the dependency's `default` feature; defaults to `true`. |
