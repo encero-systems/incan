@@ -102,13 +102,14 @@ The completed release lines are kept here as a compact history. Expand a release
 
 #### 0.6 Release: backend cutover
 
-The 0.6 milestone removes the Rust-source backend from the normal compiler path. The replacement backend should preserve supported behavior, report compatibility/migration details, and retire generated Rust as the semantic handoff.
+The 0.6 milestone removes the Rust-source backend from the normal compiler path. The direct route, which lowers Body IR inside the pinned `rustc`, should preserve supported behavior, report compatibility and migration details, and retire generated Rust as the semantic handoff.
 
 Only runtime/DSL RFC scope that stress-tests or supports the new backend belongs here.
 
 Core tracking issues:
 
-- [#652](https://github.com/encero-systems/incan/issues/652): replacement backend parity cutover.
+- [#652](https://github.com/encero-systems/incan/issues/652): backend parity cutover.
+- [#1337](https://github.com/encero-systems/incan/issues/1337): the direct route through the pinned `rustc`.
 - [#653](https://github.com/encero-systems/incan/issues/653): Body IR v0 and backend-owned lowering.
 - [#654](https://github.com/encero-systems/incan/issues/654): remove Rust-source backend and generated-Rust semantic handoff.
 - [#655](https://github.com/encero-systems/incan/issues/655): backend compatibility report and migration notes.
