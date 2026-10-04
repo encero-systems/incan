@@ -317,6 +317,20 @@ def main() -> None:
             "ordinary consumers must not inherit a completed bake's Cargo inspection capability: {inspection_workspaces:?}"
         );
 
+        let mut check = super::incan_command();
+        check
+            .args(["check", "src/main.incn", "--format", "json"])
+            .current_dir(&project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_HOME", &oven_home);
+        let check_output = run_timed_incan_command("incan check after oven bake", check)?;
+        assert!(
+            check_output.status.success(),
+            "expected a successful bake to authorize a separate typecheck process.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
         let mut build = super::incan_command();
         build
             .args(["build", "--locked"])
