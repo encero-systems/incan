@@ -87,7 +87,7 @@ An `oven.lock` whose only stale part is its dependency fingerprint is reported w
 | --- | --- | --- |
 | Diagnostics | `incan check --format json` | `2` |
 | Diagnostic explanation | `incan explain --format json` | `2` |
-| Build report | `incan build --report json` | `2`; `"incan.replacement_execution.v1"` with `--backend replacement` |
+| Build report | `incan build --report json` | `2` |
 | Backend-selection receipt | `incan inspect backend-selection --format json` | `2` |
 | Generated Rust | `incan inspect rust --format json` | `2` |
 | Codegraph | `incan inspect codegraph --format jsonl` | `8`, on the header record |
@@ -210,20 +210,17 @@ incan build [OPTIONS] [FILE] [OUTPUT_DIR]
 
 Compiles `FILE`, or the project entrypoint, to an executable and prints the generated project path and the binary path. Generated source and the binary go under `target/incan/`, or under `OUTPUT_DIR` when given.
 
-With no `FILE`, a project that declares one or more `[[rust.bin]]` entries and no `[project.scripts].main` builds the declared toolchain binaries from stored direct-`rustc` plans. This mode accepts `OUTPUT_DIR`. It refuses `--release`, backend-selection options, package-feature options, `--sdk-profile`, lock-policy options, Cargo feature or passthrough controls, generated-Cargo target-directory controls, and build reports. `INCAN_OVEN_COMPILER_SUITE_STORE` selects the compiler-suite store for this mode.
+With no `FILE`, a project that declares one or more `[[rust.bin]]` entries and no `[project.scripts].main` builds the declared toolchain binaries from stored direct-`rustc` plans. This mode accepts `OUTPUT_DIR`. It refuses `--release`, package-feature options, `--sdk-profile`, lock-policy options, Cargo feature or passthrough controls, generated-Cargo target-directory controls, and build reports. `INCAN_OVEN_COMPILER_SUITE_STORE` selects the compiler-suite store for this mode.
 
 Options:
 
 - `--lib`: build the library rooted at `src/lib.incn`: its checked `.incnlib` manifest, debug and release `rlib` outputs, and its [package executable representation](package_executable_representation.md). `--help` does not list this option.
 - `--release`: build the release profile, which is the default for `incan build`. The profile does not change language semantics; integer `abs` and `sum` stay overflow-checked in every profile.
-- `--backend legacy|replacement` (default `legacy`): select the compiler backend. `replacement` runs the entrypoint's zero-argument `main` directly, without generating Rust or an Oven plan, for a program within the replacement backend's supported profile; a program outside it is refused before it runs. The profile is described in [Backend selection & execution receipts](../explanation/backend_selection_receipts.md).
-- `--backend-fallback refuse`: refuse an unavailable backend instead of substituting another. `refuse` is the only policy.
-- `--shadow`: record a shadow comparison against the replacement backend. For a build, the comparison is recorded as unavailable, with its reason; the comparison that does run is described in [Source-observable shadow comparison](../explanation/backend_selection_receipts.md#source-observable-shadow-comparison).
 - `--report json`: emit a machine-readable build report.
-- `--report-output <PATH>`: write the report to `PATH` instead of stdout. Required with `--backend replacement --report json`; without it that command is refused before it runs.
+- `--report-output <PATH>`: write the report to `PATH` instead of stdout.
 - The [package-feature and SDK profile options](#package-feature-and-sdk-profile-options), the [lock policy options](#lock-policy-options), and `--workspace` and `--member <NAME_OR_PATH>` ([workspace scope](#workspace-scope)).
 
-Build report, `legacy` backend:
+Build report:
 
 - `schema_version: 2`;
 - source and generated paths, emitted artifacts, dependency and provider summaries;
@@ -232,18 +229,7 @@ Build report, `legacy` backend:
 - a note that no Cargo consumer ran;
 - `backend`: the build's backend-selection execution receipt.
 
-Build report, `replacement` backend:
-
-- `schema_version: "incan.replacement_execution.v1"`;
-- `status`, `mode`, `entrypoint`, `backend`, and `semantic_module`, which names the selected module with its source and semantic-snapshot identities, as `backend.semantic_module` does;
-- `replacement_execution`: `result`, the exact checked `result_type`, the `stdout_bytes` and `stderr_bytes` byte arrays, the `emitted_output` projection, `output_identity`, the Body-IR snapshot, canonical ownership reads and runtime requirements;
-- in `replacement_execution`, `package_declarations_decoded`, `package_payload_bytes_read` and `package_content_bytes_verified` (see [package execution report fields](package_executable_representation.md#execution-report));
-- total elapsed time;
-- no `generated`, artifact or `oven` fields.
-
-The replacement backend writes program output to stdout and stderr while it runs, and each print flushes. A later failure does not withdraw output already written. The report never goes to the program's stdout or stderr. The byte arrays keep each stream's bytes, which need not be UTF-8, and record no order between the two streams.
-
-A successful build also writes its backend-selection receipt to `.incan/backend/receipt.json` in the project root (see [`incan inspect backend-selection`](#incan-inspect-backend-selection)). A reused completed output keeps the receipt its bake sealed; that reuse applies only to the implicit `legacy` default, and an explicit `--backend` or `--shadow` prepares the build again.
+A successful build also writes its backend-selection receipt to `.incan/backend/receipt.json` in the project root (see [`incan inspect backend-selection`](#incan-inspect-backend-selection)). A reused completed output keeps the receipt its bake sealed; that reuse applies only to the implicit default backend selection.
 
 `build`, `run` and `test` select a compatible standard-library Loaf from the active toolchain and, for a project outside it, the project extension its bake published to the Oven store. A missing compatible selection is refused; these commands do not prepare one. `incan inspect oven --receipt PATH --format json` reports the plan selection for the receipt's build unit and its reason.
 
@@ -252,7 +238,6 @@ incan build examples/simple/hello.incn
 incan build src/main.incn --report json --report-output target/build-report.json
 incan build src/main.incn --features json,http --sdk-profile minimal
 incan build --lib
-incan build src/main.incn --backend replacement --backend-fallback refuse --report json --report-output report.json
 ```
 
 ## `incan cache`

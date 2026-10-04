@@ -1,0 +1,32 @@
+pub def imported_lexical(value: int) -> int:
+    return value
+
+pub def aliased_lexical(value: int) -> int:
+    return value
+
+pub def relayed_lexical(value: int) -> int:
+    return value
+
+pub model ImportedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub model AliasedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub model RelayedMember:
+    pub value: int
+
+    def read(self) -> int:
+        return self.value
+
+pub def imported_path(value: int) -> int:
+    return value
+
+pub def aliased_path(value: int) -> int:
+    return value

@@ -1,0 +1,12 @@
+# behavior: a closure stored in a typed local captures a local and is called (parity corpus row replacement-body-v0-008)
+# expect-stdout:
+#   42
+
+def stored_closure() -> int:
+    offset = 2
+    add: (int) -> int = (value) => value + offset
+    return add(40)
+
+
+def main() -> None:
+    println(stored_closure())
