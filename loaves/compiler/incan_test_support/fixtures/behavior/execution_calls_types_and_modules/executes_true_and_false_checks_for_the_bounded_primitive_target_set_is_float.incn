@@ -2,25 +2,31 @@
 # expect-stdout:
 #   true
 
+"""Executes true and false checks for the bounded primitive target set."""
 def is_int(value: int | str) -> bool:
+  """Check whether the union member is an integer."""
   if isinstance(value, int):
     return true
   return false
 
 def is_str(value: int | str) -> bool:
+  """Check whether the union member is a string."""
   if isinstance(value, str):
     return true
   return false
 
 def is_bool(value: bool | str) -> bool:
+  """Check whether the union member is a boolean."""
   if isinstance(value, bool):
     return true
   return false
 
 def float_member() -> float | str:
+  """Return `1.5` for this fixture."""
   return 1.5
 
 def is_float() -> bool:
+  """Check whether the selected union member is a float."""
   value = float_member()
   if isinstance(value, float):
     return true
@@ -28,4 +34,5 @@ def is_float() -> bool:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(is_float())

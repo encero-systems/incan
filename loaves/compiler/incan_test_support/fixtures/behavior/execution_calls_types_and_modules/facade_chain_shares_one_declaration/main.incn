@@ -2,9 +2,11 @@
 # expect-stdout:
 #   42
 
+"""A function reached directly, re-exported through a facade and through its alias is one declaration with one result."""
 from provider import compute
 from facade import compute as reexported, renamed
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(compute(1) + reexported(10) + renamed(28))

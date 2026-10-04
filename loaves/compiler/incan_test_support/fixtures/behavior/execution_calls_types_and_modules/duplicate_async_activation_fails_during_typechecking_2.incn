@@ -1,12 +1,15 @@
 # behavior: duplicate async activation fails during typechecking
 # expect-diagnostic: INCAN-I0001
 
+"""Duplicate async activation fails during typechecking."""
 import std.async
 import std.async
 
 def program_result() -> int:
+  """Return `42` for this fixture."""
   return 42
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

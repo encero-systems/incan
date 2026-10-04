@@ -2,15 +2,20 @@
 # expect-stdout:
 #   true
 
+"""Source defined isinstance keeps its direct callable identity."""
 def isinstance(value: int, target: int) -> bool:
+  """Return the fixture expression `value == target`."""
   return value == target
 
 def probe() -> bool:
+  """Return the fixture expression `isinstance(1, 1)`."""
   return isinstance(1, 1)
 
 def explicit_probe(value: int | str) -> bool:
+  """Return the fixture expression `std.builtins.isinstance(value, int)`."""
   return std.builtins.isinstance(value, int)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(probe())

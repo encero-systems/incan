@@ -7,7 +7,9 @@
 #   110
 
 
+"""Zip equal unequal and empty lists match native."""
 def observe() -> int:
+  """Print and score zipped equal, unequal, and empty inputs."""
   mut total = 0
   for equal_left, equal_right in zip([1, 2], [10, 20]):
     println(equal_left + equal_right)
@@ -29,4 +31,5 @@ def observe() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(observe())

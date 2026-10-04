@@ -3,7 +3,9 @@
 #   7
 
 
+"""Executes plain scalar tuple collection loop."""
 def program_result() -> int:
+  """Traverse `for pair in pairs` and return `7`."""
   pairs = [(1, 2), (3, 4)]
   for pair in pairs:
     if false:
@@ -12,4 +14,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

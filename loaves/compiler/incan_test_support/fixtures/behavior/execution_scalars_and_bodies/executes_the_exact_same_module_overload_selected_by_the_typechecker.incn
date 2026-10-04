@@ -3,15 +3,20 @@
 #   41
 
 
+"""Executes the exact same module overload selected by the typechecker."""
 def pick(a: int, b: int) -> int:
+  """Return the fixture expression `a - b`."""
   return a - b
 
 def pick(b: str, a: str) -> str:
+  """Return `a` for this fixture."""
   return a
 
 def program_result() -> int:
+  """Return the fixture expression `pick(a=42, b=1)`."""
   return pick(a=42, b=1)
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

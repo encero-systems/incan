@@ -21,8 +21,10 @@ def sorted_int_list() -> int:
 
 
 def program_result() -> int:
+    """Return the fixture expression `sorted_int_list()`."""
     return sorted_int_list()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

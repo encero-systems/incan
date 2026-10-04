@@ -3,7 +3,9 @@
 #   3
 
 
+"""Executes let shadowing by local identity."""
 def program_result() -> int:
+  """Compute and return `total + x`."""
   mut total = 0
   x = 1
   if true:
@@ -13,4 +15,5 @@ def program_result() -> int:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

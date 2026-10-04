@@ -3,12 +3,16 @@
 #   42
 
 
+"""Dispatches named calls by canonical target and refuses absent identity."""
 def helper() -> int:
+  """Return `42` for this fixture."""
   return 42
 
 def program_result() -> int:
+  """Return the fixture expression `helper()`."""
   return helper()
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

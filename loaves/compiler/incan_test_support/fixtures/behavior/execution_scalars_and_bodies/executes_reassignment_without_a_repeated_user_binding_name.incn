@@ -3,11 +3,14 @@
 #   2
 
 
+"""Executes reassignment without a repeated user binding name."""
 def program_result() -> int:
+  """Compute and return `x`."""
   mut x = 1
   x = 2
   return x
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

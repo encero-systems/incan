@@ -3,6 +3,8 @@
 # expect-stdout:
 #   program output
 
+"""Success keeps program streams separate from metadata."""
 def main() -> int:
+  """Return `42` from the entrypoint."""
   println("program output")
   return 42

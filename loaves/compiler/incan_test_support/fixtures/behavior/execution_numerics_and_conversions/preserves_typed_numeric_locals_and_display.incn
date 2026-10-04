@@ -3,7 +3,9 @@
 #   1.2345679 1.23456789 340282366920938463463374607431768211455 -170141183460469231731687303715884105728 19.90
 
 
+"""Preserves typed numeric locals and display."""
 def program_result() -> str:
+  """Compute and return `f"{rounded} {str(explicit)} {wide} {low} {price}"`."""
   rounded: f32 = 1.23456789
   explicit: f64 = 1.23456789
   wide: u128 = 340282366920938463463374607431768211455
@@ -13,4 +15,5 @@ def program_result() -> str:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

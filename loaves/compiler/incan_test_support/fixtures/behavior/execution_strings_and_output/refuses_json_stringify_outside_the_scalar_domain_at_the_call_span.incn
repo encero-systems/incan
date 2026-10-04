@@ -2,9 +2,12 @@
 # expect-stdout:
 #   [1,2]
 
+"""Refuses json stringify outside the scalar domain at the call span, as the legacy route runs it."""
 def program_result() -> str:
+  """Return the fixture expression `json_stringify([1, 2])`."""
   return json_stringify([1, 2])
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(program_result())

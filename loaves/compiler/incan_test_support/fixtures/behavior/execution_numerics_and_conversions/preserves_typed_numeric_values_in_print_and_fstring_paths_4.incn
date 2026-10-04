@@ -3,7 +3,9 @@
 #   1.2345679
 
 
+"""Preserves typed numeric values in print and fstring paths."""
 def main() -> None:
+  """Call `render()` with the fixture inputs."""
   value: f32 = 1.23456789
   render: () -> None = () => println(value)
   render()

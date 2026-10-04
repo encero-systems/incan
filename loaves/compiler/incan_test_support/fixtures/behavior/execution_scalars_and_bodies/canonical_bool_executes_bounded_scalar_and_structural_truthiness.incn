@@ -32,4 +32,5 @@ def bool_truthiness() -> bool:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(bool_truthiness())

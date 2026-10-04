@@ -95,4 +95,5 @@ def isinstance_targets() -> bool:
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(isinstance_targets())

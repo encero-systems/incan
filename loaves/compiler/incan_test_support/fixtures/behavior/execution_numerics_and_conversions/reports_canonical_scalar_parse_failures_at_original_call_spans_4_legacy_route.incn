@@ -1,20 +1,28 @@
-# behavior: reports canonical scalar parse failures at original call spans, as the legacy route runs it
+# behavior: scalar parse failure preserves ValueError and the original input, stopping the program
 # expect-stdout:
 # expect-exit: 101
+# expect-stderr-contains:
+#   ValueError: cannot convert '1_000._50' to float
 
 
+"""Attempt a scalar parse failure that preserves its error class and original input."""
 def parse_int() -> int:
+  """Attempt to parse the deliberately invalid integer text."""
   return int("AssertionError overflow division by zero")
 
 def parse_float() -> float:
+  """Attempt to parse the deliberately invalid float text."""
   return float("AssertionError overflow division by zero")
 
 def parse_int_with_invalid_separators() -> int:
+  """Attempt to parse the deliberately invalid integer text."""
   return int("1__000")
 
 def parse_float_with_invalid_separators() -> float:
+  """Attempt to parse the deliberately invalid float text."""
   return float("1_000._50")
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(parse_float_with_invalid_separators())

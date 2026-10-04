@@ -2,9 +2,12 @@
 # expect-stdout:
 #   true
 
+"""Canonical string comparisons use shared unicode order."""
 def compare(left: str, right: str) -> bool:
+    """Return the fixture expression `left != right`."""
     return left != right
 
 
 def main() -> None:
+    """Print the fixture values in the expected order."""
     println(compare("é", "猫"))
