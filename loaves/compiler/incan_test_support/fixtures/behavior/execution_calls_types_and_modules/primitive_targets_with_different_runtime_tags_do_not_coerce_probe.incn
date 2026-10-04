@@ -1,0 +1,10 @@
+# behavior: primitive targets with different runtime tags do not coerce
+# expect-stdout:
+#   true
+
+def probe(value: int | bool) -> bool:
+  return isinstance(value, int)
+
+
+def main() -> None:
+    println(probe(1))

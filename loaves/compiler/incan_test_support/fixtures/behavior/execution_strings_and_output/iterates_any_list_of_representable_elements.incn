@@ -1,0 +1,13 @@
+# behavior: iterates any list of representable elements
+# expect-stdout:
+#   6
+
+def program_result() -> int:
+  mut total = 0
+  for value in [1, 2, 3]:
+    total += value
+  return total
+
+
+def main() -> None:
+    println(program_result())

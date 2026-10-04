@@ -1,0 +1,15 @@
+# behavior: cli executes direct named callable with a replacement receipt
+# expect-stdout:
+#   143
+
+def route(method: int, path: int, content_type: int = 3) -> int:
+  return method * 100 + path * 10 + content_type
+
+def program_result() -> int:
+  method = 1
+  get = partial route(method=method)
+  return get(4)
+
+
+def main() -> None:
+    println(program_result())

@@ -1,0 +1,21 @@
+# behavior: preserves same spelled source enumerate and zip functions
+# expect-stdout:
+#   source enumerate
+#   source zip
+#   42
+
+
+def enumerate(values: list[int]) -> int:
+  println("source enumerate")
+  return 40
+
+def zip(left: list[int], right: list[int]) -> int:
+  println("source zip")
+  return 2
+
+def source_owned_spelling() -> int:
+  return enumerate([1]) + zip([1], [2])
+
+
+def main() -> None:
+    println(source_owned_spelling())

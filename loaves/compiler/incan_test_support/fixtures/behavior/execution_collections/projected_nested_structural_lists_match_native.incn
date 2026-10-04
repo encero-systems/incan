@@ -1,0 +1,21 @@
+# behavior: projected nested structural lists match native
+# expect-stdout:
+#   one
+#   two
+#   13
+
+
+def observe() -> int:
+  groups = [[(1, "one"), (2, "two")]]
+  labels = ([true, false], 0)
+  mut total = 0
+  for numbered_pair, flag in zip(groups[0], labels.0):
+    println(numbered_pair.1)
+    total += numbered_pair.0
+    if flag:
+      total += 10
+  return total
+
+
+def main() -> None:
+    println(observe())

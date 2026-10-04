@@ -1,0 +1,14 @@
+# behavior: executes lazy generator adapters with local callbacks
+# expect-stdout:
+#   34
+
+
+def program_result() -> int:
+  increment: (int) -> int = (value) => value + 1
+  accepted: (int) -> bool = (value) => value > 2
+  values = (value for value in range(1, 5)).map(increment).filter(accepted).collect()
+  return values[0] * 10 + values[1]
+
+
+def main() -> None:
+    println(program_result())

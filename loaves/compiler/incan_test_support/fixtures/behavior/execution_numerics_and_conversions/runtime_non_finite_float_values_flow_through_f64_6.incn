@@ -1,0 +1,14 @@
+# behavior: runtime non finite float values flow through f64
+# expect-stdout:
+#   nan
+
+
+def exact(value: str) -> f64:
+  return float(value)
+
+def ordinary(value: str) -> float:
+  return float(value)
+
+
+def main() -> None:
+    println(ordinary("NaN"))

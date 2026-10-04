@@ -1,0 +1,13 @@
+# behavior: cli refuses typed empty non structural callable default without a receipt, as the legacy route runs it
+# expect-stdout:
+#   1
+
+def keep(items: list[float] = []) -> int:
+  return 1
+
+def program_result() -> int:
+  return keep()
+
+
+def main() -> None:
+    println(program_result())

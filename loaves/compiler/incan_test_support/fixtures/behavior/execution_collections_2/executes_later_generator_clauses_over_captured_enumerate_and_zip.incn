@@ -1,0 +1,16 @@
+# behavior: executes later generator clauses over captured enumerate and zip
+# pending: the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   6
+
+
+def later_clause_generator_capture() -> int:
+  captured_enumeration = enumerate([1])
+  captured_zip = zip([2], [3])
+  generated_values = (outer_value + later_index + later_value + later_left + later_right for outer_value in [0] for later_index, later_value in captured_enumeration for later_left, later_right in captured_zip).collect()
+  generated_first = generated_values[0]
+  return generated_first
+
+
+def main() -> None:
+    println(later_clause_generator_capture())

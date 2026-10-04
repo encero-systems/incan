@@ -1,0 +1,15 @@
+# behavior: refuses a value enum member without its retained identity at its original source span, as the legacy route runs it
+# expect-stdout:
+#   404
+
+
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+def program_result() -> int:
+  return HttpStatus.NotFound.value()
+
+
+def main() -> None:
+    println(program_result())

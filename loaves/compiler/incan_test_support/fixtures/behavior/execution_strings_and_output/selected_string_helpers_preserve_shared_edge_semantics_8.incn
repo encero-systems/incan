@@ -1,0 +1,10 @@
+# behavior: selected string helpers preserve shared edge semantics
+# expect-stdout:
+#   a||b|
+
+def result() -> str:
+    return "|".join("a,,b,".split(","))
+
+
+def main() -> None:
+    println(result())

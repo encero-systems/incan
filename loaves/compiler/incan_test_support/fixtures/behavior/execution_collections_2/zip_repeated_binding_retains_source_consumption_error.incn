@@ -1,0 +1,11 @@
+# behavior: zip repeated binding retains source consumption error
+# expect-diagnostic: INCAN-T0001
+
+def observe() -> int:
+    pairs = zip([1], [2])
+    mut total = 0
+    for left, right in pairs:
+        total += left + right
+    for other_left, other_right in pairs:
+        total += other_left + other_right
+    return total

@@ -1,0 +1,10 @@
+# behavior: scalar set key kinds execute
+# expect-stdout:
+#   true
+
+def program_result() -> bool:
+  return "café" in {"café"}
+
+
+def main() -> None:
+    println(program_result())

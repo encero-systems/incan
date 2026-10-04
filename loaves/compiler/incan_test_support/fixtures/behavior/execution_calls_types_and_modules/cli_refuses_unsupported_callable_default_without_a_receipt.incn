@@ -1,0 +1,14 @@
+# behavior: cli refuses unsupported callable default without a receipt, as the legacy route runs it
+# expect-stdout:
+#   1
+
+def keep(payload: bytes = b"x") -> bytes:
+  return payload
+
+def program_result() -> int:
+  keep()
+  return 1
+
+
+def main() -> None:
+    println(program_result())
