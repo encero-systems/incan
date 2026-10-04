@@ -21,7 +21,7 @@ The optional `contract_metadata.executable_representation` object has these fiel
 
 | Field | Type | Contract |
 | --- | --- | --- |
-| `representation_version` | unsigned integer | Executable encoding version, independent of the package and manifest versions. The current compiler accepts version 4. |
+| `representation_version` | unsigned integer | Executable encoding version, independent of the package and manifest versions. The current compiler accepts version 8. |
 | `content_digest` | string | Exactly 64 lowercase hexadecimal digits containing the binary file's SHA-256 digest. It selects `semantic/<content_digest>.incnsem` relative to the manifest directory. |
 
 An omitted object denotes a package with no published executable representation. The package remains valid for native linking. The reader checks the binary's leading version before decoding version-specific data, verifies package and coverage identity against the manifest, and checks the complete file against its selected digest. This content check is not a package signature.
@@ -32,7 +32,7 @@ Coverage is declared for the manifest's public canonical identities. A callable 
 
 Coverage can be partial. The published content excludes private declarations and private type layouts. A public body that needs either remains uncovered, as does a body containing an unsupported operation or an unresolved reference. An uncovered required public declaration also leaves its callers uncovered. An empty supported function is covered; it is distinct from an absent executable declaration.
 
-Published fragments currently represent supported functions and methods, plain-model layout, fieldless enums and scalar value enums. Each selected body and value shape must also satisfy the replacement backend's [execution profile](../explanation/backend_selection_receipts.md). Publication does not grant general support for generics, methods, aggregate shapes, interop or other operations that the execution profile refuses.
+Published fragments represent functions and methods, plain-model layout, fieldless enums and scalar value enums. A body is covered exactly when Body IR represents all of it; coverage does not depend on what one consumer can execute. A consumer refuses a covered body it cannot execute, with the failures listed below.
 
 ## Refusals
 
