@@ -2,7 +2,7 @@
 //!
 //! Project discovery, the compilation session, module collection and typecheck orchestration, Cargo policy for
 //! the compatibility path, the rust-inspect workspace, the build pipeline, the generated project (`backend`), the
-//! inspection analyses (`inspect`), the generated-output cache and the replacement-compatibility corpus live here.
+//! inspection analyses (`inspect`) and the generated-output cache live here.
 //! Nothing in this crate parses `clap` arguments; the binaries render what the driver returns, and the LSP and
 //! codegraph consume the same sessions. The provider is `incan_provider`, which this crate consumes as a client.
 //!
@@ -33,11 +33,9 @@ pub mod metadata_packages;
 pub mod modules;
 pub mod oven_store;
 pub mod project;
-pub mod replacement_compatibility;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect_workspace;
 pub mod session;
-pub mod shadow_support;
 pub mod testing;
 #[cfg(test)]
 mod tests;

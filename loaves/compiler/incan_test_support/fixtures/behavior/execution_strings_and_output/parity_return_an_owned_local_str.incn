@@ -1,0 +1,11 @@
+# behavior: a function returns a str it bound to a local (parity corpus row replacement-body-v0-003)
+# expect-stdout:
+#   owned
+
+def return_owned() -> str:
+    value = "owned"
+    return value
+
+
+def main() -> None:
+    println(return_owned())

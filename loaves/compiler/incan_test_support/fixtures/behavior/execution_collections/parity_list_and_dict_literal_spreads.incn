@@ -1,0 +1,12 @@
+# behavior: a list literal spreads a list and a dict literal spreads a dict (parity corpus case 12)
+# expect-stdout:
+#   4
+#   2
+
+def main() -> None:
+    xs = [2, 3]
+    values = [1, *xs, 4]
+    base = {"a": 1}
+    merged = {**base, "b": 2}
+    println(len(values))
+    println(len(merged))

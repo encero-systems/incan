@@ -1,0 +1,15 @@
+# behavior: a `let` inside a block shadows the outer binding only inside it (parity corpus identity row)
+# expect-stdout:
+#   3
+
+def shadow_let() -> int:
+    mut total = 0
+    x = 1
+    if true:
+        let x = 2
+        total += x
+    return total + x
+
+
+def main() -> None:
+    println(shadow_let())

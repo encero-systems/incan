@@ -25,7 +25,6 @@
 //!   `incan_emit` (codegen entrypoint `IrCodegen`, emission, conversions) crates
 //! - `project/` - Rust source projection and explicit publisher support (plan, generator, cargo_toml, runner)
 //! - `selection` - backend-selection identity and execution receipt (#986), re-exported from `incan_emit`
-//! - `shadow/` - bounded source-observable legacy/replacement shadow comparison (#1146)
 //! - `c_abi` - the platform C ABI table
 
 // Enforce explicit error handling in project generation code.
@@ -39,9 +38,7 @@
 pub mod c_abi;
 pub mod ir;
 pub mod project;
-pub use incan_emit::replacement;
 pub use incan_emit::selection;
-pub mod shadow;
 
 // Re-export the unified codegen entrypoint
 pub use ir::{GenerationError, IrCodegen};
@@ -51,12 +48,6 @@ pub use selection::{
     BackendExecutionReceipt, BackendKind, BackendSelection, BackendSelectionError, CompatibilityProfile,
     FallbackOutcome, FallbackPolicy, SelectionReason, ShadowComparisonState, digest_output, finalize_receipt,
     resolve_execution, select_backend,
-};
-
-// Bounded source-observable shadow comparison between the two backends (#1146)
-pub use shadow::{
-    LegacyExecutionAuthority, RuntimeFailureClass, SHADOW_COMPARISON_PROFILE_ID, ShadowComparison,
-    ShadowComparisonProfile, ShadowUnavailable, SourceObservable, legacy_oven::LegacyOvenCapability,
 };
 
 // Project generation (public API)
