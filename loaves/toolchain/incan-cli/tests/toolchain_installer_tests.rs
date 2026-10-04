@@ -1682,11 +1682,23 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         evidence_workflow.contains("uses: ./.github/actions/run-oven-compiler-suite"),
         "complete compiler-suite correctness must remain in explicit release evidence"
     );
-    let focused_target = makefile
+    let (focused_target, retention_target) = makefile
         .split_once(".PHONY: test-oven-focused")
-        .and_then(|(_, suffix)| suffix.split_once(".PHONY: test-oven-pr-regressions"))
-        .map(|(target, _)| target)
-        .ok_or("Makefile omitted the focused Oven target boundary")?;
+        .and_then(|(_, suffix)| suffix.split_once(".PHONY: test-oven-report-retention"))
+        .and_then(|(focused, suffix)| {
+            suffix
+                .split_once(".PHONY: test-oven-pr-regressions")
+                .map(|(retention, _)| (focused, retention))
+        })
+        .ok_or("Makefile omitted the focused Oven or report-retention target boundary")?;
+    assert!(
+        retention_target.contains("cargo test --locked -p oven-cli --lib")
+            && retention_target.contains("commands::oven::suite_retention")
+            && retention_target.contains("commands::oven::partition_reconciliation")
+            && !retention_target.contains("python3")
+            && !retention_target.contains("$("),
+        "the report-retention target must run the Rust retention and reconciliation tests through Cargo alone"
+    );
     let focused_cargo_tests = focused_target
         .lines()
         .filter(|line| line.contains("cargo test"))
