@@ -542,6 +542,21 @@ impl TypeChecker {
         Some((name.clone(), info.path.clone()))
     }
 
+    /// The declaring identity of a callable reached through a module binding (`math.sqrt`), from the module graph or,
+    /// for a standard-library module, from the stdlib cache that resolved its signature.
+    ///
+    /// A stdlib module binding resolves the callable's symbol through the stdlib cache, which the dependency-member
+    /// walk does not consult, so the walk alone leaves `import std.math` + `math.sqrt(..)` without the identity that
+    /// `from std.math import sqrt` + `sqrt(..)` records. Both spellings select the same declaration and record it.
+    fn imported_module_callable_identity(
+        &mut self,
+        module_path: &[String],
+        member: &str,
+    ) -> Option<incan_semantics_core::CanonicalSymbolId> {
+        self.dependency_member_identity(&ImportPath::simple(module_path.to_vec()), member)
+            .or_else(|| self.stdlib_cache.lookup_identity(module_path, member))
+    }
+
     /// Resolve a function member from a stdlib or public-package module binding.
     fn resolve_imported_module_function_member(&mut self, module_path: &[String], member: &str) -> Option<SymbolKind> {
         self.resolve_imported_module_function_member_with_source(module_path, member)

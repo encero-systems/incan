@@ -5,6 +5,33 @@ use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
 
+/// The type a `Type.member(..)` call is made on, when its receiver names a type rather than a value.
+///
+/// A nominal type in the ordinary namespace (model, class, newtype, rusttype, enum, alias or trait) is that type; a
+/// generic parameter (`T.default()` under a `Default` bound) is the type variable, so a trait's associated function
+/// called on it keeps the type that selects the implementation. Anything else is a value, and `None`.
+fn static_receiver_type(recv: &ast::Spanned<ast::Expr>, identity: Option<&CanonicalSymbolId>) -> Option<IncanType> {
+    let ast::Expr::Ident(name) = &recv.node else {
+        return None;
+    };
+    let identity = identity?;
+    if identity.kind == SemanticSourceTargetKind::GenericBinder {
+        return Some(IncanType::TypeVar(name.clone()));
+    }
+    (identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
+        && matches!(
+            identity.kind,
+            SemanticSourceTargetKind::Model
+                | SemanticSourceTargetKind::Class
+                | SemanticSourceTargetKind::Newtype
+                | SemanticSourceTargetKind::Rusttype
+                | SemanticSourceTargetKind::Enum
+                | SemanticSourceTargetKind::TypeAlias
+                | SemanticSourceTargetKind::Trait
+        ))
+    .then(|| IncanType::Named(name.clone()))
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Rewrite an argument bound to a `mut` parameter (#2022). A `mut` parameter of non-`Copy` type writes through to
     /// the caller, as the emitted route's `&mut T` does, so the argument is borrowed mutably instead of copied or
@@ -787,6 +814,43 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         };
 
+        // Calling a value whose type adopts `__call__` (a `Callable1` adopter, or a type parameter bounded by one) is a
+        // call of that method, as the checker resolved it; the value is the receiver, borrowed like any receiver.
+        if let Some(dispatch) = self.type_info.resolved_operator_call(span)
+            && dispatch.kind == ResolvedOperatorKind::Call
+        {
+            let method = dispatch.method.clone();
+            let receiver_place = self.lower_expr_to_place(callee, scope, out);
+            let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
+            let declared: Option<Vec<DeclaredSlot>> = self
+                .type_info
+                .call_site_callable_params(span)
+                .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+            let (mut operands, binding) =
+                match self.bind_declared_args(&format!("`{method}` of `{name}`"), declared, args, scope, out) {
+                    Ok(bound) => bound,
+                    Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+                };
+            let mut call_args = Vec::with_capacity(operands.len() + 1);
+            call_args.push(bir::ArgumentElement::One(receiver));
+            call_args.append(&mut operands);
+            let ty = self.resolve_ty(span);
+            return self.push_call_temp(
+                bir::Callee::Method(bir::MethodTarget {
+                    name: method,
+                    canonical: self.type_info.resolved_identity(span).cloned(),
+                    type_args: resolved_type_args,
+                    binding,
+                }),
+                call_args,
+                ty,
+                scope,
+                hir_span_value,
+                false,
+                out,
+            );
+        }
+
         if let Some(&local) = self.bindings.get(&name) {
             let local_ty = self.locals[local.index()].ty.clone();
             let IncanType::Function { params, return_type: _ } = local_ty else {
@@ -871,6 +935,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
                 name,
                 direct_call_id: declaration.direct_call_id,
                 canonical: declaration.canonical,
@@ -943,6 +1008,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         Some(self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
                 name: display_name,
                 direct_call_id: None,
                 canonical: Some(canonical),
@@ -1018,6 +1084,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // The declaration lives in another module, so it has no span identity in this one. `canonical` is the
             // fact that survives the boundary, and it is the only one a consumer may dispatch on here.
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
                 name: name.to_string(),
                 direct_call_id: None,
                 canonical: Some(canonical),
@@ -1067,19 +1134,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
-        if self.type_info.resolved_identity(recv.span).is_some_and(|identity| {
-            identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
-                && matches!(
-                    &identity.kind,
-                    SemanticSourceTargetKind::Model
-                        | SemanticSourceTargetKind::Class
-                        | SemanticSourceTargetKind::Newtype
-                        | SemanticSourceTargetKind::Rusttype
-                        | SemanticSourceTargetKind::Enum
-                        | SemanticSourceTargetKind::TypeAlias
-                        | SemanticSourceTargetKind::Trait
-                )
-        }) {
+        if self
+            .type_info
+            .resolved_identity(recv.span)
+            .is_some_and(|identity| static_receiver_type(recv, Some(identity)).is_some())
+        {
             return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
@@ -1227,6 +1286,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: static_receiver_type(recv, self.type_info.resolved_identity(recv.span)),
                 name: spelling,
                 direct_call_id,
                 canonical: Some(canonical),

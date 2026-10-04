@@ -2492,6 +2492,12 @@ pub struct NamedCallableTarget {
     /// import, an alias, or a re-export, and is `None` whenever that answer is not proven. [`Self::name`] remains the
     /// call site's own spelling, so the pair records both what was written and what it means.
     pub canonical: Option<CanonicalSymbolId>,
+    /// The type an associated function is called on: `Point` in `Point.default()`, `T` in `T.default()`.
+    ///
+    /// `None` for an ordinary function call. When [`Self::canonical`] is a trait's method, this is what selects the
+    /// implementation, as `<T as Default>::default()` does in Rust; for a type's own static method it repeats the
+    /// owner.
+    pub receiver_type: Option<IncanType>,
 }
 
 /// Whether the provider owning an operation can be executed against in this compilation.
@@ -2776,9 +2782,13 @@ impl CallableTarget {
     fn render_snapshot(&self) -> String {
         match self {
             Self::Named(target) => format!(
-                "fn:{}{}{}",
+                "fn:{}{}{}{}",
                 target.name,
                 render_type_arguments(&target.type_args),
+                target
+                    .receiver_type
+                    .as_ref()
+                    .map_or_else(String::new, |ty| format!(" on {ty}")),
                 target.binding.render_snapshot()
             ),
             Self::Local(target) => format!(
