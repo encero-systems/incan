@@ -8,17 +8,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::build::output_selection::load_current_project_registry_source_authorities;
 use crate::cargo_policy::cargo_command_flags;
 use crate::error::{CliError, CliResult};
 use crate::generated_cache::resolve_generated_cargo_target;
 use crate::lock::LockResolutionRequest;
-use crate::lock::registry_sources::{acquire_explicit_project_inspection_sources, install_required_oven_registry_lock};
+use crate::lock::registry_sources::{
+    acquire_explicit_project_inspection_sources, install_required_oven_registry_lock,
+    prepare_project_registry_source_authorities,
+};
 use crate::lock::resolution::resolve_lock_context;
 use crate::lock::{
     OvenRustInspectSourceAuthorityRequest, PreparedRustInspectTypecheckWorkspace, PreparedRustInspectWorkspace,
     RustInspectTypecheckRequest, RustInspectWorkspaceRequest,
 };
 use crate::modules::{build_source_map, collect_rust_dependency_uses, format_dependency_error};
+use crate::oven_store::open_default_oven_store;
 use crate::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths;
 use crate::rust_inspect_workspace::collect_rust_inspect_query_paths;
 use crate::rust_inspect_workspace::ensure_rust_inspect_workspace_with_cargo_package_name;
@@ -396,6 +401,13 @@ pub fn prepare_rust_inspect_typecheck_workspace(
         .and_then(|manifest| manifest.project.as_ref())
         .and_then(|project| project.version.as_deref())
         .unwrap_or("0.1.0");
+    let prepared_project_source_authorities = if manifest.is_some() {
+        load_current_project_registry_source_authorities(&open_default_oven_store()?, project_root)?
+            .map(prepare_project_registry_source_authorities)
+            .transpose()?
+    } else {
+        None
+    };
     let manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
         project_root,
         project_name,
@@ -426,7 +438,7 @@ pub fn prepare_rust_inspect_typecheck_workspace(
             build_unit_inputs: &oven_build_inputs,
             registry_dependencies: &lock_resolution.resolved.dependencies,
         }),
-        prepared_project_source_authorities: None,
+        prepared_project_source_authorities,
         explicit_oven_bake: false,
     })?;
     Ok(manifest_dir.map(|workspace| PreparedRustInspectTypecheckWorkspace {
