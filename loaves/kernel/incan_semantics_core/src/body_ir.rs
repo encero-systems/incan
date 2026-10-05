@@ -42,7 +42,8 @@
 use std::fmt::Write as _;
 
 use incan_lang::errors::ErrorKind;
-use incan_lang::lang::builtins::BuiltinFnId;
+/// The compiler-owned builtin identity carried by checked named call targets.
+pub use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::errors;
 use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::numerics::NumericTypeId;
@@ -3015,6 +3016,8 @@ pub enum HelperOp {
     DictContainsKey,
     /// `k not in d` on a dict, with the same `(haystack, needle)` argument order as [`Self::DictContainsKey`].
     DictNotContainsKey,
+    /// Validate normalized builtin range bounds and step using the runtime constructor's error contract.
+    RangeValidate,
 }
 
 impl HelperOp {
@@ -3046,6 +3049,7 @@ impl HelperOp {
     /// name so callers building runtime-requirement facts stay on the same helper naming as the snapshot renderer.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::RangeValidate => "range_validate",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",

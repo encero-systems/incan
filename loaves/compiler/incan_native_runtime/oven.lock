@@ -4,7 +4,7 @@
 [incan]
 format = 2
 incan-version = "0.6.0-dev.6"
-deps-fingerprint = "sha256:12bab4d1826f39244106bdc9deb0fcabeb58b604ba32ab651b4ca7a86e0adf56"
+deps-fingerprint = "sha256:1b6160adb4f8f9857704a8ac67855cff9d52be9e49c4e5dbca842043d7a9f7f6"
 cargo-features = []
 cargo-no-default-features = false
 cargo-all-features = false
@@ -65,7 +65,7 @@ version = "0.6.0-dev.6"
 reason = "profile:default"
 
 [[semantic.packages]]
-package = "incan_mir_plan"
+package = "incan_native_runtime"
 project_root = ""
 active_features = []
 active_optional_dependencies = []

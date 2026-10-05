@@ -1,0 +1,33 @@
+"""Monomorphic language runtime calls used by the direct scalar native route."""
+
+from rust::incan_std_core::iter import range as runtime_range
+
+
+pub def format_int(value: int) -> str:
+    """Format an integer with the same conversion used by language string interpolation."""
+    return str(value)
+
+
+pub def format_float(value: float) -> str:
+    """Preserve the language's float spelling, including visibly integral floats."""
+    return str(value)
+
+
+pub def format_bool(value: bool) -> str:
+    """Format a boolean with the language's existing scalar conversion."""
+    return str(value)
+
+
+pub def println_text(value: str) -> None:
+    """Print one formatted value followed by the language's normal newline."""
+    println(value)
+
+
+pub def clone_text(value: &str) -> str:
+    """Create the owned display text for an already formatted borrowed string."""
+    return str(value)
+
+
+pub def validate_range(start: int, end: int, step: int) -> None:
+    """Use the existing range constructor's error behavior before a normalized counting loop."""
+    _ = runtime_range(start, end, step)

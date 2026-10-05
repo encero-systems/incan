@@ -111,6 +111,8 @@ mod inspection_validation;
 mod invocation;
 mod manifest_validation;
 mod path_libraries;
+mod path_workspace;
+pub use path_workspace::effective_path_manifest;
 mod plan_building;
 mod receipt_selection;
 

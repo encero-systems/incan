@@ -1,0 +1,12 @@
+[project]
+name = "incan_mir_lowering"
+version = "0.6.0-dev.7"
+
+[dependencies]
+incan_mir_plan = { loaf = "incan_mir_plan", path = "../incan_mir_plan" }
+
+[rust-dependencies]
+incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
+
+[build]
+rust-edition = "2024"

@@ -5228,13 +5228,54 @@ impl TypeChecker {
         }
         let base_ty = self.check_type_receiver_expr(base);
 
+        // Field lookup follows explicit references without changing the checked receiver's ownership facts.
+        let mut field_owner = &base_ty;
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = field_owner {
+            field_owner = inner;
+        }
+        let base_ty = field_owner;
+
+        if let Some(ty) = self.check_imported_module_field(base, field, span) {
+            return ty;
+        }
+        if matches!(base_ty, ResolvedType::Unknown) {
+            return ResolvedType::Unknown;
+        }
+        if let ResolvedType::RustPath(path) = base_ty {
+            return self.check_rust_path_field(path, field, span);
+        }
+
+        if let ResolvedType::Generic(name, args) = &base_ty
+            && surface_types::from_str(name.as_str()).is_some_and(surface_types::field_access_reads_wrapped_value)
+            && args.len() == 1
+        {
+            if field == "value" {
+                return args[0].clone();
+            }
+            return self.check_nominal_field(base, &args[0], field, span);
+        }
+
+        // In a declared type's own method, a `Self` value (`other: Self`) is that type, so its fields resolve as they
+        // do on `self`, as its methods already do (#1561); a trait default keeps `Self` open and reads fields through
+        // `@requires`.
+        if matches!(base_ty, ResolvedType::SelfType)
+            && let Some(owner_ty) = self.current_method_owner_type()
+        {
+            return self.check_nominal_field(base, &owner_ty, field, span);
+        }
+
+        self.check_nominal_field(base, base_ty, field, span)
+    }
+
+    /// Resolve imported module members from checked symbol metadata before treating a receiver as a value.
+    fn check_imported_module_field(&mut self, base: &Spanned<Expr>, field: &str, span: Span) -> Option<ResolvedType> {
         // Imported modules use symbol-driven metadata resolution.
         if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
             if let Some((info, identity)) = self.resolve_imported_module_constant_member(&module_path, field) {
                 if let Some(identity) = identity {
                     self.type_info.record_resolved_identity(span, identity);
                 }
-                return info.ty;
+                return Some(info.ty);
             }
             let is_public_library_module =
                 module_path.len() >= 2 && module_path.first().is_some_and(|segment| segment == "pub");
@@ -5257,7 +5298,7 @@ impl TypeChecker {
                             &source_modules,
                             span,
                         ));
-                        return ResolvedType::Unknown;
+                        return Some(ResolvedType::Unknown);
                     }
                 }
             } else {
@@ -5292,7 +5333,7 @@ impl TypeChecker {
                             .insert((span.start, span.end), IdentKind::TypeName);
                         let source_kind = Self::source_target_kind_for_type_info(&type_info).unwrap_or("type");
                         self.record_source_target(span, source_module_path, source_name, source_kind);
-                        return ResolvedType::Named(canonical_name);
+                        return Some(ResolvedType::Named(canonical_name));
                     }
                     (SymbolKind::Function(info), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
@@ -5301,11 +5342,11 @@ impl TypeChecker {
                             if !self.is_generic_partial_target_span(span) {
                                 self.errors
                                     .push(errors::generic_function_reference(callable.as_str(), span));
-                                return ResolvedType::Unknown;
+                                return Some(ResolvedType::Unknown);
                             }
                             self.generic_partial_target = Some(GenericPartialTarget::of_function(&callable, &info));
                         }
-                        return Self::function_info_to_resolved_function_type(&info);
+                        return Some(Self::function_info_to_resolved_function_type(&info));
                     }
                     (SymbolKind::FunctionOverloads(_), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
@@ -5315,192 +5356,178 @@ impl TypeChecker {
                             ),
                             span,
                         ));
-                        return ResolvedType::Unknown;
+                        return Some(ResolvedType::Unknown);
                     }
                     _ => {}
                 }
             }
         }
 
-        // Be permissive for unknown receivers: allow field access and continue typechecking.
-        if matches!(base_ty, ResolvedType::Unknown) {
-            return ResolvedType::Unknown;
-        }
+        None
+    }
 
-        if let ResolvedType::RustPath(path) = &base_ty {
-            let Some(meta) = self.rust_item_metadata_for_path(path) else {
-                if let Some(sig) = metadata_free_method_signature(path, field) {
+    /// Resolve a Rust field or associated item using the admitted metadata, retaining the no-metadata fallback.
+    fn check_rust_path_field(&mut self, path: &str, field: &str, span: Span) -> ResolvedType {
+        let Some(meta) = self.rust_item_metadata_for_path(path) else {
+            if let Some(sig) = metadata_free_method_signature(path, field) {
+                return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
+            }
+            // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
+            return ResolvedType::Unknown;
+        };
+        match &meta.kind {
+            RustItemKind::Module(module) => {
+                if let Some(child) = module.children.iter().find(|c| c.name == field) {
+                    return match child.kind_hint {
+                        incan_lang::interop::RustModuleChildKind::Module
+                        | incan_lang::interop::RustModuleChildKind::Type
+                        | incan_lang::interop::RustModuleChildKind::Trait
+                        | incan_lang::interop::RustModuleChildKind::Other => {
+                            ResolvedType::RustPath(format!("{path}::{field}"))
+                        }
+                        incan_lang::interop::RustModuleChildKind::Function => {
+                            ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
+                        }
+                        incan_lang::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
+                    };
+                }
+                // Module membership from rust-analyzer is authoritative.
+                self.errors
+                    .push(errors::missing_field(rust_receiver_display(path).as_str(), field, span));
+                ResolvedType::Unknown
+            }
+            RustItemKind::Type(_) => {
+                if let Some(sig) = self.rust_associated_function_signature(path, field) {
                     return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
                 }
-                // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
-                return ResolvedType::Unknown;
-            };
-            match &meta.kind {
-                RustItemKind::Module(module) => {
-                    if let Some(child) = module.children.iter().find(|c| c.name == field) {
-                        return match child.kind_hint {
-                            incan_lang::interop::RustModuleChildKind::Module
-                            | incan_lang::interop::RustModuleChildKind::Type
-                            | incan_lang::interop::RustModuleChildKind::Trait
-                            | incan_lang::interop::RustModuleChildKind::Other => {
-                                ResolvedType::RustPath(format!("{path}::{field}"))
-                            }
-                            incan_lang::interop::RustModuleChildKind::Function => {
-                                ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
-                            }
-                            incan_lang::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
-                        };
+                if let Some(params) = self.rust_variant_callable_params(path, field) {
+                    if params.is_empty() {
+                        return ResolvedType::RustPath(path.to_string());
                     }
-                    // Module membership from rust-analyzer is authoritative.
-                    self.errors
-                        .push(errors::missing_field(rust_receiver_display(path).as_str(), field, span));
-                    return ResolvedType::Unknown;
+                    return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
                 }
-                RustItemKind::Type(_) => {
-                    if let Some(sig) = self.rust_associated_function_signature(path, field) {
-                        return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
-                    }
-                    if let Some(params) = self.rust_variant_callable_params(path, field) {
-                        if params.is_empty() {
-                            return ResolvedType::RustPath(path.to_string());
-                        }
-                        return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
-                    }
-                    if let RustItemKind::Type(info) = &meta.kind
-                        && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
-                    {
-                        self.type_info
-                            .record_rust_field_access_name(span, rust_field.name.clone());
-                        return self.resolved_rust_field_type(path, rust_field);
-                    }
-                    // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
-                    // Stay permissive when no exact field surface is available.
-                    return ResolvedType::Unknown;
-                }
-                RustItemKind::Unsupported { description } => {
-                    self.errors
-                        .push(errors::rust_item_shape_not_supported(path, description.as_str(), span));
-                    return ResolvedType::Unknown;
-                }
-                // Function, Trait, Constant: metadata coverage is incomplete, stay permissive.
-                _ => return ResolvedType::Unknown,
-            };
-        }
-
-        let resolve_on = |checker: &mut Self, ty: &ResolvedType| -> ResolvedType {
-            if field == "__name__" && checker.is_generic_placeholder_type(ty) {
-                if let Some(owner_name) = checker.generic_placeholder_name(ty)
-                    && let Some(identity) = checker.synthetic_member_identity_for_named_owner(
-                        owner_name,
-                        field,
-                        SemanticSourceTargetKind::Field,
-                    )
+                if let RustItemKind::Type(info) = &meta.kind
+                    && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
                 {
-                    checker.type_info.record_resolved_identity(span, identity);
+                    self.type_info
+                        .record_rust_field_access_name(span, rust_field.name.clone());
+                    return self.resolved_rust_field_type(path, rust_field);
                 }
-                return ResolvedType::Str;
+                // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
+                // Stay permissive when no exact field surface is available.
+                ResolvedType::Unknown
             }
-            match ty {
-                ResolvedType::Unknown => ResolvedType::Unknown,
-                // Trait default methods typecheck against `Self`, but field access must be declared via
-                // `@requires(...)` on the trait.
-                ResolvedType::SelfType => {
-                    if let Some(info) = checker
-                        .current_trait_properties
-                        .as_ref()
-                        .and_then(|properties| properties.get(field))
-                        .cloned()
-                    {
-                        if let Some(identity) = info.identity {
-                            checker.type_info.record_resolved_identity(span, identity);
-                        }
-                        checker.type_info.record_computed_property_access(span, "Self", field);
-                        info.return_type
-                    } else {
-                        checker
-                            .trait_required_field_type(field, span)
-                            .unwrap_or(ResolvedType::Unknown)
-                    }
-                }
-                ResolvedType::Tuple(elements) => {
-                    if let Ok(idx) = field.parse::<usize>()
-                        && idx < elements.len()
-                    {
-                        return elements[idx].clone();
-                    }
-                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
-                    ResolvedType::Unknown
-                }
-                ResolvedType::Function(_, _) if field == "__name__" => {
-                    if let Some(owner) = checker.type_info.resolved_identity(base.span).cloned() {
-                        checker.type_info.record_resolved_identity(
-                            span,
-                            Self::synthetic_member_identity(&owner, field, SemanticSourceTargetKind::Field),
-                        );
-                    }
-                    ResolvedType::Str
-                }
-                ResolvedType::Named(type_name) => {
-                    if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
-                        return field_ty;
-                    }
-                    if let Some(property_ty) = checker.resolve_nominal_property_type(type_name, None, field, span) {
-                        return property_ty;
-                    }
-                    checker.errors.push(errors::missing_field(type_name, field, span));
-                    ResolvedType::Unknown
-                }
-                ResolvedType::Generic(type_name, type_args) => {
-                    if let Some(field_ty) =
-                        checker.resolve_nominal_field_type(type_name, Some(type_args.as_slice()), field, span)
-                    {
-                        return field_ty;
-                    }
-                    if let Some(property_ty) =
-                        checker.resolve_nominal_property_type(type_name, Some(type_args.as_slice()), field, span)
-                    {
-                        return property_ty;
-                    }
-                    checker.errors.push(errors::missing_field(type_name, field, span));
-                    ResolvedType::Unknown
-                }
-                ResolvedType::TypeVar(name) => {
-                    if field == "__name__" {
-                        return ResolvedType::Str;
-                    }
-                    if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
-                        return property_ty;
-                    }
-                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
-                    ResolvedType::Unknown
-                }
-                _ => {
-                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
-                    ResolvedType::Unknown
-                }
+            RustItemKind::Unsupported { description } => {
+                self.errors
+                    .push(errors::rust_item_shape_not_supported(path, description.as_str(), span));
+                ResolvedType::Unknown
             }
-        };
-
-        if let ResolvedType::Generic(name, args) = &base_ty
-            && surface_types::from_str(name.as_str()).is_some_and(surface_types::field_access_reads_wrapped_value)
-            && args.len() == 1
-        {
-            if field == "value" {
-                return args[0].clone();
-            }
-            return resolve_on(self, &args[0]);
+            // Function, Trait, Constant: metadata coverage is incomplete, stay permissive.
+            _ => ResolvedType::Unknown,
         }
+    }
 
-        // In a declared type's own method, a `Self` value (`other: Self`) is that type, so its fields resolve as they
-        // do on `self`, as its methods already do (#1561); a trait default keeps `Self` open and reads fields through
-        // `@requires`.
-        if matches!(base_ty, ResolvedType::SelfType)
-            && let Some(owner_ty) = self.current_method_owner_type()
-        {
-            return resolve_on(self, &owner_ty);
+    /// Resolve a nominal value's field without changing the receiver's ownership or reference facts.
+    fn check_nominal_field(
+        &mut self,
+        base: &Spanned<Expr>,
+        ty: &ResolvedType,
+        field: &str,
+        span: Span,
+    ) -> ResolvedType {
+        let checker = self;
+
+        if field == "__name__" && checker.is_generic_placeholder_type(ty) {
+            if let Some(owner_name) = checker.generic_placeholder_name(ty)
+                && let Some(identity) = checker.synthetic_member_identity_for_named_owner(
+                    owner_name,
+                    field,
+                    SemanticSourceTargetKind::Field,
+                )
+            {
+                checker.type_info.record_resolved_identity(span, identity);
+            }
+            return ResolvedType::Str;
         }
-
-        resolve_on(self, &base_ty)
+        match ty {
+            ResolvedType::Unknown => ResolvedType::Unknown,
+            // Trait default methods typecheck against `Self`, but field access must be declared via
+            // `@requires(...)` on the trait.
+            ResolvedType::SelfType => {
+                if let Some(info) = checker
+                    .current_trait_properties
+                    .as_ref()
+                    .and_then(|properties| properties.get(field))
+                    .cloned()
+                {
+                    if let Some(identity) = info.identity {
+                        checker.type_info.record_resolved_identity(span, identity);
+                    }
+                    checker.type_info.record_computed_property_access(span, "Self", field);
+                    info.return_type
+                } else {
+                    checker
+                        .trait_required_field_type(field, span)
+                        .unwrap_or(ResolvedType::Unknown)
+                }
+            }
+            ResolvedType::Tuple(elements) => {
+                if let Ok(idx) = field.parse::<usize>()
+                    && idx < elements.len()
+                {
+                    return elements[idx].clone();
+                }
+                checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                ResolvedType::Unknown
+            }
+            ResolvedType::Function(_, _) if field == "__name__" => {
+                if let Some(owner) = checker.type_info.resolved_identity(base.span).cloned() {
+                    checker.type_info.record_resolved_identity(
+                        span,
+                        Self::synthetic_member_identity(&owner, field, SemanticSourceTargetKind::Field),
+                    );
+                }
+                ResolvedType::Str
+            }
+            ResolvedType::Named(type_name) => {
+                if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
+                    return field_ty;
+                }
+                if let Some(property_ty) = checker.resolve_nominal_property_type(type_name, None, field, span) {
+                    return property_ty;
+                }
+                checker.errors.push(errors::missing_field(type_name, field, span));
+                ResolvedType::Unknown
+            }
+            ResolvedType::Generic(type_name, type_args) => {
+                if let Some(field_ty) =
+                    checker.resolve_nominal_field_type(type_name, Some(type_args.as_slice()), field, span)
+                {
+                    return field_ty;
+                }
+                if let Some(property_ty) =
+                    checker.resolve_nominal_property_type(type_name, Some(type_args.as_slice()), field, span)
+                {
+                    return property_ty;
+                }
+                checker.errors.push(errors::missing_field(type_name, field, span));
+                ResolvedType::Unknown
+            }
+            ResolvedType::TypeVar(name) => {
+                if field == "__name__" {
+                    return ResolvedType::Str;
+                }
+                if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
+                    return property_ty;
+                }
+                checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                ResolvedType::Unknown
+            }
+            _ => {
+                checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
+                ResolvedType::Unknown
+            }
+        }
     }
 
     /// Validate the RFC 006 `Generator[T].map(fn)` helper and return the mapped element type.

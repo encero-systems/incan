@@ -1,0 +1,6 @@
+[project]
+name = "incan_native_runtime"
+version = "0.6.0-dev.7"
+
+[build]
+rust-edition = "2024"

@@ -4,7 +4,7 @@
 [incan]
 format = 2
 incan-version = "0.6.0-dev.6"
-deps-fingerprint = "sha256:12bab4d1826f39244106bdc9deb0fcabeb58b604ba32ab651b4ca7a86e0adf56"
+deps-fingerprint = "sha256:4e86935f9b8e98f48c679008495e8a83689615a1c8fd72df22e7b96ec5ddd240"
 cargo-features = []
 cargo-no-default-features = false
 cargo-all-features = false
@@ -65,13 +65,38 @@ version = "0.6.0-dev.6"
 reason = "profile:default"
 
 [[semantic.packages]]
-package = "incan_mir_plan"
+package = "incan_mir_lowering"
 project_root = ""
 active_features = []
 active_optional_dependencies = []
 required_sdk_components = []
 
 [semantic.packages.dependency_features]
+
+[[semantic.packages]]
+package = "incan_mir_plan"
+project_root = "../incan_mir_plan"
+active_features = []
+active_optional_dependencies = []
+required_sdk_components = []
+
+[semantic.packages.dependency_features]
+
+[[semantic.feature_edges]]
+from = ""
+dependency_key = "incan_mir_plan"
+to = "../incan_mir_plan"
+requested_features = []
+default_features = true
+optional = false
+
+[[semantic.providers]]
+identity = "incan_mir_plan@0.6.0-dev.7#sha256:40cec36fb20581792df2e3dc229151a85190fad0e28d6d214ee1d8442f824d1d[]"
+participation = "enabled"
+namespace_claims = []
+used_modules = []
+implementation_facets = []
+backend_requirements = []
 
 [[semantic.providers]]
 identity = "incan_stdlib_async@0.5.0#sha256:a50bacb1dc1095db99a2aa9f6270cee10f8a74ab779a2305d6872e13610a2d6e[]"
@@ -102,7 +127,7 @@ identity = "incan_stdlib_core@0.5.0#sha256:865252d3b133b8ad3871e5daee19f54a4fa3a
 participation = "used"
 namespace_claims = [["std", "derives", "collection"], ["std", "derives", "comparison"], ["std", "derives", "copying"], ["std", "derives", "string"], ["std", "features"], ["std", "prelude"], ["std", "reflection"], ["std", "registry"], ["std", "result"], ["std", "runtime"], ["std", "runtime", "host"], ["std", "runtime", "host", "clock"], ["std", "runtime", "host", "env"], ["std", "runtime", "host", "fs"], ["std", "runtime", "host", "http"], ["std", "runtime", "host", "model"], ["std", "runtime", "host", "process"], ["std", "runtime", "host", "tool"], ["std", "this"], ["std", "traits"], ["std", "traits", "callable"], ["std", "traits", "convert"], ["std", "traits", "error"], ["std", "traits", "indexing"], ["std", "traits", "ops"]]
 used_modules = [["std", "prelude"]]
-implementation_facets = []
+implementation_facets = ["rust_derives", "rust_reflection", "rust_registry", "rust_result", "rust_runtime", "rust_traits"]
 backend_requirements = []
 
 [[semantic.providers]]

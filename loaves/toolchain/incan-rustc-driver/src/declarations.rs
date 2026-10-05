@@ -19,6 +19,7 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             let name = match other {
                 PlanType::Int => "i64",
                 PlanType::Float => "f64",
+                PlanType::String => "String",
                 _ => "bool",
             };
             ast::TyKind::Path(None, ast::Path::from_ident(ident(name, span)))

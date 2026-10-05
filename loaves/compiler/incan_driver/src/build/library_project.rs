@@ -1307,7 +1307,17 @@ pub fn prepare_library_project_with_caller_facet(
     record_timing(&mut timings_ms, "library_generate_rust", codegen_start);
     record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
 
+    // The caller namespace names entrypoint-relative declarations. Keep canonical identities intact while removing
+    // the checked entrypoint module prefix from this separate caller-selection projection.
+    let mut checked_exports = selected_exports;
+    for export in &mut checked_exports {
+        if export.identity.source_path.starts_with(&lib_module.path_segments) {
+            export.identity.source_path.drain(..lib_module.path_segments.len());
+        }
+    }
+
     Ok(PreparedLibraryProject {
+        checked_exports,
         executable_surface,
         generator,
         project_root,
