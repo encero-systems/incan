@@ -8,6 +8,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/backend/project/body_ir_projection.rs": {
+      "disposition": "keep",
+      "notes": "Compiler host closure preserves checked-in CLI registry patches and rejects compile-time manifest-root captures while preserving child-process environment controls.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/backend/project/cargo_toml.rs": {
       "dies": "every test renders the generated project's Cargo.toml (`generate_cargo_toml`, `dependency_spec_to_toml`, `path_dependency`) and asserts its text or parsed tables: [package] name/version/license, [[bin]]/[lib] targets, registry/git/path/optional/dev dependency sources, feature gates, the stdlib facet and toolchain support-crate paths. Generated projects die with #654; there is no manifest to render.",
       "disposition": "retire",
@@ -5699,6 +5707,14 @@
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs": {
+      "disposition": "keep",
+      "notes": "Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""

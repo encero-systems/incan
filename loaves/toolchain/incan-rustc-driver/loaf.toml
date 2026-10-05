@@ -8,6 +8,7 @@ incan_mir_plan = { loaf = "incan_mir_plan", path = "../../compiler/incan_mir_pla
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
 
 [rust-dependencies]
+incan_driver = { path = "../../compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_testing", "std_decorators"] }
 thiserror = "2"
 sha2 = "0.10.9"
 incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
