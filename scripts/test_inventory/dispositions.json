@@ -576,7 +576,15 @@
     },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs": {
       "disposition": "keep",
-      "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and complete exact-output single-file behavior corpus",
+      "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs": {
+      "disposition": "keep",
+      "notes": "Direct-route census refusal grouping and bounded process capture; route-independent measurement support",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
