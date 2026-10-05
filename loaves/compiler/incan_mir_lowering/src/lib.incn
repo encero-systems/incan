@@ -69,6 +69,7 @@ from rust::incan_semantics_core::body_ir import (
     Rvalue as RustRvalue,
     Statement as RustStatement,
     StatementKind as RustStatementKind,
+    StdlibDelegation as RustStdlibDelegation,
     UnOp,
 )
 # =====================================================================================================================
@@ -706,7 +707,7 @@ def lower_named_target(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Call a builtin, or the same-module function the checker's canonical identity selects (never a name)."""
+    """Call a builtin, a same-module function, or a proven stdlib forwarder, all selected by identity, never a name."""
     if len(target.type_args) != 0:
         return Err("unsupported Body IR generic NamedCallableTarget")
     match target.builtin:
@@ -715,8 +716,10 @@ def lower_named_target(
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(identity) =>
+            # Without a body in this module, the target may be an imported stdlib function that the frontend proved
+            # forwards to a Rust call.
             match module.body_for_canonical_target(identity):
-                None => return Err("unsupported Body IR imported or unresolved canonical call target")
+                None => return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
                 Some(body) => return lower_local_call(builder, target, body, arguments, destination, span)
 
 
@@ -744,6 +747,60 @@ def lower_local_call(
             output = temporary(builder, scalar_type(body.return_type)?, span)
     terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
     return Ok(None)
+
+
+def lower_stdlib_delegation(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call the Rust function an imported stdlib function forwards to.
+
+    The frontend records a delegation only for a forwarder it proved transparent: its only statement returns one Rust
+    call with every parameter passed through in order. Calling that Rust function directly is therefore the call the
+    legacy route makes, selected by the checker's canonical identity and native path, never by a spelling.
+    """
+    match target.direct_call_id:
+        Some(_identity) => return Err("Body IR imported delegation has a local call identity")
+        None => pass
+    for delegation in module.stdlib_delegations:
+        match target.canonical:
+            None => return Err("unsupported Body IR unproven stdlib call target")
+            Some(identity) =>
+                if identity != delegation.canonical:
+                    continue
+        return lower_delegated_call(builder, delegation, target, arguments, destination, span)
+    return Err("unsupported Body IR imported or unresolved canonical call target")
+
+
+def lower_delegated_call(
+    mut builder: Builder,
+    delegation: &RustStdlibDelegation,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Emit the external call for one matched delegation, with its checked scalar signature."""
+    mut parameters: list[PlanType] = []
+    for parameter in delegation.parameters:
+        parameters.append(scalar_type(parameter)?)
+    result = scalar_type(delegation.return_type)?
+    operands = ordered_arguments(target.binding, arguments, len(parameters), span)?
+    mut output = temporary(builder, result, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(place, span)?
+        None => pass
+    match delegation.rust_path():
+        None => return Err("unsupported Body IR stdlib delegation native identity")
+        Some(path) =>
+            external_call(builder, path, parameters, result, operands, output, span)
+            return Ok(None)
 
 
 def ordered_arguments(

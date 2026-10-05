@@ -314,6 +314,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         .collect::<Vec<_>>();
     apply_top_level_input_contract_refusal(program, &mut bodies);
     bir::BodyIrModule {
+        stdlib_delegations: stdlib_delegations::collect(type_info),
         module_id,
         nominal_declarations,
         fieldless_enum_declarations,
@@ -1036,6 +1037,7 @@ mod async_;
 mod literals;
 
 mod calls;
+mod stdlib_delegations;
 
 mod operators;
 

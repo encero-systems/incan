@@ -284,7 +284,14 @@ fn prepare_formatting_runtime(root: &Path, repo: &Path, home: &Path) -> Result<P
     let runtime = root.join("formatting-runtime");
     let original = repo.join("loaves/compiler/incan_native_runtime");
     copy_tree(&original.join("src"), &runtime.join("src"))?;
-    fs::copy(original.join("loaf.toml"), runtime.join("loaf.toml"))?;
+    // Retain the math dependency in the caller's explicit native closure instead of discovering ambient artifacts.
+    fs::write(
+        runtime.join("loaf.toml"),
+        format!(
+            "{}\n[rust-dependencies]\nlibm = \"0.2\"\n",
+            fs::read_to_string(original.join("loaf.toml"))?
+        ),
+    )?;
     let caller = root.join("formatting-caller");
     fs::create_dir_all(caller.join("src"))?;
     fs::write(
@@ -351,6 +358,49 @@ fn check_source_pipeline(
 
 #[path = "native_driver_project_tests/census.rs"]
 mod census;
+
+/// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output.
+#[test]
+fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, _temporary) = fixture_root()?;
+    let repo = support::repo_root();
+    let driver = prepare_source_driver(&root, &repo)?;
+    let home = root.join("home");
+    bake(&root.join("library"), &home)?;
+    bake(&root.join("lowering"), &home)?;
+    bake(&driver, &home)?;
+    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
+    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    let source = root.join("imports.incn");
+    fs::write(
+        &source,
+        "from std.math import gcd as common, sqrt as root\nimport std.math\nfrom std.derives.comparison import Eq\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> None:\n  println(common(b=18, a=48))\n  println(math.lcm(4, 6))\n  println(gcd(4, 6))\n  println(root(16.0))\n  println(math.sqrt(25.0))\n",
+    )?;
+    let closure = corpus::runtime_closure(&runtime, "release")?;
+    let native = root.join("imports-native");
+    let binary = driver.join("target/rust/release/incan-rustc-driver");
+    success(
+        &corpus::source_command(&binary, &source, &native, &sysroot, &closure).output()?,
+        "native imported scalar compilation",
+    );
+    let legacy_root = root.join("imports-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy imported scalar compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/imports")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&legacy, "legacy imported scalar execution");
+    success(&actual, "native imported scalar execution");
+    assert_eq!(actual.stdout, b"6\n12\n10\n4.0\n5.0\n");
+    assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
 
 /// Measure every behavior fixture only when explicitly requested.
 #[test]

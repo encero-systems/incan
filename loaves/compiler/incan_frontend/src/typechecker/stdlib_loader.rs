@@ -144,6 +144,34 @@ pub struct StdlibAstCache {
 }
 
 impl StdlibAstCache {
+    /// Load the declaring source for an exact stdlib function identity, retaining imports and only its selected
+    /// function. Re-exports are followed by identity before this boundary; overloads or stale spans are refused.
+    pub fn callable_program(&mut self, identity: &CanonicalSymbolId) -> Option<ast::Program> {
+        let incan_semantics_core::SymbolOrigin::Module(path) = &identity.origin else {
+            return None;
+        };
+        if !stdlib::is_any_stdlib_path(path)
+            || self.lookup_identity(path, &identity.declaration_name).as_ref() != Some(identity)
+        {
+            return None;
+        }
+        let relative = stdlib::stdlib_stub_path(path)?;
+        let file = find_stdlib_file(&relative)?;
+        let source = std::fs::read_to_string(file).ok()?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| match &declaration.node {
+            ast::Declaration::Import(_) => true,
+            ast::Declaration::Function(function) => {
+                function.name == identity.declaration_name
+                    && declaration.span.start == identity.declaration_span.start
+                    && declaration.span.end == identity.declaration_span.end
+            }
+            _ => false,
+        });
+        Some(program)
+    }
+
     pub fn new() -> Self {
         Self { cache: HashMap::new() }
     }

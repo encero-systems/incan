@@ -1168,6 +1168,49 @@ fn a_module_qualified_stdlib_call_carries_the_selected_declaration() -> Result<(
         sqrt.canonical.is_some(),
         "the stdlib callee must keep its identity: {rendered}"
     );
+    let delegation = module
+        .stdlib_delegations
+        .iter()
+        .find(|delegation| Some(&delegation.canonical) == sqrt.canonical.as_ref())
+        .ok_or("sqrt must retain its checked transparent delegation")?;
+    assert_eq!(delegation.rust_path().as_deref(), Some("libm::sqrt"));
+    assert_eq!(
+        delegation.parameters,
+        vec![IncanType::Primitive(IncanPrimitiveType::Float)]
+    );
+    assert_eq!(delegation.return_type, IncanType::Primitive(IncanPrimitiveType::Float));
+    Ok(())
+}
+
+/// Imported aliases carry the same delegation, while a local shadow has no stdlib delegation.
+#[test]
+fn stdlib_delegations_follow_aliases_and_preserve_local_shadowing() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.math import gcd as common\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> int:\n  return common(b=18, a=48) + gcd(4, 6)\n",
+        &["m", "import_alias"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let imported = targets
+        .iter()
+        .find(|target| target.name == "common")
+        .ok_or("missing imported call")?;
+    let local = targets
+        .iter()
+        .find(|target| target.name == "gcd")
+        .ok_or("missing local call")?;
+    assert!(
+        module
+            .stdlib_delegations
+            .iter()
+            .any(|delegation| Some(&delegation.canonical) == imported.canonical.as_ref()
+                && delegation.rust_path().as_deref() == Some("incan_std_core::num::gcd_i64"))
+    );
+    assert!(
+        !module
+            .stdlib_delegations
+            .iter()
+            .any(|delegation| Some(&delegation.canonical) == local.canonical.as_ref())
+    );
     Ok(())
 }
 
