@@ -518,7 +518,8 @@ pub struct RustBinaryRole {
     /// The binary's root source, relative to the project directory and below the Rust root (`src/main.rs` for the
     /// conventional binary, `<rust.source root>/src/bin/<name>.rs` for a mixed Loaf).
     pub path: String,
-    /// Unit-scoped unstable permissions; an embedded compiler must grant these through its session options.
+    /// Unit-scoped unstable permissions. Oven receipts the first driver's crate-scoped bootstrap grant; driver-built
+    /// units receive permissions through session options.
     #[serde(default)]
     pub unstable_features: Vec<String>,
     /// Toolchain components required before this unit can be compiled.

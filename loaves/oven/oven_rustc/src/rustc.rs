@@ -7,6 +7,7 @@
 mod artifact;
 mod compiled_unit;
 mod diagnostics;
+pub mod driver_grant;
 mod inspection;
 mod manifest_cohort;
 mod manifest_materialize;

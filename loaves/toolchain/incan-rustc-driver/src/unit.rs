@@ -23,8 +23,7 @@ impl rustc_driver::Callbacks for UnitCallbacks {
 
 /// Compile one Oven-selected Rust unit under the exact build-bound toolchain.
 ///
-/// The initial driver cannot use this function to build itself: Oven must select a preexisting identity-bound
-/// compiler containing this hook. The capability list must enter that unit's RFC 124 build identity before launch.
+/// Oven builds the initial driver with a declared, receipt-bound crate-scoped bootstrap grant. Later units use this session callback; their capability list must enter the unit's RFC 124 build identity before launch.
 pub fn compile(args: &[String], sysroot: &Path, features: &[String]) -> Result<(), DriverError> {
     identity::verify(sysroot)?;
     if features.len() > 1 || features.iter().any(|feature| feature != "rustc_private") {

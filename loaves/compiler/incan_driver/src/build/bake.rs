@@ -638,7 +638,10 @@ fn cached_rust_caller_paths(
     unit_name: &str,
     source: &str,
 ) -> CliResult<BTreeMap<String, BTreeSet<String>>> {
-    let source_digest = format!("sha256:{}", hex::encode(Sha256::digest(source.as_bytes())));
+    let source_digest = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(format!("rust-caller-scan-v3\0{source}").as_bytes()))
+    );
     let cache_path = project_root
         .join("target/rust/caller-scans")
         .join(format!("{unit_name}.json"));
@@ -730,6 +733,17 @@ fn project_rust_unit_receipt(
     )
     .with_build_unit_input("callee-incan-unit", callee_identity)
     .with_build_unit_input("caller-facet", facet_id);
+    let mut request = request;
+    if let Some(role) = context
+        .manifest
+        .rust_binary_roles()
+        .iter()
+        .find(|role| role.name == unit_name)
+        && let Some(grant) =
+            oven_rustc::rustc::driver_grant::authorize_driver_grant(role, context.rustc).map_err(oven_rustc_error)?
+    {
+        request = request.with_build_unit_input(oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT, grant);
+    }
     let evidence = generated_project_source_evidence(&request).map_err(|error| CliError::failure(error.to_string()))?;
     let receipt = receipt_generated_project_with_source_evidence(&request, &evidence)
         .map_err(|error| CliError::failure(error.to_string()))?;
@@ -747,19 +761,133 @@ struct ProjectRustCallerUnit<'a> {
     facet_id: &'a str,
 }
 
-/// Build one profile of one Rust unit against its selected Incan caller artifact.
-fn bake_project_rust_profile(
+/// Publish or select a Rust unit's own dependency closure without granting permissions to its dependencies.
+fn prepare_rust_unit_dependencies(
+    context: &ProjectRustBakeContext<'_>,
+    profile: &str,
+    base_receipt: &oven_store::OvenReceipt,
+) -> CliResult<Option<(oven_store::OvenReceipt, crate::build::OvenDirectRustcPlanPreparation)>> {
+    if context.manifest.rust_dependencies().is_empty() {
+        return Ok(None);
+    }
+
+    // ---- Declared dependency roots ----
+    let mut dependencies = context
+        .manifest
+        .rust_dependencies()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    let generated = context
+        .manifest
+        .project_root()
+        .join("target/rust/dependencies")
+        .join(profile);
+    let mut generator = crate::backend::ProjectGenerator::new(&generated, "incan_rust_unit_dependencies", true);
+    generator.set_dependencies(dependencies.clone());
+    let mut dependency_source = String::from("use incan_std_core::{self as _};\n");
+    for dependency in &dependencies {
+        dependency_source.push_str(&format!(
+            "use {}::{{self as _}};\n",
+            dependency.crate_name.replace('-', "_")
+        ));
+    }
+    dependency_source.push_str("fn main() {}\n");
+    generator
+        .generate(&dependency_source)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+
+    // ---- Receipt-bound dependency publisher ----
+    let request = OvenGeneratedProjectRequest::new(
+        context.manifest.project_root(),
+        "incan-rust-unit-dependencies",
+        context.project_version,
+        context.target,
+        context.toolchain,
+        profile,
+        Vec::new(),
+    )
+    .with_generated_source("generated-root", generator.crate_root_path());
+    let mut request = request;
+    for (name, value) in &base_receipt.sources.build_unit_inputs {
+        if name != oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT {
+            request = request.with_build_unit_input(name, value);
+        }
+    }
+    let dependency_digest =
+        oven_store::digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
+            .map_err(|error| CliError::failure(error.to_string()))?;
+    request = request.with_build_unit_input("rust-dependencies", dependency_digest);
+    let receipt =
+        oven_store::receipt_generated_project(&request).map_err(|error| CliError::failure(error.to_string()))?;
+
+    // ---- Explicit plan selection under lease ----
+    let store = open_default_oven_store()?;
+    let preparation = crate::build::plan_selection::select_or_bake_generated_project_plan(
+        OvenProjectPlanMode::ExplicitBake,
+        &store,
+        &receipt,
+        crate::build::OvenProjectDependencySurface {
+            selection: &dependencies,
+            provider_compilations: &[],
+        },
+        &generated,
+        &generator.crate_root_path(),
+        context.rustc,
+    )?
+    .ok_or_else(|| CliError::failure("Rust unit dependency closure was not prepared"))?;
+    Ok(Some((receipt, preparation)))
+}
+
+/// Compose separately leased native closures, retaining direct roots and all transitive search bindings.
+fn compose_rust_unit_dependencies(
+    plan: &mut oven_rustc::rustc::OvenRustcArtifactPlan,
+    preparation: &crate::build::OvenDirectRustcPlanPreparation,
+    manifest: &ProjectManifest,
+) -> CliResult<()> {
+    let own = preparation
+        .plan_selection
+        .source_artifact_plan("generated-root")
+        .map_err(oven_rustc_error)?;
+    let mut libraries = Vec::new();
+    let declared = manifest.declared_rust_crate_names();
+    for (name, output) in &own.externs {
+        if !declared.contains(name) {
+            continue;
+        }
+        // The unit's declared root owns its alias; the sibling library retains its transitive metadata searches.
+        plan.externs.retain(|(existing, _)| existing != name);
+        libraries.push(OvenCallerOwnedRustcLibrary {
+            crate_name: name.clone(),
+            output: output.clone(),
+            digest: oven_store::digest_bytes(&fs::read(output).map_err(|error| CliError::failure(error.to_string()))?),
+            expose_extern: true,
+        });
+    }
+    attach_caller_owned_rustc_libraries(plan, &libraries).map_err(oven_rustc_error)?;
+    for path in own.dependency_search_paths {
+        plan.retain_caller_dependency_search_path(path);
+    }
+    plan.native_search_paths.extend(own.native_search_paths);
+    plan.native_search_paths.sort();
+    plan.native_search_paths.dedup();
+    Ok(())
+}
+
+/// Prepare the selected sibling library and its usage-derived caller projection for both native profiles.
+fn prepare_rust_caller_library(
     context: &ProjectRustBakeContext<'_>,
     unit: &ProjectRustCallerUnit<'_>,
     profile: &str,
-) -> CliResult<OvenProjectBakeProfileReport> {
+) -> CliResult<PreparedLibraryProject> {
     let ProjectRustCallerUnit {
         unit_name,
-        source,
         library,
         dependency,
         selection,
         facet_id,
+        ..
     } = *unit;
     let receipt_reference = format!("target/rust/receipts/{unit_name}-{profile}.json");
     let caller = CallerFacetRequest {
@@ -775,7 +903,7 @@ fn bake_project_rust_profile(
             dependency.path.display()
         ))
     })?;
-    let prepared = prepare_library_project_with_caller_facet(
+    prepare_library_project_with_caller_facet(
         Some(dependency_path),
         None,
         CargoPolicy::default(),
@@ -796,7 +924,25 @@ fn bake_project_rust_profile(
         CliError::failure(format!(
             "failed to prepare caller library `{library}` for `{unit_name}`: {error}"
         ))
-    })?;
+    })
+}
+
+/// Build one profile of one Rust unit against its selected Incan caller artifact.
+fn bake_project_rust_profile(
+    context: &ProjectRustBakeContext<'_>,
+    unit: &ProjectRustCallerUnit<'_>,
+    profile: &str,
+) -> CliResult<OvenProjectBakeProfileReport> {
+    let ProjectRustCallerUnit {
+        unit_name,
+        source,
+        library,
+        facet_id,
+        ..
+    } = *unit;
+
+    // ---- Checked sibling Incan caller ----
+    let prepared = prepare_rust_caller_library(context, unit, profile)?;
     let oven = prepared
         .oven
         .as_ref()
@@ -824,7 +970,13 @@ fn bake_project_rust_profile(
         }],
     )
     .map_err(oven_rustc_error)?;
-    let (receipt, receipt_path) = project_rust_unit_receipt(
+
+    // ---- Rust dependency composition and unit receipt ----
+    let own_dependencies = prepare_rust_unit_dependencies(context, profile, &selected.receipt)?;
+    if let Some((_, preparation)) = &own_dependencies {
+        compose_rust_unit_dependencies(&mut artifact_plan, preparation, context.manifest)?;
+    }
+    let (mut receipt, receipt_path) = project_rust_unit_receipt(
         context,
         unit_name,
         source,
@@ -832,6 +984,21 @@ fn bake_project_rust_profile(
         &selected.receipt.identity,
         facet_id,
     )?;
+    if let Some((dependency_receipt, preparation)) = &own_dependencies {
+        receipt = oven_store::receipt_with_build_unit_input(
+            &receipt,
+            "rust-unit-dependencies",
+            format!(
+                "{}:{}",
+                dependency_receipt.identity,
+                preparation.plan_selection.report_identity()
+            ),
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?;
+        write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
+    }
+
+    // ---- Receipt-authorized native compilation ----
     let output = context
         .manifest
         .project_root()
@@ -876,19 +1043,6 @@ fn bake_project_rust_units(
     package_features: &FeatureSelection,
     requested_target: Option<&str>,
 ) -> CliResult<OvenProjectBakeReport> {
-    for role in manifest.rust_binary_roles() {
-        if !role.unstable_features.is_empty()
-            || !role.toolchain_components.is_empty()
-            || !role.sysroot_dependencies.is_empty()
-        {
-            return Err(CliError::failure(format!(
-                "Rust unit `{}` requires an identity-bound embedded compiler to grant {:?} through \
-                 `unstable_features`; plain pinned rustc cannot grant session permissions, and no \
-                 seed compiler is selected by this project planner (RUSTC_BOOTSTRAP is forbidden)",
-                role.name, role.unstable_features
-            )));
-        }
-    }
     if manifest.library_dependencies().is_empty() {
         return Err(CliError::failure(
             "a project Rust unit must declare an Incan `loaf` dependency",
