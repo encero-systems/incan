@@ -31,3 +31,6 @@ pub def clone_text(value: &str) -> str:
 pub def validate_range(start: int, end: int, step: int) -> None:
     """Use the existing range constructor's error behavior before a normalized counting loop."""
     _ = runtime_range(start, end, step)
+
+
+pub from strings import concat_text, equal_text, unequal_text, less_text, less_equal_text, greater_text, greater_equal_text
