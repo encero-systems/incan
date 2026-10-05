@@ -62,6 +62,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
+                // Retain the checker's evaluated text for a source-local constant. Identity must prove the
+                // module and declaration kind before the name-keyed const-evaluation table is consulted;
+                // imported globals and same-spelled locals keep their existing place representation.
+                if let Some(global) = place.global()
+                    && global.identity.kind == SemanticSourceTargetKind::Const
+                    && incan_semantics_core::canonical_module_identity(&global.identity).as_deref()
+                        == Some(self.module_identity)
+                    && let Some(crate::typechecker::ConstValue::FrozenStr(text)) = self.type_info.const_value(name)
+                {
+                    return bir::Operand::Constant(bir::Constant::Str(text.clone()));
+                }
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
             }
