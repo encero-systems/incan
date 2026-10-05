@@ -16,6 +16,17 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
             .find(|def| tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name))
             .ok_or_else(|| PlanError::UnknownCallee(name.clone())),
         CalleeKind::External(path) => external(tcx, path),
+        CalleeKind::CloneModel(_, _) => {
+            let trait_id = tcx
+                .lang_items()
+                .clone_trait()
+                .ok_or_else(|| PlanError::UnknownCallee("Clone".into()))?;
+            tcx.associated_item_def_ids(trait_id)
+                .iter()
+                .copied()
+                .find(|def| tcx.item_name(*def).as_str() == "clone")
+                .ok_or_else(|| PlanError::UnknownCallee("Clone::clone".into()))
+        }
     }
 }
 

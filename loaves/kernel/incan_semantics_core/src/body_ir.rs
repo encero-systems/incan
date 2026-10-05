@@ -226,6 +226,14 @@ pub struct NominalDeclaration {
     pub field_identities: Vec<CanonicalSymbolId>,
     /// Checked field types in the same canonical order, including private layout dependencies.
     pub field_types: Vec<IncanType>,
+    /// Checker-resolved public visibility, in the same order as the fields.
+    pub field_public: Vec<bool>,
+    /// Whether the source model declaration is public.
+    pub public: bool,
+    /// Whether any declared field has a default; native plain models refuse these declarations.
+    pub has_field_defaults: bool,
+    /// Legacy plain-model derives, retained by the frontend rather than inferred by consumers.
+    pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Number of declared type parameters; this profile admits only zero.

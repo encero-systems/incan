@@ -77,10 +77,11 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
     let name = tcx.opt_item_name(def.to_def_id());
-    let function = plan
-        .functions
-        .iter()
-        .find(|function| name.is_some_and(|name| name.as_str() == function.name));
+    let function = plan.functions.iter().find(|function| {
+        tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
+            && tcx.parent(def.to_def_id()).is_crate_root()
+            && name.is_some_and(|name| name.as_str() == function.name)
+    });
     match function {
         Some(function) => match bodies::body(tcx, def, function) {
             Ok(body) => tcx.alloc_steal_mir(body),
@@ -112,6 +113,21 @@ impl rustc_driver::Callbacks for Callbacks {
         krate: &mut ast::Crate,
     ) -> rustc_driver::Compilation {
         let sources = Sources::new(compiler.sess.source_map());
+        for model in &self.plan.models {
+            let span = match sources.span(&model.span) {
+                Ok(span) => span,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
+            let mut item = declarations::model(model, span);
+            for derive in &model.derives {
+                item.attrs.push(declarations::derive_attribute(
+                    &compiler.sess.psess.attr_id_generator,
+                    derive,
+                    span,
+                ));
+            }
+            krate.items.push(item);
+        }
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
@@ -146,7 +162,8 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(def) => def,
                 Err(error) => refuse(tcx, error),
             };
-            let signature = tcx.instantiate_bound_regions_with_erased(tcx.fn_sig(def).instantiate_identity().skip_normalization());
+            let signature =
+                tcx.instantiate_bound_regions_with_erased(tcx.fn_sig(def).instantiate_identity().skip_normalization());
             let parameters: Vec<_> = external
                 .parameters
                 .iter()

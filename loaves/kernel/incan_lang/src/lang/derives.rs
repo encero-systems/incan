@@ -42,6 +42,16 @@ pub const FIELD_INFO_DERIVE_NAME: &str = "FieldInfo";
 /// Compiler-generated derive name that emits model/class class-name metadata.
 pub const INCAN_CLASS_DERIVE_NAME: &str = "IncanClass";
 
+/// The implicit derives of an undecorated model, shared by both native backends.
+pub fn plain_model_derives() -> [&'static str; 4] {
+    [
+        as_str(DeriveId::Debug),
+        as_str(DeriveId::Clone),
+        FIELD_INFO_DERIVE_NAME,
+        INCAN_CLASS_DERIVE_NAME,
+    ]
+}
+
 /// Metadata for a builtin derive.
 pub type DeriveInfo = LangItemInfo<DeriveId>;
 

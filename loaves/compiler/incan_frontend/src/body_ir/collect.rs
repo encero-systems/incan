@@ -83,6 +83,23 @@ pub(super) fn collect_local_nominal_declarations(
                 name: model.name.clone(),
                 fields: model.fields.iter().map(|field| field.node.name.clone()).collect(),
                 field_identities,
+                field_public: model
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        type_info
+                            .declarations
+                            .model_field_visibilities
+                            .get(&model.name)
+                            .and_then(|fields| fields.get(&field.node.name))
+                            .map(|visibility| *visibility == ast::Visibility::Public)
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                public: model.visibility == ast::Visibility::Public,
+                has_field_defaults: model.fields.iter().any(|field| field.node.default.is_some()),
+                derives: incan_lang::lang::derives::plain_model_derives()
+                    .map(str::to_owned)
+                    .to_vec(),
                 field_types: model
                     .fields
                     .iter()
