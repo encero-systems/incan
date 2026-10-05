@@ -23,6 +23,8 @@ enum Scalar {
     StrArray(i64),
     StringArrayRef(i64),
     StrArrayRef(i64),
+    Model(i64),
+    ModelRef(i64),
     StringSlice,
     StrSlice,
 }
@@ -30,6 +32,8 @@ enum Scalar {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::Model(index, _) => Scalar::Model(*index),
+        PlanType::ModelRef(index, _) => Scalar::ModelRef(*index),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
         PlanType::Bool => Scalar::Bool,
@@ -67,6 +71,7 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
             return Err(invalid(function, "function name is invalid or duplicated"));
         }
     }
+    validate_models(plan)?;
     let mut paths = BTreeSet::new();
     for external in &plan.externals {
         span(&external.span)?;
@@ -77,7 +82,10 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
                 reason: "invalid or duplicate canonical external path".into(),
             });
         }
-        if external.parameters.iter().any(|ty| !external_signature_type(scalar(ty)))
+        if external
+            .parameters
+            .iter()
+            .any(|ty| !external_signature_type(scalar(ty)))
             || !external_signature_type(scalar(&external.return_type))
         {
             return Err(PlanError::Invalid {
@@ -153,6 +161,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
     }
     for local in &function.locals {
         span(&local.span)?;
+        validate_model_type(plan, &local.ty)?;
         validate_array_length(function, scalar(&local.ty))?;
     }
     for block in &function.blocks {
@@ -162,8 +171,8 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
             match &statement.kind {
                 StatementKind::Assign(destination, value) => {
                     span(&value.span)?;
-                    let expected = place(function, destination)?;
-                    let result = rvalue(function, &value.kind, expected)?;
+                    let expected = place(plan, function, destination)?;
+                    let result = rvalue(plan, function, &value.kind, expected)?;
                     require(function, expected, result, "assignment")?;
                 }
                 StatementKind::StorageLive(index) | StatementKind::StorageDead(index) => {
@@ -199,11 +208,23 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
 }
 
 /// Resolve a local projection, restricted to the checked result pair.
-fn place(function: &Function, value: &Place) -> Result<Scalar, PlanError> {
+fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, PlanError> {
     span(&value.span)?;
     let ty = local(function, value.local)?;
     match &value.projection {
         Projection::Whole => Ok(ty),
+        Projection::Field(slot, field_type) => {
+            let Scalar::Model(owner) = ty else {
+                return Err(invalid(function, "field projection requires a model owner"));
+            };
+            let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
+            let field = usize::try_from(*slot)
+                .ok()
+                .and_then(|slot| model.fields.get(slot))
+                .ok_or_else(|| invalid(function, "unknown model field"))?;
+            require(function, scalar(field_type), scalar(&field.ty), "projected field type")?;
+            Ok(scalar(field_type))
+        }
         Projection::Value if ty == Scalar::CheckedInt => Ok(Scalar::Int),
         Projection::Overflow if ty == Scalar::CheckedInt => Ok(Scalar::Bool),
         _ => Err(invalid(function, "only checked integer results support projections")),
@@ -236,17 +257,17 @@ fn unwind(function: &Function, action: &Unwind, cleanup: bool) -> Result<(), Pla
 }
 
 /// Infer a source operand's exact scalar representation.
-fn operand(function: &Function, value: &Operand) -> Result<Scalar, PlanError> {
+fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, PlanError> {
     span(&value.span)?;
     match &value.kind {
         OperandKind::Copy(value) => {
-            let ty = place(function, value)?;
-            if matches!(ty, Scalar::String | Scalar::StringArray(_)) {
+            let ty = place(plan, function, value)?;
+            if matches!(ty, Scalar::String | Scalar::StringArray(_) | Scalar::Model(_)) {
                 return Err(invalid(function, "owned formatting values cannot be copied"));
             }
             Ok(ty)
         }
-        OperandKind::Move(value) => place(function, value),
+        OperandKind::Move(value) => place(plan, function, value),
         OperandKind::Literal(value) => Ok(match value {
             Constant::Int(_) => Scalar::Int,
             Constant::Float(_) => Scalar::Float,
@@ -269,15 +290,15 @@ fn require(function: &Function, actual: Scalar, expected: Scalar, context: &str)
 }
 
 /// Type scalar rvalues, including the checked integer pair rustc produces for arithmetic.
-fn rvalue(function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
+fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
-        RvalueKind::Use(value) => operand(function, value),
+        RvalueKind::Use(value) => operand(plan, function, value),
         RvalueKind::IntToFloat(value) => {
-            require(function, operand(function, value)?, Scalar::Int, "int-to-float")?;
+            require(function, operand(plan, function, value)?, Scalar::Int, "int-to-float")?;
             Ok(Scalar::Float)
         }
         RvalueKind::Unary(op, value) => {
-            let ty = operand(function, value)?;
+            let ty = operand(plan, function, value)?;
             match op {
                 UnaryOp::Not if ty == Scalar::Bool => Ok(ty),
                 UnaryOp::Negate if matches!(ty, Scalar::Int | Scalar::Float) => Ok(ty),
@@ -285,39 +306,71 @@ fn rvalue(function: &Function, value: &RvalueKind, expected: Scalar) -> Result<S
             }
         }
         RvalueKind::Binary(op, left, right) => {
-            let ty = operand(function, left)?;
-            require(function, operand(function, right)?, ty, "binary operands")?;
+            let ty = operand(plan, function, left)?;
+            require(function, operand(plan, function, right)?, ty, "binary operands")?;
             binary_result(function, op, ty)
         }
-        RvalueKind::Array(elements) => validate_array(function, elements, expected),
-        RvalueKind::Borrow(value) => match place(function, value)? {
+        RvalueKind::Array(elements) => validate_array(plan, function, elements, expected),
+        RvalueKind::Model(index, elements) => {
+            require(function, expected, Scalar::Model(*index), "model aggregate destination")?;
+            let model = model(plan, *index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
+            if elements.len() != model.fields.len() {
+                return Err(invalid(function, "model field count differs from declaration"));
+            }
+            for (element, field) in elements.iter().zip(&model.fields) {
+                require(
+                    function,
+                    operand(plan, function, element)?,
+                    scalar(&field.ty),
+                    "model field",
+                )?;
+            }
+            Ok(expected)
+        }
+        RvalueKind::Borrow(value) => match place(plan, function, value)? {
+            Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
             Scalar::String => Ok(Scalar::StringRef),
             Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
             Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
             _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
         },
-        RvalueKind::UnsizeSlice(value) => match operand(function, value)? {
+        RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
             Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
             Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
-            _ => Err(invalid(function, "slice coercion requires a shared formatting-array reference")),
+            _ => Err(invalid(
+                function,
+                "slice coercion requires a shared formatting-array reference",
+            )),
         },
     }
 }
 
 /// Source functions expose only scalar or owned text values; formatting arrays and references stay body-internal.
 fn source_signature_type(ty: Scalar) -> bool {
-    matches!(ty, Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String)
+    matches!(
+        ty,
+        Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String | Scalar::Model(_)
+    )
 }
 
 /// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
 fn external_signature_type(ty: Scalar) -> bool {
-    source_signature_type(ty) || matches!(ty, Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice)
+    source_signature_type(ty)
+        || matches!(
+            ty,
+            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice
+        )
 }
 
 /// Refuse an invalid dimension before constructing native array constants, including unused locals.
 fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
-        Scalar::StringArray(count) | Scalar::StrArray(count) | Scalar::StringArrayRef(count) | Scalar::StrArrayRef(count) if count < 0 => {
+        Scalar::StringArray(count)
+        | Scalar::StrArray(count)
+        | Scalar::StringArrayRef(count)
+        | Scalar::StrArrayRef(count)
+            if count < 0 =>
+        {
             Err(invalid(function, "formatting array length must be nonnegative"))
         }
         _ => Ok(()),
@@ -325,17 +378,27 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
 }
 
 /// Check a formatting array's exact length and each element against its declared destination type.
-fn validate_array(function: &Function, values: &[Operand], expected: Scalar) -> Result<Scalar, PlanError> {
+fn validate_array(plan: &Plan, function: &Function, values: &[Operand], expected: Scalar) -> Result<Scalar, PlanError> {
     let (element, count) = match expected {
         Scalar::StringArray(count) => (Scalar::String, count),
         Scalar::StrArray(count) => (Scalar::StrRef, count),
-        _ => return Err(invalid(function, "array expression requires a formatting-array destination")),
+        _ => {
+            return Err(invalid(
+                function,
+                "array expression requires a formatting-array destination",
+            ));
+        }
     };
     if usize::try_from(count).ok() != Some(values.len()) {
         return Err(invalid(function, "formatting array length differs from its elements"));
     }
     for value in values {
-        require(function, operand(function, value)?, element, "formatting array element")?;
+        require(
+            function,
+            operand(plan, function, value)?,
+            element,
+            "formatting array element",
+        )?;
     }
     Ok(expected)
 }
@@ -378,6 +441,13 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
                 scalar(&function.return_type),
             ))
         }
+        CalleeKind::CloneModel(index, name) => {
+            let declaration = model(plan, *index).ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            if declaration.name != *name {
+                return Err(PlanError::UnknownCallee(name.clone()));
+            }
+            Ok((vec![Scalar::ModelRef(*index)], Scalar::Model(*index)))
+        }
         CalleeKind::External(path) => {
             let external = plan
                 .externals
@@ -399,7 +469,7 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
         TerminatorKind::SwitchBool(condition, false_target, true_target) => {
             require(
                 function,
-                operand(function, condition)?,
+                operand(plan, function, condition)?,
                 Scalar::Bool,
                 "switch condition",
             )?;
@@ -415,23 +485,38 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
                 ));
             }
             for (argument, parameter) in arguments.iter().zip(parameters) {
-                require(function, operand(function, argument)?, parameter, "call argument")?;
+                require(function, operand(plan, function, argument)?, parameter, "call argument")?;
             }
-            require(function, place(function, destination)?, result, "call destination")?;
+            require(
+                function,
+                place(plan, function, destination)?,
+                result,
+                "call destination",
+            )?;
             edge(function, *target, cleanup)?;
             unwind(function, action, cleanup)
         }
         TerminatorKind::Drop(value, target, action) => {
-            place(function, value)?;
+            place(plan, function, value)?;
             edge(function, *target, cleanup)?;
             unwind(function, action, cleanup)
         }
         TerminatorKind::AssertOverflow(condition, op, left, right, target, action) => {
-            require(function, operand(function, condition)?, Scalar::Bool, "overflow flag")?;
-            require(function, operand(function, left)?, Scalar::Int, "overflow left operand")?;
             require(
                 function,
-                operand(function, right)?,
+                operand(plan, function, condition)?,
+                Scalar::Bool,
+                "overflow flag",
+            )?;
+            require(
+                function,
+                operand(plan, function, left)?,
+                Scalar::Int,
+                "overflow left operand",
+            )?;
+            require(
+                function,
+                operand(plan, function, right)?,
                 Scalar::Int,
                 "overflow right operand",
             )?;
@@ -448,4 +533,60 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
         TerminatorKind::UnwindResume if !cleanup => Err(invalid(function, "unwind resume requires a cleanup block")),
         TerminatorKind::Return | TerminatorKind::Unreachable | TerminatorKind::UnwindResume => Ok(()),
     }
+}
+
+/// Resolve a checked nominal index without signed conversions or ambient name lookup.
+fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
+    usize::try_from(index).ok().and_then(|index| plan.models.get(index))
+}
+
+/// Ensure every nominal type's diagnostic spelling agrees with its indexed declaration.
+fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
+    if let PlanType::Model(index, name) | PlanType::ModelRef(index, name) = ty {
+        if model(plan, *index).is_none_or(|declaration| declaration.name != *name) {
+            return Err(PlanError::Invalid {
+                function: name.clone(),
+                reason: "nominal type differs from its declaration".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate plain nominal declarations and reject cyclic layouts before invoking rustc.
+fn validate_models(plan: &Plan) -> Result<(), PlanError> {
+    let mut names: BTreeSet<_> = plan.functions.iter().map(|function| &function.name).collect();
+    for (index, declaration) in plan.models.iter().enumerate() {
+        span(&declaration.span)?;
+        if !identifier(&declaration.name)
+            || !names.insert(&declaration.name)
+            || declaration.fields.len() != declaration.field_public.len()
+            || declaration.derives != ["Debug", "Clone", "FieldInfo", "IncanClass"]
+        {
+            return Err(PlanError::Invalid {
+                function: declaration.name.clone(),
+                reason: "invalid plain model declaration".into(),
+            });
+        }
+        let mut fields = BTreeSet::new();
+        for field in &declaration.fields {
+            span(&field.span)?;
+            if !identifier(&field.name) || !fields.insert(&field.name) || !source_signature_type(scalar(&field.ty)) {
+                return Err(PlanError::Invalid {
+                    function: declaration.name.clone(),
+                    reason: "invalid model field declaration".into(),
+                });
+            }
+            validate_model_type(plan, &field.ty)?;
+            if let PlanType::Model(owner, _) = &field.ty {
+                if usize::try_from(*owner).ok().is_some_and(|owner| owner >= index) {
+                    return Err(PlanError::Invalid {
+                        function: declaration.name.clone(),
+                        reason: "unsupported recursive or forward model field".into(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
