@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3557 | 245 | 8 |
+| keep | 3559 | 245 | 8 |
 | re-point | 526 | 86 | 1055 |
 | retire | 1504 | 153 | 0 |
 | unaffected | 1649 | 158 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7236** | **642** | **1068** |
+| **Total** | **7238** | **642** | **1068** |
 
 - Retire-class tests: 1504, of which twinned 1023, dies 294, open 187 (neither yet).
 - Retire-class files with open rows: 34 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -169,7 +169,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/lock/mod.rs` | 2 | 564 | 159 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/registry_sources.rs` | 4 | 683 | 83 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/resolution.rs` | 3 | 780 | 85 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/lock/rust_inspect.rs` | 2 | 536 | 97 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/lock/rust_inspect.rs` | 2 | 548 | 97 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/test_inputs.rs` | 2 | 200 | 91 | unaffected | - | - | - | #1561 | checker 2, parser 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/workspace.rs` | 2 | 653 | 53 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/modules.rs` | 23 | 2041 | 1166 | keep | - | - | - | #1561 | replacement 1, checker 19, parser 20 | module collection and Rust dependency use discovery through the parser. |
@@ -1842,19 +1842,19 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `assignment_preserves_move_and_copy_without_clone` | retire | `dies` | asserts the assignment conversion policy over hand-built IR moves and Copy reads; a conversion-policy invariant of the dying emitter. | legacy_ir | - |
 | `assignment_preserves_string_and_borrowed_materialization_precedence` | retire | `dies` | asserts the assignment conversion policy's precedence over hand-built IR literals and borrows; a conversion-policy invariant of the dying emitter. | legacy_ir | - |
 
-### `loaves/compiler/incan_format` (193 tests in 9 files: keep 193)
+### `loaves/compiler/incan_format` (195 tests in 9 files: keep 195)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_format/src/config.rs` | 24 | 275 | 206 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/formatter/tests.rs` | 11 | 327 | 327 | keep | - | - | - | #1561 | parser 7, formatter 11 | formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 20 | 488 | 488 | keep | - | - | - | #1561 | formatter 18 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 22 | 556 | 556 | keep | - | - | - | #1561 | formatter 20 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/declarations.rs` | 28 | 755 | 755 | keep | - | - | - | #1561 | formatter 28 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs` | 27 | 455 | 455 | keep | - | - | - | #1561 | checker 1, parser 1, formatter 21 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 24 | 658 | 658 | keep | - | - | - | #1561 | parser 2, formatter 24 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/statements_and_patterns.rs` | 15 | 306 | 306 | keep | - | - | - | #1561 | formatter 15 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 358 | 334 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
 ### `loaves/compiler/incan_frontend` (2091 tests in 114 files: keep 2091)
 
@@ -2692,7 +2692,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/tests/rfc031_checked_c_span_tests.rs` | 12 | 957 | 957 | re-point (keep 6, retire 6) | 0/6 | 6 | - | #1561 | codegen 6, text 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_manifest_diagnostics_tests.rs` | 9 | 547 | 547 | re-point (keep 6, re-point 3) | - | - | - | #1561 | run 1, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_pub_model_tests.rs` | 6 | 1060 | 1060 | re-point | - | - | - | #1561 | run 2, checker 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
-| `loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs` | 6 | 490 | 490 | re-point (re-point 5, retire 1) | 0/1 | 0 | - | #1561 | codegen 2, text 1, run 4, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
+| `loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs` | 6 | 504 | 504 | re-point (re-point 5, retire 1) | 0/1 | 0 | - | #1561 | codegen 2, text 1, run 4, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_stdlib_facade_tests.rs` | 11 | 941 | 941 | re-point | - | - | - | #1561 | run 8, checker 4 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_vocab_desugar_tests.rs` | 8 | 354 | 354 | re-point (keep 4, re-point 2, retire 2) | 1/2 | 0 | - | #1561 | text 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs` | 13 | 823 | 823 | re-point (keep 9, re-point 4) | - | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |

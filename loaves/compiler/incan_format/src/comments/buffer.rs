@@ -64,6 +64,11 @@ impl NormalizedLineBuffer {
         }
     }
 
+    /// Replace generated declaration spacing with the source gap around a root-level suite comment.
+    pub fn set_root_blank_lines(&mut self, count: usize) {
+        self.pending_blank_lines = count.min(2);
+    }
+
     /// Return whether the comment buffer ends with a nonblank line.
     pub fn ends_with_nonblank_line(&self) -> bool {
         self.lines.last().is_some_and(|line| !line.is_empty())
