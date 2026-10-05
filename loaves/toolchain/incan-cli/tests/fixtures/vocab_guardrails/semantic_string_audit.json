@@ -25,6 +25,12 @@
       "expected_fingerprint": "0xf643e2ca93edf3f7"
     },
     {
+      "path": "loaves/compiler/incan_driver/src/build/caller_facet.rs",
+      "category": "Rust caller-path tokens (`<library>::caller::incan::<name>`, `::`, braces and commas) read from Rust-authored caller units",
+      "expected_count": 9,
+      "expected_fingerprint": "0x9e9cddb72e9fdad9"
+    },
+    {
       "path": "loaves/compiler/incan_driver/src/build/library_project.rs",
       "category": "library build profile selection and stdlib crate exclusion",
       "expected_count": 2,

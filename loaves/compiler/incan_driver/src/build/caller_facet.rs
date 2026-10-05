@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use incan_frontend::ast::Visibility;
 use incan_frontend::library_exports::{CheckedExportKind, CheckedExportProjection, CheckedNamedExport};
 use incan_frontend::symbols::ResolvedType;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 /// One library-scoped caller facet selected from Rust source paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,7 +166,12 @@ fn type_representability(
 ) -> Result<(), String> {
     match ty {
         ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Str | ResolvedType::Unit => Ok(()),
-        ResolvedType::Generic(name, arguments) if matches!(name.as_str(), "list" | "List" | "Option" | "Result") => {
+        ResolvedType::Generic(name, arguments)
+            if matches!(
+                collections::from_str(name),
+                Some(CollectionTypeId::List | CollectionTypeId::Option | CollectionTypeId::Result)
+            ) =>
+        {
             for argument in arguments {
                 type_representability(argument, exports, visiting)?;
             }
