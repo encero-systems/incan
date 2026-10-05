@@ -22,7 +22,8 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
 /// Prove that one undecorated scalar wrapper returns its Rust callee with every parameter exactly once in declaration
 /// order. Checking supplies the native identity; the source spelling never becomes an execution path.
 fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<bir::StdlibDelegation> {
-    let SymbolOrigin::Module(path) = &identity.origin else {
+    let source_identity = cache.callable_source_identity(identity)?;
+    let SymbolOrigin::Module(path) = &source_identity.origin else {
         return None;
     };
     let program = cache.callable_program(identity)?;
@@ -75,7 +76,7 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
     checker.check_program(&program).ok()?;
     let target = checker.type_info().resolved_identity(callee.span)?.clone();
     let binding = checker.type_info().declarations.function_bindings.get(&function.name)?;
-    if binding.identity.as_ref() != Some(identity) {
+    if binding.identity.as_ref() != Some(&source_identity) {
         return None;
     }
     let parameters = binding
@@ -105,4 +106,33 @@ fn scalar(ty: &IncanType) -> bool {
             IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool | IncanPrimitiveType::Unit
         )
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StdlibAstCache, SymbolOrigin, delegation};
+
+    /// SDK publication may rebase the owner, but a wrong package or declaration span cannot gain forwarding rights.
+    #[test]
+    fn package_delegations_require_the_exact_catalog_owned_declaration() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cache = StdlibAstCache::new();
+        let path = vec!["std".to_string(), "math".to_string()];
+        let mut identity = cache.lookup_identity(&path, "sqrt").ok_or("missing sqrt identity")?;
+        identity.origin = SymbolOrigin::Package {
+            library: "incan_stdlib_data".to_string(),
+            module_path: vec!["math".to_string()],
+        };
+        let fact = delegation(&identity, &mut cache).ok_or("SDK sqrt must retain its forwarding fact")?;
+        assert_eq!(fact.canonical, identity);
+        assert_eq!(fact.rust_path().as_deref(), Some("libm::sqrt"));
+        identity.declaration_span.start += 1;
+        assert!(delegation(&identity, &mut cache).is_none());
+        identity.declaration_span.start -= 1;
+        identity.origin = SymbolOrigin::Package {
+            library: "foreign_math".to_string(),
+            module_path: vec!["math".to_string()],
+        };
+        assert!(delegation(&identity, &mut cache).is_none());
+        Ok(())
+    }
 }

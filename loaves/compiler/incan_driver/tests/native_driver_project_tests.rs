@@ -170,7 +170,13 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
         .replace("../../compiler/incan_mir_plan", "../library")
         .replace("../../compiler/incan_mir_lowering", "../lowering")
         .replace("../../kernel/incan_semantics_core", core)
-        .replace("../../compiler/incan_frontend", frontend);
+        .replace("../../compiler/incan_frontend", frontend)
+        .replace(
+            "../../compiler/incan_driver",
+            repo.join("loaves/compiler/incan_driver")
+                .to_str()
+                .ok_or("driver path is not UTF-8")?,
+        );
     fs::write(driver.join("loaf.toml"), manifest)?;
     Ok(driver)
 }
@@ -360,7 +366,8 @@ fn check_source_pipeline(
 #[path = "native_driver_project_tests/census.rs"]
 mod census;
 
-/// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output.
+/// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
+/// reaches lowering.
 #[test]
 fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let (root, _temporary) = fixture_root()?;
@@ -380,6 +387,7 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
     let closure = corpus::runtime_closure(&runtime, "release")?;
     let native = root.join("imports-native");
     let binary = driver.join("target/rust/release/incan-rustc-driver");
+    check_async_frontend_refusal(&binary, &root, &sysroot, &closure)?;
     success(
         &corpus::source_command(&binary, &source, &native, &sysroot, &closure).output()?,
         "native imported scalar compilation",
@@ -408,4 +416,27 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
 #[ignore = "explicit full direct-route census"]
 fn direct_route_fixture_census() -> Result<(), Box<dyn std::error::Error>> {
     census::run()
+}
+
+/// Import-activated async vocabulary must check through the CLI session before the lowering refuses async bodies.
+fn check_async_frontend_refusal(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    closure: &corpus::NativeClosure,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = root.join("async_frontend.incn");
+    fs::write(
+        &source,
+        "import std.async\n\nasync def value() -> int:\n    return 1\n\nasync def main() -> None:\n    result = await value()\n    println(result)\n",
+    )?;
+    success(
+        &support::repo_command().arg("check").arg(&source).output()?,
+        "legacy async checking",
+    );
+    let output = corpus::source_command(driver, &source, &root.join("async-native"), sysroot, closure).output()?;
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8(output.stderr)?;
+    assert!(diagnostic.contains("unsupported Body IR async Body"), "{diagnostic}");
+    Ok(())
 }
