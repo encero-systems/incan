@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3281 | 220 | 431 |
 | re-point | 1481 | 91 | 1047 |
 | retire | 1505 | 153 | 0 |
-| unaffected | 1660 | 159 | 5 |
+| unaffected | 1661 | 159 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7927** | **623** | **1483** |
+| **Total** | **7928** | **623** | **1483** |
 
 - Retire-class tests: 1505, of which twinned 1022, dies 294, open 189 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -188,7 +188,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs` | 4 | 193 | 193 | retire | 0/4 | 4 | - | #1561 | - | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
-| `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 134 | 134 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
+| `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 133 | 133 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 1 | 349 | 349 | keep | - | - | - | #1337 | run 1, checker 1 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and complete exact-output single-file behavior corpus |
 | `loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1561 | checker 3, parser 3 | lex/parse/typecheck only. |
 | `loaves/compiler/incan_driver/tests/protected_generic_binding_tests.rs` | 2 | 106 | 106 | keep | - | - | - | #1561 | checker 2, parser 2 | lex/parse/typecheck only. |
@@ -3049,7 +3049,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1024 tests in 88 files)"
+??? note "Unaffected crates (1025 tests in 88 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3098,7 +3098,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/kernel/incan_vocab/src/lib.rs` | 6 | 514 | 205 | unaffected | - | - | - | #1561 | checker 6 | vocab registration contract crate. Reviewed at crate level. |
 
-    #### `loaves/oven/oven_cargo_compat` (194 tests in 12 files: unaffected 194)
+    #### `loaves/oven/oven_cargo_compat` (195 tests in 12 files: unaffected 195)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3111,9 +3111,9 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_cargo_compat/src/loaf_bake/vocab_support.rs` | 5 | 1204 | 367 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/native_trace.rs` | 4 | 341 | 104 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/registry_sources.rs` | 2 | 728 | 134 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/rustc_trace.rs` | 8 | 726 | 187 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/rustc_trace.rs` | 8 | 731 | 188 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 25 | 5319 | 2472 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 17 | 3417 | 1205 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 18 | 3504 | 1252 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
     #### `loaves/oven/oven_interop` (20 tests in 1 file: unaffected 20)
 
