@@ -9,7 +9,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclaration, ValueEnumDeclaration};
+use crate::body_ir::{
+    Body, BodyIrModule, FieldlessEnumDeclaration, LocalOrigin, NominalDeclaration, ValueEnumDeclaration,
+};
 use crate::{
     CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, SemanticSourceTargetKind, SymbolNamespace,
     canonical_module_identity,
@@ -56,26 +58,41 @@ impl BodyIrModule {
         })
     }
 
-    /// Whether a free function's body retains precisely the identity lowering derives for its own declaration: its
-    /// span-derived direct-call id and a canonical function identity of this module that names the same declaration.
+    /// Whether a function or retained nominal method has its own canonical declaration identity and span-derived
+    /// direct-call id. Methods additionally require a receiver of the retained owner whose span contains them.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
         body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
             && body.canonical.as_ref().is_some_and(|canonical| {
+                let namespace = match canonical.kind {
+                    SemanticSourceTargetKind::Function => SymbolNamespace::OrdinaryLexical,
+                    SemanticSourceTargetKind::Method => SymbolNamespace::Member,
+                    _ => return false,
+                };
                 canonical.declaration_name == body.name
-                    && self.declaration_id_for_canonical(
-                        canonical,
-                        SymbolNamespace::OrdinaryLexical,
-                        SemanticSourceTargetKind::Function,
-                    ) == Some(body.direct_call_id.clone())
+                    && self.declaration_id_for_canonical(canonical, namespace, canonical.kind.clone())
+                        == Some(body.direct_call_id.clone())
+                    && (canonical.kind == SemanticSourceTargetKind::Function
+                        || body.locals.first().is_some_and(|receiver| {
+                            matches!(receiver.origin, LocalOrigin::Receiver { .. })
+                                && self.nominal_declarations.iter().any(|owner| {
+                                    self.is_well_formed_nominal_declaration(owner)
+                                        && receiver.ty == crate::IncanType::Named(owner.name.clone())
+                                        && canonical.origin == owner.canonical.origin
+                                        && declares_member(&owner.canonical, canonical)
+                                })
+                        }))
             })
     }
 
-    /// Whether a retained plain-model layout agrees with its checked canonical identities.
+    /// Whether a retained model or class layout agrees with its checked canonical identities.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
-        self.declaration_id_for_canonical(
+        matches!(
+            declaration.canonical.kind,
+            SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+        ) && self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,
-            SemanticSourceTargetKind::Model,
+            declaration.canonical.kind.clone(),
         ) == Some(declaration.direct_declaration_id.clone())
             && declaration.canonical.declaration_name == declaration.name
             && declaration.fields.len() == declaration.field_identities.len()

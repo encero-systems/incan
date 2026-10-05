@@ -40,6 +40,15 @@ pub def model_place(
     match value.local_id():
         Some(local) =>
             index = int(local.index()) + 1
+            match receiver_owner(locals[index].ty):
+                Some(owner) =>
+                    owner_index, name = owner
+                    if len(value.projection) == 0:
+                        return Ok(
+                            Place(local=index, projection=Projection.Deref(PlanType.Model(owner_index, name)), span=span),
+                        )
+                    return receiver_field(declarations, index, owner_index, value, span)
+                None => pass
             if len(value.projection) == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
             if len(value.projection) != 1:
@@ -58,6 +67,8 @@ pub def place_type(locals: list[Local], value: Place) -> PlanType:
     """Read a projected destination's actual type rather than its owner's type."""
     match value.projection:
         Projection.Field(_slot, ty) => return ty
+        Projection.DerefField(_slot, ty) => return ty
+        Projection.Deref(ty) => return ty
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool
         Projection.Whole => return locals[value.local].ty
@@ -119,3 +130,27 @@ def validate_constructor_binding(binding: &ArgumentBinding, count: int) -> Resul
                 slots.append(slot)
             return Ok(None)
         _ => return Err("unsupported Body IR unresolved model constructor")
+
+
+def receiver_field(
+    declarations: list[NominalDeclaration],
+    index: int,
+    owner: int,
+    value: &RustPlace,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Project one canonical field through a borrowed receiver, refusing nested projections."""
+    if len(value.projection) != 1:
+        return Err("unsupported Body IR nested receiver projection")
+    declaration = declarations[owner]
+    slot = field_slot(value.projection[0], declaration)?
+    ty = model_type(declarations, declaration.field_types[slot])?
+    return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+
+
+def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:
+    """Identify the nominal owner behind either checked receiver-reference shape."""
+    match ty:
+        PlanType.ModelRef(owner, name) => return Some((owner, name))
+        PlanType.ModelMutRef(owner, name) => return Some((owner, name))
+        _ => return None

@@ -11,8 +11,8 @@ The file reads top to bottom:
 2. translating checked values (types, places, operands, operators);
 3. the frame builder and its ownership bookkeeping (owners, drops, cleanup chains);
 4. statements and control flow;
-5. calls (same-module functions, runtime helpers, builtins);
-6. plain model construction and field replacement;
+5. calls (same-module functions and class methods, runtime helpers, builtins);
+6. nominal construction and field replacement;
 7. formatting and strings;
 8. the module and function entry points.
 """
@@ -50,6 +50,7 @@ from pub::incan_mir_plan import assign as plan_assign, block as plan_block, plac
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
+    MethodTarget as RustMethodTarget,
     NominalDeclaration as RustNominalDeclaration,
     AggregateKind as RustAggregateKind,
     ArgumentBinding as RustArgumentBinding,
@@ -77,6 +78,7 @@ from rust::incan_semantics_core::body_ir import (
     UnOp,
 )
 # ---- Admission helpers owned by this Loaf ----
+from classes import frame_type, function_name, method_index, method_receiver
 from models import model_type, model_place, place_type, constructor_index
 from numbers import float_operand
 from strings import text_helper
@@ -733,10 +735,40 @@ def lower_call(
                         CallableTarget.Named(target) =>
                             return lower_named_target(module, builder, target, arguments, destination, span)
                         _ => return Err("unsupported Body IR local callable value")
-                RustCallee.Method(_target) => return Err("unsupported Body IR Method")
+                RustCallee.Method(target) =>
+                    return lower_method_call(module, builder, target, arguments, destination, span)
                 RustCallee.Helper(helper) => return lower_runtime_helper(builder, helper, arguments, destination, span)
                 RustCallee.ProviderOperation(_operation) => return Err("unsupported Body IR ProviderOperation")
         _ => return Err("expected Body IR Call")
+
+
+def lower_method_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustMethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the proven receiver and call its canonical method body with bound ordinary arguments."""
+    index = method_index(module, target)?
+    body = module.bodies[index]
+    if len(arguments) == 0:
+        return Err("invalid Body IR Method missing receiver")
+    receiver_type, borrow = method_receiver(module, builder.locals, index, arguments[0], span)?
+    reference = temporary(builder, receiver_type, span)
+    builder.emit(plan_assign(reference, borrow, span))
+    mut types: list[PlanType] = []
+    for index in range(1, len(body.params)):
+        parameter = body.params[index]
+        if parameter.mutable:
+            return Err("unsupported Body IR mutable Method argument")
+        types.append(model_type(builder.nominals, parameter.ty)?)
+    ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
+    mut operands = [read_place(reference, true, span)]
+    for operand in ordinary:
+        operands.append(operand)
+    return emit_local_call(builder, body, operands, destination, span)
 
 
 def lower_named_target(
@@ -778,6 +810,17 @@ def lower_local_call(
             if call_id != body.direct_call_id:
                 return Err("Body IR call identity disagrees with target body")
     operands = ordered_arguments(builder, target.binding, arguments, body, span)?
+    return emit_local_call(builder, body, operands, destination, span)
+
+
+def emit_local_call(
+    mut builder: Builder,
+    body: &RustBody,
+    operands: list[Operand],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Emit a previously validated local call, sharing owned-result replacement between functions and methods."""
     mut output = plan_place(0, span)
     # A call whose result is unused still needs somewhere to put it.
     match destination:
@@ -788,14 +831,14 @@ def lower_local_call(
     result_type = model_type(builder.nominals, body.return_type)?
     if result_type == PlanType.String or is_model_type(result_type):
         result = temporary(builder, result_type, span)
-        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, result, span)
+        terminate_call(builder, CalleeKind.Planned(function_name(body)), operands, result, span)
         builder.owned.append(result.local)
         drop_owned(builder, output.local, span)
         forget_owned(builder, result.local)
         builder.emit(plan_assign(output, RvalueKind.Use(read_place(result, true, span)), span))
         builder.owned.append(output.local)
     else:
-        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
+        terminate_call(builder, CalleeKind.Planned(function_name(body)), operands, output, span)
     return Ok(None)
 
 
@@ -878,29 +921,33 @@ def ordered_slot_operands(
     elements: &list[RustArgumentElement],
     types: list[PlanType],
     span: SourceSpan,
+    offset: int = 0,
 ) -> Result[list[Operand], str]:
     """
     Place the written arguments into the callee's declared parameter slots.
 
     Body IR has already evaluated the arguments in written order; the binding says which slot each one fills.
-    Defaults, missing slots, named or spread elements are refused.
+    Defaults, missing slots, named or spread elements are refused. An offset of one skips a method receiver,
+    whose borrow is lowered separately and whose slot is absent from the ordinary argument binding.
     """
+    if offset < 0 or offset > len(elements):
+        return Err("invalid Body IR argument offset")
     count = len(types)
     match binding:
         RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            if len(defaults) != 0 or len(bindings) != len(elements) or len(bindings) != count:
+            if len(defaults) != 0 or len(bindings) != len(elements) - offset or len(bindings) != count:
                 return Err("unsupported Body IR defaulted or incomplete ArgumentBinding")
             # Start every slot as a placeholder, then fill each exactly once.
             mut operands: list[Operand] = []
             for _index in range(count):
                 operands.append(literal(Constant.Unit, span))
             mut occupied: list[int] = []
-            for index in range(len(elements)):
+            for index in range(count):
                 slot = int(bindings[index].slot)
                 if slot < 0 or slot >= count or slot in occupied:
                     return Err("invalid Body IR argument slot map")
                 occupied.append(slot)
-                match elements[index].as_one():
+                match elements[index + offset].as_one():
                     Some(value) =>
                         if types[slot] == PlanType.String:
                             text = display_operand(builder, value, span)?
@@ -1425,7 +1472,7 @@ pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Pl
     for body in module.bodies:
         # Planned calls name their callee, so two bodies with one name would be ambiguous.
         for retained in functions:
-            if retained.name == str(body.name):
+            if retained.name == function_name(body):
                 return Err(f"unsupported Body IR overloaded function {body.name}")
         function, runtime = lower_function(module, body, source, file)?
         functions.append(function)
@@ -1515,7 +1562,7 @@ def lower_function(
         drop_all_owned(builder, span)
         builder.finish(TerminatorKind.Return, span)
     function = Function(
-        name=body.name,
+        name=function_name(body),
         parameters=parameters,
         return_type=return_type,
         locals=builder.locals,
@@ -1538,9 +1585,7 @@ def frame_locals(
     for local in body.locals:
         if int(local.id.index()) + 1 != len(locals):
             return Err("Body IR local order disagrees with LocalId")
-        locals.append(
-            Local(ty=model_type(module.nominal_declarations, local.ty)?, span=location(local.span, source, file)),
-        )
+        locals.append(Local(ty=frame_type(module, local)?, span=location(local.span, source, file)))
     return Ok(locals)
 
 
@@ -1548,7 +1593,7 @@ def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: 
     """The frame's parameters, in declaration order; mutable string, mutable model, and defaulted parameters are refused."""
     mut parameters: list[Parameter] = []
     for parameter in body.params:
-        ty = model_type(module.nominal_declarations, parameter.ty)?
+        ty = frame_type(module, body.locals[int(parameter.local.index())])?
         if is_model_type(ty) and parameter.mutable:
             return Err("unsupported Body IR mutable model parameter")
         if ty == PlanType.String and parameter.mutable:
@@ -1559,5 +1604,8 @@ def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: 
         match parameter.default:
             CallableParamDefault.Required => pass
             _ => return Err("unsupported Body IR defaulted parameter")
-        parameters.append(Parameter(name=parameter.name, ty=ty, span=location(parameter.span, source, file)))
+        mut name = str(parameter.name)
+        if name == "self":
+            name = "__incan_self"
+        parameters.append(Parameter(name=name, ty=ty, span=location(parameter.span, source, file)))
     return Ok(parameters)

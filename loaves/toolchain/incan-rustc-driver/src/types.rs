@@ -9,6 +9,7 @@ use rustc_middle::ty::{Ty, TyCtxt};
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
         PlanType::Model(_, name) => model_type(tcx, name)?,
+        PlanType::ModelMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::Int => tcx.types.i64,
         PlanType::Float => tcx.types.f64,

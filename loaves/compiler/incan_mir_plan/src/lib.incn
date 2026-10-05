@@ -24,6 +24,7 @@ pub enum PlanType:
     Array lengths are exact nonnegative counts. CheckedInt and arrays are body
     temporaries; shared slice variants already include their reference. StringRef
     borrows an owned String, while StrRef is a string literal's shared str view.
+    ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
     """
 
     Int
@@ -40,6 +41,7 @@ pub enum PlanType:
     StrArrayRef(int)
     Model(int, str)
     ModelRef(int, str)
+    ModelMutRef(int, str)
     StringSlice
     StrSlice
 
@@ -63,12 +65,14 @@ pub model Local:
 
 @derive(Clone, PartialEq)
 pub enum Projection:
-    """Whole local, checked arithmetic component, or an indexed checked model field."""
+    """Whole local, checked component, or canonical nominal field; Deref projections traverse a receiver reference."""
 
     Whole
     Value
     Overflow
     Field(int, PlanType)
+    Deref(PlanType)
+    DerefField(int, PlanType)
 
 
 @derive(Clone, PartialEq)
@@ -143,7 +147,7 @@ pub enum RvalueKind:
     An explicit scalar or formatting expression assigned to a place.
 
     Array moves or copies its listed operands into a fixed array. Borrow creates
-    a shared reference to a whole local. UnsizeSlice converts an array reference
+    a shared reference to a place; MutBorrow creates a mutable nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
     """
 
@@ -154,6 +158,7 @@ pub enum RvalueKind:
     Array(list[Operand])
     Model(int, list[Operand])
     Borrow(Place)
+    MutBorrow(Place)
     UnsizeSlice(Operand)
 
 

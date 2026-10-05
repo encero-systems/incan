@@ -25,6 +25,7 @@ enum Scalar {
     StrArrayRef(i64),
     Model(i64),
     ModelRef(i64),
+    ModelMutRef(i64),
     StringSlice,
     StrSlice,
 }
@@ -33,6 +34,7 @@ enum Scalar {
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::Model(index, _) => Scalar::Model(*index),
+        PlanType::ModelMutRef(index, _) => Scalar::ModelMutRef(*index),
         PlanType::ModelRef(index, _) => Scalar::ModelRef(*index),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
@@ -153,7 +155,8 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         if !identifier(&parameter.name) || !parameters.insert(&parameter.name) {
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
-        if !source_signature_type(scalar(&parameter.ty))
+        if !(source_signature_type(scalar(&parameter.ty))
+            || matches!(scalar(&parameter.ty), Scalar::ModelRef(_) | Scalar::ModelMutRef(_)))
             || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
         {
             return Err(invalid(function, "parameter local differs from its declaration"));
@@ -207,15 +210,25 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
-/// Resolve a local projection, restricted to the checked result pair.
+/// Resolve checked arithmetic and nominal projections, verifying receiver-reference shape and canonical field type.
 fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, PlanError> {
     span(&value.span)?;
     let ty = local(function, value.local)?;
     match &value.projection {
         Projection::Whole => Ok(ty),
-        Projection::Field(slot, field_type) => {
-            let Scalar::Model(owner) = ty else {
-                return Err(invalid(function, "field projection requires a model owner"));
+        Projection::Deref(field_type) => {
+            let owner = match ty {
+                Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => owner,
+                _ => return Err(invalid(function, "dereference requires a nominal reference")),
+            };
+            require(function, scalar(field_type), Scalar::Model(owner), "dereferenced owner")?;
+            Ok(Scalar::Model(owner))
+        }
+        Projection::Field(slot, field_type) | Projection::DerefField(slot, field_type) => {
+            let owner = match (&value.projection, ty) {
+                (Projection::Field(..), Scalar::Model(owner)) => owner,
+                (Projection::DerefField(..), Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner)) => owner,
+                _ => return Err(invalid(function, "field projection requires a matching nominal owner")),
             };
             let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
             let field = usize::try_from(*slot)
@@ -327,6 +340,15 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             }
             Ok(expected)
         }
+        RvalueKind::MutBorrow(value) => match place(plan, function, value)? {
+            Scalar::Model(index) => {
+                if matches!(local(function, value.local)?, Scalar::ModelRef(_)) {
+                    return Err(invalid(function, "cannot mutably reborrow a shared receiver"));
+                }
+                Ok(Scalar::ModelMutRef(index))
+            }
+            _ => Err(invalid(function, "mutable borrow requires a nominal value")),
+        },
         RvalueKind::Borrow(value) => match place(plan, function, value)? {
             Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
             Scalar::String => Ok(Scalar::StringRef),
@@ -542,7 +564,7 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
 
 /// Ensure every nominal type's diagnostic spelling agrees with its indexed declaration.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
-    if let PlanType::Model(index, name) | PlanType::ModelRef(index, name) = ty {
+    if let PlanType::Model(index, name) | PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) = ty {
         if model(plan, *index).is_none_or(|declaration| declaration.name != *name) {
             return Err(PlanError::Invalid {
                 function: name.clone(),

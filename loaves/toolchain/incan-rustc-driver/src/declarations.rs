@@ -14,6 +14,17 @@ fn ident(name: &str, span: Span) -> Ident {
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
+        PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::Model(*index, name.clone()), span),
+                mutbl: if matches!(kind, PlanType::ModelMutRef(..)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => {
             let name = match other {
