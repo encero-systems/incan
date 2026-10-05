@@ -2,6 +2,47 @@
 
 use super::*;
 
+/// Prove constants, shared parameters, owned returns, concatenation, comparison, and display against legacy.
+pub(super) fn check_strings(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("strings");
+    fs::create_dir_all(&project)?;
+    let source = project.join("strings.incn");
+    fs::write(
+        &source,
+        "const PREFIX: str = \"hello\"\n\ndef greet(value: str) -> str:\n    \"\"\"Return the greeting.\"\"\"\n    return value + \" world\"\n\ndef identity(value: str) -> str:\n    return value\n\ndef main() -> None:\n    \"\"\"Exercise owned string boundaries.\"\"\"\n    \"discarded text\"\n    text = greet(PREFIX)\n    same = identity(text)\n    same\n    println(text == same)\n    println(text < \"z\")\n    println(text)\n    println(f\"result={same}\")\n    mut changing = same\n    changing += \"!\"\n    changing = identity(changing)\n    println(changing)\n",
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "native strings compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy strings compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/strings")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy strings execution");
+    success(&actual, "native strings execution");
+    assert_eq!(actual.stdout, expected.stdout, "string output must be byte-identical");
+    assert_eq!(
+        actual.stdout,
+        b"true\ntrue\nhello world\nresult=hello world\nhello world!\n"
+    );
+    Ok(())
+}
+
 /// Explicit runtime artifacts and metadata search paths retained by its publisher receipt.
 pub(super) struct NativeClosure {
     externs: Vec<(String, PathBuf)>,

@@ -941,3 +941,18 @@ fn a_module_constant_reads_its_global_place() -> Result<(), Box<dyn std::error::
     assert!(!rendered.contains("unsupported("), "{rendered}");
     Ok(())
 }
+
+/// Retain evaluated source-local text constants while a same-spelled frame binding stays a place read.
+#[test]
+fn text_constants_retain_checked_values_without_shadowing_local_places() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const TEXT: str = \"hello\" + \" world\"\n\ndef constant() -> str:\n    return TEXT\n\ndef local(TEXT: str) -> str:\n    return TEXT\n",
+        &["m", "text_constants"],
+    )?;
+    let constant = body_named(&module, "constant")?.render_snapshot();
+    assert!(constant.contains("hello world"), "{constant}");
+    let local = body_named(&module, "local")?.render_snapshot();
+    assert!(!local.contains("hello world"), "{local}");
+    assert!(local.contains("_0"), "{local}");
+    Ok(())
+}

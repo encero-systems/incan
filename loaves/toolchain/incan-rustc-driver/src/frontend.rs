@@ -27,8 +27,7 @@ fn checked_module(source: &str, name: &str) -> Result<BodyIrModule, String> {
     for declaration in &program.declarations {
         use incan_frontend::ast::Declaration;
         let kind = match &declaration.node {
-            Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Import(_) => continue,
-            Declaration::Const(_) => "Const",
+            Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Import(_) | Declaration::Const(_) => continue,
             Declaration::Static(_) => "Static",
             Declaration::Model(_) => "Model",
             Declaration::Class(_) => "Class",
