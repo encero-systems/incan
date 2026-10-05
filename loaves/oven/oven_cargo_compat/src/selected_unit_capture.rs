@@ -661,7 +661,7 @@ fn stdin_probe_output_path(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
     (lexically_beneath(&output, out_root) && output != out_root).then_some(output)
 }
 
-/// Bind a bounded stdin probe to its captured source digest and its one output beneath the package OUT_DIR.
+/// Bind a bounded stdin probe to its source and either captured file output or explicit stdout result.
 ///
 /// The output's own spelling (`-o`) or its directory (`--out-dir`) is recorded relative to `OUT_DIR`, so the identity
 /// does not depend on where the publisher's scratch target lives.
@@ -674,6 +674,9 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         return None;
+    }
+    if stdout_stdin_probe(invocation) {
+        return stdout_stdin_probe_digest(invocation);
     }
     let output = stdin_probe_output_path(invocation, out_root)?;
     let relative = output.strip_prefix(out_root).ok()?;
@@ -710,6 +713,43 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
         "environment": environment,
         "source_digest": source_digest,
         "output_digest": captured.digest,
+    }))
+    .ok()?;
+    Some(digest_bytes(&encoded))
+}
+
+/// Recognize only a metadata stdin probe with an explicit stdout output and no output directory.
+fn stdout_stdin_probe(invocation: &OvenLegacyRustcInvocation) -> bool {
+    super::rustc_trace::rustc_positional_source(&invocation.arguments) == Some("-")
+        && comma_separated_argument_values(&invocation.arguments, "--emit") == ["metadata"]
+        && argument_value(&invocation.arguments, "-o") == Some("-")
+        && argument_value(&invocation.arguments, "--out-dir").is_none()
+}
+
+/// Bind stdout probes to explicit compiler results; stdout is inherited and is not captured by the trace.
+/// File-output evidence cannot be substituted for stdout evidence.
+fn stdout_stdin_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Option<String> {
+    if invocation.stdin_probe_output.is_some() {
+        return None;
+    }
+    let exit_code = invocation.exit_code?;
+    let arguments = invocation
+        .arguments
+        .iter()
+        .enumerate()
+        .map(|(index, _)| portable_probe_argument(&invocation.arguments, index))
+        .collect::<Vec<_>>();
+    let environment = invocation
+        .environment
+        .iter()
+        .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
+        .collect::<BTreeMap<_, _>>();
+    let encoded = canonical_json_bytes(&serde_json::json!({
+        "arguments": arguments,
+        "environment": environment,
+        "source_digest": invocation.stdin_digest,
+        "exit_code": exit_code,
+        "output": "stdout",
     }))
     .ok()?;
     Some(digest_bytes(&encoded))
@@ -2811,6 +2851,7 @@ mod tests {
         let invocation = OvenLegacyRustcInvocation {
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -2870,6 +2911,7 @@ mod tests {
             environment: BTreeMap::from([("OUT_DIR".into(), "/build/script/out".into())]),
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
         };
         assert_eq!(
             expected_feature_cfgs(&artifact, &invocation, &records),
@@ -2941,6 +2983,7 @@ mod tests {
             ]),
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
         };
         let expected_manifest = package_root.to_string_lossy();
         let comparison = compare_artifact_invocation(
@@ -2958,6 +3001,48 @@ mod tests {
         Ok(())
     }
 
+    /// Stdout admission requires build-script context, source evidence, and an explicit result.
+    #[test]
+    fn stdout_stdin_probe_binds_source_and_result() -> Result<(), Box<dyn std::error::Error>> {
+        let mut invocation = OvenLegacyRustcInvocation {
+            reason: "incan-rustc-invocation".into(),
+            rustc: "/verified/rustc".into(),
+            working_directory: "/package".into(),
+            arguments: ["--crate-type=rlib", "--emit=metadata", "-o", "-", "-"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            environment: BTreeMap::from([
+                ("CARGO_MANIFEST_DIR".into(), "/package".into()),
+                ("OUT_DIR".into(), "/target/out".into()),
+                ("CARGO_PKG_NAME".into(), "rustix".into()),
+                ("CARGO_PKG_VERSION".into(), "1.0.0".into()),
+            ]),
+            stdin_digest: Some(digest_bytes(b"pub fn probe() {}")),
+            stdin_probe_output: None,
+            exit_code: Some(0),
+        };
+        let original = build_script_tool_probe_digest(&invocation).ok_or("stdout probe refused")?;
+        invocation.stdin_digest = Some(digest_bytes(b"pub fn changed() {}"));
+        assert_ne!(build_script_tool_probe_digest(&invocation).as_ref(), Some(&original));
+        invocation.stdin_digest = Some(digest_bytes(b"pub fn probe() {}"));
+        invocation.exit_code = Some(1);
+        assert_ne!(build_script_tool_probe_digest(&invocation).as_ref(), Some(&original));
+        invocation.exit_code = None;
+        assert!(build_script_tool_probe_digest(&invocation).is_none());
+        invocation.exit_code = Some(0);
+        invocation.environment.remove("OUT_DIR");
+        assert!(build_script_tool_probe_digest(&invocation).is_none());
+        invocation.environment.insert("OUT_DIR".into(), "/relocated/out".into());
+        invocation
+            .environment
+            .insert("CARGO_MANIFEST_DIR".into(), "/relocated/package".into());
+        assert_eq!(build_script_tool_probe_digest(&invocation).as_ref(), Some(&original));
+        invocation.arguments[1] = "--emit=link".into();
+        assert!(build_script_tool_probe_digest(&invocation).is_none());
+        Ok(())
+    }
+
     #[test]
     fn stable_trace_classifies_only_bounded_non_linking_build_script_probes() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -2970,6 +3055,7 @@ mod tests {
         let invocation = OvenLegacyRustcInvocation {
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -3152,6 +3238,7 @@ mod tests {
         let probe = |root: &Path, out_dir: &Path| OvenLegacyRustcInvocation {
             stdin_digest: Some(digest_bytes(b"pub fn probe() {}")),
             stdin_probe_output: None,
+            exit_code: Some(0),
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: root.to_string_lossy().to_string(),

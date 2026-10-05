@@ -43,6 +43,9 @@ pub struct OvenLegacyRustcInvocation {
     /// Digest of bounded source bytes forwarded unchanged when rustc reads its input from stdin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin_digest: Option<String>,
+    /// Observed compiler exit code; older traces lack explicit result evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     /// Metadata output verified before the invoking build script can remove or overwrite its probe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin_probe_output: Option<OvenLegacyStdinProbeOutput>,
@@ -140,6 +143,7 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         environment,
         stdin_digest,
         stdin_probe_output: None,
+        exit_code: Some(exit_code),
     };
     record.stdin_probe_output = super::selected_unit_capture::capture_stdin_probe_output(&record);
     let encoded = serde_json::to_vec(&record).map_err(|_| ())?;
@@ -559,6 +563,7 @@ mod tests {
             environment: BTreeMap::new(),
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
         })?;
         maximum.resize(MAX_RUSTC_TRACE_RECORD_BYTES, b' ');
         maximum.push(b'\n');
