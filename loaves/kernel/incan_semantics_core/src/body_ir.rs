@@ -58,6 +58,10 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Checked stdlib wrappers that forward every parameter unchanged to a Rust function. Other imported
+    /// implementations are absent and must refuse.
+    #[serde(default)]
+    pub stdlib_delegations: Vec<StdlibDelegation>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
     pub module_id: CompilerNodeId,
     /// Source-local plain-model declarations whose construction layout is available to a direct runtime.
@@ -85,6 +89,38 @@ pub struct BodyIrModule {
     pub value_enum_declarations: Vec<ValueEnumDeclaration>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
+}
+
+/// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StdlibDelegation {
+    /// Exact source declaration identity selected by checking, independent of the caller's spelling.
+    pub canonical: CanonicalSymbolId,
+    /// Checked Rust item selected by the wrapper call; consumers must validate its callable signature against native
+    /// metadata and must not recover its path from the source callable's name.
+    pub target: CanonicalSymbolId,
+    /// Declaration-order parameter types; argument binding still belongs to the call site.
+    pub parameters: Vec<IncanType>,
+    /// The declared wrapper result type, verified against native metadata before execution.
+    pub return_type: IncanType,
+}
+
+impl StdlibDelegation {
+    /// Materialize only a checker-proven Rust call target path, never a source-module identity. An unresolved
+    /// `RustItem` still requires native metadata validation before execution.
+    pub fn rust_path(&self) -> Option<String> {
+        match &self.target.origin {
+            crate::SymbolOrigin::RustCrate(path)
+                if matches!(
+                    self.target.kind,
+                    crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::RustItem
+                ) =>
+            {
+                Some(path.join("::"))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl BodyIrModule {
@@ -4331,6 +4367,7 @@ mod tests {
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
+            stdlib_delegations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
