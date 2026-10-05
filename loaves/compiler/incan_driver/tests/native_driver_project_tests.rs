@@ -348,3 +348,13 @@ fn check_source_pipeline(
     assert_eq!(String::from_utf8(run.stdout)?, "total=12 float=12.0 div=-3 mod=2\n");
     Ok(())
 }
+
+#[path = "native_driver_project_tests/census.rs"]
+mod census;
+
+/// Measure every behavior fixture only when explicitly requested.
+#[test]
+#[ignore = "explicit full direct-route census"]
+fn direct_route_fixture_census() -> Result<(), Box<dyn std::error::Error>> {
+    census::run()
+}

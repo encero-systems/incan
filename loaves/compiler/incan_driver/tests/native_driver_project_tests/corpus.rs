@@ -3,13 +3,13 @@
 use super::*;
 
 /// Explicit runtime artifacts and metadata search paths retained by its publisher receipt.
-struct NativeClosure {
+pub(super) struct NativeClosure {
     externs: Vec<(String, PathBuf)>,
     directories: Vec<PathBuf>,
 }
 
 /// Select exactly one published profile, without discovering similarly named ambient rlibs.
-fn runtime_closure(runtime: &Path, profile: &str) -> Result<NativeClosure, Box<dyn std::error::Error>> {
+pub(super) fn runtime_closure(runtime: &Path, profile: &str) -> Result<NativeClosure, Box<dyn std::error::Error>> {
     let receipt = oven_store::default_receipt_path(runtime);
     let receipt = if profile == "debug" {
         receipt.with_file_name("library-debug-receipt.json")
@@ -41,6 +41,17 @@ fn compile_source(
     sysroot: &Path,
     closure: &NativeClosure,
 ) -> Result<Output, Box<dyn std::error::Error>> {
+    Ok(source_command(driver, source, output, sysroot, closure).output()?)
+}
+
+/// Construct the exact direct-route invocation so bounded census execution shares dependency selection.
+pub(super) fn source_command(
+    driver: &Path,
+    source: &Path,
+    output: &Path,
+    sysroot: &Path,
+    closure: &NativeClosure,
+) -> Command {
     let mut command = Command::new(driver);
     command
         .env_remove("RUSTC_BOOTSTRAP")
@@ -55,7 +66,7 @@ fn compile_source(
     for directory in &closure.directories {
         command.arg("--search").arg(directory);
     }
-    Ok(command.output()?)
+    command
 }
 
 /// Preserve the benchmark source bytes and compare direct-native output with its normal backend output.
