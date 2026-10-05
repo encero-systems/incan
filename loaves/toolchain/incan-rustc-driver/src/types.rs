@@ -1,7 +1,7 @@
 //! Mapping admitted plan types to the pinned rustc representation.
 
 use crate::error::PlanError;
-use crate::plan::PlanType;
+use crate::plan::{PlanType, SizedNumeric};
 use rustc_middle::ty::{Ty, TyCtxt};
 
 /// Translate an admitted scalar or model type. Checked pairs and shared references are body-internal and never appear
@@ -12,6 +12,20 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::Int => tcx.types.i64,
         PlanType::Float => tcx.types.f64,
+        PlanType::I8 => tcx.types.i8,
+        PlanType::I16 => tcx.types.i16,
+        PlanType::I32 => tcx.types.i32,
+        PlanType::I128 => tcx.types.i128,
+        PlanType::U8 => tcx.types.u8,
+        PlanType::U16 => tcx.types.u16,
+        PlanType::U32 => tcx.types.u32,
+        PlanType::U64 => tcx.types.u64,
+        PlanType::U128 => tcx.types.u128,
+        PlanType::F32 => tcx.types.f32,
+        PlanType::F64 => tcx.types.f64,
+        PlanType::CheckedNumeric(ty) => Ty::new_tup(tcx, &[numeric_type(tcx, ty), tcx.types.bool]),
+        PlanType::ISize => tcx.types.isize,
+        PlanType::USize => tcx.types.usize,
         PlanType::Bool => tcx.types.bool,
         PlanType::Unit => tcx.types.unit,
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
@@ -72,4 +86,23 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
             reason: "model declaration is missing".into(),
         })?;
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Resolve the named sized carrier retained in an overflow pair.
+fn numeric_type<'tcx>(tcx: TyCtxt<'tcx>, kind: &SizedNumeric) -> Ty<'tcx> {
+    match kind {
+        SizedNumeric::I8 => tcx.types.i8,
+        SizedNumeric::I16 => tcx.types.i16,
+        SizedNumeric::I32 => tcx.types.i32,
+        SizedNumeric::I128 => tcx.types.i128,
+        SizedNumeric::U8 => tcx.types.u8,
+        SizedNumeric::U16 => tcx.types.u16,
+        SizedNumeric::U32 => tcx.types.u32,
+        SizedNumeric::U64 => tcx.types.u64,
+        SizedNumeric::U128 => tcx.types.u128,
+        SizedNumeric::F32 => tcx.types.f32,
+        SizedNumeric::F64 => tcx.types.f64,
+        SizedNumeric::ISize => tcx.types.isize,
+        SizedNumeric::USize => tcx.types.usize,
+    }
 }

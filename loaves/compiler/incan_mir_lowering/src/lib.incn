@@ -34,6 +34,7 @@ pub from pub::incan_mir_plan import (
     Place,
     Plan,
     PlanType,
+    SizedNumeric,
     Projection,
     Rvalue,
     RvalueKind,
@@ -79,7 +80,19 @@ from rust::incan_semantics_core::body_ir import (
 # ---- Admission helpers owned by this Loaf ----
 from models import model_type, model_place, place_type, constructor_index
 from numbers import float_operand
+from numerics import (
+    integer_conversion,
+    float_conversion,
+    numeric_constant,
+    sized_numeric,
+    has_sized_numeric,
+    sized_plan_type,
+    numeric_name,
+    sized_signed_integer,
+    numeric_carrier,
+)
 from strings import text_helper
+
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
@@ -133,6 +146,7 @@ pub def is_continue(statement: &BodyStatementKind) -> bool:
     match statement:
         BodyStatementKind.Continue => return true
         _ => return false
+
 # =====================================================================================================================
 # Translating checked values
 # =====================================================================================================================
@@ -188,7 +202,7 @@ def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand
         RustConstant.Float(text) => return Ok(literal(Constant.Float(float(str(text))), span))
         RustConstant.Bool(flag) => return Ok(literal(Constant.Bool(flag), span))
         RustConstant.Unit => return Ok(literal(Constant.Unit, span))
-        RustConstant.TypedNumeric(_value) => return Err("unsupported Body IR TypedNumeric")
+        RustConstant.TypedNumeric(value) => return Ok(literal(numeric_constant(value)?, span))
         RustConstant.Str(_value) => return Err("unsupported Body IR Str constant")
         RustConstant.Bytes(_value) => return Err("unsupported Body IR Bytes constant")
         RustConstant.None => return Err("unsupported Body IR None constant")
@@ -218,6 +232,7 @@ def operand_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str
         OperandKind.Move(place) => return Ok(place_type(builder.locals, place))
         OperandKind.Literal(constant) =>
             match constant:
+                Constant.Numeric(_text, ty) => return Ok(ty)
                 Constant.Int(_value) => return Ok(PlanType.Int)
                 Constant.Float(_value) => return Ok(PlanType.Float)
                 Constant.Bool(_value) => return Ok(PlanType.Bool)
@@ -270,13 +285,13 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
                     span,
                 )?:
                     return Err("unsupported Body IR non-float true division operands")
-            return Ok(
-                RvalueKind.Binary(
-                    binary_operator(operator)?,
-                    scalar_operand(builder, left, span)?,
-                    scalar_operand(builder, right, span)?,
-                ),
-            )
+            left_operand = scalar_operand(builder, left, span)?
+            right_operand = scalar_operand(builder, right, span)?
+            left_type = operand_type(builder, left_operand)?
+            right_type = operand_type(builder, right_operand)?
+            if left_type != right_type:
+                return Err("unsupported Body IR mixed numeric arithmetic without retained coercion")
+            return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
         RustRvalue.IsInstance(value=_value, value_ty=_ty, target=_target) =>
             return Err("unsupported Body IR IsInstance")
         RustRvalue.Aggregate(kind, elements) => return model_aggregate(builder, kind, elements, span)
@@ -290,6 +305,7 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
         RustRvalue.Generator(source=_source, captured_operands=_captures, body=_body) =>
             return Err("unsupported Body IR Generator")
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
+
 # =====================================================================================================================
 # The frame builder and ownership
 # =====================================================================================================================
@@ -489,6 +505,7 @@ def external_call(
     # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
     if result == PlanType.String:
         builder.owned.append(destination.local)
+
 # =====================================================================================================================
 # Statements and control flow
 # =====================================================================================================================
@@ -555,7 +572,10 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
                 result = scalar_operand(builder, operand, span)?
                 track_rvalue_moves(builder, RvalueKind.Use(result))
         None => pass
+    return_type = builder.locals[0].ty
+    result = coerce_numeric_operand(builder, result, return_type, span)?
     builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
+    validate_exact_float(builder, plan_place(0, span), span)
     drop_all_owned(builder, span)
     builder.finish(TerminatorKind.Return, span)
     return Ok(None)
@@ -593,14 +613,39 @@ def lower_assignment(
                 _ => pass
         _ => pass
     mut operation = scalar_rvalue(builder, value, span)?
+    ty = place_type(builder.locals, target)
+    match operation:
+        RvalueKind.Use(operand) =>
+            if numeric_carrier(ty):
+                source_type = operand_type(builder, operand)?
+                if source_type != ty:
+                    if not numeric_carrier(source_type):
+                        return Err("unsupported Body IR nonnumeric implicit conversion")
+                    operation = RvalueKind.NumericCast(operand, source_type, ty)
+        RvalueKind.Unary(operator, operand) =>
+            if operator == UnaryOp.Negate and sized_signed_integer(ty):
+                external_call(
+                    builder,
+                    f"incan_native_runtime::negate_{numeric_name(ty)}",
+                    [ty],
+                    ty,
+                    [operand],
+                    target,
+                    span,
+                )
+                return Ok(None)
+        _ => pass
     track_rvalue_moves(builder, operation)
-    if place_type(builder.locals, target) == PlanType.Int:
+    # Legacy release builds use native wrapping arithmetic for sized integers.
+    # Only the existing default-int boundary requests an explicit overflow pair.
+    if ty == PlanType.Int:
         operation = negation_as_subtraction(operation, span)
         if is_checked_int_operation(operation):
             return lower_checked_int_assignment(builder, target, operation, span)
     if is_model_type(place_type(builder.locals, target)) and target.projection == Projection.Whole:
         drop_owned(builder, target.local, span)
     builder.emit(plan_assign(target, operation, span))
+    validate_exact_float(builder, target, span)
     if is_model_type(place_type(builder.locals, target)) and target.local not in builder.owned:
         builder.owned.append(target.local)
     return Ok(None)
@@ -639,7 +684,15 @@ def lower_checked_int_assignment(
     match operation:
         RvalueKind.Binary(operator, left, right) =>
             pair = len(builder.locals)
-            builder.locals.append(Local(ty=PlanType.CheckedInt, span=span))
+            ty = place_type(builder.locals, target)
+            mut pair_type = PlanType.CheckedInt
+            mut projection = Projection.Value
+            match sized_numeric(ty):
+                Some(kind) =>
+                    pair_type = PlanType.CheckedNumeric(kind)
+                    projection = Projection.NumericValue(sized_plan_type(kind))
+                None => pass
+            builder.locals.append(Local(ty=pair_type, span=span))
             builder.emit(plan_assign(plan_place(pair, span), operation, span))
             next_block = builder.new_block(span)
             flag = read_place(Place(local=pair, projection=Projection.Overflow, span=span), false, span)
@@ -647,7 +700,7 @@ def lower_checked_int_assignment(
             assertion = TerminatorKind.AssertOverflow(flag, operator, left, right, next_block, Unwind.Cleanup(cleanup))
             builder.finish(assertion, span)
             builder.current = next_block
-            result = read_place(Place(local=pair, projection=Projection.Value, span=span), false, span)
+            result = read_place(Place(local=pair, projection=projection, span=span), false, span)
             builder.emit(plan_assign(target, RvalueKind.Use(result), span))
             return Ok(None)
         _ => return Err("checked integer lowering expects a binary operation")
@@ -713,6 +766,7 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     builder.owned = incoming
     builder.current = after
     return Ok(None)
+
 # =====================================================================================================================
 # Calls
 # =====================================================================================================================
@@ -906,7 +960,8 @@ def ordered_slot_operands(
                             text = display_operand(builder, value, span)?
                             operands[slot] = read_place(text, true, span)
                         else:
-                            operands[slot] = scalar_operand(builder, value, span)?
+                            operand = scalar_operand(builder, value, span)?
+                            operands[slot] = coerce_numeric_operand(builder, operand, types[slot], span)?
                     None => return Err("unsupported Body IR named or spread ArgumentElement")
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
@@ -936,6 +991,21 @@ def lower_numeric_helper(
 ) -> Result[None, str]:
     """Call the runtime's Python-semantics `//` or `%`, which handle negative operands and division by zero."""
     ty = place_type(builder.locals, destination)
+    if has_sized_numeric(ty):
+        arguments = [scalar_operand(builder, left, span)?, scalar_operand(builder, right, span)?]
+        if operand_type(builder, arguments[0])? != ty or operand_type(builder, arguments[1])? != ty:
+            return Err("unsupported Body IR mixed numeric division or modulo")
+        external_call(
+            builder,
+            f"incan_native_runtime::{operation}_{numeric_name(ty)}",
+            [ty, ty],
+            ty,
+            arguments,
+            destination,
+            span,
+        )
+        validate_exact_float(builder, destination, span)
+        return Ok(None)
     mut suffix = ""
     match ty:
         PlanType.Int =>
@@ -984,7 +1054,8 @@ def lower_builtin(
     """Dispatch checked builtin identities rather than matching source spellings."""
     match builtin:
         RustBuiltin.Print => return lower_print(builder, arguments, span)
-        RustBuiltin.Float => return lower_float_builtin(builder, arguments, destination, span)
+        RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
+        RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
         RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
 
@@ -1008,29 +1079,134 @@ def lower_print(mut builder: Builder, arguments: &list[RustArgumentElement], spa
     return Ok(None)
 
 
-def lower_float_builtin(
+def lower_scalar_conversion(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
+    integer: bool,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """`float()`: `0.0` with no argument, a conversion of an `int`, or a `float` unchanged."""
+    """Lower checked scalar builtins through the numeric admission table."""
     match destination:
-        None => return Err("Body IR Float has no destination")
+        None => return Err("Body IR scalar conversion has no destination")
         Some(place) =>
             output = scalar_place(builder, place, span)?
+            if lower_text_scalar_conversion(builder, arguments, output, integer, span)?:
+                return Ok(None)
             operands = fixed_arguments(builder, arguments, span)?
             if len(operands) == 0:
-                builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Float(0.0), span)), span))
+                mut zero = Constant.Float(0.0)
+                if integer:
+                    zero = Constant.Int(0)
+                builder.emit(plan_assign(output, RvalueKind.Use(literal(zero, span)), span))
                 return Ok(None)
             if len(operands) != 1:
-                return Err("unsupported Body IR Float arity")
+                return Err("unsupported Body IR scalar conversion arity")
             operand = operands[0]
-            match operand_type(builder, operand)?:
-                PlanType.Int => builder.emit(plan_assign(output, RvalueKind.IntToFloat(operand), span))
-                PlanType.Float => builder.emit(plan_assign(output, RvalueKind.Use(operand), span))
-                _ => return Err("unsupported Body IR Float input type")
+            ty = operand_type(builder, operand)?
+            if has_sized_numeric(ty):
+                mut builtin = "float"
+                mut result_type = PlanType.Float
+                if integer:
+                    builtin = "int"
+                    result_type = PlanType.Int
+                external_call(
+                    builder,
+                    f"incan_native_runtime::{builtin}_{numeric_name(ty)}",
+                    [ty],
+                    result_type,
+                    [operand],
+                    output,
+                    span,
+                )
+                return Ok(None)
+            mut conversion = float_conversion(operand, ty)
+            if integer:
+                conversion = integer_conversion(operand, ty)
+            builder.emit(plan_assign(output, conversion?, span))
             return Ok(None)
+
+
+def validate_exact_float(mut builder: Builder, target: Place, span: SourceSpan) -> None:
+    """Keep exact f32 values finite at assignment and parameter boundaries, as legacy does."""
+    if place_type(builder.locals, target) == PlanType.F32:
+        operand = read_place(target, false, span)
+        external_call(
+            builder,
+            "incan_std_core::num::require_finite_f32",
+            [PlanType.F32],
+            PlanType.F32,
+            [operand],
+            target,
+            span,
+        )
+
+
+def lower_text_scalar_conversion(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    output: Place,
+    integer: bool,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Parse borrowed text through legacy's raising runtime functions, preserving the original input."""
+    if len(arguments) != 1:
+        return Ok(false)
+    match arguments[0].as_one():
+        None => return Err("unsupported Body IR spread scalar conversion")
+        Some(value) =>
+            mut text_input = false
+            match value:
+                RustOperand.Constant(constant) =>
+                    match constant:
+                        RustConstant.Str(_text) =>
+                            text_input = true
+                        _ => pass
+                RustOperand.Place(read) =>
+                    place = scalar_place(builder, read.place, span)?
+                    text_input = place_type(builder.locals, place) == PlanType.String
+            if not text_input:
+                return Ok(false)
+            text = display_operand(builder, value, span)?
+            reference = temporary(builder, PlanType.StringRef, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(text), span))
+            mut name = "parse_float"
+            mut result = PlanType.Float
+            if integer:
+                name = "parse_int"
+                result = PlanType.Int
+            external_call(
+                builder,
+                f"incan_native_runtime::{name}",
+                [PlanType.StringRef],
+                result,
+                [read_place(reference, false, span)],
+                output,
+                span,
+            )
+            drop_owned(builder, text.local, span)
+            return Ok(true)
+
+
+def coerce_numeric_operand(
+    mut builder: Builder,
+    operand: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize a checker-admitted destination carrier at calls and returns, never guess binary promotions."""
+    if not numeric_carrier(target):
+        return Ok(operand)
+    source = operand_type(builder, operand)?
+    if source == target:
+        return Ok(operand)
+    if not numeric_carrier(source):
+        return Err("unsupported Body IR nonnumeric implicit conversion")
+    converted = temporary(builder, target, span)
+    builder.emit(plan_assign(converted, RvalueKind.NumericCast(operand, source, target), span))
+    validate_exact_float(builder, converted, span)
+    return Ok(read_place(converted, false, span))
+
 # =====================================================================================================================
 # Plain model construction and field replacement
 # =====================================================================================================================
@@ -1111,6 +1287,7 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
+
 # =====================================================================================================================
 # Formatting and strings
 # =====================================================================================================================
@@ -1216,6 +1393,18 @@ def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan)
     ty = operand_type(builder, operand)?
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
+    if has_sized_numeric(ty):
+        result = temporary(builder, PlanType.String, span)
+        external_call(
+            builder,
+            f"incan_native_runtime::format_{numeric_name(ty)}",
+            [ty],
+            PlanType.String,
+            [operand],
+            result,
+            span,
+        )
+        return Ok(result)
     mut name = ""
     match ty:
         PlanType.Int =>
@@ -1381,6 +1570,7 @@ def lower_text_helper(
                 builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
+
 # =====================================================================================================================
 # Module and function entry points
 # =====================================================================================================================
@@ -1506,6 +1696,8 @@ def lower_function(
     for index in range(len(parameters)):
         if parameters[index].ty == PlanType.String or is_model_type(parameters[index].ty):
             builder.owned.append(index + 1)
+    for index in range(len(parameters)):
+        validate_exact_float(builder, plan_place(index + 1, span), span)
     lower_block(module, builder, body.block)?
     # A body that falls off its end returns unit; any other return type must have returned explicitly.
     if not builder.closed[builder.current]:
