@@ -68,6 +68,7 @@ pub from pub::incan_mir_plan import (
     Constant,
     Function,
     Local,
+    ModelDeclaration,
     Operand,
     OperandKind,
     Parameter,
@@ -88,6 +89,8 @@ pub from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, HirSourceSpan as RustSpan
+from rust::incan_semantics_core::body_ir import NominalDeclaration as RustNominalDeclaration, AggregateKind as RustAggregateKind
+
 from rust::incan_semantics_core::body_ir import (
     Body as RustBody,
     Operand as RustOperand,
@@ -114,38 +117,23 @@ def location(span: &RustSpan, source: str, file: str) -> SourceSpan:
     return SourceSpan(file=file, line=number, column=1)
 
 
-def scalar_type(ty: &RustType) -> Result[PlanType, str]:
-    """Admit the fixed scalar representation and refuse other checked types."""
-    match ty:
-        RustType.Primitive(primitive) =>
-            match primitive:
-                Primitive.Int => return Ok(PlanType.Int)
-                Primitive.Float => return Ok(PlanType.Float)
-                Primitive.Bool => return Ok(PlanType.Bool)
-                Primitive.Unit => return Ok(PlanType.Unit)
-                Primitive.Str => return Ok(PlanType.String)
-                _ => return Err(f"unsupported Body IR primitive type {primitive}")
-        _ => return Err(f"unsupported Body IR type {ty}")
+def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Map a local or proven model field into the native frame, which reserves local zero for return."""
+    return model_place(builder.nominals, builder.locals, value, span)
 
 
-def scalar_place(value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
-    """Map a bare local to the native frame, which reserves local zero for return."""
-    if len(value.projection) != 0:
-        return Err("unsupported Body IR place projection")
-    match value.local_id():
-        Some(local) => return Ok(plan_place(int(local.index()) + 1, span))
-        None => return Err("unsupported Body IR global place")
-
-
-def scalar_operand(value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
     """Preserve each scalar read's checked ownership fact rather than inferring it."""
     match value:
         RustOperand.Place(read) =>
-            target = scalar_place(read.place, span)?
+            target = scalar_place(builder, read.place, span)?
             match read.fact:
                 OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
-                OwnershipFact.Move => return Ok(Operand(kind=OperandKind.Move(target), span=span))
-                OwnershipFact.Clone => return Err("unsupported Body IR ownership Clone outside formatting")
+                OwnershipFact.Move =>
+                    if target.projection != Projection.Whole and place_type(builder.locals, target) == PlanType.String:
+                        return Err("unsupported Body IR partial model move")
+                    return Ok(Operand(kind=OperandKind.Move(target), span=span))
+                OwnershipFact.Clone => return clone_model_operand(builder, target, span)
                 OwnershipFact.Borrow => return Err("unsupported Body IR ownership Borrow outside formatting")
                 OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
                 OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
@@ -190,22 +178,26 @@ def binary_operator(operator: &BinOp) -> Result[BinaryOp, str]:
         BinOp.Or => return Err("unsupported Body IR Or")
 
 
-def scalar_rvalue(value: &RustRvalue, span: SourceSpan) -> Result[RvalueKind, str]:
+def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) -> Result[RvalueKind, str]:
     """Read the checked expression without interpreting generated Rust syntax."""
     match value:
-        RustRvalue.Use(operand) => return Ok(RvalueKind.Use(scalar_operand(operand, span)?))
+        RustRvalue.Use(operand) => return Ok(RvalueKind.Use(scalar_operand(builder, operand, span)?))
         RustRvalue.UnaryOp(operator, operand) =>
             match operator:
-                UnOp.Not => return Ok(RvalueKind.Unary(UnaryOp.Not, scalar_operand(operand, span)?))
-                UnOp.Neg => return Ok(RvalueKind.Unary(UnaryOp.Negate, scalar_operand(operand, span)?))
+                UnOp.Not => return Ok(RvalueKind.Unary(UnaryOp.Not, scalar_operand(builder, operand, span)?))
+                UnOp.Neg => return Ok(RvalueKind.Unary(UnaryOp.Negate, scalar_operand(builder, operand, span)?))
                 _ => return Err("unsupported Body IR unary operator Invert")
         RustRvalue.BinaryOp(operator, left, right) =>
             return Ok(
-                RvalueKind.Binary(binary_operator(operator)?, scalar_operand(left, span)?, scalar_operand(right, span)?),
+                RvalueKind.Binary(
+                    binary_operator(operator)?,
+                    scalar_operand(builder, left, span)?,
+                    scalar_operand(builder, right, span)?,
+                ),
             )
         RustRvalue.IsInstance(value=_value, value_ty=_ty, target=_target) =>
             return Err("unsupported Body IR IsInstance")
-        RustRvalue.Aggregate(_kind, _elements) => return Err("unsupported Body IR Aggregate")
+        RustRvalue.Aggregate(kind, elements) => return model_aggregate(builder, kind, elements, span)
         RustRvalue.Dict(_entries) => return Err("unsupported Body IR Dict")
         RustRvalue.ValueEnumVariant(_target) => return Err("unsupported Body IR ValueEnumVariant")
         RustRvalue.FieldlessEnumVariant(_target) => return Err("unsupported Body IR FieldlessEnumVariant")
@@ -239,6 +231,7 @@ model Builder:
     externals: list[ExternalFunction]
     owned: list[int]
     closed: list[bool]
+    nominals: list[RustNominalDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -264,8 +257,8 @@ def lower_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Split checked integer arithmetic at its explicit overflow assertion."""
-    target = scalar_place(destination, span)?
-    if builder.locals[target.local].ty == PlanType.String:
+    target = scalar_place(builder, destination, span)?
+    if place_type(builder.locals, target) == PlanType.String:
         return lower_string_assignment(builder, target, value, span)
     match value:
         RustRvalue.Format(parts) => return lower_format(builder, target, parts, span)
@@ -277,16 +270,17 @@ def lower_assignment(
                 BinOp.Mod => return lower_numeric_helper(builder, target, left, right, "py_mod", span)
                 _ => pass
         _ => pass
-    mut operation = scalar_rvalue(value, span)?
+    mut operation = scalar_rvalue(builder, value, span)?
+    track_rvalue_moves(builder, operation)
     match operation:
         RvalueKind.Unary(operator, operand) =>
-            if builder.locals[target.local].ty == PlanType.Int and operator == UnaryOp.Negate:
+            if place_type(builder.locals, target) == PlanType.Int and operator == UnaryOp.Negate:
                 zero = Operand(kind=OperandKind.Literal(Constant.Int(0)), span=span)
                 operation = RvalueKind.Binary(BinaryOp.Subtract, zero, operand)
         _ => pass
     match operation:
         RvalueKind.Binary(operator, left, right) =>
-            if builder.locals[target.local].ty == PlanType.Int and (
+            if place_type(builder.locals, target) == PlanType.Int and (
                 operator == BinaryOp.Add
                 or operator == BinaryOp.Subtract
                 or operator == BinaryOp.Multiply
@@ -312,7 +306,17 @@ def lower_assignment(
                 builder.emit(plan_assign(target, RvalueKind.Use(result), span))
                 return Ok(None)
         _ => pass
+    match place_type(builder.locals, target):
+        PlanType.Model(_index, _name) =>
+            if target.projection == Projection.Whole:
+                drop_owned(builder, target.local, span)
+        _ => pass
     builder.emit(plan_assign(target, operation, span))
+    match place_type(builder.locals, target):
+        PlanType.Model(_index, _name) =>
+            if target.local not in builder.owned:
+                builder.owned.append(target.local)
+        _ => pass
     return Ok(None)
 
 
@@ -328,7 +332,9 @@ def lower_if(
     then_index = builder.new_block(span)
     else_index = builder.new_block(span)
     after = builder.new_block(span)
-    builder.finish(TerminatorKind.SwitchBool(scalar_operand(condition, span)?, else_index, then_index), span)
+    # Legacy E0499: evaluate the mutable builder call before borrowing its receiver again, until dev.8.
+    condition_value = scalar_operand(builder, condition, span)?
+    builder.finish(TerminatorKind.SwitchBool(condition_value, else_index, then_index), span)
     incoming = builder.owned
     builder.current = then_index
     lower_block(module, builder, then_body)?
@@ -386,9 +392,11 @@ def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &Rus
         RustStatementKind.Loop(body=body) => return lower_loop(module, builder, body, span)
         RustStatementKind.Return(value=value) =>
             match value:
-                Some(operand) => builder.emit(
-                    plan_assign(plan_place(0, span), RvalueKind.Use(scalar_operand(operand, span)?), span),
-                )
+                Some(operand) =>
+                    # Legacy E0499: keep the mutable operand conversion outside the emit receiver call until dev.8.
+                    result = scalar_operand(builder, operand, span)?
+                    track_rvalue_moves(builder, RvalueKind.Use(result))
+                    builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
                 None => builder.emit(
                     plan_assign(
                         plan_place(0, span),
@@ -416,7 +424,7 @@ def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &Rus
             drop_owned(builder, index, span)
             builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
         RustStatementKind.Expr(value=value) =>
-            _ = scalar_operand(value, span)?
+            _ = scalar_operand(builder, value, span)?
         RustStatementKind.Call(destination=_destination, callee=_callee, args=_args, may_panic=_may_panic) =>
             return lower_call(module, builder, statement, span)
         RustStatementKind.Await(destination=_destination, awaited=_awaited) => return Err("unsupported Body IR Await")
@@ -455,17 +463,24 @@ def lower_function(
         Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
         None => pass
     span = location(body.span, source, file)
-    return_type = scalar_type(body.return_type)?
+    return_type = model_type(module.nominal_declarations, body.return_type)?
     if return_type == PlanType.String:
         return Err("unsupported Body IR String return type outside formatting")
     mut locals = [Local(ty=return_type, span=span)]
     for local in body.locals:
         if int(local.id.index()) + 1 != len(locals):
             return Err("Body IR local order disagrees with LocalId")
-        locals.append(Local(ty=scalar_type(local.ty)?, span=location(local.span, source, file)))
+        locals.append(
+            Local(ty=model_type(module.nominal_declarations, local.ty)?, span=location(local.span, source, file)),
+        )
     mut parameters: list[Parameter] = []
     for parameter in body.params:
-        if scalar_type(parameter.ty)? == PlanType.String:
+        match model_type(module.nominal_declarations, parameter.ty)?:
+            PlanType.Model(_index, _name) =>
+                if parameter.mutable:
+                    return Err("unsupported Body IR mutable model parameter")
+            _ => pass
+        if model_type(module.nominal_declarations, parameter.ty)? == PlanType.String:
             return Err("unsupported Body IR String parameter outside formatting")
         if int(parameter.local.index()) != len(parameters):
             return Err("Body IR parameter order disagrees with scalar frame")
@@ -473,7 +488,11 @@ def lower_function(
             CallableParamDefault.Required => pass
             _ => return Err("unsupported Body IR defaulted parameter")
         parameters.append(
-            Parameter(name=parameter.name, ty=scalar_type(parameter.ty)?, span=location(parameter.span, source, file)),
+            Parameter(
+                name=parameter.name,
+                ty=model_type(module.nominal_declarations, parameter.ty)?,
+                span=location(parameter.span, source, file),
+            ),
         )
     mut builder = Builder(
         locals=locals,
@@ -486,8 +505,13 @@ def lower_function(
         externals=[],
         owned=[],
         closed=[],
+        nominals=module.nominal_declarations,
     )
     _ = builder.new_block(span)
+    for index in range(len(parameters)):
+        match parameters[index].ty:
+            PlanType.Model(_index, _name) => builder.owned.append(index + 1)
+            _ => pass
     lower_block(module, builder, body.block)?
     if not builder.closed[builder.current]:
         if return_type != PlanType.Unit:
@@ -512,12 +536,33 @@ def lower_function(
 
 
 pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
-    """Validate first, then lower the current scalar slice; every unsupported fact refuses."""
+    """Validate first, then lower admitted scalars and plain models; every unsupported fact refuses."""
     _ = validate_module(module)?
-    if len(module.nominal_declarations) != 0 or len(module.fieldless_enum_declarations) != 0 or len(
-        module.value_enum_declarations,
-    ) != 0:
+    if len(module.fieldless_enum_declarations) != 0 or len(module.value_enum_declarations) != 0:
         return Err("unsupported Body IR nominal, fieldless enum, or value enum declaration")
+    mut models: list[ModelDeclaration] = []
+    for declaration in module.nominal_declarations:
+        if declaration.has_field_defaults:
+            return Err(f"unsupported Body IR model defaults on {declaration.name}")
+        mut fields: list[Parameter] = []
+        for slot in range(len(declaration.fields)):
+            fields.append(
+                Parameter(
+                    name=str(declaration.fields[slot]),
+                    ty=model_type(module.nominal_declarations, declaration.field_types[slot])?,
+                    span=SourceSpan(file=file, line=1, column=1),
+                ),
+            )
+        models.append(
+            ModelDeclaration(
+                name=str(declaration.name),
+                public=declaration.public,
+                fields=fields,
+                field_public=declaration.field_public,
+                derives=declaration.derives,
+                span=SourceSpan(file=file, line=1, column=1),
+            ),
+        )
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     for body in module.bodies:
@@ -533,7 +578,9 @@ pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Pl
                     found = true
             if not found:
                 externals.append(external)
-    return Ok(Plan(functions=functions, externals=externals, span=SourceSpan(file=file, line=1, column=1)))
+    return Ok(
+        Plan(models=models, functions=functions, externals=externals, span=SourceSpan(file=file, line=1, column=1)),
+    )
 
 
 from rust::incan_semantics_core::body_ir import Callee as RustCallee, CallableTarget, ArgumentBinding
@@ -547,10 +594,7 @@ def terminate_call(
     span: SourceSpan,
 ) -> None:
     """Remove moved arguments before constructing an unwind path for each remaining initialized owner."""
-    for argument in arguments:
-        match argument.kind:
-            OperandKind.Move(place) => forget_owned(builder, place.local)
-            _ => pass
+    forget_moved_arguments(builder, arguments)
     continuation = builder.new_block(span)
     cleanup = cleanup_exit(builder, span)
     builder.finish(
@@ -575,7 +619,7 @@ def lower_numeric_helper(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Use the runtime's Python division semantics, including negatives and checked failures."""
-    ty = builder.locals[destination.local].ty
+    ty = place_type(builder.locals, destination)
     mut suffix = ""
     match ty:
         PlanType.Int =>
@@ -585,10 +629,12 @@ def lower_numeric_helper(
         _ => return Err("unsupported Body IR division or modulo type")
     path = f"incan_std_core::num::{operation}_{suffix}"
     builder.externals.append(ExternalFunction(path=path, parameters=[ty, ty], return_type=ty, span=span))
+    # Legacy emits overlapping mutable borrows for nested builder calls (E0499); retain evaluation order until dev.8.
+    arguments = [scalar_operand(builder, left, span)?, scalar_operand(builder, right, span)?]
     terminate_call(
         builder,
         CalleeKind.External(path),
-        [scalar_operand(left, span)?, scalar_operand(right, span)?],
+        arguments,
         destination,
         span,
     )
@@ -624,6 +670,7 @@ from rust::incan_semantics_core::body_ir import (
 
 
 def ordered_arguments(
+    mut builder: Builder,
     binding: &RustArgumentBinding,
     elements: &list[RustArgumentElement],
     count: int,
@@ -645,7 +692,7 @@ def ordered_arguments(
                 occupied.append(slot)
                 match elements[index].as_one():
                     Some(value) =>
-                        operands[slot] = scalar_operand(value, span)?
+                        operands[slot] = scalar_operand(builder, value, span)?
                     None => return Err("unsupported Body IR named or spread ArgumentElement")
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
     return Ok(operands)
@@ -674,16 +721,21 @@ def lower_named_target(
                             if call_id != body.direct_call_id:
                                 return Err("Body IR call identity disagrees with target body")
                         None => return Err("unsupported Body IR non-local NamedCallableTarget")
-                    operands = ordered_arguments(target.binding, arguments, len(body.params), span)?
+                    operands = ordered_arguments(builder, target.binding, arguments, len(body.params), span)?
                     mut output = plan_place(0, span)
                     match destination:
                         Some(place) =>
-                            output = scalar_place(place, span)?
+                            output = scalar_place(builder, place, span)?
                         None =>
                             slot = len(builder.locals)
-                            builder.locals.append(Local(ty=scalar_type(body.return_type)?, span=span))
+                            builder.locals.append(
+                                Local(ty=model_type(module.nominal_declarations, body.return_type)?, span=span),
+                            )
                             output = plan_place(slot, span)
                     terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
+                    match place_type(builder.locals, output):
+                        PlanType.Model(_index, _name) => builder.owned.append(output.local)
+                        _ => pass
                     return Ok(None)
                 None => return Err("unsupported Body IR imported or unresolved canonical call target")
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
@@ -760,13 +812,13 @@ def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan)
                 RustConstant.Str(text) => return Ok(owned_literal(builder, str(text), span))
                 _ => pass
         _ => pass
-    operand = scalar_operand(value, span)?
+    operand = scalar_operand(builder, value, span)?
     mut ty = PlanType.Unit
     match operand.kind:
         OperandKind.Copy(place) =>
-            ty = builder.locals[place.local].ty
+            ty = place_type(builder.locals, place)
         OperandKind.Move(place) =>
-            ty = builder.locals[place.local].ty
+            ty = place_type(builder.locals, place)
         OperandKind.Literal(constant) =>
             match constant:
                 Constant.Int(_value) =>
@@ -873,7 +925,7 @@ def forget_owned(mut builder: Builder, index: int) -> None:
 
 
 def drop_owned(mut builder: Builder, index: int, span: SourceSpan) -> None:
-    """Drop a known initialized string owner and continue in a fresh normal block."""
+    """Drop a known initialized string or model owner and continue in a fresh normal block."""
     if index not in builder.owned:
         return
     forget_owned(builder, index)
@@ -882,12 +934,16 @@ def drop_owned(mut builder: Builder, index: int, span: SourceSpan) -> None:
     builder.current = successor
 
 
-def fixed_arguments(elements: &list[RustArgumentElement], span: SourceSpan) -> Result[list[Operand], str]:
+def fixed_arguments(
+    mut builder: Builder,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
     """Read already ordered positional elements while refusing spreading by name."""
     mut result: list[Operand] = []
     for element in elements:
         match element.as_one():
-            Some(value) => result.append(scalar_operand(value, span)?)
+            Some(value) => result.append(scalar_operand(builder, value, span)?)
             None => return Err("unsupported Body IR spread ArgumentElement")
     return Ok(result)
 
@@ -905,12 +961,14 @@ def lower_runtime_helper(
             if len(arguments) != 3:
                 return Err("invalid Body IR RangeValidate arity")
             output = temporary(builder, PlanType.Unit, span)
+            # Legacy E0499: evaluate mutable argument conversions before external_call borrows the builder, until dev.8.
+            operands = fixed_arguments(builder, arguments, span)?
             external_call(
                 builder,
                 "incan_native_runtime::validate_range",
                 [PlanType.Int, PlanType.Int, PlanType.Int],
                 PlanType.Unit,
-                fixed_arguments(arguments, span)?,
+                operands,
                 output,
                 span,
             )
@@ -1005,8 +1063,8 @@ def verify_branch_owners(reachable: bool, owned: list[int], incoming: list[int])
 
 def clone_display_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Honor a retained string clone or shared display borrow through a monomorphic runtime call."""
-    place = scalar_place(value, span)?
-    if builder.locals[place.local].ty != PlanType.String:
+    place = scalar_place(builder, value, span)?
+    if place_type(builder.locals, place) != PlanType.String:
         return Err("unsupported Body IR nonscalar display borrow")
     reference = temporary(builder, PlanType.StringRef, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
@@ -1030,6 +1088,8 @@ def lower_string_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Admit formatting text allocation and retained ownership transfer, refusing other string operations."""
+    if destination.projection != Projection.Whole:
+        return lower_string_field_assignment(builder, destination, value, span)
     if destination.local in builder.owned:
         return Err("unsupported Body IR reassignment of live formatted String")
     match value:
@@ -1050,10 +1110,10 @@ def lower_float_builtin(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Use the checked operand type for scalar conversion; a float input remains a float."""
-    operands = fixed_arguments(arguments, span)?
+    operands = fixed_arguments(builder, arguments, span)?
     match destination:
         Some(place) =>
-            output = scalar_place(place, span)?
+            output = scalar_place(builder, place, span)?
             if len(operands) == 0:
                 builder.emit(
                     plan_assign(
@@ -1069,9 +1129,9 @@ def lower_float_builtin(
             mut ty = PlanType.Unit
             match operand.kind:
                 OperandKind.Copy(place) =>
-                    ty = builder.locals[place.local].ty
+                    ty = place_type(builder.locals, place)
                 OperandKind.Move(place) =>
-                    ty = builder.locals[place.local].ty
+                    ty = place_type(builder.locals, place)
                 OperandKind.Literal(value) =>
                     match value:
                         Constant.Int(_value) =>
@@ -1098,4 +1158,108 @@ def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str
         owner = retained[len(retained) - index - 1]
         if owner not in incoming:
             drop_owned(builder, owner, span)
+    return Ok(None)
+
+
+from models import model_type, model_place, place_type
+
+
+def clone_model_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize the checker's clone fact through the model's real derived Clone implementation."""
+    match place_type(builder.locals, value):
+        PlanType.Model(index, name) =>
+            reference = temporary(builder, PlanType.ModelRef(index, name), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+            result = temporary(builder, PlanType.Model(index, name), span)
+            terminate_call(
+                builder,
+                CalleeKind.CloneModel(index, name),
+                [read_place(reference, false, span)],
+                result,
+                span,
+            )
+            builder.owned.append(result.local)
+            return Ok(read_place(result, true, span))
+        _ => return Err("unsupported Body IR ownership Clone outside models or formatting")
+
+
+def model_aggregate(
+    mut builder: Builder,
+    kind: &RustAggregateKind,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Validate constructor identity and layout before using the frontend's canonical operand order."""
+    match kind:
+        RustAggregateKind.Constructor(target) =>
+            for index in range(len(builder.nominals)):
+                declaration = builder.nominals[index]
+                match target.direct_declaration_id:
+                    Some(identity) =>
+                        if identity != declaration.direct_declaration_id:
+                            continue
+                    None => return Err("unsupported Body IR nonlocal model constructor")
+                if target.name != declaration.name or target.canonical != Some(declaration.canonical) or target.canonical_field_layout != Some(
+                    declaration.fields,
+                ):
+                    return Err("invalid Body IR model constructor identity or layout")
+                match target.binding:
+                    RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+                        if len(defaults) != 0 or len(bindings) != len(elements) or len(elements) != len(
+                            declaration.fields,
+                        ):
+                            return Err("unsupported Body IR incomplete model constructor")
+                        mut slots: list[int] = []
+                        for binding in bindings:
+                            slot = int(binding.slot)
+                            if slot < 0 or slot >= len(elements) or slot in slots:
+                                return Err("invalid Body IR model constructor slot map")
+                            slots.append(slot)
+                    _ => return Err("unsupported Body IR unresolved model constructor")
+                mut operands: list[Operand] = []
+                for slot in range(len(elements)):
+                    match elements[slot].as_one():
+                        Some(value) =>
+                            if model_type(builder.nominals, declaration.field_types[slot])? == PlanType.String:
+                                text = display_operand(builder, value, span)?
+                                operands.append(read_place(text, true, span))
+                            else:
+                                operands.append(scalar_operand(builder, value, span)?)
+                        None => return Err("unsupported Body IR spread model field")
+                return Ok(RvalueKind.Model(index, operands))
+            return Err("unsupported Body IR unretained model constructor")
+        _ => return Err("unsupported Body IR Aggregate outside plain models")
+
+
+def track_rvalue_moves(mut builder: Builder, value: RvalueKind) -> None:
+    """Remove transferred whole owners before building cleanup edges."""
+    match value:
+        RvalueKind.Use(operand) => forget_moved_arguments(builder, [operand])
+        RvalueKind.Model(_index, operands) => forget_moved_arguments(builder, operands)
+        _ => pass
+
+
+def forget_moved_arguments(mut builder: Builder, arguments: list[Operand]) -> None:
+    """Forget only moved whole locals; partial moves are refused before constructing a plan."""
+    for argument in arguments:
+        match argument.kind:
+            OperandKind.Move(value) =>
+                if value.projection == Projection.Whole:
+                    forget_owned(builder, value.local)
+            _ => pass
+
+
+def lower_string_field_assignment(mut builder: Builder, destination: Place, value: &RustRvalue, span: SourceSpan) -> Result[None, str]:
+    """Evaluate replacement text before dropping the old field, retaining its initialized parent owner."""
+    mut replacement = temporary(builder, PlanType.String, span)
+    match value:
+        RustRvalue.Use(operand) => replacement = display_operand(builder, operand, span)?
+        RustRvalue.Format(parts) => lower_format(builder, replacement, parts, span)?
+        _ => return Err("unsupported Body IR string field Rvalue outside formatting")
+    continuation = builder.new_block(span)
+    cleanup = cleanup_exit(builder, span)
+    builder.finish(TerminatorKind.Drop(destination, continuation, Unwind.Cleanup(cleanup)), span)
+    builder.current = continuation
+    forget_owned(builder, replacement.local)
+    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)

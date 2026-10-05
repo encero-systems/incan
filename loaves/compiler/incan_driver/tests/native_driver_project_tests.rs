@@ -358,3 +358,23 @@ mod census;
 fn direct_route_fixture_census() -> Result<(), Box<dyn std::error::Error>> {
     census::run()
 }
+
+/// Prove named construction, field mutation, argument passing, returned models, and final drops against legacy.
+#[test]
+fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, _temporary) = fixture_root()?;
+    let repo = support::repo_root();
+    let driver = prepare_source_driver(&root, &repo)?;
+    let home = root.join("home");
+    bake(&root.join("library"), &home)?;
+    bake(&root.join("lowering"), &home)?;
+    bake(&driver, &home)?;
+    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
+    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    corpus::check_plain_model(
+        &driver.join("target/rust/release/incan-rustc-driver"),
+        &root,
+        &sysroot,
+        &runtime,
+    )
+}

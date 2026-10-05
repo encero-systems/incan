@@ -1,6 +1,9 @@
 //! Minimal source-to-Body-IR glue. All Body-IR-to-plan decisions belong to the Incan lowering Loaf.
 
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use incan_frontend::{body_ir::build_body_ir_module_v0, lexer, parser, typechecker::TypeChecker};
 use incan_mir_lowering::caller::incan::lower_module;
@@ -17,7 +20,21 @@ fn checked_module(source: &str, name: &str) -> Result<BodyIrModule, String> {
             Declaration::Import(_) => "Import",
             Declaration::Const(_) => "Const",
             Declaration::Static(_) => "Static",
-            Declaration::Model(_) => "Model",
+            Declaration::Model(model) => {
+                if !incan_frontend::body_ir::is_direct_replacement_plain_model(model) {
+                    return Err(format!(
+                        "unsupported source nonplain Model {} on the native route",
+                        model.name
+                    ));
+                }
+                if model.fields.iter().any(|field| field.node.default.is_some()) {
+                    return Err(format!(
+                        "unsupported source Model defaults on {} on the native route",
+                        model.name
+                    ));
+                }
+                continue;
+            }
             Declaration::Class(_) => "Class",
             Declaration::Enum(_) => "Enum",
             Declaration::Trait(_) => "Trait",
@@ -32,7 +49,9 @@ fn checked_module(source: &str, name: &str) -> Result<BodyIrModule, String> {
     let module_path = vec![name.to_owned()];
     let mut checker = TypeChecker::new();
     checker.set_current_module_path(Some(module_path.clone()));
-    checker.check_program(&program).map_err(|errors| format!("checking failed: {errors:?}"))?;
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("checking failed: {errors:?}"))?;
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
 }
 
@@ -70,6 +89,13 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let module = checked_module(&source, &arguments[1])?;
     let plan = lower_module(&module, source, arguments[0].clone())?;
     let dependencies = dependencies(&arguments[4..])?;
-    crate::adapter::compile(plan, &arguments[1], Path::new(&arguments[2]), Path::new(&arguments[3]), &dependencies.externs, &dependencies.directories)?;
+    crate::adapter::compile(
+        plan,
+        &arguments[1],
+        Path::new(&arguments[2]),
+        Path::new(&arguments[3]),
+        &dependencies.externs,
+        &dependencies.directories,
+    )?;
     Ok(())
 }

@@ -150,7 +150,7 @@ fn construction_records_an_omitted_field_default_as_an_explicit_slot() -> Result
 #[test]
 fn source_local_model_construction_retains_its_declaration_identity_and_canonical_field_layout()
 -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Pair:\n  left: int\n  right: int\n\ndef main() -> int:\n  pair = Pair(right=2, left=40)\n  return pair.left + pair.right\n";
+    let source = "model Pair:\n  pub left: int\n  right: int\n\ndef main() -> int:\n  pair = Pair(right=2, left=40)\n  return pair.left + pair.right\n";
     let module = build(source, &["m", "nominal_identity"])?;
     let declaration = match module.nominal_declarations.as_slice() {
         [declaration] => declaration,
@@ -161,6 +161,11 @@ fn source_local_model_construction_retains_its_declaration_identity_and_canonica
     assert_eq!(declaration.name, "Pair");
     assert_eq!(declaration.fields, vec!["left", "right"]);
     assert_eq!(declaration.type_parameter_count, 0);
+    assert_eq!(declaration.field_public, vec![true, false]);
+    assert!(!declaration.public);
+    assert!(!declaration.has_field_defaults);
+    assert_eq!(declaration.derives, incan_lang::lang::derives::plain_model_derives());
+    assert!(module.is_well_formed_nominal_declaration(declaration));
     assert_eq!(
         declaration.canonical.kind,
         SemanticSourceTargetKind::Model,

@@ -23,7 +23,10 @@ fn statement<'tcx>(
     let span = sources.span(location)?;
     let kind = match &value.kind {
         StatementKind::Assign(destination, value) => {
-            let ty = &function.locals[values::index(destination.local)?].ty;
+            let ty = match &destination.projection {
+                crate::plan::Projection::Field(_, ty) => ty,
+                _ => &function.locals[values::index(destination.local)?].ty,
+            };
             mir::StatementKind::Assign(Box::new((
                 values::place(tcx, destination)?,
                 values::rvalue(tcx, sources, &value.kind, ty)?,
