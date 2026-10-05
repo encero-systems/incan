@@ -1,0 +1,17 @@
+"""Admission table for Body IR's canonical text operations."""
+
+from rust::incan_semantics_core::body_ir import HelperOp
+from pub::incan_mir_plan import PlanType
+
+
+pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
+    """Select only concatenation and comparisons; all other string helpers remain refused by name."""
+    match helper:
+        HelperOp.StrConcat => return Some(("concat_text", PlanType.String))
+        HelperOp.StrEq => return Some(("equal_text", PlanType.Bool))
+        HelperOp.StrNe => return Some(("unequal_text", PlanType.Bool))
+        HelperOp.StrLt => return Some(("less_text", PlanType.Bool))
+        HelperOp.StrLe => return Some(("less_equal_text", PlanType.Bool))
+        HelperOp.StrGt => return Some(("greater_text", PlanType.Bool))
+        HelperOp.StrGe => return Some(("greater_equal_text", PlanType.Bool))
+        _ => return None
