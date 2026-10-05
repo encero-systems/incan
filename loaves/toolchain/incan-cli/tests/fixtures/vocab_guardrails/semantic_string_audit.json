@@ -20,15 +20,15 @@
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/bake.rs",
-      "category": "Oven bake profile selection",
-      "expected_count": 3,
-      "expected_fingerprint": "0xf643e2ca93edf3f7"
+      "category": "Oven bake profile selection and Rust unit source-file discovery",
+      "expected_count": 4,
+      "expected_fingerprint": "0xc51a2922e665fdb0"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/caller_facet.rs",
       "category": "Rust caller-path tokens (`<library>::caller::incan::<name>`, `::`, braces and commas) read from Rust-authored caller units",
-      "expected_count": 9,
-      "expected_fingerprint": "0x9e9cddb72e9fdad9"
+      "expected_count": 8,
+      "expected_fingerprint": "0x484c602b727809c2"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/library_project.rs",

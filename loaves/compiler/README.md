@@ -8,7 +8,7 @@ The pipeline from checked AST to emitted Rust, plus the session and provider mac
 | --- | --- |
 | `incan_frontend/` | Typechecker, semantic analysis, vocab desugar pass, body IR, API metadata. |
 | `incan_ir/` | AST-to-IR lowering and the IR type definitions. |
-| `incan_mir_plan/` | Incan-authored scalar native-plan data and builders, with no rustc types or Rust dependencies. Body IR lowering into this plan is still pending. |
+| `incan_mir_plan/` | Incan-authored scalar native-plan data and builders, with no rustc types or Rust dependencies. The Oven-built native driver consumes its hand-filled scalar fixture through the Rust caller facet. Body IR lowering into this plan remains stage 3c. |
 | `incan_emit/` | IR-to-Rust emission with syn/quote, conversions, prettyplease formatting, replacement lowering. |
 | `incan_format/` | Source formatter. |
 | `incan_provider/` | Provider and SDK contracts (manifest types, component catalog, inventory) and their loaders. |

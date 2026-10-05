@@ -22,6 +22,53 @@ pub const OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV: &str = "INCAN_INTERNAL_OV
 /// Offline Cargo-home authority exposed only to a test helper performing `incan oven bake`.
 pub const OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV: &str = "INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_HOME";
 
+/// CLI test roots whose explicit bakes require the publisher's offline Cargo authority.
+const EXPLICIT_CLI_BAKE_ROOTS: &[&str] = &[
+    "loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_language_call_regression_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_language_reflection_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_language_union_regression_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_surface_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_workspace_command_tests.rs",
+    "loaves/toolchain/incan-cli/tests/cli_workspace_scope_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_codegen_async_and_modules_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_codegen_constants_and_interop_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_codegen_hash_and_io_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_codegen_imports_and_results_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_codegen_language_and_fs_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_codegen_ownership_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_codegen_stdlib_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_format_and_cli_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_language_runtime_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_lexer_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_numeric_semantics_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_runtime_types_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_sdk_interop_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_test_runner_basics_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_test_runner_fixtures_tests.rs",
+    "loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs",
+    "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs",
+    "loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs",
+    "loaves/toolchain/incan-cli/tests/package_executable_representation.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_boundary_parity_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_checked_c_resource_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_checked_c_span_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_manifest_diagnostics_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_pub_model_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_stdlib_facade_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_vocab_desugar_tests.rs",
+    "loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs",
+];
+
 const OVEN_COMPILER_SUITE_CAPABILITY_SCHEMA_VERSION: u32 = 1;
 const MAX_COMPILER_SUITE_DIRECT_RUSTC_INPUTS: usize = 1024;
 
@@ -75,182 +122,14 @@ impl OvenCompilerSuiteTargetCapabilities {
         // No behavior-fixture root (`loaves/toolchain/incan-cli/tests/behavior_*_tests.rs`) is registered here, by
         // design: their programs run on the sealed stdlib Loaf, and the provider bakes of the `cli_dependencies`
         // area run with no Cargo authority, so a bake that reaches for Cargo meets the scheduler's guard instead.
-        let explicit_bake_cargo = matches!(
-            (package_name, target_kind, source_relative_path),
-            (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_language_call_regression_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_language_reflection_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_language_union_regression_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_surface_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_workspace_command_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/cli_workspace_scope_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_codegen_async_and_modules_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_codegen_constants_and_interop_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_codegen_hash_and_io_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_codegen_imports_and_results_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_codegen_language_and_fs_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_codegen_ownership_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_codegen_stdlib_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_format_and_cli_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_language_runtime_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_lexer_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_numeric_semantics_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_runtime_types_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_sdk_interop_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_test_runner_basics_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_test_runner_fixtures_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/package_executable_representation.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_boundary_parity_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_checked_c_resource_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_checked_c_span_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_manifest_diagnostics_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_pub_model_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_stdlib_facade_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_vocab_desugar_tests.rs"
-            ) | (
-                "incan-cli",
-                "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs"
-            )
-        );
+        let explicit_bake_cargo = target_kind == "test"
+            && match package_name {
+                "incan_driver" => {
+                    source_relative_path == "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs"
+                }
+                "incan-cli" => EXPLICIT_CLI_BAKE_ROOTS.contains(&source_relative_path),
+                _ => false,
+            };
         Self {
             generated_rust_closure,
             cargo_fixture,

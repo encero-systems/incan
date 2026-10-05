@@ -195,62 +195,58 @@ fn type_representability(
     }
 }
 
-/// Tokenize only the identifier and path punctuation needed by [`scan_rust_caller_paths`].
+/// Tokenize source paths with Rust's token grammar, excluding comments and every literal form.
+/// Invalid Rust tokenization produces no caller selection and is refused by the caller planner.
 fn rust_path_tokens(source: &str) -> Vec<String> {
-    let bytes = source.as_bytes();
+    let Ok(stream) = source.parse::<proc_macro2::TokenStream>() else {
+        return Vec::new();
+    };
     let mut tokens = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index..].starts_with(b"//") {
-            index += 2;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
+    append_rust_path_tokens(stream, &mut tokens);
+    tokens
+}
+
+/// Flatten nested token groups while preserving path separators and grouped-import delimiters.
+fn append_rust_path_tokens(stream: proc_macro2::TokenStream, tokens: &mut Vec<String>) {
+    let mut stream = stream.into_iter().peekable();
+    while let Some(token) = stream.next() {
+        match token {
+            proc_macro2::TokenTree::Ident(name) => {
+                let name = name.to_string();
+                tokens.push(name.strip_prefix("r#").unwrap_or(&name).to_string());
             }
-        } else if bytes[index..].starts_with(b"/*") {
-            index += 2;
-            let mut depth = 1usize;
-            while index < bytes.len() && depth > 0 {
-                if bytes[index..].starts_with(b"/*") {
-                    depth += 1;
-                    index += 2;
-                } else if bytes[index..].starts_with(b"*/") {
-                    depth -= 1;
-                    index += 2;
+            proc_macro2::TokenTree::Group(group) => {
+                tokens.push(
+                    if group.delimiter() == proc_macro2::Delimiter::Brace {
+                        "{"
+                    } else {
+                        "("
+                    }
+                    .into(),
+                );
+                append_rust_path_tokens(group.stream(), tokens);
+                tokens.push(
+                    if group.delimiter() == proc_macro2::Delimiter::Brace {
+                        "}"
+                    } else {
+                        ")"
+                    }
+                    .into(),
+                );
+            }
+            proc_macro2::TokenTree::Punct(punctuation) => {
+                if punctuation.as_char() == ':'
+                    && matches!(stream.peek(), Some(proc_macro2::TokenTree::Punct(next)) if next.as_char() == ':')
+                {
+                    stream.next();
+                    tokens.push("::".into());
                 } else {
-                    index += 1;
+                    tokens.push(punctuation.as_char().to_string());
                 }
             }
-        } else if matches!(bytes[index], b'"' | b'\'') {
-            let delimiter = bytes[index];
-            index += 1;
-            while index < bytes.len() {
-                if bytes[index] == b'\\' {
-                    index = (index + 2).min(bytes.len());
-                } else if bytes[index] == delimiter {
-                    index += 1;
-                    break;
-                } else {
-                    index += 1;
-                }
-            }
-        } else if bytes[index..].starts_with(b"::") {
-            tokens.push("::".to_string());
-            index += 2;
-        } else if matches!(bytes[index], b'{' | b'}' | b',') {
-            tokens.push((bytes[index] as char).to_string());
-            index += 1;
-        } else if (bytes[index] as char).is_ascii_alphabetic() || bytes[index] == b'_' {
-            let start = index;
-            index += 1;
-            while index < bytes.len() && ((bytes[index] as char).is_ascii_alphanumeric() || bytes[index] == b'_') {
-                index += 1;
-            }
-            tokens.push(source[start..index].to_string());
-        } else {
-            index += 1;
+            proc_macro2::TokenTree::Literal(_) => tokens.push("literal".into()),
         }
     }
-    tokens
 }
 
 /// Return whether a token has the lexical shape of a Rust identifier.
@@ -275,12 +271,16 @@ mod tests {
 
     #[test]
     fn caller_scan_unions_paths_and_ignores_comments_and_literals() {
-        let source = r#"
+        let source = r###"
 use policy::caller::incan::{Plan, Op};
 fn run() { let _ = policy::caller::incan::make_plan(); }
 // hidden::caller::incan::ignored
 const TEXT: &str = "hidden::caller::incan::ignored";
-"#;
+fn borrowed<'a>(value: &'a str) { let literal = "hidden::caller::incan::ignored"; }
+fn generic<'b>() { let other = "native_output::caller::incan::print_int"; }
+const UNICODE: char = 'é';
+const RAW: &str = r##"a quote " hidden::caller::incan::ignored"##;
+"###;
         let paths = scan_rust_caller_paths(source);
         let policy = paths
             .get("policy")
@@ -290,6 +290,7 @@ const TEXT: &str = "hidden::caller::incan::ignored";
             Some(vec!["Op".to_string(), "Plan".to_string(), "make_plan".to_string()])
         );
         assert!(!paths.contains_key("hidden"));
+        assert!(!paths.contains_key("native_output"));
     }
 
     #[test]
