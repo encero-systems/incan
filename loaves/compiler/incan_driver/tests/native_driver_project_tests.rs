@@ -260,6 +260,7 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
         check_source_pipeline(&binary, root, &sysroot, &formatting, profile)?;
     }
     let release = driver.join("target/rust/release/incan-rustc-driver");
+    corpus::check_strings(&release, root, &sysroot, &formatting)?;
     for name in ["fib", "collatz", "mandelbrot"] {
         corpus::check_benchmark(&release, root, &sysroot, &formatting, name)?;
     }
