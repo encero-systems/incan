@@ -260,6 +260,7 @@ fn lowers_negated_string_membership_as_its_own_helper_rather_than_a_wrapped_nega
     Ok(())
 }
 
+/// Preserve each container's helper identity and ownership contract for membership.
 #[test]
 fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> Result<(), Box<dyn std::error::Error>> {
     // Each collection names its own helper rather than sharing one `contains`. A single variant would leave a
@@ -275,9 +276,14 @@ fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> R
     ] {
         let source = format!("def f({container}) -> bool:\n  return v in xs\n");
         let rendered = rendered_f(&source, module_leaf)?;
+        let read = if helper == "list_contains" {
+            "clone(_0)"
+        } else {
+            "move(_0, last_use)"
+        };
 
         assert!(
-            rendered.contains(&format!("call helper:{helper}(move(_0, last_use)")),
+            rendered.contains(&format!("call helper:{helper}({read}")),
             "`in` over {container} must lower to {helper} with the container first: {rendered}"
         );
         assert!(
@@ -296,6 +302,7 @@ fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> R
     Ok(())
 }
 
+/// Retain negated membership directly, cloning shared list parameter storage.
 #[test]
 fn lowers_negated_collection_membership_as_its_own_helper_per_container() -> Result<(), Box<dyn std::error::Error>> {
     // One source operator stays one Body IR operation, following the `str_contains`/`str_not_contains` pair: a
@@ -307,9 +314,14 @@ fn lowers_negated_collection_membership_as_its_own_helper_per_container() -> Res
     ] {
         let source = format!("def f({container}) -> bool:\n  return v not in xs\n");
         let rendered = rendered_f(&source, module_leaf)?;
+        let read = if helper == "list_not_contains" {
+            "clone(_0)"
+        } else {
+            "move(_0, last_use)"
+        };
 
         assert!(
-            rendered.contains(&format!("call helper:{helper}(move(_0, last_use)")),
+            rendered.contains(&format!("call helper:{helper}({read}")),
             "`not in` over {container} must lower to {helper}, container first: {rendered}"
         );
         assert!(
@@ -344,6 +356,7 @@ fn dict_membership_names_key_lookup_rather_than_element_lookup() -> Result<(), B
     Ok(())
 }
 
+/// Concatenation preserves both shared list parameters while returning a fresh list.
 #[test]
 fn lowers_list_concatenation_as_a_helper_call_rather_than_a_primitive_addition()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -358,7 +371,7 @@ fn lowers_list_concatenation_as_a_helper_call_rather_than_a_primitive_addition()
     )?;
 
     assert!(
-        rendered.contains("call helper:list_concat(move(_0, last_use), move(_1, last_use))"),
+        rendered.contains("call helper:list_concat(clone(_0), clone(_1))"),
         "list `+` must lower to the concatenation helper in source order: {rendered}"
     );
     assert!(

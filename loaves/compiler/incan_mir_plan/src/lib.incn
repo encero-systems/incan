@@ -24,6 +24,8 @@ pub enum PlanType:
     Array lengths are exact nonnegative counts. CheckedInt and arrays are body
     temporaries; shared slice variants already include their reference. StringRef
     borrows an owned String, while StrRef is a string literal's shared str view.
+    List stores a primitive leaf (0=int, 1=float, 2=bool, 3=str) and positive nesting
+    depth; ListRef and ListMutRef borrow that same Vec representation.
     """
 
     Int
@@ -40,6 +42,10 @@ pub enum PlanType:
     StrArrayRef(int)
     StringSlice
     StrSlice
+    # A homogeneous list: primitive leaf (0=int, 1=float, 2=bool, 3=str), nesting depth.
+    List(int, int)
+    ListRef(int, int)
+    ListMutRef(int, int)
 
 
 @derive(Clone, PartialEq)
@@ -66,6 +72,7 @@ pub enum Projection:
     Whole
     Value
     Overflow
+    Deref
 
 
 @derive(Clone, PartialEq)
@@ -150,6 +157,7 @@ pub enum RvalueKind:
     IntToFloat(Operand)
     Array(list[Operand])
     Borrow(Place)
+    MutBorrow(Place)
     UnsizeSlice(Operand)
 
 
@@ -184,6 +192,7 @@ pub enum CalleeKind:
 
     Planned(str)
     External(str)
+    Instantiated(str, PlanType)
 
 
 @derive(Clone, PartialEq)
@@ -258,7 +267,7 @@ pub model Plan:
     """
     A scalar native crate; external functions are admitted by canonical path.
 
-    External declarations give validation a signature before rustc runs. The
+    External declarations give validation a signature and explicit type arguments before rustc runs. The
     adapter verifies those signatures against the loaded dependency metadata.
     """
 
@@ -272,6 +281,7 @@ pub model ExternalFunction:
     """The signature of a canonical dependency function used by this plan."""
 
     pub path: str
+    pub type_arguments: list[PlanType] = []
     pub parameters: list[PlanType]
     pub return_type: PlanType
     pub span: SourceSpan

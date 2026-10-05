@@ -1396,7 +1396,8 @@ pub struct CallArtifacts {
     /// Argument expressions, by span, that a call hands to a caller-visible `mut` parameter the callee never changes
     /// while the argument is an immutable binding or field: lowering passes a copy of the value (#1773).
     pub mut_argument_copies: HashSet<(usize, usize)>,
-    /// Method calls, by full call span, whose receiver's source type declares the method only with `mut self`.
+    /// Method calls, by full call span, whose source declaration requires `mut self` or whose builtin list registry
+    /// marks the receiver as changing.
     ///
     /// Lowering marks the binding at the root of such a call's receiver as borrowed mutably, so every later question
     /// about whether a body changes that binding, such as whether a `for` loop must reach its items in place, sees the
@@ -1971,7 +1972,8 @@ impl TypeCheckInfo {
         self.calls.mut_argument_copies.contains(&(span.start, span.end))
     }
 
-    /// Return whether the method call at `span` calls a source method whose receiver is `mut self`.
+    /// Return whether the checked method call requires an exclusive receiver from its source declaration or builtin
+    /// list registry.
     pub fn method_call_takes_mutable_receiver(&self, span: Span) -> bool {
         self.calls
             .mutable_receiver_method_calls

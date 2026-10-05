@@ -9,7 +9,7 @@ use crate::plan::{
 };
 
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
     Int,
     Float,
@@ -25,11 +25,17 @@ enum Scalar {
     StrArrayRef(i64),
     StringSlice,
     StrSlice,
+    List(i64, i64),
+    ListRef(i64, i64),
+    ListMutRef(i64, i64),
 }
 
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::List(leaf, depth) => Scalar::List(*leaf, *depth),
+        PlanType::ListRef(leaf, depth) => Scalar::ListRef(*leaf, *depth),
+        PlanType::ListMutRef(leaf, depth) => Scalar::ListMutRef(*leaf, *depth),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
         PlanType::Bool => Scalar::Bool,
@@ -71,13 +77,22 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
     for external in &plan.externals {
         span(&external.span)?;
         let segments: Vec<_> = external.path.split("::").collect();
-        if segments.len() < 2 || !segments.iter().all(|segment| identifier(segment)) || !paths.insert(&external.path) {
+        if segments.len() < 2
+            || !segments.iter().all(|segment| identifier(segment))
+            || !paths.insert((
+                external.path.clone(),
+                external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
+            ))
+        {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
                 reason: "invalid or duplicate canonical external path".into(),
             });
         }
-        if external.parameters.iter().any(|ty| !external_signature_type(scalar(ty)))
+        if external
+            .parameters
+            .iter()
+            .any(|ty| !external_signature_type(scalar(ty)))
             || !external_signature_type(scalar(&external.return_type))
         {
             return Err(PlanError::Invalid {
@@ -204,6 +219,10 @@ fn place(function: &Function, value: &Place) -> Result<Scalar, PlanError> {
     let ty = local(function, value.local)?;
     match &value.projection {
         Projection::Whole => Ok(ty),
+        Projection::Deref => match ty {
+            Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Ok(Scalar::List(leaf, depth)),
+            _ => Err(invalid(function, "dereference requires a list reference")),
+        },
         Projection::Value if ty == Scalar::CheckedInt => Ok(Scalar::Int),
         Projection::Overflow if ty == Scalar::CheckedInt => Ok(Scalar::Bool),
         _ => Err(invalid(function, "only checked integer results support projections")),
@@ -241,7 +260,10 @@ fn operand(function: &Function, value: &Operand) -> Result<Scalar, PlanError> {
     match &value.kind {
         OperandKind::Copy(value) => {
             let ty = place(function, value)?;
-            if matches!(ty, Scalar::String | Scalar::StringArray(_)) {
+            if matches!(
+                ty,
+                Scalar::String | Scalar::StringArray(_) | Scalar::List(_, _) | Scalar::ListMutRef(_, _)
+            ) {
                 return Err(invalid(function, "owned formatting values cannot be copied"));
             }
             Ok(ty)
@@ -291,34 +313,66 @@ fn rvalue(function: &Function, value: &RvalueKind, expected: Scalar) -> Result<S
         }
         RvalueKind::Array(elements) => validate_array(function, elements, expected),
         RvalueKind::Borrow(value) => match place(function, value)? {
+            Scalar::List(leaf, depth) => Ok(Scalar::ListRef(leaf, depth)),
             Scalar::String => Ok(Scalar::StringRef),
             Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
             Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
             _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
         },
+        RvalueKind::MutBorrow(value) => match place(function, value)? {
+            Scalar::List(leaf, depth) => Ok(Scalar::ListMutRef(leaf, depth)),
+            _ => Err(invalid(function, "mutable borrow requires an owned list")),
+        },
         RvalueKind::UnsizeSlice(value) => match operand(function, value)? {
             Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
             Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
-            _ => Err(invalid(function, "slice coercion requires a shared formatting-array reference")),
+            _ => Err(invalid(
+                function,
+                "slice coercion requires a shared formatting-array reference",
+            )),
         },
     }
 }
 
 /// Source functions expose only scalar or owned text values; formatting arrays and references stay body-internal.
 fn source_signature_type(ty: Scalar) -> bool {
-    matches!(ty, Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String)
+    matches!(
+        ty,
+        Scalar::Int
+            | Scalar::Float
+            | Scalar::Bool
+            | Scalar::Unit
+            | Scalar::String
+            | Scalar::List(_, _)
+            | Scalar::ListRef(_, _)
+            | Scalar::ListMutRef(_, _)
+    )
 }
 
 /// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
 fn external_signature_type(ty: Scalar) -> bool {
-    source_signature_type(ty) || matches!(ty, Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice)
+    source_signature_type(ty)
+        || matches!(
+            ty,
+            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice
+        )
 }
 
 /// Refuse an invalid dimension before constructing native array constants, including unused locals.
 fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
-        Scalar::StringArray(count) | Scalar::StrArray(count) | Scalar::StringArrayRef(count) | Scalar::StrArrayRef(count) if count < 0 => {
+        Scalar::StringArray(count)
+        | Scalar::StrArray(count)
+        | Scalar::StringArrayRef(count)
+        | Scalar::StrArrayRef(count)
+            if count < 0 =>
+        {
             Err(invalid(function, "formatting array length must be nonnegative"))
+        }
+        Scalar::List(leaf, depth) | Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth)
+            if !(0..=3).contains(&leaf) || depth < 1 =>
+        {
+            Err(invalid(function, "invalid list leaf or depth"))
         }
         _ => Ok(()),
     }
@@ -329,7 +383,12 @@ fn validate_array(function: &Function, values: &[Operand], expected: Scalar) -> 
     let (element, count) = match expected {
         Scalar::StringArray(count) => (Scalar::String, count),
         Scalar::StrArray(count) => (Scalar::StrRef, count),
-        _ => return Err(invalid(function, "array expression requires a formatting-array destination")),
+        _ => {
+            return Err(invalid(
+                function,
+                "array expression requires a formatting-array destination",
+            ));
+        }
     };
     if usize::try_from(count).ok() != Some(values.len()) {
         return Err(invalid(function, "formatting array length differs from its elements"));
@@ -378,11 +437,19 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
                 scalar(&function.return_type),
             ))
         }
-        CalleeKind::External(path) => {
+        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => {
             let external = plan
                 .externals
                 .iter()
-                .find(|external| &external.path == path)
+                .find(|external| {
+                    &external.path == path
+                        && match &callee.kind {
+                            CalleeKind::Instantiated(_, ty) => {
+                                external.type_arguments.len() == 1 && scalar(&external.type_arguments[0]) == scalar(ty)
+                            }
+                            _ => external.type_arguments.is_empty(),
+                        }
+                })
                 .ok_or_else(|| PlanError::UnknownCallee(path.clone()))?;
             Ok((
                 external.parameters.iter().map(scalar).collect(),

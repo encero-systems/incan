@@ -40,7 +40,17 @@ pub fn terminator<'tcx>(
             targets: mir::SwitchTargets::new([(0, block(*false_target)?)].into_iter(), block(*true_target)?),
         },
         TerminatorKind::Call(callee, arguments, destination, target, action) => mir::TerminatorKind::Call {
-            func: mir::Operand::function_handle(tcx, callees::resolve(tcx, callee)?, [], sources.span(&callee.span)?),
+            func: mir::Operand::function_handle(
+                tcx,
+                callees::resolve(tcx, callee)?,
+                match &callee.kind {
+                    crate::plan::CalleeKind::Instantiated(_, ty) => {
+                        callees::arguments(tcx, callees::resolve(tcx, callee)?, std::slice::from_ref(ty))?
+                    }
+                    _ => tcx.mk_args(&[]),
+                },
+                sources.span(&callee.span)?,
+            ),
             args: arguments
                 .iter()
                 .map(|value| {

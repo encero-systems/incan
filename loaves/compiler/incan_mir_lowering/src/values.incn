@@ -1,0 +1,101 @@
+"""Checked scalar and list representations, without inferred ownership or source-name dispatch."""
+
+from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, OperandKind, Constant
+from pub::incan_mir_plan import place as plan_place
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core::body_ir import (
+    Operand as RustOperand,
+    Constant as RustConstant,
+    Place as RustPlace,
+    OwnershipFact,
+    ArgumentBinding,
+    ArgumentElement,
+)
+
+
+pub def scalar_type(ty: &RustType) -> Result[PlanType, str]:
+    """Admit the fixed scalar representation and refuse other checked types."""
+    match ty:
+        RustType.Primitive(primitive) =>
+            match primitive:
+                Primitive.Int => return Ok(PlanType.Int)
+                Primitive.Float => return Ok(PlanType.Float)
+                Primitive.Bool => return Ok(PlanType.Bool)
+                Primitive.Unit => return Ok(PlanType.Unit)
+                Primitive.Str => return Ok(PlanType.String)
+                _ => return Err(f"unsupported Body IR primitive type {primitive}")
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "List" or len(arguments) != 1:
+                return Err(f"unsupported Body IR type {ty}")
+            element = scalar_type(arguments[0])?
+            match element:
+                PlanType.Int => return Ok(PlanType.List(0, 1))
+                PlanType.Float => return Ok(PlanType.List(1, 1))
+                PlanType.Bool => return Ok(PlanType.List(2, 1))
+                PlanType.String => return Ok(PlanType.List(3, 1))
+                PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
+                _ => return Err(f"unsupported Body IR list element {ty}")
+        _ => return Err(f"unsupported Body IR type {ty}")
+
+
+pub def scalar_place(value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Map a bare local to the native frame, which reserves local zero for return."""
+    if len(value.projection) != 0:
+        return Err("unsupported Body IR place projection")
+    match value.local_id():
+        Some(local) => return Ok(plan_place(int(local.index()) + 1, span))
+        None => return Err("unsupported Body IR global place")
+
+
+pub def scalar_operand(value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Preserve each scalar read's checked ownership fact rather than inferring it."""
+    match value:
+        RustOperand.Place(read) =>
+            target = scalar_place(read.place, span)?
+            match read.fact:
+                OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
+                OwnershipFact.Move => return Ok(Operand(kind=OperandKind.Move(target), span=span))
+                OwnershipFact.Clone => return Err("unsupported Body IR ownership Clone outside formatting")
+                OwnershipFact.Borrow => return Err("unsupported Body IR ownership Borrow outside formatting")
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
+                OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
+        RustOperand.Constant(constant) =>
+            match constant.clone():
+                RustConstant.Int(number) =>
+                    return Ok(Operand(kind=OperandKind.Literal(Constant.Int(number)), span=span))
+                RustConstant.Float(text) =>
+                    return Ok(Operand(kind=OperandKind.Literal(Constant.Float(float(str(text)))), span=span))
+                RustConstant.Bool(flag) => return Ok(Operand(kind=OperandKind.Literal(Constant.Bool(flag)), span=span))
+                RustConstant.Unit => return Ok(Operand(kind=OperandKind.Literal(Constant.Unit), span=span))
+                RustConstant.TypedNumeric(_value) => return Err("unsupported Body IR TypedNumeric")
+                RustConstant.Str(_value) => return Err("unsupported Body IR Str constant")
+                RustConstant.Bytes(_value) => return Err("unsupported Body IR Bytes constant")
+                RustConstant.None => return Err("unsupported Body IR None constant")
+
+
+pub def ordered_scalar_arguments(
+    binding: &ArgumentBinding,
+    elements: &list[ArgumentElement],
+    count: int,
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Preserve checked declaration slots for scalar stdlib delegations that have no local Body declaration."""
+    mut operands: list[Operand] = []
+    for index in range(count):
+        operands.append(Operand(kind=OperandKind.Literal(Constant.Unit), span=span))
+    match binding:
+        ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0 or len(bindings) != len(elements) or len(bindings) != count:
+                return Err("unsupported Body IR defaulted or incomplete ArgumentBinding")
+            mut occupied: list[int] = []
+            for index in range(len(elements)):
+                slot = int(bindings[index].slot)
+                if slot < 0 or slot >= count or slot in occupied:
+                    return Err("invalid Body IR argument slot map")
+                occupied.append(slot)
+                match elements[index].as_one():
+                    Some(value) =>
+                        operands[slot] = scalar_operand(value, span)?
+                    None => return Err("unsupported Body IR named or spread ArgumentElement")
+        _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+    return Ok(operands)

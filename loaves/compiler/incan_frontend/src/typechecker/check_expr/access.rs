@@ -5732,10 +5732,20 @@ impl TypeChecker {
 
     /// Record the call at `span` when the receiver's source type declares `method` only with `mut self`.
     ///
-    /// Only the type's own declarations answer, after resolving a method alias; a method a trait provides reaches
-    /// lowering through its trait dispatch fact, which carries the receiver itself. Builtin receivers and unknown
-    /// methods are not recorded.
+    /// List members answer from the builtin registry's receiver-change contract. Other types answer from their own
+    /// declarations after resolving a method alias; a method a trait provides reaches lowering through its trait
+    /// dispatch fact, which carries the receiver itself. Other builtin receivers and unknown methods are not recorded.
     fn record_mutable_receiver_method_call(&mut self, base_ty: &ResolvedType, method: &str, span: Span) {
+        if matches!(base_ty, ResolvedType::Generic(name, _) if collection_type_id(name.as_str()) == Some(CollectionTypeId::List))
+        {
+            if self.method_receiver_change(base_ty, method, span) == ReceiverChange::Changes {
+                self.type_info
+                    .calls
+                    .mutable_receiver_method_calls
+                    .insert((span.start, span.end));
+            }
+            return;
+        }
         let type_name = match base_ty {
             ResolvedType::Named(name) => name,
             ResolvedType::Generic(name, _) if collection_type_id(name.as_str()).is_none() => name,

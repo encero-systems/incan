@@ -1173,7 +1173,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.lower_expr_to_operand(recv, scope, out)
         } else {
             let recv_place = self.lower_expr_to_place(recv, scope, out);
-            bir::Operand::place(recv_place, bir::OwnershipFact::Borrow, false)
+            let builtin_list_receiver = self.type_info.resolved_identity(span).is_some_and(|identity| {
+                identity.origin == incan_semantics_core::SymbolOrigin::Builtin
+                    && identity.declaration_name.starts_with("List.")
+            });
+            let fact = if builtin_list_receiver && self.type_info.method_call_takes_mutable_receiver(span) {
+                bir::OwnershipFact::MutBorrow
+            } else {
+                bir::OwnershipFact::Borrow
+            };
+            bir::Operand::place(recv_place, fact, false)
         };
 
         let (mut arg_operands, binding) =

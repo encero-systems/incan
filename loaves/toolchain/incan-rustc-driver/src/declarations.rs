@@ -13,6 +13,42 @@ fn ident(name: &str, span: Span) -> Ident {
 /// Construct a scalar AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
+        PlanType::List(leaf, depth) => {
+            let mut element = ty(
+                &match leaf {
+                    0 => PlanType::Int,
+                    1 => PlanType::Float,
+                    2 => PlanType::Bool,
+                    _ => PlanType::String,
+                },
+                span,
+            );
+            for _ in 0..*depth {
+                let mut path = ast::Path::from_ident(ident("Vec", span));
+                path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+                    span,
+                    args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(element))],
+                })));
+                element = Box::new(ast::Ty {
+                    id: ast::DUMMY_NODE_ID,
+                    kind: ast::TyKind::Path(None, path),
+                    span,
+                    tokens: None,
+                });
+            }
+            return element;
+        }
+        PlanType::ListRef(leaf, depth) | PlanType::ListMutRef(leaf, depth) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::List(*leaf, *depth), span),
+                mutbl: if matches!(kind, PlanType::ListMutRef(_, _)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => {

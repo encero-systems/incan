@@ -409,3 +409,23 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
 fn direct_route_fixture_census() -> Result<(), Box<dyn std::error::Error>> {
     census::run()
 }
+
+/// Prove list behavior against the legacy route using an independently baked native driver.
+#[test]
+fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, _temporary) = fixture_root()?;
+    let repo = support::repo_root();
+    let driver = prepare_source_driver(&root, &repo)?;
+    let home = root.join("home");
+    bake(&root.join("library"), &home)?;
+    bake(&root.join("lowering"), &home)?;
+    bake(&driver, &home)?;
+    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
+    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    corpus::check_lists(
+        &driver.join("target/rust/release/incan-rustc-driver"),
+        &root,
+        &sysroot,
+        &runtime,
+    )
+}

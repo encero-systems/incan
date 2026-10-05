@@ -4,8 +4,8 @@ use crate::error::PlanError;
 use crate::plan::{BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, UnaryOp};
 use crate::spans::Sources;
 use crate::types::native_type;
-use rustc_index::IndexVec;
 use rustc_abi::FieldIdx;
+use rustc_index::IndexVec;
 use rustc_middle::mir::{self, interpret::Scalar};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
@@ -24,6 +24,7 @@ pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>,
     let place = mir::Place::from(local);
     Ok(match &value.projection {
         Projection::Whole => place,
+        Projection::Deref => place.project_deeper(&[mir::ProjectionElem::Deref], tcx),
         Projection::Value => tcx.mk_place_field(place, FieldIdx::from_u32(0), tcx.types.i64),
         Projection::Overflow => tcx.mk_place_field(place, FieldIdx::from_u32(1), tcx.types.bool),
     })
@@ -59,11 +60,16 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir
         Constant::Text(text) => {
             let alloc_id = tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
             let meta = u64::try_from(text.len()).map_err(|_| PlanError::Invalid {
-                function: "text".into(), reason: "string literal length exceeds the native representation".into(),
+                function: "text".into(),
+                reason: "string literal length exceeds the native representation".into(),
             })?;
             mir::Operand::Constant(Box::new(mir::ConstOperand {
-                span, user_ty: None,
-                const_: mir::Const::Val(mir::ConstValue::Slice { alloc_id, meta }, native_type(tcx, &PlanType::StrRef)?),
+                span,
+                user_ty: None,
+                const_: mir::Const::Val(
+                    mir::ConstValue::Slice { alloc_id, meta },
+                    native_type(tcx, &PlanType::StrRef)?,
+                ),
             }))
         }
     })
@@ -115,15 +121,39 @@ pub fn rvalue<'tcx>(
             let element = match destination_type {
                 PlanType::StringArray(_) => native_type(tcx, &PlanType::String)?,
                 PlanType::StrArray(_) => native_type(tcx, &PlanType::StrRef)?,
-                _ => return Err(PlanError::Invalid { function: "array".into(), reason: "array expression requires a formatting array destination".into() }),
+                _ => {
+                    return Err(PlanError::Invalid {
+                        function: "array".into(),
+                        reason: "array expression requires a formatting array destination".into(),
+                    });
+                }
             };
-            let operands = elements.iter().map(|value| operand(tcx, sources, value)).collect::<Result<Vec<_>, _>>()?;
-            mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Array(element)), IndexVec::from_raw(operands))
+            let operands = elements
+                .iter()
+                .map(|value| operand(tcx, sources, value))
+                .collect::<Result<Vec<_>, _>>()?;
+            mir::Rvalue::Aggregate(
+                Box::new(mir::AggregateKind::Array(element)),
+                IndexVec::from_raw(operands),
+            )
         }
-        RvalueKind::Borrow(value) => mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?),
+        RvalueKind::MutBorrow(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Mut {
+                kind: mir::MutBorrowKind::Default,
+            },
+            place(tcx, value)?,
+        ),
+        RvalueKind::Borrow(value) => {
+            mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?)
+        }
         RvalueKind::UnsizeSlice(value) => mir::Rvalue::Cast(
-            mir::CastKind::PointerCoercion(rustc_middle::ty::adjustment::PointerCoercion::Unsize, mir::CoercionSource::Implicit),
-            operand(tcx, sources, value)?, native_type(tcx, destination_type)?,
+            mir::CastKind::PointerCoercion(
+                rustc_middle::ty::adjustment::PointerCoercion::Unsize,
+                mir::CoercionSource::Implicit,
+            ),
+            operand(tcx, sources, value)?,
+            native_type(tcx, destination_type)?,
         ),
     })
 }
