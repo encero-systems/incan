@@ -1,4 +1,4 @@
-//! Unchanged Fibonacci benchmark proof using the Oven-built driver and authored formatting runtime.
+//! Unchanged compute benchmark proof using the Oven-built driver and authored formatting runtime.
 
 use super::*;
 
@@ -58,15 +58,15 @@ fn compile_source(
     Ok(command.output()?)
 }
 
-/// Preserve the Fibonacci source bytes and compare direct-native output with its normal backend output.
-pub(super) fn check_fib(
+/// Preserve the benchmark source bytes and compare direct-native output with its normal backend output.
+pub(super) fn check_benchmark(
     driver: &Path,
     root: &Path,
     sysroot: &Path,
     runtime: &Path,
+    name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let closure = runtime_closure(runtime, "release")?;
-    let name = "fib";
     let original = support::repo_root()
         .join("workspaces/benchmarks/compute")
         .join(name)
