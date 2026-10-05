@@ -1,0 +1,19 @@
+# behavior: concatenation result iterates from the start
+# expect-stdout:
+#   15
+
+
+"""Concatenation result iterates from the start."""
+def program_result() -> int:
+  """Traverse `for left, right in xs + ys` and return `total`."""
+  xs = [(1, 2)]
+  ys = [(4, 8)]
+  mut total = 0
+  for left, right in xs + ys:
+    total += left + right
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

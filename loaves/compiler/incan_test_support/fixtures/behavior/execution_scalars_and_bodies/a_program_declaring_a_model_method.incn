@@ -1,0 +1,22 @@
+# behavior: a program that declares a model with a method runs
+# expect-stdout:
+#   42
+
+"""A program that declares a model with a method runs."""
+model Pair:
+    """Hold left used by this fixture."""
+    left: int
+
+    def score(self) -> int:
+        """Return `self.left` for this fixture."""
+        return self.left
+
+
+def program_result() -> int:
+    """Return `42` for this fixture."""
+    return 42
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -1,0 +1,15 @@
+# behavior: preserves typed numeric values in print and fstring paths
+# expect-stdout:
+#   1.2345679
+
+
+"""Preserves typed numeric values in print and fstring paths."""
+def program_result() -> str:
+  """Compute and return `f"{value}"`."""
+  value: f32 = 1.23456789
+  return f"{value}"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

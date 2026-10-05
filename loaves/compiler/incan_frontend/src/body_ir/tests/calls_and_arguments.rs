@@ -993,3 +993,219 @@ fn set_literals_have_no_spread_spelling_to_represent() -> Result<(), Box<dyn std
     }
     Ok(())
 }
+
+/// The ownership fact of the first argument of the first call to `callee` in `body`.
+fn first_argument_fact(body: &bir::Body, callee: &str) -> Option<bir::OwnershipFact> {
+    body.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            args,
+            ..
+        } if target.name == callee => match args.first() {
+            Some(bir::ArgumentElement::One(bir::Operand::Place(place))) => Some(place.fact),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+#[test]
+fn a_mut_parameter_of_a_model_is_borrowed_mutably_not_copied_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // A `mut` parameter of a non-`Copy` type writes through to the caller, as the emitted route's `&mut Counter` does:
+    // the call borrows the argument mutably, the callee does not own or drop it, and the caller still does.
+    let source = "model Counter:\n  value: int\n\n\
+                  def bump(mut c: Counter) -> None:\n  c.value = c.value + 1\n\n\
+                  def main() -> None:\n  mut c = Counter(value=1)\n  bump(c)\n  println(c.value)\n";
+    let module = build(source, &["m", "mut_params"])?;
+    let main = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing main")?;
+    assert_eq!(
+        first_argument_fact(main, "bump"),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{}",
+        module.render_snapshot()
+    );
+    let bump = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "bump")
+        .ok_or("missing bump")?;
+    assert!(
+        bump.params.first().is_some_and(|param| param.mutable),
+        "{}",
+        module.render_snapshot()
+    );
+    let param_local = bump.param_locals.first().copied().ok_or("missing parameter")?;
+    let drops_param = bump
+        .block
+        .stmts
+        .iter()
+        .any(|stmt| matches!(stmt.kind, bir::StatementKind::Drop { local } if local == param_local));
+    assert!(
+        !drops_param,
+        "the callee must not drop a parameter it only borrows: {}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_borrowed_mut_parameter_is_never_moved_out_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // The caller owns a `mut` collection parameter's storage and the callee only borrows it, so an owned read in the
+    // callee is a clone, never a move: returning it or passing it by value leaves the caller's list in place, and
+    // passing it on to another `mut` parameter reborrows it.
+    let source = "def same(mut xs: List[int]) -> List[int]:\n  return xs\n\n\
+                  def take(ys: List[int]) -> int:\n  return len(ys)\n\n\
+                  def forward(mut xs: List[int]) -> int:\n  return take(xs)\n\n\
+                  def bump(mut xs: List[int]) -> None:\n  xs[0] = 1\n\n\
+                  def relay(mut xs: List[int]) -> None:\n  bump(xs)\n";
+    let module = build(source, &["m", "borrowed_mut"])?;
+    let body = |name: &str| {
+        module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or(format!("missing {name}"))
+    };
+    let returned_fact = body("same")?.block.stmts.iter().find_map(|stmt| match &stmt.kind {
+        bir::StatementKind::Return {
+            value: Some(bir::Operand::Place(place)),
+        } => Some(place.fact),
+        _ => None,
+    });
+    assert_eq!(
+        returned_fact,
+        Some(bir::OwnershipFact::Clone),
+        "{}",
+        module.render_snapshot()
+    );
+    assert_eq!(
+        first_argument_fact(body("forward")?, "take"),
+        Some(bir::OwnershipFact::Clone),
+        "{}",
+        module.render_snapshot()
+    );
+    assert_eq!(
+        first_argument_fact(body("relay")?, "bump"),
+        Some(bir::OwnershipFact::MutBorrow),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mut_scalar_parameter_stays_a_copy_issue2022() -> Result<(), Box<dyn std::error::Error>> {
+    // A `mut` scalar is a mutable local copy, as the emitted route's `mut n: i64` is: the caller's value is unchanged.
+    let source =
+        "def inc(mut n: int) -> None:\n  n = n + 1\n\ndef main() -> None:\n  mut n = 1\n  inc(n)\n  println(n)\n";
+    let module = build(source, &["m", "mut_scalar"])?;
+    let main = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing main")?;
+    assert_eq!(
+        first_argument_fact(main, "inc"),
+        Some(bir::OwnershipFact::Copy),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_static_method_call_is_a_direct_call_to_the_method_body() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Point:\n  x: int\n\n  def origin() -> Point:\n    return Point(x=0)\n\n  def shifted(by: int) -> Point:\n    return Point(x=by)\n\ndef main() -> int:\n  p = Point.shifted(by=3)\n  q = Point.origin()\n  return p.x + q.x\n";
+    let module = build(source, &["m", "static_calls"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(
+        !rendered.contains("unsupported("),
+        "a static method call must lower: {rendered}"
+    );
+    let origin = body_named(&module, "origin")?;
+    let shifted = body_named(&module, "shifted")?;
+    let targets = named_targets(&module, "main");
+    for (method, body) in [("shifted", shifted), ("origin", origin)] {
+        let target = targets
+            .iter()
+            .find(|target| target.name.ends_with(method))
+            .ok_or_else(|| format!("no named call to `{method}`: {rendered}"))?;
+        assert_eq!(
+            target.direct_call_id.as_ref(),
+            Some(&body.direct_call_id),
+            "{method}: {rendered}"
+        );
+        assert_eq!(
+            target.canonical.as_ref(),
+            body.canonical.as_ref(),
+            "{method}: {rendered}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_module_qualified_stdlib_call_carries_the_selected_declaration() -> Result<(), Box<dyn std::error::Error>> {
+    // `import std.math` + `math.sqrt(..)` selects the same declaration `from std.math import sqrt` does, and records
+    // it.
+    let module = build(
+        "import std.math\n\ndef main() -> float:\n  return math.sqrt(16.0)\n",
+        &["m", "stdlib_module_call"],
+    )?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let targets = named_targets(&module, "main");
+    let sqrt = targets
+        .iter()
+        .find(|target| target.name == "sqrt")
+        .ok_or_else(|| format!("no named call to `sqrt`: {rendered}"))?;
+    assert!(
+        sqrt.canonical.is_some(),
+        "the stdlib callee must keep its identity: {rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_static_call_on_a_type_parameter_keeps_the_type_it_is_called_on() -> Result<(), Box<dyn std::error::Error>> {
+    // `T.default()` under a `Default` bound is a trait's associated function; the type parameter selects its
+    // implementation, so the call records it.
+    let module = build(
+        "def make[T with Default]() -> T:\n  return T.default()\n\ndef main() -> int:\n  return make[int]()\n",
+        &["m", "type_param_static"],
+    )?;
+    let rendered = body_named(&module, "make")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let targets = named_targets(&module, "make");
+    let default = targets
+        .iter()
+        .find(|target| target.name.ends_with("default"))
+        .ok_or_else(|| format!("no named call to `default`: {rendered}"))?;
+    assert_eq!(
+        default.receiver_type,
+        Some(IncanType::TypeVar("T".to_string())),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn calling_a_call_dunder_adopter_is_a_call_of_its_dunder() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Doubler:\n  extra: int\n\n  def __call__(self, value: int) -> int:\n    return value * 2 + self.extra\n\ndef main() -> int:\n  d = Doubler(extra=1)\n  return d(3)\n",
+        &["m", "call_dunder"],
+    )?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(
+        rendered.contains("method:__call__"),
+        "the call must dispatch to `__call__`: {rendered}"
+    );
+    Ok(())
+}

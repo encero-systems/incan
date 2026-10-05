@@ -1,0 +1,18 @@
+# behavior: executes core body and binds a real receipt
+# expect-stdout:
+#   42
+
+
+"""Executes core body and binds a real receipt."""
+def program_result() -> int:
+  """Return the sum when left is larger; otherwise return right."""
+  left = 40
+  right = 2
+  if left > right:
+    return left + right
+  return right
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -220,6 +220,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         self.loop_break_targets.push(None);
+        self.loop_continue_actions.push(Vec::new());
         let mut first_loop_stmts = vec![bir::Statement {
             kind: bir::StatementKind::IterNext {
                 destination: bir::Place::from_local(first_local),
@@ -263,6 +264,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         );
         self.insert_scope_drops(&mut first_loop_stmts, first_loop_scope);
         self.loop_break_targets.pop();
+        self.loop_continue_actions.pop();
         generator_stmts.push(bir::Statement {
             kind: bir::StatementKind::Loop {
                 body: bir::Block {

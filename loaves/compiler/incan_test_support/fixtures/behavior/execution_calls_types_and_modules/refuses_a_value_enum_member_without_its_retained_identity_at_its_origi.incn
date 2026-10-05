@@ -1,0 +1,19 @@
+# behavior: refuses a value enum member without its retained identity at its original source span, as the legacy route runs it
+# expect-stdout:
+#   404
+
+
+"""Refuses a value enum member without its retained identity at its original source span, as the legacy route runs it."""
+enum HttpStatus(int):
+  """Represent the Ok, NotFound alternatives in this fixture."""
+  Ok = 200
+  NotFound = 404
+
+def program_result() -> int:
+  """Return the fixture expression `HttpStatus.NotFound.value()`."""
+  return HttpStatus.NotFound.value()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -384,6 +384,18 @@ pub fn bake_trusted_direct_rustc_proc_macro_with_artifact_role(
 pub fn bake_trusted_direct_rustc_run(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    bake_trusted_direct_rustc_run_with_artifact_role(request, request.source_evidence_key)
+}
+
+/// Compile one trusted caller-owned binary while selecting an existing closure role separately from its source key.
+///
+/// Project Rust facets have their own receipted source, but consume the same sealed dependency closure as the Incan
+/// library whose caller artifact they link. Keeping the two keys explicit prevents either receipt from claiming the
+/// other's source bytes.
+pub fn bake_trusted_direct_rustc_run_with_artifact_role(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    artifact_role: &str,
+) -> Result<OvenDirectRustcBake, OvenRustcError> {
     bake_direct_rustc(
         request.receipt,
         request.artifacts,
@@ -394,7 +406,7 @@ pub fn bake_trusted_direct_rustc_run(
         request.crate_name,
         request.edition,
         request.source_evidence_key,
-        request.source_evidence_key,
+        artifact_role,
         false,
         OvenDirectRustcOutputKind::Binary,
         true,
@@ -574,6 +586,7 @@ pub(super) fn bake_direct_rustc(
         })?;
     verify_rustc_identity(rustc, &receipt.intent.toolchain)?;
     validate_rust_identifier(crate_name)?;
+    super::driver_grant::apply_driver_grant(&mut Command::new(rustc), receipt, crate_name)?;
     validate_edition(edition)?;
     let source = verified_regular_file(source, "source")?;
     let output = caller_output_path(output, artifact_root)?;
@@ -647,7 +660,7 @@ pub(super) fn bake_direct_rustc(
         &output,
         crate_name,
         edition,
-        source_evidence_key,
+        artifact_role,
         test_harness,
         output_kind,
         trusted_store,
@@ -678,7 +691,7 @@ fn compile_direct_rustc_output(
     output: &Path,
     crate_name: &str,
     edition: &str,
-    source_evidence_key: &str,
+    artifact_role: &str,
     test_harness: bool,
     output_kind: OvenDirectRustcOutputKind,
     trusted_store: bool,
@@ -691,7 +704,7 @@ fn compile_direct_rustc_output(
     // output miss, normal consumers prove file shape/containment under their active lease rather than rehash every
     // dependency; externally supplied plans retain the stronger byte-for-byte materialization path.
     let plan = if let Some(plan) = trusted_artifact_plan {
-        trusted_artifact_plan_for_source(plan, artifacts, selected_artifacts, source_evidence_key)?
+        trusted_artifact_plan_for_source(plan, artifacts, selected_artifacts, artifact_role)?
     } else if trusted_store {
         selected_artifacts.materialize_trusted_store(artifact_root, &receipt.intent)?
     } else {
@@ -742,6 +755,7 @@ fn compile_direct_rustc_output(
         let value = resolve_compile_environment_value(name, value, source)?;
         command.env(name, value);
     }
+    super::driver_grant::apply_driver_grant(&mut command, receipt, crate_name)?;
     for feature in features {
         command.arg("--cfg").arg(format!("feature={feature:?}"));
     }

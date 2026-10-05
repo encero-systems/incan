@@ -1,0 +1,29 @@
+# behavior: race failure preserves the first arm span and cancels constructed losers, stopping the program
+# expect-stdout:
+# expect-exit: 101
+
+
+"""Race failure preserves the first arm span and cancels constructed losers, stopping the program."""
+import std.async
+
+async def first() -> int:
+  """Fail the assertion when this callable is reached."""
+  assert false
+  return 1
+
+async def loser() -> int:
+  """Fail the assertion when this callable is reached."""
+  assert false
+  return 2
+
+async def program_result() -> int:
+  """Compute and return `winner`."""
+  winner = race for value:
+    await first() => value
+    await loser() => value
+  return winner
+
+
+async def main() -> None:
+    """Await `program_result()` with the fixture inputs."""
+    await program_result()

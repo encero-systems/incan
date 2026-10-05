@@ -1,0 +1,15 @@
+# behavior: cli json report projects canonical execution evidence
+# expect-stdout:
+#   answer follows
+#   42
+
+"""Cli json report projects canonical execution evidence."""
+def program_result() -> int:
+  """Compute and return `42`."""
+  println("answer follows")
+  return 42
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

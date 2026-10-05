@@ -1,0 +1,16 @@
+# behavior: cli executes typed empty scalar tuple list with a replacement receipt
+# expect-stdout:
+#   42
+
+"""Cli executes typed empty scalar tuple list with a replacement receipt."""
+def program_result() -> int:
+  """Traverse `for a, b in values` and return `42`."""
+  values: list[tuple[int, int]] = []
+  for a, b in values:
+    return a + b
+  return 42
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

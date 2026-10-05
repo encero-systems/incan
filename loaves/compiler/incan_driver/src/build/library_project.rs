@@ -11,7 +11,8 @@ use sha2::Sha256;
 
 use crate::backend::selection::digest_output;
 use crate::backend::{IrCodegen, ProjectGenerator};
-use crate::build::backend_selection::{finalize_backend_receipt, select_and_resolve_backend};
+use crate::build::backend_selection::{finalize_backend_receipt, select_build_backend};
+use crate::build::caller_facet::CallerFacetRequest;
 use crate::build::caller_owned::{append_oven_interop_execution_build_inputs, oven_caller_owned_libraries};
 use crate::build::library_exports::{
     LibraryReexportResolver, collect_library_rust_abi, collect_library_rust_abi_query_paths, module_key,
@@ -39,10 +40,9 @@ use crate::build::provider_metadata::{
 };
 use crate::build::rust_extern::{collect_rust_extern_contexts, multi_file_output_identity, rust_extern_report_paths};
 use crate::build::{
-    BackendSelectionOptions, CompiledProviderMetadataInputs, OvenDirectRustcPlanPreparation, OvenPreparedLibrary,
-    OvenPreparedLibraryProfile, OvenProjectBakeAuthorityContext, OvenProjectDependencySurface, OvenProjectPlanMode,
-    OvenToolchainMaterialization, PreparedLibraryProject, manifest_project_report, packaged_provider_candidates,
-    record_timing, source_file_report,
+    CompiledProviderMetadataInputs, OvenDirectRustcPlanPreparation, OvenPreparedLibrary, OvenPreparedLibraryProfile,
+    OvenProjectBakeAuthorityContext, OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization,
+    PreparedLibraryProject, manifest_project_report, packaged_provider_candidates, record_timing, source_file_report,
 };
 use crate::build_report::{
     BuildOvenReport, BuildReportDraft, BuildReportMode, cargo_report, dependencies_report, generated_project_report,
@@ -72,6 +72,7 @@ use crate::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths;
 use crate::session::CompilationSession;
 #[cfg(feature = "rust_inspect")]
 use ::rust_inspect::RustMetadataCache;
+use incan_emit::CallerIdentity;
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     collect_checked_api_alias_metadata, collect_checked_api_metadata, materialize_api_alias_projections,
@@ -86,6 +87,7 @@ use incan_frontend::registry_metadata::{
 };
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{ParsedModule, diagnostics, typechecker};
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::compiled_sdk::CompiledSdkModules;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
 use incan_provider::inventory::extend_requirements_with_provider_plan;
@@ -136,7 +138,42 @@ pub fn prepare_library_project(
     include_interop_execution: bool,
     oven_plan_mode: OvenProjectPlanMode,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
-    backend_options: &BackendSelectionOptions,
+) -> CliResult<PreparedLibraryProject> {
+    prepare_library_project_with_caller_facet(
+        file_path,
+        output_dir,
+        cargo_policy,
+        package_features,
+        sdk_profile_override,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+        generated_cargo_target_dir,
+        normal_oven,
+        include_interop_execution,
+        oven_plan_mode,
+        authority_context,
+        None,
+    )
+}
+
+/// Prepare a library while emitting one usage-derived Rust caller projection.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_library_project_with_caller_facet(
+    file_path: Option<&str>,
+    output_dir: Option<&str>,
+    cargo_policy: CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    generated_cargo_target_dir: Option<&Path>,
+    normal_oven: bool,
+    include_interop_execution: bool,
+    oven_plan_mode: OvenProjectPlanMode,
+    authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+    caller_facet: Option<&CallerFacetRequest>,
 ) -> CliResult<PreparedLibraryProject> {
     let prepare_start = Instant::now();
     let mut timings_ms = BTreeMap::new();
@@ -676,10 +713,12 @@ pub fn prepare_library_project(
     library_manifest.contract_metadata.api = Some(checked_api);
     let public_identities =
         incan_frontend::library_manifest::published_layout::public_executable_identities(&library_manifest);
+    // A published body is unrepresentable when Body IR has a gap in it, not when one consumer cannot execute it: what
+    // a package publishes is a fact about the package, and every consumer reads the same representation.
     let unrepresentable = executable_modules
         .iter()
         .flat_map(|module| module.bodies.iter())
-        .filter(|body| crate::backend::replacement::validate_direct_body_profile(body).is_err())
+        .filter(|body| body.first_representation_gap().is_some())
         .filter_map(|body| body.canonical.clone())
         .collect();
     let executable_surface = incan_semantics_core::executable_representation::build_surface(
@@ -731,7 +770,7 @@ pub fn prepare_library_project(
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
     // ---- Backend selection (#986) — declared before codegen, refused visibly if unavailable ----
-    let (backend_selection, backend_executed) = select_and_resolve_backend(backend_options, &modules)?;
+    let backend_selection = select_build_backend(&modules);
 
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(true);
@@ -775,6 +814,20 @@ pub fn prepare_library_project(
         project_name.as_str(),
         &selected_exports,
     ));
+    if let Some(caller_facet) = caller_facet {
+        let identity = CallerIdentity {
+            package_name: project_name.clone(),
+            package_version: project_version.clone(),
+            caller_facet_id: caller_facet.facet_id.clone(),
+            caller_abi_version: "1".to_string(),
+            compiler_version_range: format!("={INCAN_VERSION}"),
+            manifest_schema_version: library_manifest.manifest_format,
+            target: caller_facet.target.clone(),
+            profile: caller_facet.profile.clone(),
+            receipt_reference: caller_facet.receipt_reference.clone(),
+        };
+        codegen = codegen.with_caller_facet(caller_facet.exports.iter().cloned(), identity);
+    }
     for module in dep_modules
         .iter()
         .filter(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments))
@@ -943,7 +996,7 @@ pub fn prepare_library_project(
                 "failed to publish inferred implementation requirements: {error}"
             ))
         })?;
-    let backend_receipt = finalize_backend_receipt(&backend_selection, backend_executed, backend_output_identity)?;
+    let backend_receipt = finalize_backend_receipt(&backend_selection, backend_output_identity)?;
     // Not persisted here — see the matching comment in `prepare_oven_project`: this function also runs for
     // internal/dependency callers, and real compilation still follows below. The receipt is published once by
     // `build_library_report` after the whole build succeeds (#986).
@@ -1254,7 +1307,17 @@ pub fn prepare_library_project(
     record_timing(&mut timings_ms, "library_generate_rust", codegen_start);
     record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
 
+    // The caller namespace names entrypoint-relative declarations. Keep canonical identities intact while removing
+    // the checked entrypoint module prefix from this separate caller-selection projection.
+    let mut checked_exports = selected_exports;
+    for export in &mut checked_exports {
+        if export.identity.source_path.starts_with(&lib_module.path_segments) {
+            export.identity.source_path.drain(..lib_module.path_segments.len());
+        }
+    }
+
     Ok(PreparedLibraryProject {
+        checked_exports,
         executable_surface,
         generator,
         project_root,

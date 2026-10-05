@@ -7,15 +7,14 @@
 //! through `incan run` (the legacy generated-Rust route) and `incan check`; when slice 7 flips the route underneath,
 //! the fixtures do not change. The contributor-facing description of the format is the family's `README.md`.
 //!
-//! The runner discovers every fixture in an area, materializes each one as a scratch project under
+//! Every fixture is its own libtest case. The runner materializes the fixture as a scratch project under
 //! `INCAN_TEST_TMP_ROOT`, bakes the in-fixture providers a project fixture declares (its `loaf.toml` path
 //! dependencies, in dependency order, with no Cargo authority: a provider whose bake needs Cargo fails under the
-//! suite's guard, attributed to the fixture), runs it, compares the observables and reports **every** failing
-//! fixture with its path and its expected-versus-actual, so one libtest case per area still attributes a failure to
-//! the fixture that caused it. Roots are thin: `loaves/toolchain/incan-cli/tests/behavior_<area>_tests.rs` calls
-//! [`assert_area_green`] and nothing else, and no behavior root is registered for a suite capability. The inventory
-//! (`scripts/test_inventory/collect.py`) reads the same header for its `# retires:` lines, so the header grammar here
-//! and the collector's reader must agree.
+//! suite's guard, attributed to the fixture), runs it and compares the observables with its header. Roots are
+//! generated: `loaves/toolchain/incan-cli/tests/behavior_<area>_tests.rs` holds one `#[test]` per fixture of the
+//! area, each calling [`assert_fixture_holds`], and `crate::behavior_roots` keeps the roots equal to the areas. No
+//! behavior root is registered for a suite capability. The inventory (`scripts/test_inventory/collect.py`) reads the
+//! same header for its `# retires:` lines, so the header grammar here and the collector's reader must agree.
 
 use std::error::Error;
 use std::fmt;
@@ -33,19 +32,10 @@ pub const BEHAVIOR_FIXTURES_ROOT: &str = "behavior";
 /// The entrypoint every materialized fixture project runs and checks.
 const ENTRYPOINT: &str = "src/main.incn";
 
-/// The most fixtures one leaf area may hold.
-///
-/// An area is one libtest case, and the compiler suite runs roots on two threads with no slicing inside a case
-/// (#1549 slices by case), so the case is the unit of budget: at roughly 3.5 s per fixture locally and 6-10 s on the
-/// four-core CI runner, 60 fixtures is about 3.5 minutes locally and 6-10 minutes in CI, the most one case should
-/// cost. A larger family splits into leaf areas of at most this size, each its own `#[test]` in the root file (one
-/// root file may hold several, one per leaf area) and its own `fixture_roots` entry in the inventory; only leaf
-/// areas are declared there, because a parent directory of areas would be discovered as module fixtures.
-pub const MAX_FIXTURES_PER_AREA: usize = 60;
-
-/// The two block directives, whose lines follow them indented.
+/// Block directives whose items follow them indented.
 const EXPECT_STDOUT: &str = "expect-stdout";
 const EXPECT_STDOUT_CONTAINS: &str = "expect-stdout-contains";
+const EXPECT_STDERR_CONTAINS: &str = "expect-stderr-contains";
 
 /// The directives a fixture header may carry, in the order the README documents them.
 const DIRECTIVES: &[&str] = &[
@@ -53,8 +43,10 @@ const DIRECTIVES: &[&str] = &[
     "retires",
     EXPECT_STDOUT,
     EXPECT_STDOUT_CONTAINS,
+    EXPECT_STDERR_CONTAINS,
     "expect-exit",
     "expect-diagnostic",
+    "pending",
 ];
 
 // ============================================================
@@ -64,7 +56,7 @@ const DIRECTIVES: &[&str] = &[
 /// What a run of the fixture's stdout must show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StdoutExpectation {
-    /// The header declared no stdout expectation; only the exit code is checked.
+    /// The header declared no stdout expectation; stderr and exit expectations still apply.
     Unchecked,
     /// Every line of stdout, in order (`# expect-stdout:`).
     Exact(Vec<String>),
@@ -72,13 +64,15 @@ pub enum StdoutExpectation {
     Contains(Vec<String>),
 }
 
-/// The observables a fixture declares: either a run with its stdout and exit code, or a refusal at check time.
+/// The observables a fixture declares: run streams and exit code, or a refusal at check time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expectation {
-    /// The program must build and run; its stdout and exit code are compared.
+    /// The program must build and run; its stream expectations and exit code are compared.
     Run {
         /// The stdout expectation, exact or by contained lines.
         stdout: StdoutExpectation,
+        /// Substrings that must each appear in stderr, in any order.
+        stderr_contains: Vec<String>,
         /// The exit code the run must end with (`# expect-exit:`, default 0).
         exit_code: i32,
     },
@@ -98,6 +92,13 @@ pub struct Header {
     pub retires: Vec<String>,
     /// What a run must show.
     pub expectation: Expectation,
+    /// Why the fixture does not hold yet (`# pending:`), when it is known not to.
+    ///
+    /// A pending fixture is run like any other, and a run that does not show what it declares is reported as pending
+    /// rather than failing its area: the fixture is the test written first, red until the change it waits for lands.
+    /// A pending fixture that does show what it declares fails its area, so the change that turns it green removes the
+    /// line in the same commit and the marker never outlives what it described.
+    pub pending: Option<String>,
 }
 
 /// How a fixture is laid out on disk.
@@ -184,7 +185,7 @@ fn checkout_relative(path: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// A stdout block: the line that opened it and the expected lines collected under it.
+/// An observable block: the line that opened it and the expected lines collected under it.
 type Block = (usize, Vec<String>);
 
 /// Parse the leading comment block of a fixture program.
@@ -194,26 +195,16 @@ type Block = (usize, Vec<String>);
 /// key), an item of the block directive above it (`#` followed by two or more spaces, or a bare `#` for an empty
 /// expected line), or a bare `#` between directives, which is ignored. Anything else is refused with the line number,
 /// and so is an unknown directive, a `behavior:` that is missing or repeated, a stdout block beside another stdout
-/// block, an `expect-diagnostic:` beside any run expectation, an `expect-stdout-contains:` block with no line (anything
-/// would satisfy it), a contained line listed twice (one occurrence satisfies both), an expected line that ends with
-/// whitespace (a report cannot show it), an `expect-exit:` outside `0..=255`, and a header that declares no observable
-/// at all: a fixture that proves nothing is not a twin. A directive that appears after the header ended is refused
-/// too, naming the line: it would otherwise be ignored and the fixture would pass on less than it appears to declare.
+/// block, an `expect-diagnostic:` beside any run expectation, a contains block with no item (anything
+/// would satisfy it), an empty stderr substring, a contained item listed twice (one occurrence satisfies both), an
+/// expected item that ends with whitespace (a report cannot show it), an `expect-exit:` outside `0..=255`, and a header
+/// that declares no observable at all: a fixture that proves nothing is not a twin. A directive that appears after the
+/// header ended is refused too, naming the line: it would otherwise be ignored and the fixture would pass on less than
+/// it appears to declare.
 pub fn parse_header(text: &str) -> Result<Header, String> {
-    let mut behavior: Option<String> = None;
-    let mut retires: Vec<String> = Vec::new();
-    // Every expectation remembers the line that introduced it, so a refusal that involves two directives names both.
-    let mut stdout_exact: Option<Block> = None;
-    let mut stdout_contains: Option<Block> = None;
-    let mut exit_code: Option<(usize, i32)> = None;
-    let mut diagnostics: Vec<String> = Vec::new();
-    let mut first_diagnostic: Option<usize> = None;
-    let mut first_run: Option<(usize, &str)> = None;
-    // The block directive currently collecting items, with the indentation its first item established.
+    let mut state = HeaderParser::default();
     let mut open_block: Option<(&'static str, Option<usize>)> = None;
-    // Where the header ended: the first line that is not a `#` comment, and whether that line was blank.
     let mut header_end: Option<(usize, bool)> = None;
-
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
 
@@ -239,7 +230,14 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: inside the `{key}:` block, `#` followed only by whitespace is an expected line that ends with whitespace, which a report cannot show; a bare `#` is the empty expected line"
                     ));
                 }
-                push_block_item(key, number, String::new(), &mut stdout_exact, &mut stdout_contains)?;
+                push_block_item(
+                    key,
+                    number,
+                    String::new(),
+                    &mut state.stdout_exact,
+                    &mut state.stdout_contains,
+                    &mut state.stderr_contains,
+                )?;
             }
             continue;
         }
@@ -249,12 +247,19 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
         if indent >= 2 {
             let Some((key, established)) = open_block.as_mut() else {
                 return Err(format!(
-                    "line {number}: indented line outside an `expect-stdout:` / `expect-stdout-contains:` block"
+                    "line {number}: indented line outside an `expect-stdout:` / `expect-stdout-contains:` / `expect-stderr-contains:` block"
                 ));
             };
             let width = *established.get_or_insert(indent);
             let item = rest.get(width.min(indent)..).unwrap_or("").to_string();
-            push_block_item(key, number, item, &mut stdout_exact, &mut stdout_contains)?;
+            push_block_item(
+                key,
+                number,
+                item,
+                &mut state.stdout_exact,
+                &mut state.stdout_contains,
+                &mut state.stderr_contains,
+            )?;
             continue;
         }
 
@@ -278,22 +283,51 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
         }
         let value = raw_value.trim();
         open_block = None;
+        state.directive(number, key, value, &mut open_block)?;
+    }
+    state.finish()
+}
+
+/// Accumulated directives, with their source lines for cross-directive refusals.
+#[derive(Default)]
+struct HeaderParser {
+    behavior: Option<String>,
+    retires: Vec<String>,
+    stdout_exact: Option<Block>,
+    stdout_contains: Option<Block>,
+    stderr_contains: Option<Block>,
+    exit_code: Option<(usize, i32)>,
+    diagnostics: Vec<String>,
+    first_diagnostic: Option<usize>,
+    pending: Option<String>,
+    first_run: Option<(usize, &'static str)>,
+}
+
+impl HeaderParser {
+    /// Admit one directive without mixing run observables with a check-time refusal.
+    fn directive(
+        &mut self,
+        number: usize,
+        key: &str,
+        value: &str,
+        open_block: &mut Option<(&'static str, Option<usize>)>,
+    ) -> Result<(), String> {
         match key {
             "behavior" => {
-                if behavior.is_some() {
+                if self.behavior.is_some() {
                     return Err(format!("line {number}: `behavior:` is declared twice"));
                 }
                 if value.is_empty() {
                     return Err(format!("line {number}: `behavior:` must say what the program proves"));
                 }
-                behavior = Some(value.to_string());
+                self.behavior = Some(value.to_string());
             }
             "retires" => {
                 let test = retires_key(number, value)?;
-                if retires.contains(&test) {
+                if self.retires.contains(&test) {
                     return Err(format!("line {number}: `retires: {value}` is declared twice"));
                 }
-                retires.push(test);
+                self.retires.push(test);
             }
             "expect-stdout" | "expect-stdout-contains" => {
                 if !value.is_empty() {
@@ -301,21 +335,21 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: `{key}:` takes its lines below it, indented by two spaces after `#`"
                     ));
                 }
-                if let Some(line) = first_diagnostic {
+                if let Some(line) = self.first_diagnostic {
                     return Err(run_beside_refusal_reason(number, key, line));
                 }
                 let (block, slot, other, other_key) = if key == EXPECT_STDOUT {
                     (
                         EXPECT_STDOUT,
-                        &mut stdout_exact,
-                        &stdout_contains,
+                        &mut self.stdout_exact,
+                        &self.stdout_contains,
                         EXPECT_STDOUT_CONTAINS,
                     )
                 } else {
                     (
                         EXPECT_STDOUT_CONTAINS,
-                        &mut stdout_contains,
-                        &stdout_exact,
+                        &mut self.stdout_contains,
+                        &self.stdout_exact,
                         EXPECT_STDOUT,
                     )
                 };
@@ -330,11 +364,43 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                     ));
                 }
                 *slot = Some((number, Vec::new()));
-                first_run.get_or_insert((number, key));
-                open_block = Some((block, None));
+                self.first_run.get_or_insert((number, block));
+                *open_block = Some((block, None));
+            }
+            _ => return self.run_directive(number, key, value, open_block),
+        }
+        Ok(())
+    }
+
+    /// Admit stderr, exit, diagnostic, and pending directives with their conflict checks.
+    fn run_directive(
+        &mut self,
+        number: usize,
+        key: &str,
+        value: &str,
+        open_block: &mut Option<(&'static str, Option<usize>)>,
+    ) -> Result<(), String> {
+        match key {
+            "expect-stderr-contains" => {
+                if !value.is_empty() {
+                    return Err(format!(
+                        "line {number}: `{key}:` takes its lines below it, indented by two spaces after `#`"
+                    ));
+                }
+                if let Some(line) = self.first_diagnostic {
+                    return Err(run_beside_refusal_reason(number, key, line));
+                }
+                if let Some((line, _)) = &self.stderr_contains {
+                    return Err(format!(
+                        "line {number}: `{key}:` is declared twice (first on line {line})"
+                    ));
+                }
+                self.stderr_contains = Some((number, Vec::new()));
+                self.first_run.get_or_insert((number, EXPECT_STDERR_CONTAINS));
+                *open_block = Some((EXPECT_STDERR_CONTAINS, None));
             }
             "expect-exit" => {
-                if let Some((line, _)) = exit_code {
+                if let Some((line, _)) = self.exit_code {
                     return Err(format!(
                         "line {number}: `expect-exit:` is declared twice (first on line {line})"
                     ));
@@ -347,11 +413,11 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: `expect-exit:` must be an exit code in 0..=255, got `{value}`"
                     ));
                 }
-                if let Some(line) = first_diagnostic {
+                if let Some(line) = self.first_diagnostic {
                     return Err(run_beside_refusal_reason(number, key, line));
                 }
-                exit_code = Some((number, code));
-                first_run.get_or_insert((number, key));
+                self.exit_code = Some((number, code));
+                self.first_run.get_or_insert((number, "expect-exit"));
             }
             "expect-diagnostic" => {
                 if value.is_empty() || value.contains(char::is_whitespace) {
@@ -359,16 +425,27 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                         "line {number}: `expect-diagnostic:` must name one diagnostic code such as `INCAN-T0001`"
                     ));
                 }
-                if let Some((line, run_key)) = first_run {
+                if let Some((line, run_key)) = self.first_run {
                     return Err(format!(
                         "line {number}: `expect-diagnostic:` means the program is refused at check time and never run, but line {line} declares `{run_key}:`, a run expectation; drop one side"
                     ));
                 }
-                if diagnostics.iter().any(|existing| existing == value) {
+                if self.diagnostics.iter().any(|existing| existing == value) {
                     return Err(format!("line {number}: `expect-diagnostic: {value}` is declared twice"));
                 }
-                first_diagnostic.get_or_insert(number);
-                diagnostics.push(value.to_string());
+                self.first_diagnostic.get_or_insert(number);
+                self.diagnostics.push(value.to_string());
+            }
+            "pending" => {
+                if self.pending.is_some() {
+                    return Err(format!("line {number}: `pending:` is declared twice"));
+                }
+                if value.is_empty() {
+                    return Err(format!(
+                        "line {number}: `pending:` must say what the fixture waits for, such as the change that makes it hold"
+                    ));
+                }
+                self.pending = Some(value.to_string());
             }
             other => {
                 return Err(format!(
@@ -381,43 +458,61 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
                 ));
             }
         }
+        Ok(())
     }
 
-    // ---- Cross-directive rules ----
-    let behavior = behavior.ok_or_else(|| "the header has no `behavior:` line".to_string())?;
-    if let Some((line, items)) = &stdout_contains
-        && items.is_empty()
-    {
-        return Err(format!(
-            "line {line}: `expect-stdout-contains:` lists no line, so anything would satisfy it; name at least one line, or use an empty `expect-stdout:` for a program that prints nothing"
-        ));
-    }
-    if !diagnostics.is_empty() {
-        return Ok(Header {
-            behavior,
-            retires,
-            expectation: Expectation::Refused { diagnostics },
-        });
-    }
-    if first_run.is_none() {
-        return Err(
-            "the header declares no observable: add `expect-stdout:`, `expect-stdout-contains:`, `expect-exit:` or `expect-diagnostic:`"
+    /// Validate complete blocks and turn admitted directives into the fixture contract.
+    fn finish(self) -> Result<Header, String> {
+        // ---- Cross-directive rules ----
+        let behavior = self
+            .behavior
+            .ok_or_else(|| "the header has no `behavior:` line".to_string())?;
+        if let Some((line, items)) = &self.stdout_contains
+            && items.is_empty()
+        {
+            return Err(format!(
+                "line {line}: `expect-stdout-contains:` lists no line, so anything would satisfy it; name at least one line, or use an empty `expect-stdout:` for a program that prints nothing"
+            ));
+        }
+        if let Some((line, items)) = &self.stderr_contains
+            && (items.is_empty() || items.iter().any(String::is_empty))
+        {
+            return Err(format!(
+                "line {line}: `expect-stderr-contains:` must list at least one nonempty substring; an empty substring checks nothing"
+            ));
+        }
+        if !self.diagnostics.is_empty() {
+            return Ok(Header {
+                behavior,
+                retires: self.retires,
+                expectation: Expectation::Refused {
+                    diagnostics: self.diagnostics,
+                },
+                pending: self.pending,
+            });
+        }
+        if self.first_run.is_none() {
+            return Err(
+            "the header declares no observable: add `expect-stdout:`, `expect-stdout-contains:`, `expect-stderr-contains:`, `expect-exit:` or `expect-diagnostic:`"
                 .to_string(),
         );
+        }
+        let stdout = match (self.stdout_exact, self.stdout_contains) {
+            (Some((_, lines)), _) => StdoutExpectation::Exact(lines),
+            (None, Some((_, lines))) => StdoutExpectation::Contains(lines),
+            (None, None) => StdoutExpectation::Unchecked,
+        };
+        Ok(Header {
+            behavior,
+            retires: self.retires,
+            expectation: Expectation::Run {
+                stdout,
+                stderr_contains: self.stderr_contains.map_or_else(Vec::new, |(_, items)| items),
+                exit_code: self.exit_code.map_or(0, |(_, code)| code),
+            },
+            pending: self.pending,
+        })
     }
-    let stdout = match (stdout_exact, stdout_contains) {
-        (Some((_, lines)), _) => StdoutExpectation::Exact(lines),
-        (None, Some((_, lines))) => StdoutExpectation::Contains(lines),
-        (None, None) => StdoutExpectation::Unchecked,
-    };
-    Ok(Header {
-        behavior,
-        retires,
-        expectation: Expectation::Run {
-            stdout,
-            exit_code: exit_code.map_or(0, |(_, code)| code),
-        },
-    })
 }
 
 /// Validate a `retires:` value as the inventory keys a test: `<path>.rs::<fn>`, no whitespace anywhere, the function
@@ -475,7 +570,7 @@ fn late_directive_reason(number: usize, key: &str, end: usize, blank: bool) -> S
     )
 }
 
-/// Append one expected line to whichever stdout block is open, refusing what the comparison could not report
+/// Append one expected item to the open stdout or stderr block, refusing what the comparison could not report
 /// faithfully: a line that ends with whitespace (invisible in the report, so a mismatch there would be unreadable)
 /// and, in a contains block, a line listed twice (one occurrence of it satisfies both entries).
 fn push_block_item(
@@ -484,20 +579,25 @@ fn push_block_item(
     item: String,
     stdout_exact: &mut Option<Block>,
     stdout_contains: &mut Option<Block>,
+    stderr_contains: &mut Option<Block>,
 ) -> Result<(), String> {
     if item != item.trim_end() {
         return Err(format!(
             "line {number}: the expected line `{item}` ends with whitespace, which a report cannot show; remove it"
         ));
     }
-    let contains = key == EXPECT_STDOUT_CONTAINS;
-    let slot = if contains { stdout_contains } else { stdout_exact };
+    let contains = key != EXPECT_STDOUT;
+    let slot = match key {
+        EXPECT_STDERR_CONTAINS => stderr_contains,
+        EXPECT_STDOUT_CONTAINS => stdout_contains,
+        _ => stdout_exact,
+    };
     let Some((_, lines)) = slot.as_mut() else {
         return Ok(());
     };
     if contains && lines.contains(&item) {
         return Err(format!(
-            "line {number}: `expect-stdout-contains:` lists `{item}` twice; one occurrence of the line satisfies both, so the repeat checks nothing"
+            "line {number}: `{key}:` lists `{item}` twice; one occurrence of the line satisfies both, so the repeat checks nothing"
         ));
     }
     lines.push(item);
@@ -517,9 +617,8 @@ pub fn area_dir(area: &str) -> PathBuf {
 ///
 /// An entry is a single-file fixture (`<name>.incn`), a module directory (`<name>/main.incn`) or a project directory
 /// (`<name>/loaf.toml`). Hidden entries are skipped; anything else is refused, because a stray file in an area
-/// would otherwise silently prove nothing. An area with no fixture at all is refused for the same reason, and so is
-/// an area with more than [`MAX_FIXTURES_PER_AREA`] fixtures: the area is one libtest case, and a case that large
-/// no longer fits the suite's per-root budget.
+/// would otherwise silently prove nothing. An area with no fixture at all is refused for the same reason. An area has
+/// no size limit: each fixture is its own libtest case, and the compiler suite slices a heavy root by case.
 pub fn discover(area_dir: &Path) -> Result<Vec<BehaviorFixture>, FixtureFormatError> {
     let area_display = checkout_relative(area_dir);
     let entries = fs::read_dir(area_dir).map_err(|error| FixtureFormatError {
@@ -549,16 +648,29 @@ pub fn discover(area_dir: &Path) -> Result<Vec<BehaviorFixture>, FixtureFormatEr
             reason: "the area has no fixture; an empty area proves nothing".to_string(),
         });
     }
-    if fixtures.len() > MAX_FIXTURES_PER_AREA {
-        return Err(FixtureFormatError {
-            path: area_display,
-            reason: format!(
-                "the area holds {} fixtures; a leaf area holds at most {MAX_FIXTURES_PER_AREA} (one libtest case, about 3.5 minutes locally and 6-10 minutes on the CI runner). Split it into leaf areas of at most {MAX_FIXTURES_PER_AREA} fixtures, one `#[test]` per area in the root file calling `assert_area_green`, each leaf declared in `fixture_roots`",
-                fixtures.len()
-            ),
-        });
-    }
     Ok(fixtures)
+}
+
+/// Find and parse the fixture called `name` in an area: the single file `<name>.incn`, else the directory `<name>/`.
+///
+/// This is how a generated root's case reaches its fixture, so a fixture that was renamed or removed without its
+/// root being regenerated fails here, naming the path it looked for.
+pub fn fixture_in_area(area: &str, name: &str) -> Result<BehaviorFixture, FixtureFormatError> {
+    let dir = area_dir(area);
+    let file = dir.join(format!("{name}.incn"));
+    if file.is_file() {
+        return parse_fixture(&file);
+    }
+    let directory = dir.join(name);
+    if directory.is_dir() {
+        return parse_fixture(&directory);
+    }
+    Err(FixtureFormatError {
+        path: checkout_relative(&directory),
+        reason: format!(
+            "the area has no fixture `{name}` (neither `{name}.incn` nor `{name}/`); regenerate the area's root with `make behavior-roots`"
+        ),
+    })
 }
 
 /// Parse one fixture from its file or directory.
@@ -747,45 +859,26 @@ pub enum Outcome {
     Passed,
     /// At least one observable did not; the failure says which.
     Failed(FixtureFailure),
+    /// A `pending:` fixture did not show what it declares, as its header says it does not yet; the record keeps what it
+    /// showed, so the report still says how far the program is from holding.
+    Pending(FixtureFailure),
 }
 
-/// What running an area produced: every fixture attempted, and every one that failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AreaReport {
-    /// The area directory, checkout-relative.
-    pub area: String,
-    /// Checkout-relative paths of the fixtures that showed what they declared.
-    pub passed: Vec<String>,
-    /// Every fixture that did not, in discovery order.
-    pub failures: Vec<FixtureFailure>,
-}
-
-impl AreaReport {
-    /// The report as one message: a headline, then each failure with its expected-versus-actual.
-    pub fn message(&self) -> String {
-        let mut out = format!(
-            "{} of {} behavior fixture(s) failed in {}\n",
-            self.failures.len(),
-            self.passed.len() + self.failures.len(),
-            self.area
-        );
-        for failure in &self.failures {
+/// The message of an area's pending check when `pending:` fixtures now show what they declare: a headline, then each
+/// fixture with the line to remove.
+fn stale_pending_message(area: &str, stale: &[FixtureFailure]) -> String {
+    let mut out = format!(
+        "{} pending behavior fixture(s) in {area} now show what they declare; remove their `pending:` lines\n",
+        stale.len()
+    );
+    for failure in stale {
+        out.push('\n');
+        out.push_str(&failure.to_string());
+        if !out.ends_with('\n') {
             out.push('\n');
-            out.push_str(&failure.to_string());
-            if !out.ends_with('\n') {
-                out.push('\n');
-            }
         }
-        if !self.passed.is_empty() {
-            out.push_str("\npassed:\n");
-            for path in &self.passed {
-                out.push_str("  ");
-                out.push_str(path);
-                out.push('\n');
-            }
-        }
-        out
     }
+    out
 }
 
 /// The directory scratch projects are created under: `INCAN_TEST_TMP_ROOT` when the harness set it, else the
@@ -862,9 +955,14 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
         detail,
     };
 
-    let outcome = |compared: Result<(), String>| match compared {
-        Ok(()) => Outcome::Passed,
-        Err(detail) => Outcome::Failed(failure(detail)),
+    let pending = fixture.header.pending.as_deref();
+    let outcome = |compared: Result<(), String>| match (compared, pending) {
+        (Ok(()), None) => Outcome::Passed,
+        (Err(detail), None) => Outcome::Failed(failure(detail)),
+        (Err(detail), Some(reason)) => Outcome::Pending(failure(format!("pending: {reason}\n{detail}"))),
+        (Ok(()), Some(reason)) => Outcome::Failed(failure(format!(
+            "the fixture now shows what it declares, but its header still says `pending: {reason}`; remove that line"
+        ))),
     };
 
     match &fixture.header.expectation {
@@ -872,7 +970,11 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
             let check = run_incan(project.path(), &["check", ENTRYPOINT, "--format", "json"])?;
             Ok(outcome(compare_refusal(diagnostics, &check)))
         }
-        Expectation::Run { stdout, exit_code } => {
+        Expectation::Run {
+            stdout,
+            stderr_contains,
+            exit_code,
+        } => {
             // ---- Providers first, in dependency order, Cargo-guarded, into the project's own Oven home ----
             let home = standalone_oven_home(project.path());
             for provider in &fixture.providers {
@@ -894,7 +996,7 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
                 }
             }
             let run = run_incan(project.path(), &["run", ENTRYPOINT])?;
-            Ok(outcome(compare_run(stdout, *exit_code, &run)))
+            Ok(outcome(compare_run(stdout, stderr_contains, *exit_code, &run)))
         }
     }
 }
@@ -913,7 +1015,7 @@ fn bake_result(what: &str, bake: &Output) -> Result<(), String> {
 }
 
 /// Compare a check report with the diagnostics a refused fixture declares.
-fn compare_refusal(expected: &[String], check: &Output) -> Result<(), String> {
+pub fn compare_refusal(expected: &[String], check: &Output) -> Result<(), String> {
     let stdout = String::from_utf8_lossy(&check.stdout);
     let stderr = String::from_utf8_lossy(&check.stderr);
     if check.status.success() {
@@ -955,8 +1057,13 @@ fn compare_refusal(expected: &[String], check: &Output) -> Result<(), String> {
     ))
 }
 
-/// Compare a run's stdout and exit code with what a run fixture declares.
-fn compare_run(stdout: &StdoutExpectation, exit_code: i32, run: &Output) -> Result<(), String> {
+/// Compare a run's stdout, stderr substrings, and exit code with what a run fixture declares.
+pub fn compare_run(
+    stdout: &StdoutExpectation,
+    stderr_contains: &[String],
+    exit_code: i32,
+    run: &Output,
+) -> Result<(), String> {
     let actual_stdout = String::from_utf8_lossy(&run.stdout);
     let actual_lines: Vec<&str> = actual_stdout.lines().collect();
     let mut problems: Vec<String> = Vec::new();
@@ -995,6 +1102,20 @@ fn compare_run(stdout: &StdoutExpectation, exit_code: i32, run: &Output) -> Resu
         }
     }
 
+    let actual_stderr = String::from_utf8_lossy(&run.stderr);
+    let missing: Vec<&str> = stderr_contains
+        .iter()
+        .map(String::as_str)
+        .filter(|item| !actual_stderr.contains(item))
+        .collect();
+    if !missing.is_empty() {
+        problems.push(format!(
+            "stderr is missing expected substring(s)\nexpected stderr substrings:\n{}missing:\n{}actual stderr:\n{}",
+            indent_lines(stderr_contains.iter().map(String::as_str)),
+            indent_lines(missing.iter().copied()),
+            indent_block(&actual_stderr)
+        ));
+    }
     if problems.is_empty() {
         return Ok(());
     }
@@ -1036,35 +1157,61 @@ fn indent_block(text: &str) -> String {
     indent_lines(text.lines())
 }
 
-/// Run every fixture in an area and collect the report; a fixture that cannot be read or run at all, or an area
-/// over [`MAX_FIXTURES_PER_AREA`], is an error of the harness, not a failure of the fixture, and comes back as `Err`.
-pub fn run_area(area: &str) -> Result<AreaReport, Box<dyn Error>> {
-    let dir = area_dir(area);
-    let fixtures = discover(&dir)?;
-    let scratch = scratch_root()?;
-    let mut report = AreaReport {
-        area: checkout_relative(&dir),
-        passed: Vec::new(),
-        failures: Vec::new(),
-    };
-    for fixture in &fixtures {
-        match run_fixture(fixture, &scratch)? {
-            Outcome::Passed => report.passed.push(fixture.display_path()),
-            Outcome::Failed(failure) => report.failures.push(failure),
-        }
+/// The call each case of a generated behavior root makes: run the fixture `name` of `area` and fail with its
+/// expected-versus-actual unless it shows what its header declares.
+///
+/// A harness error (an unreadable or missing fixture, a missing scratch root) comes back as `Err`, and so does a
+/// fixture that ran and did not show what it declared, as a [`FixtureMismatch`] carrying the expected-versus-actual
+/// report. A `pending:` fixture's case is generated `#[ignore]`d with its reason, so it runs only when ignored cases
+/// are asked for, and then it fails while it is still red: that run is asking what is left to fix.
+pub fn assert_fixture_holds(area: &str, name: &str) -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_in_area(area, name)?;
+    match run_fixture(&fixture, &scratch_root()?)? {
+        Outcome::Passed => Ok(()),
+        Outcome::Failed(failure) | Outcome::Pending(failure) => Err(Box::new(FixtureMismatch(failure))),
     }
-    Ok(report)
 }
 
-/// The one call a behavior root makes: run the area and fail with every failing fixture's expected-versus-actual.
+/// A fixture that ran and did not show what its header declared, as the error a test case returns.
 ///
-/// A harness error (an unreadable fixture, a missing scratch root, an area over [`MAX_FIXTURES_PER_AREA`]) comes
-/// back as `Err`; a fixture that ran and did not show what it declared is an assertion failure, so libtest prints
-/// the report as written rather than as one escaped string. A root file holds one `#[test]` per leaf area, each
-/// making this call, so the suite's two-thread root budget can run two areas of one family concurrently.
-pub fn assert_area_green(area: &str) -> Result<(), Box<dyn Error>> {
-    let report = run_area(area)?;
-    assert!(report.failures.is_empty(), "{}", report.message());
+/// libtest prints a failing case's error with `{:?}`, so `Debug` writes the same multi-line report as `Display`
+/// instead of one escaped string.
+pub struct FixtureMismatch(pub FixtureFailure);
+
+impl fmt::Display for FixtureMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for FixtureMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl Error for FixtureMismatch {}
+
+/// The one case a generated root adds when its area has `pending:` fixtures: every one of them must still not show
+/// what it declares.
+///
+/// Their own cases are ignored, so without this a pending fixture that started to hold would go unnoticed and its
+/// marker would outlive what it describes. Each one still red is listed on stderr with what it showed; each one that
+/// now holds fails this case, naming the `pending:` line to remove.
+pub fn assert_pending_fixtures_still_wait(area: &str) -> Result<(), Box<dyn Error>> {
+    let scratch = scratch_root()?;
+    let mut stale = Vec::new();
+    for fixture in discover(&area_dir(area))?
+        .iter()
+        .filter(|fixture| fixture.header.pending.is_some())
+    {
+        match run_fixture(fixture, &scratch)? {
+            Outcome::Pending(failure) => eprintln!("pending fixture {}\n{}\n", failure.path, failure.detail),
+            Outcome::Failed(failure) => stale.push(failure),
+            Outcome::Passed => {}
+        }
+    }
+    assert!(stale.is_empty(), "{}", stale_pending_message(area, &stale));
     Ok(())
 }
 
@@ -1077,6 +1224,71 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn Error>>;
+
+    /// Stderr assertions are substrings and can be the only run observable.
+    #[test]
+    fn stderr_header_and_conflicts() -> TestResult {
+        let header = parse_header("# behavior: b\n# expect-stderr-contains:\n#   ValueError:\n#   original input\n")?;
+        assert_eq!(
+            header.expectation,
+            Expectation::Run {
+                stdout: StdoutExpectation::Unchecked,
+                stderr_contains: vec!["ValueError:".into(), "original input".into()],
+                exit_code: 0
+            }
+        );
+        for (text, reason) in [
+            ("# expect-stderr-contains: inline\n", "takes its lines below"),
+            ("# expect-stderr-contains:\n", "nonempty substring"),
+            ("# expect-stderr-contains:\n#\n", "nonempty substring"),
+            ("# expect-stderr-contains:\n#   x\n#   x\n", "lists `x` twice"),
+            (
+                "# expect-stderr-contains:\n#   x\n# expect-stderr-contains:\n#   y\n",
+                "declared twice",
+            ),
+            (
+                "# expect-diagnostic: INCAN-T0001\n# expect-stderr-contains:\n#   x\n",
+                "never run",
+            ),
+            (
+                "# expect-stderr-contains:\n#   x\n# expect-diagnostic: INCAN-T0001\n",
+                "never run",
+            ),
+            ("# expect-stderr-contains:\n#   x \n", "ends with whitespace"),
+            (
+                "# expect-exit: 0\n\n# expect-stderr-contains:\n#   x\n",
+                "after the header ended",
+            ),
+        ] {
+            let error = parse_header(&format!("# behavior: b\n{text}"))
+                .err()
+                .ok_or("malformed stderr header accepted")?;
+            assert!(error.contains(reason), "{error}");
+        }
+        Ok(())
+    }
+
+    /// A conversion error must match both class and input even when exit and stdout match.
+    #[cfg(unix)]
+    #[test]
+    fn stderr_comparison_reports_expected_and_actual() -> TestResult {
+        let expected = vec!["ValueError:".into(), "'bad input'".into()];
+        let mut run = Output {
+            status: exit_status(101),
+            stdout: Vec::new(),
+            stderr: b"prefix ValueError: cannot convert 'bad input' to int\n".to_vec(),
+        };
+        assert_eq!(compare_run(&StdoutExpectation::Unchecked, &expected, 101, &run), Ok(()));
+        run.stderr = b"another panic\n".to_vec();
+        let error = compare_run(&StdoutExpectation::Unchecked, &expected, 101, &run)
+            .err()
+            .ok_or("wrong panic accepted")?;
+        assert!(error.contains("expected stderr substrings:"), "{error}");
+        assert!(error.contains("ValueError:"), "{error}");
+        assert!(error.contains("'bad input'"), "{error}");
+        assert!(error.contains("actual stderr:\n  another panic"), "{error}");
+        Ok(())
+    }
 
     /// A run fixture: exact stdout, explicit exit code, two retires.
     #[test]
@@ -1103,6 +1315,7 @@ mod tests {
                     String::new(),
                     "  indented line".to_string(),
                 ]),
+                stderr_contains: Vec::new(),
                 exit_code: 3,
             }
         );
@@ -1117,6 +1330,7 @@ mod tests {
             header.expectation,
             Expectation::Run {
                 stdout: StdoutExpectation::Contains(vec!["one".to_string(), "two".to_string()]),
+                stderr_contains: Vec::new(),
                 exit_code: 0,
             }
         );
@@ -1135,6 +1349,7 @@ mod tests {
             header.expectation,
             Expectation::Run {
                 stdout: StdoutExpectation::Unchecked,
+                stderr_contains: Vec::new(),
                 exit_code: 0,
             }
         );
@@ -1149,6 +1364,7 @@ mod tests {
             header.expectation,
             Expectation::Run {
                 stdout: StdoutExpectation::Exact(Vec::new()),
+                stderr_contains: Vec::new(),
                 exit_code: 0,
             }
         );
@@ -1169,147 +1385,149 @@ mod tests {
         Ok(())
     }
 
+    /// Malformed header specimens and the fragments identifying each refusal.
+    const MALFORMED_HEADERS: &[(&str, &[&str])] = &[
+        ("# expect-exit: 0\n", &["no `behavior:`"]),
+        ("# behavior: b\n", &["declares no observable"]),
+        (
+            "# behavior: b\n# behavior: c\n# expect-exit: 0\n",
+            &["line 2", "declared twice"],
+        ),
+        (
+            "# behavior: b\n# expects-stdout:\n#   x\n",
+            &["line 2", "unknown directive"],
+        ),
+        (
+            "# behavior: b\n# just prose\n# expect-exit: 0\n",
+            &["line 2", "neither a directive"],
+        ),
+        (
+            "# behavior: b\n#   stray\n# expect-exit: 0\n",
+            &["line 2", "outside an"],
+        ),
+        (
+            "# behavior: b\n# expect-stdout: inline\n",
+            &["line 2", "takes its lines below"],
+        ),
+        // ---- The two stdout blocks: the second one introduces the conflict ----
+        (
+            "# behavior: b\n# expect-stdout:\n#   a\n# expect-stdout-contains:\n#   a\n",
+            &[
+                "line 4",
+                "`expect-stdout-contains:` cannot be declared beside `expect-stdout:` (line 2)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#   a\n# expect-stdout:\n#   a\n",
+            &[
+                "line 4",
+                "`expect-stdout:` cannot be declared beside `expect-stdout-contains:` (line 2)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-exit: zero\n",
+            &["line 2", "must be an integer"],
+        ),
+        ("# behavior: b\n# expect-exit: 256\n", &["line 2", "0..=255"]),
+        ("# behavior: b\n# expect-exit: -1\n", &["line 2", "0..=255"]),
+        // ---- A refusal beside a run expectation: whichever comes second introduces the conflict ----
+        (
+            "# behavior: b\n# expect-diagnostic: INCAN-T0001\n# expect-exit: 1\n",
+            &[
+                "line 3",
+                "`expect-exit:` is a run expectation, but line 2 declares `expect-diagnostic:`",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-stdout:\n#   a\n# expect-diagnostic: INCAN-T0001\n",
+            &["line 4", "never run, but line 2 declares `expect-stdout:`"],
+        ),
+        (
+            "# behavior: b\n# retires: not-a-test\n# expect-exit: 0\n",
+            &["line 2", "`<path>.rs::<fn>`"],
+        ),
+        (
+            "# behavior: b\n# retires: a b.rs::t\n# expect-exit: 0\n",
+            &["line 2", "no whitespace"],
+        ),
+        (
+            "# behavior: b\n# retires: a.rs::t\n# retires: a.rs::t\n# expect-exit: 0\n",
+            &["line 3", "declared twice"],
+        ),
+        (
+            "# behavior: b\n# expect-diagnostic:\n",
+            &["line 2", "one diagnostic code"],
+        ),
+        // ---- Directive spelling both readers agree on: one space after `#`, none before the colon ----
+        (
+            "# behavior: b\n#\tretires: a.rs::t\n# expect-exit: 0\n",
+            &["line 2", "one space between"],
+        ),
+        (
+            "# behavior: b\n# retires : a.rs::t\n# expect-exit: 0\n",
+            &["line 2", "before the colon"],
+        ),
+        // ---- B1: a directive after the header ended is refused, not dropped ----
+        (
+            "# behavior: b\n# expect-exit: 0\n\n# expect-stdout:\n#   x\n\ndef main() -> None:\n    pass\n",
+            &[
+                "line 4",
+                "`expect-stdout:` after the header ended; a blank line ends the header (line 3)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-exit: 0\ndef main() -> None:\n    pass\n# retires: a.rs::t\n",
+            &[
+                "line 5",
+                "`retires:` after the header ended; the first line that is not a `#` comment ends the header (line 3)",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-exit: 0\n\n# expect-stdou:\n",
+            &["line 4", "`expect-stdou:` after the header ended"],
+        ),
+        // ---- B1: a contains block with no line would be satisfied by anything ----
+        (
+            "# behavior: b\n# expect-stdout-contains:\n",
+            &["line 2", "lists no line"],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n# expect-exit: 0\n",
+            &["line 2", "lists no line"],
+        ),
+        // ---- A contained line listed twice checks nothing the first did not ----
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\n#   a\n",
+            &["line 5", "lists `a` twice"],
+        ),
+        // ---- Trailing whitespace on an expected line is invisible in a report ----
+        (
+            "# behavior: b\n# expect-stdout:\n#   a \n",
+            &["line 3", "ends with whitespace"],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\t\n",
+            &["line 4", "ends with whitespace"],
+        ),
+        // ---- `#` and only whitespace inside a block is not the empty expected line ----
+        (
+            "# behavior: b\n# expect-stdout:\n#   a\n#   \n",
+            &[
+                "line 4",
+                "ends with whitespace",
+                "a bare `#` is the empty expected line",
+            ],
+        ),
+        (
+            "# behavior: b\n# expect-stdout-contains:\n#      \n#   a\n",
+            &["line 3", "ends with whitespace"],
+        ),
+    ];
+
     /// Every malformed header is refused with a reason that names the problem and, where one exists, the line.
     #[test]
     fn malformed_headers_are_refused_with_the_reason() -> TestResult {
-        let cases: &[(&str, &[&str])] = &[
-            ("# expect-exit: 0\n", &["no `behavior:`"]),
-            ("# behavior: b\n", &["declares no observable"]),
-            (
-                "# behavior: b\n# behavior: c\n# expect-exit: 0\n",
-                &["line 2", "declared twice"],
-            ),
-            (
-                "# behavior: b\n# expects-stdout:\n#   x\n",
-                &["line 2", "unknown directive"],
-            ),
-            (
-                "# behavior: b\n# just prose\n# expect-exit: 0\n",
-                &["line 2", "neither a directive"],
-            ),
-            (
-                "# behavior: b\n#   stray\n# expect-exit: 0\n",
-                &["line 2", "outside an"],
-            ),
-            (
-                "# behavior: b\n# expect-stdout: inline\n",
-                &["line 2", "takes its lines below"],
-            ),
-            // ---- The two stdout blocks: the second one introduces the conflict ----
-            (
-                "# behavior: b\n# expect-stdout:\n#   a\n# expect-stdout-contains:\n#   a\n",
-                &[
-                    "line 4",
-                    "`expect-stdout-contains:` cannot be declared beside `expect-stdout:` (line 2)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#   a\n# expect-stdout:\n#   a\n",
-                &[
-                    "line 4",
-                    "`expect-stdout:` cannot be declared beside `expect-stdout-contains:` (line 2)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-exit: zero\n",
-                &["line 2", "must be an integer"],
-            ),
-            ("# behavior: b\n# expect-exit: 256\n", &["line 2", "0..=255"]),
-            ("# behavior: b\n# expect-exit: -1\n", &["line 2", "0..=255"]),
-            // ---- A refusal beside a run expectation: whichever comes second introduces the conflict ----
-            (
-                "# behavior: b\n# expect-diagnostic: INCAN-T0001\n# expect-exit: 1\n",
-                &[
-                    "line 3",
-                    "`expect-exit:` is a run expectation, but line 2 declares `expect-diagnostic:`",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-stdout:\n#   a\n# expect-diagnostic: INCAN-T0001\n",
-                &["line 4", "never run, but line 2 declares `expect-stdout:`"],
-            ),
-            (
-                "# behavior: b\n# retires: not-a-test\n# expect-exit: 0\n",
-                &["line 2", "`<path>.rs::<fn>`"],
-            ),
-            (
-                "# behavior: b\n# retires: a b.rs::t\n# expect-exit: 0\n",
-                &["line 2", "no whitespace"],
-            ),
-            (
-                "# behavior: b\n# retires: a.rs::t\n# retires: a.rs::t\n# expect-exit: 0\n",
-                &["line 3", "declared twice"],
-            ),
-            (
-                "# behavior: b\n# expect-diagnostic:\n",
-                &["line 2", "one diagnostic code"],
-            ),
-            // ---- Directive spelling both readers agree on: one space after `#`, none before the colon ----
-            (
-                "# behavior: b\n#\tretires: a.rs::t\n# expect-exit: 0\n",
-                &["line 2", "one space between"],
-            ),
-            (
-                "# behavior: b\n# retires : a.rs::t\n# expect-exit: 0\n",
-                &["line 2", "before the colon"],
-            ),
-            // ---- B1: a directive after the header ended is refused, not dropped ----
-            (
-                "# behavior: b\n# expect-exit: 0\n\n# expect-stdout:\n#   x\n\ndef main() -> None:\n    pass\n",
-                &[
-                    "line 4",
-                    "`expect-stdout:` after the header ended; a blank line ends the header (line 3)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-exit: 0\ndef main() -> None:\n    pass\n# retires: a.rs::t\n",
-                &[
-                    "line 5",
-                    "`retires:` after the header ended; the first line that is not a `#` comment ends the header (line 3)",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-exit: 0\n\n# expect-stdou:\n",
-                &["line 4", "`expect-stdou:` after the header ended"],
-            ),
-            // ---- B1: a contains block with no line would be satisfied by anything ----
-            (
-                "# behavior: b\n# expect-stdout-contains:\n",
-                &["line 2", "lists no line"],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n# expect-exit: 0\n",
-                &["line 2", "lists no line"],
-            ),
-            // ---- A contained line listed twice checks nothing the first did not ----
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\n#   a\n",
-                &["line 5", "lists `a` twice"],
-            ),
-            // ---- Trailing whitespace on an expected line is invisible in a report ----
-            (
-                "# behavior: b\n# expect-stdout:\n#   a \n",
-                &["line 3", "ends with whitespace"],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\t\n",
-                &["line 4", "ends with whitespace"],
-            ),
-            // ---- `#` and only whitespace inside a block is not the empty expected line ----
-            (
-                "# behavior: b\n# expect-stdout:\n#   a\n#   \n",
-                &[
-                    "line 4",
-                    "ends with whitespace",
-                    "a bare `#` is the empty expected line",
-                ],
-            ),
-            (
-                "# behavior: b\n# expect-stdout-contains:\n#      \n#   a\n",
-                &["line 3", "ends with whitespace"],
-            ),
-        ];
-        for (text, expected) in cases {
+        for (text, expected) in MALFORMED_HEADERS {
             let reason = parse_header(text)
                 .err()
                 .ok_or_else(|| format!("expected `{text}` to be refused"))?;
@@ -1334,24 +1552,21 @@ mod tests {
         Ok(())
     }
 
-    /// An area is one libtest case, so it is capped: 60 fixtures pass discovery, 61 are refused naming the rule.
+    /// A case reaches its fixture by name, as a single file or a directory; a name with neither is refused, naming
+    /// the regeneration that fixes the root.
     #[test]
-    fn discovery_refuses_an_area_over_the_cap() -> TestResult {
-        let tmp = tempfile::tempdir()?;
-        let area = tmp.path().join("area");
-        fs::create_dir_all(&area)?;
-        for index in 0..MAX_FIXTURES_PER_AREA {
-            fs::write(
-                area.join(format!("f{index:03}.incn")),
-                "# behavior: b\n# expect-exit: 0\n",
-            )?;
-        }
-        assert_eq!(discover(&area)?.len(), MAX_FIXTURES_PER_AREA);
-        fs::write(area.join("one_too_many.incn"), "# behavior: b\n# expect-exit: 0\n")?;
-        let error = discover(&area).err().ok_or("an area over the cap must be refused")?;
-        assert!(error.reason.contains("holds 61 fixtures"), "{error}");
-        assert!(error.reason.contains("at most 60"), "{error}");
-        assert!(error.reason.contains("one `#[test]` per area"), "{error}");
+    fn a_fixture_is_found_by_name_in_its_area() -> TestResult {
+        let single = fixture_in_area("smoke", &discover(&area_dir("smoke"))?[0].name)?;
+        assert_eq!(single.layout, FixtureLayout::SingleFile);
+        let directory = discover(&area_dir("harness"))?
+            .into_iter()
+            .find(|fixture| fixture.layout != FixtureLayout::SingleFile)
+            .ok_or("the harness area has a directory fixture")?;
+        assert_eq!(fixture_in_area("harness", &directory.name)?.path, directory.path);
+        let missing = fixture_in_area("smoke", "no_such_fixture")
+            .err()
+            .ok_or("a missing fixture must be refused")?;
+        assert!(missing.reason.contains("make behavior-roots"), "{missing}");
         Ok(())
     }
 
@@ -1585,30 +1800,42 @@ mod tests {
         assert_eq!(normalize_lexically(Path::new("a/../../b")), PathBuf::from("../b"));
     }
 
-    /// A report names every failing fixture, its behavior and the mismatch, and lists what passed.
+    /// The pending check names every fixture that now holds, its behavior and the line to remove.
     #[test]
-    fn report_message_lists_every_failure() {
-        let report = AreaReport {
-            area: "loaves/x/behavior/smoke".to_string(),
-            passed: vec!["loaves/x/behavior/smoke/ok.incn".to_string()],
-            failures: vec![
-                FixtureFailure {
-                    path: "loaves/x/behavior/smoke/a.incn".to_string(),
-                    behavior: "a".to_string(),
-                    detail: "stdout differs\n".to_string(),
-                },
-                FixtureFailure {
-                    path: "loaves/x/behavior/smoke/b.incn".to_string(),
-                    behavior: "b".to_string(),
-                    detail: "exit code: expected 0, got 1\n".to_string(),
-                },
-            ],
-        };
-        let message = report.message();
-        assert!(message.starts_with("2 of 3 behavior fixture(s) failed in loaves/x/behavior/smoke"));
-        assert!(message.contains("--- loaves/x/behavior/smoke/a.incn\nbehavior: a\nstdout differs"));
-        assert!(message.contains("--- loaves/x/behavior/smoke/b.incn\nbehavior: b\nexit code: expected 0, got 1"));
-        assert!(message.contains("passed:\n  loaves/x/behavior/smoke/ok.incn"));
+    fn stale_pending_message_names_each_fixture() {
+        let stale = [
+            FixtureFailure {
+                path: "loaves/x/behavior/smoke/a.incn".to_string(),
+                behavior: "a".to_string(),
+                detail: "the fixture now shows what it declares, but its header still says `pending: x`".to_string(),
+            },
+            FixtureFailure {
+                path: "loaves/x/behavior/smoke/b.incn".to_string(),
+                behavior: "b".to_string(),
+                detail: "the fixture now shows what it declares, but its header still says `pending: y`\n".to_string(),
+            },
+        ];
+        let message = stale_pending_message("smoke", &stale);
+        assert!(message.starts_with("2 pending behavior fixture(s) in smoke now show what they declare"));
+        assert!(message.contains("--- loaves/x/behavior/smoke/a.incn\nbehavior: a\n"));
+        assert!(message.contains("--- loaves/x/behavior/smoke/b.incn\nbehavior: b\n"));
+    }
+
+    /// `pending:` records why a fixture does not hold yet; it is optional, single, and needs a reason.
+    #[test]
+    fn pending_names_what_the_fixture_waits_for() -> TestResult {
+        let header = parse_header("# behavior: b\n# pending: the direct route runs it\n# expect-stdout:\n#   1\n")?;
+        assert_eq!(header.pending.as_deref(), Some("the direct route runs it"));
+        assert_eq!(parse_header("# behavior: b\n# expect-exit: 0\n")?.pending, None);
+        let empty = parse_header("# behavior: b\n# pending:\n# expect-exit: 0\n")
+            .err()
+            .ok_or("an empty reason must be refused")?;
+        assert!(empty.contains("must say what the fixture waits for"), "{empty}");
+        let twice = parse_header("# behavior: b\n# pending: a\n# pending: b\n# expect-exit: 0\n")
+            .err()
+            .ok_or("a second pending line must be refused")?;
+        assert!(twice.contains("declared twice"), "{twice}");
+        Ok(())
     }
 
     /// Exact stdout is compared line by line; contained lines in any order; the exit code always.
@@ -1621,18 +1848,22 @@ mod tests {
             stderr: b"trace\n".to_vec(),
         };
         let exact = StdoutExpectation::Exact(vec!["one".to_string(), "two".to_string()]);
-        assert_eq!(compare_run(&exact, 0, &output(0, "one\ntwo\n")), Ok(()));
-        let differs = compare_run(&exact, 0, &output(0, "one\n")).err().unwrap_or_default();
+        assert_eq!(compare_run(&exact, &[], 0, &output(0, "one\ntwo\n")), Ok(()));
+        let differs = compare_run(&exact, &[], 0, &output(0, "one\n"))
+            .err()
+            .unwrap_or_default();
         assert!(differs.contains("expected stdout:\n  one\n  two\n"), "{differs}");
         assert!(differs.contains("actual stdout:\n  one\n"), "{differs}");
         assert!(differs.contains("stderr:\n  trace"), "{differs}");
 
         let contains = StdoutExpectation::Contains(vec!["two".to_string()]);
-        assert_eq!(compare_run(&contains, 0, &output(0, "one\ntwo\n")), Ok(()));
-        let missing = compare_run(&contains, 0, &output(0, "one\n")).err().unwrap_or_default();
+        assert_eq!(compare_run(&contains, &[], 0, &output(0, "one\ntwo\n")), Ok(()));
+        let missing = compare_run(&contains, &[], 0, &output(0, "one\n"))
+            .err()
+            .unwrap_or_default();
         assert!(missing.contains("missing:\n  two\n"), "{missing}");
 
-        let code = compare_run(&StdoutExpectation::Unchecked, 2, &output(1, ""))
+        let code = compare_run(&StdoutExpectation::Unchecked, &[], 2, &output(1, ""))
             .err()
             .unwrap_or_default();
         assert!(code.contains("exit code: expected 2, got 1"), "{code}");

@@ -1,0 +1,13 @@
+# behavior: the checker refuses nonfloat carriers supplied to a float entrypoint parameter
+# expect-diagnostic: INCAN-T0001
+
+"""The checker refuses nonfloat carriers supplied to a float entrypoint parameter."""
+def show(value: float) -> str:
+    """Print the call marker and render the float argument."""
+    println("must not run")
+    return str(value)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(show(1, "1.5"))

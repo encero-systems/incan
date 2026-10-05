@@ -1,0 +1,16 @@
+# behavior: executes the selected string ownership control flow and assertion cases, as the legacy route runs it
+# expect-stdout:
+# expect-exit: 101
+
+"""Executes the selected string ownership control flow and assertion cases, as the legacy route runs it."""
+def program_result() -> int:
+  """Compute and return `a // b`."""
+  a = 84
+  b = 0
+  assert b != 0
+  return a // b
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

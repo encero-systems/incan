@@ -1,0 +1,14 @@
+# behavior: the checker refuses zip shape boundaries at the original source span
+# expect-diagnostic: INCAN-T0001
+
+
+"""The checker refuses zip shape boundaries at the original source span."""
+def zip_nonlist_boundary() -> int:
+  """Attempt to zip a string with a list."""
+  pairs = zip("not a list", [1])
+  return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(zip_nonlist_boundary())

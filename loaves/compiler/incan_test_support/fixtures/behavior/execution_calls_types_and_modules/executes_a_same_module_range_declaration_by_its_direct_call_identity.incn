@@ -1,0 +1,18 @@
+# behavior: executes a same module range declaration by its direct call identity
+# expect-stdout:
+#   42
+
+
+"""Executes a same module range declaration by its direct call identity."""
+def range(start: int, end: int) -> int:
+  """Return the fixture expression `start + end`."""
+  return start + end
+
+def program_result() -> int:
+  """Return the fixture expression `range(20, 22)`."""
+  return range(20, 22)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

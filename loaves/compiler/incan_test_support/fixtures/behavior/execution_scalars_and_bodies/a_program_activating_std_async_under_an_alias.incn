@@ -1,0 +1,16 @@
+# behavior: a program that activates std.async under an alias runs
+# expect-stdout:
+#   42
+
+"""A program that activates std.async under an alias runs."""
+import std.async as async_runtime
+
+
+def program_result() -> int:
+    """Return `42` for this fixture."""
+    return 42
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

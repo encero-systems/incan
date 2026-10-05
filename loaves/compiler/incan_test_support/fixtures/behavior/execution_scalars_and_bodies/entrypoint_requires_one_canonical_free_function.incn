@@ -1,0 +1,13 @@
+# behavior: entrypoint requires one canonical free function, as the legacy route runs it
+# expect-stdout:
+#   42
+
+"""Entrypoint requires one canonical free function, as the legacy route runs it."""
+def program_result() -> int:
+  """Return `42` for this fixture."""
+  return 42
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

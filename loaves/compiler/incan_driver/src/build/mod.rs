@@ -7,6 +7,7 @@
 
 pub mod backend_selection;
 pub mod bake;
+pub mod caller_facet;
 pub mod caller_owned;
 pub mod inline_command;
 pub mod library_exports;
@@ -25,7 +26,6 @@ pub mod prepare_project;
 pub mod provider_compilation;
 pub mod provider_metadata;
 pub mod publication;
-pub mod replacement;
 pub mod reuse;
 pub mod rust_extern;
 pub mod source_authority;
@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::ProjectGenerator;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
-use crate::backend::selection::{BackendExecutionReceipt, BackendKind, FallbackPolicy};
+use crate::backend::selection::BackendExecutionReceipt;
 use crate::build::output_paths::{project_relative_entrypoint, validated_project_output_relative_path};
 use crate::build_report::{BuildReportDraft, BuildReportProject, SourceFileReport};
 use crate::cargo_policy::CargoPolicy;
@@ -126,48 +126,6 @@ pub struct OvenPreparedProject {
     pub rust_inspect_manifest_dir: Option<PathBuf>,
 }
 
-/// CLI-facing backend-selection request for one build (`--backend`, `--backend-fallback`, `--shadow`).
-///
-/// Bridges those flags to [`select_backend`]. The default (no flags given) declares the legacy backend explicitly with
-/// [`FallbackPolicy::Refuse`] — matching the "declared legacy capability selection" behavior #986 requires even when
-/// nothing was explicitly requested, rather than leaving the default path unrecorded.
-#[derive(Debug, Clone)]
-pub struct BackendSelectionOptions {
-    /// Backend requested for this build.
-    pub requested: BackendKind,
-    /// Whether `requested` came from an explicit `--backend` flag rather than the default.
-    pub explicit: bool,
-    /// Whether `--shadow` was given, requesting a comparison against the replacement backend.
-    pub shadow: bool,
-    /// What to do if `requested` cannot execute.
-    pub fallback_policy: FallbackPolicy,
-}
-
-impl Default for BackendSelectionOptions {
-    fn default() -> Self {
-        Self {
-            requested: BackendKind::Legacy,
-            explicit: false,
-            shadow: false,
-            fallback_policy: FallbackPolicy::Refuse,
-        }
-    }
-}
-
-impl BackendSelectionOptions {
-    /// Whether this request can reuse a completed project output without changing its recorded backend provenance.
-    ///
-    /// An explicit backend, fallback policy, or shadow comparison is a new declared selection and must take the
-    /// source-aware preparation path so it can be recorded against the current invocation. Only the implicit legacy
-    /// default can reuse the verified default receipt sealed into a completed output.
-    pub fn allows_completed_output_reuse(&self) -> bool {
-        self.requested == BackendKind::Legacy
-            && !self.explicit
-            && !self.shadow
-            && self.fallback_policy == FallbackPolicy::Refuse
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct BuildCommandOptions {
     pub cargo_policy: CargoPolicy,
@@ -177,7 +135,6 @@ pub struct BuildCommandOptions {
     pub cargo_no_default_features: bool,
     pub cargo_all_features: bool,
     pub generated_cargo_target_dir: Option<PathBuf>,
-    pub backend: BackendSelectionOptions,
 }
 
 impl BuildCommandOptions {
@@ -203,6 +160,8 @@ pub struct InlineCommandProject {
 /// The legacy publisher may still retain Cargo-only preparation state. Normal `incan build --lib`, however, always
 /// carries an Oven selection and compiles through direct `rustc` without entering that state.
 pub struct PreparedLibraryProject {
+    /// Public declarations from the same fully inspected checking pass that produced the provider artifact.
+    pub checked_exports: Vec<incan_frontend::library_exports::CheckedNamedExport>,
     pub generator: ProjectGenerator,
     pub project_root: PathBuf,
     pub entrypoint: PathBuf,

@@ -1,0 +1,16 @@
+# behavior: preserves float direct arguments and results
+# expect-stdout:
+#   before float result
+#   10.0
+
+
+"""Preserves float direct arguments and results."""
+def program_result() -> float:
+  """Compute and return `float(10)`."""
+  println("before float result")
+  return float(10)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

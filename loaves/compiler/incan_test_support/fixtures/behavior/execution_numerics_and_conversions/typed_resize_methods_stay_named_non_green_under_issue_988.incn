@@ -1,0 +1,17 @@
+# behavior: typed resize methods stay named non green under issue 988, as the legacy route runs it
+# expect-stdout:
+#   must-not-print
+#   127
+
+
+"""Typed resize methods stay named non green under issue 988, as the legacy route runs it."""
+def program_result() -> i8:
+  """Compute and return `wide.saturating_resize()`."""
+  println("must-not-print")
+  wide: i16 = 240
+  return wide.saturating_resize()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

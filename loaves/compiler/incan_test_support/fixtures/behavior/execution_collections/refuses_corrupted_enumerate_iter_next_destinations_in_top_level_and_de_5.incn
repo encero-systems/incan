@@ -1,0 +1,19 @@
+# behavior: refuses corrupted enumerate iter next destinations in top level and deferred frames
+# pending: the legacy route emits Rust that rustc rejects; the direct route (#1337 stage 4)
+# expect-stdout:
+#   7
+
+
+"""Refuses corrupted enumerate iter next destinations in top level and deferred frames."""
+def default_enumerate_item(values: list[int] = (default_value.1 for default_value in enumerate([7])).collect()) -> int:
+  """Return the fixture expression `values[0]`."""
+  return values[0]
+
+def default_enumerate_entry() -> int:
+  """Return the fixture expression `default_enumerate_item()`."""
+  return default_enumerate_item()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(default_enumerate_entry())

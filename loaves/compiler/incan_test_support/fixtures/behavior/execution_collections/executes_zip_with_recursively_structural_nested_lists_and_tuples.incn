@@ -1,0 +1,23 @@
+# behavior: executes zip with recursively structural nested lists and tuples
+# expect-stdout:
+#   13
+
+
+"""Executes zip with recursively structural nested lists and tuples."""
+def nested_structural_zip() -> int:
+  """Traverse zipped nested lists and tuples to compute a score."""
+  left = [[(1, "one")], [(2, "two")]]
+  right = [("first", true), ("second", false)]
+  pairs = zip(left, right)
+  mut total = 0
+  for nested_left_group, nested_right_pair in pairs:
+    for nested_member in nested_left_group:
+      total += nested_member.0
+    if nested_right_pair.1:
+      total += 10
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(nested_structural_zip())

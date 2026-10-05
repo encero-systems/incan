@@ -5,7 +5,67 @@ use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
 
+/// The type a `Type.member(..)` call is made on, when its receiver names a type rather than a value.
+///
+/// A nominal type in the ordinary namespace (model, class, newtype, rusttype, enum, alias or trait) is that type; a
+/// generic parameter (`T.default()` under a `Default` bound) is the type variable, so a trait's associated function
+/// called on it keeps the type that selects the implementation. Anything else is a value, and `None`.
+fn static_receiver_type(recv: &ast::Spanned<ast::Expr>, identity: Option<&CanonicalSymbolId>) -> Option<IncanType> {
+    let ast::Expr::Ident(name) = &recv.node else {
+        return None;
+    };
+    let identity = identity?;
+    if identity.kind == SemanticSourceTargetKind::GenericBinder {
+        return Some(IncanType::TypeVar(name.clone()));
+    }
+    (identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
+        && matches!(
+            identity.kind,
+            SemanticSourceTargetKind::Model
+                | SemanticSourceTargetKind::Class
+                | SemanticSourceTargetKind::Newtype
+                | SemanticSourceTargetKind::Rusttype
+                | SemanticSourceTargetKind::Enum
+                | SemanticSourceTargetKind::TypeAlias
+                | SemanticSourceTargetKind::Trait
+        ))
+    .then(|| IncanType::Named(name.clone()))
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Rewrite an argument bound to a `mut` parameter (#2022). A `mut` parameter of non-`Copy` type writes through to
+    /// the caller, as the emitted route's `&mut T` does, so the argument is borrowed mutably instead of copied or
+    /// moved: the caller keeps owning it (an operand that had selected a move is un-moved, so the caller still
+    /// drops it) and sees the callee's changes. A `Copy` argument stays a copy, matching the emitted route's
+    /// by-value `mut` scalar, and a compiler temporary keeps its move, since no caller can observe writes to it.
+    pub(super) fn borrow_for_mut_parameter(&mut self, operand: bir::Operand) -> bir::Operand {
+        let bir::Operand::Place(mut source) = operand else {
+            return operand;
+        };
+        let is_temporary = source
+            .place
+            .local_id()
+            .and_then(|local| self.locals.get(local.index()))
+            .is_some_and(|decl| matches!(decl.origin, bir::LocalOrigin::Temporary));
+        if is_temporary
+            || !matches!(
+                source.fact,
+                bir::OwnershipFact::Move | bir::OwnershipFact::Clone | bir::OwnershipFact::Borrow
+            )
+        {
+            return bir::Operand::Place(source);
+        }
+        if source.fact == bir::OwnershipFact::Move
+            && source.place.projection.is_empty()
+            && let Some(local) = source.place.local_id()
+        {
+            self.moved_out.remove(&local);
+        }
+        source.fact = bir::OwnershipFact::MutBorrow;
+        source.last_use = false;
+        bir::Operand::Place(source)
+    }
+
     /// Lower planned call arguments in written source order, then place them into declaration-slot order.
     ///
     /// Both orders are part of the source contract and they differ whenever a caller writes named arguments out of
@@ -19,10 +79,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Because ownership is decided during that written-order pass, each operand's [`bir::OwnershipFact`] and
     /// last-use marker are sequenced by `written_position` and **not** by operand index -- see
     /// [`bir::ArgumentBinding`]'s own docs, which state the invariant a consumer has to honor.
+    ///
+    /// `mut_slots` marks, by declaration slot, which parameters are declared `mut`; an operand for such a slot goes
+    /// through [`Self::borrow_for_mut_parameter`]. A slot past its end, or an empty slice for a surface with no
+    /// declared parameters, is treated as not `mut`.
     pub(super) fn lower_planned_args(
         &mut self,
         planned: &[(usize, &ast::Spanned<ast::Expr>)],
         slot_count: usize,
+        mut_slots: &[bool],
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::Operand>, bir::ArgumentBinding), String> {
@@ -37,7 +102,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let mut lowered: Vec<Option<(bir::Operand, usize)>> = (0..slot_count).map(|_| None).collect();
         for (written_position, (slot, expr)) in planned.iter().enumerate() {
-            let operand = self.lower_expr_to_operand(expr, scope, out);
+            let mut operand = self.lower_expr_to_operand(expr, scope, out);
+            if mut_slots.get(*slot).copied().unwrap_or(false) {
+                operand = self.borrow_for_mut_parameter(operand);
+            }
             if let Some(entry) = lowered.get_mut(*slot) {
                 *entry = Some((operand, written_position));
             }
@@ -220,7 +288,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .collect();
         let planned = plan_declared_args(callee, &slots, &expanded)?;
         let (operands, binding) = self
-            .lower_planned_args(&planned, slots.len(), scope, out)
+            .lower_planned_args(
+                &planned,
+                slots.len(),
+                &slots.iter().map(|slot| slot.is_mut).collect::<Vec<bool>>(),
+                scope,
+                out,
+            )
             .map_err(|description| format!("{callee}: {description}"))?;
         Ok((fixed_elements(operands), binding))
     }
@@ -317,7 +391,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .copied()
             .zip(written_exprs)
             .collect();
-        let (operands, binding) = match self.lower_planned_args(&planned, field_binding.field_count, scope, out) {
+        let (operands, binding) = match self.lower_planned_args(&planned, field_binding.field_count, &[], scope, out) {
             Ok(bound) => bound,
             Err(description) => {
                 return self.unsupported_operand(
@@ -444,6 +518,72 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             enum_name: declaration.name.clone(),
             variant_name: variant.name.clone(),
         })
+    }
+
+    /// Return the checked enum variant a `Type.Variant` spelling selects, for any enum the narrower fieldless and
+    /// value-enum targets do not cover.
+    ///
+    /// The base must be an unshadowed type name, and the checker must have resolved `variant_span` to a variant: the
+    /// spelling alone never selects one. `variant_span` is the member access for `Shape.Empty` and the call for
+    /// `Shape.Circle(r)`, which is where the checker records the selection. The returned target binds no payload yet.
+    pub(super) fn checked_enum_variant_target(
+        &self,
+        base: &ast::Spanned<ast::Expr>,
+        variant_name: &str,
+        variant_span: ast::Span,
+    ) -> Option<bir::EnumVariantTarget> {
+        let ast::Expr::Ident(enum_name) = &base.node else {
+            return None;
+        };
+        if self.bindings.contains_key(enum_name)
+            || !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName))
+        {
+            return None;
+        }
+        let variant_canonical = self
+            .type_info
+            .resolved_identity(variant_span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)?
+            .clone();
+        Some(bir::EnumVariantTarget {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.to_string(),
+            enum_canonical: self.type_info.resolved_identity(base.span).cloned(),
+            variant_canonical,
+            binding: bir::ArgumentBinding::resolved_positional(0),
+        })
+    }
+
+    /// Construct `Type.Variant(payload)` as an [`bir::AggregateKind::EnumVariant`], binding the payload against the
+    /// variant's checked parameters when the checker recorded them and positionally otherwise.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_enum_variant_call(
+        &mut self,
+        mut target: bir::EnumVariantTarget,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let what = format!("enum variant `{}.{}`", target.enum_name, target.variant_name);
+        let (operands, binding) = match self.bind_declared_args(&what, declared, args, scope, out) {
+            Ok(bound) => bound,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
+        target.binding = binding;
+        let ty = self.resolve_ty(span);
+        self.push_assign_temp(
+            bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), operands),
+            ty,
+            scope,
+            hir_span_value,
+            out,
+        )
     }
 
     /// Return the exact retained target for a qualified local RFC 032 value-enum member, if this spelling is safe to
@@ -674,6 +814,43 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         };
 
+        // Calling a value whose type adopts `__call__` (a `Callable1` adopter, or a type parameter bounded by one) is a
+        // call of that method, as the checker resolved it; the value is the receiver, borrowed like any receiver.
+        if let Some(dispatch) = self.type_info.resolved_operator_call(span)
+            && dispatch.kind == ResolvedOperatorKind::Call
+        {
+            let method = dispatch.method.clone();
+            let receiver_place = self.lower_expr_to_place(callee, scope, out);
+            let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
+            let declared: Option<Vec<DeclaredSlot>> = self
+                .type_info
+                .call_site_callable_params(span)
+                .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+            let (mut operands, binding) =
+                match self.bind_declared_args(&format!("`{method}` of `{name}`"), declared, args, scope, out) {
+                    Ok(bound) => bound,
+                    Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+                };
+            let mut call_args = Vec::with_capacity(operands.len() + 1);
+            call_args.push(bir::ArgumentElement::One(receiver));
+            call_args.append(&mut operands);
+            let ty = self.resolve_ty(span);
+            return self.push_call_temp(
+                bir::Callee::Method(bir::MethodTarget {
+                    name: method,
+                    canonical: self.type_info.resolved_identity(span).cloned(),
+                    type_args: resolved_type_args,
+                    binding,
+                }),
+                call_args,
+                ty,
+                scope,
+                hir_span_value,
+                false,
+                out,
+            );
+        }
+
         if let Some(&local) = self.bindings.get(&name) {
             let local_ty = self.locals[local.index()].ty.clone();
             let IncanType::Function { params, return_type: _ } = local_ty else {
@@ -697,7 +874,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // for a later executor instead of re-deriving it from the local's source spelling.
             let place = bir::Place::from_local(local);
             let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
-            let (operands, binding) = match self.lower_planned_args(&planned, slots.len(), scope, out) {
+            let (operands, binding) = match self.lower_planned_args(
+                &planned,
+                slots.len(),
+                &slots.iter().map(|slot| slot.is_mut).collect::<Vec<bool>>(),
+                scope,
+                out,
+            ) {
                 Ok(bound) => bound,
                 Err(description) => {
                     return self.unsupported_operand(description, scope, hir_span_value, out);
@@ -752,6 +935,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
                 name,
                 direct_call_id: declaration.direct_call_id,
                 canonical: declaration.canonical,
@@ -824,6 +1008,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         Some(self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
                 name: display_name,
                 direct_call_id: None,
                 canonical: Some(canonical),
@@ -899,6 +1084,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // The declaration lives in another module, so it has no span identity in this one. `canonical` is the
             // fact that survives the boundary, and it is the only one a consumer may dispatch on here.
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
                 name: name.to_string(),
                 direct_call_id: None,
                 canonical: Some(canonical),
@@ -948,25 +1134,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
-        if self.type_info.resolved_identity(recv.span).is_some_and(|identity| {
-            identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
-                && matches!(
-                    &identity.kind,
-                    SemanticSourceTargetKind::Model
-                        | SemanticSourceTargetKind::Class
-                        | SemanticSourceTargetKind::Newtype
-                        | SemanticSourceTargetKind::Rusttype
-                        | SemanticSourceTargetKind::Enum
-                        | SemanticSourceTargetKind::TypeAlias
-                        | SemanticSourceTargetKind::Trait
-                )
-        }) {
-            return self.unsupported_operand(
-                format!("static member `{name}` on a type has no Body IR value representation"),
-                scope,
-                hir_span_value,
-                out,
-            );
+        if self
+            .type_info
+            .resolved_identity(recv.span)
+            .is_some_and(|identity| static_receiver_type(recv, Some(identity)).is_some())
+        {
+            return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,
@@ -1037,6 +1210,91 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 binding,
             }),
             call_args,
+            ty,
+            scope,
+            hir_span_value,
+            false,
+            out,
+        )
+    }
+
+    /// Lower `Type.method(args)`, a call to a type's static method, as a direct call to the method's body.
+    ///
+    /// A static method has no receiver, so it is called exactly like a function: the checker's selected method is
+    /// the canonical identity, and when that method is declared in this module its declaration span is the
+    /// `direct_call_id` the method's own [`bir::Body`] carries. A selection that is not a method (an enum variant
+    /// constructor, say, or a member the checker did not resolve) refuses rather than being called by its spelling.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_static_method_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
+            return self.lower_enum_variant_call(target, args, span, scope, out);
+        }
+        let spelling = match &recv.node {
+            ast::Expr::Ident(owner) => format!("{owner}.{name}"),
+            _ => name.to_string(),
+        };
+        let canonical = self
+            .type_info
+            .resolved_identity(span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Method)
+            .cloned();
+        let Some(canonical) = canonical else {
+            return self.unsupported_operand(
+                format!("static member `{spelling}` without a resolved method declaration"),
+                scope,
+                hir_span_value,
+                out,
+            );
+        };
+        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+            Ok(resolved_type_args) => resolved_type_args,
+            Err(_) => {
+                return self.unsupported_operand(
+                    "method call with unresolved explicit type arguments".to_string(),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
+            }
+        };
+        let direct_call_id = self
+            .type_info
+            .declarations
+            .method_bindings_by_span
+            .iter()
+            .find(|(_, binding)| binding.identity.as_ref() == Some(&canonical))
+            .map(|((start, end), _)| CompilerNodeId::declaration_span(self.module_identity, *start, *end));
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let (operands, binding) =
+            match self.bind_declared_args(&format!("static method `{spelling}`"), declared, args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+            };
+        let ty = self.resolve_ty(span);
+        self.push_call_temp(
+            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: static_receiver_type(recv, self.type_info.resolved_identity(recv.span)),
+                name: spelling,
+                direct_call_id,
+                canonical: Some(canonical),
+                builtin: None,
+                type_args: resolved_type_args,
+                binding,
+            })),
+            operands,
             ty,
             scope,
             hir_span_value,

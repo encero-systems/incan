@@ -1,0 +1,173 @@
+# behavior: functions, model methods and module paths reached locally, imported, aliased and re-exported through a facade, each from function and block scope (parity corpus identity matrix)
+# expect-stdout:
+#   1
+#   1
+#   3
+#   3
+#   5
+#   5
+#   7
+#   7
+#   9
+#   10
+#   11
+#   12
+#   13
+#   14
+#   15
+#   16
+#   17
+#   17
+#   19
+#   19
+
+"""Functions, model methods and module paths reached locally, imported, aliased and re-exported through a facade, each from function and block scope (parity corpus identity matrix)."""
+from identity_provider import ImportedMember, imported_lexical
+from identity_provider import AliasedMember as MemberAlias, aliased_lexical as lexical_alias
+from identity_facade import RelayedMember as MemberReexport, relayed_lexical as lexical_reexport
+import identity_provider
+import identity_provider as provider_alias
+
+def local_lexical(value: int) -> int:
+    """Return `value` for this fixture."""
+    return value
+
+model LocalMember:
+    """Hold value used by this fixture."""
+    value: int
+
+    def read(self) -> int:
+        """Return `self.value` for this fixture."""
+        return self.value
+
+def local_lexical_function_scope() -> int:
+    """Return the fixture expression `local_lexical(1)`."""
+    return local_lexical(1)
+
+def local_lexical_block_scope() -> int:
+    """Resolve the local lexical block scope call and return its value."""
+    if true:
+        return local_lexical(1)
+    return 0
+
+def imported_lexical_function_scope() -> int:
+    """Return the fixture expression `imported_lexical(3)`."""
+    return imported_lexical(3)
+
+def imported_lexical_block_scope() -> int:
+    """Resolve the imported lexical block scope call and return its value."""
+    if true:
+        return imported_lexical(3)
+    return 0
+
+def aliased_lexical_function_scope() -> int:
+    """Return the fixture expression `lexical_alias(5)`."""
+    return lexical_alias(5)
+
+def aliased_lexical_block_scope() -> int:
+    """Resolve the aliased lexical block scope call and return its value."""
+    if true:
+        return lexical_alias(5)
+    return 0
+
+def reexported_lexical_function_scope() -> int:
+    """Return the fixture expression `lexical_reexport(7)`."""
+    return lexical_reexport(7)
+
+def reexported_lexical_block_scope() -> int:
+    """Resolve the reexported lexical block scope call and return its value."""
+    if true:
+        return lexical_reexport(7)
+    return 0
+
+def local_member_function_scope() -> int:
+    """Resolve the local member function scope call and return its value."""
+    local = LocalMember(value=9)
+    return local.read()
+
+def local_member_block_scope() -> int:
+    """Resolve the local member block scope call and return its value."""
+    local = LocalMember(value=10)
+    if true:
+        return local.read()
+    return 0
+
+def imported_member_function_scope() -> int:
+    """Resolve the imported member function scope call and return its value."""
+    imported = ImportedMember(value=11)
+    return imported.read()
+
+def imported_member_block_scope() -> int:
+    """Resolve the imported member block scope call and return its value."""
+    imported = ImportedMember(value=12)
+    if true:
+        return imported.read()
+    return 0
+
+def aliased_member_function_scope() -> int:
+    """Resolve the aliased member function scope call and return its value."""
+    aliased = MemberAlias(value=13)
+    return aliased.read()
+
+def aliased_member_block_scope() -> int:
+    """Resolve the aliased member block scope call and return its value."""
+    aliased = MemberAlias(value=14)
+    if true:
+        return aliased.read()
+    return 0
+
+def reexported_member_function_scope() -> int:
+    """Resolve the reexported member function scope call and return its value."""
+    relayed = MemberReexport(value=15)
+    return relayed.read()
+
+def reexported_member_block_scope() -> int:
+    """Resolve the reexported member block scope call and return its value."""
+    relayed = MemberReexport(value=16)
+    if true:
+        return relayed.read()
+    return 0
+
+def imported_path_function_scope() -> int:
+    """Return the fixture expression `identity_provider.imported_path(17)`."""
+    return identity_provider.imported_path(17)
+
+def imported_path_block_scope() -> int:
+    """Resolve the imported path block scope call and return its value."""
+    if true:
+        return identity_provider.imported_path(17)
+    return 0
+
+def aliased_path_function_scope() -> int:
+    """Return the fixture expression `provider_alias.aliased_path(19)`."""
+    return provider_alias.aliased_path(19)
+
+def aliased_path_block_scope() -> int:
+    """Resolve the aliased path block scope call and return its value."""
+    if true:
+        return provider_alias.aliased_path(19)
+    return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(local_lexical_function_scope())
+    println(local_lexical_block_scope())
+    println(imported_lexical_function_scope())
+    println(imported_lexical_block_scope())
+    println(aliased_lexical_function_scope())
+    println(aliased_lexical_block_scope())
+    println(reexported_lexical_function_scope())
+    println(reexported_lexical_block_scope())
+    println(local_member_function_scope())
+    println(local_member_block_scope())
+    println(imported_member_function_scope())
+    println(imported_member_block_scope())
+    println(aliased_member_function_scope())
+    println(aliased_member_block_scope())
+    println(reexported_member_function_scope())
+    println(reexported_member_block_scope())
+    println(imported_path_function_scope())
+    println(imported_path_block_scope())
+    println(aliased_path_function_scope())
+    println(aliased_path_block_scope())

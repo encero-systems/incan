@@ -1,0 +1,8 @@
+# behavior: hashed non membership operations remain refused, as the legacy route runs it
+# expect-stdout:
+#   {1}
+
+"""Hashed non membership operations remain refused, as the legacy route runs it."""
+def main() -> None:
+  """Print the fixture values in the expected order."""
+  println({1})

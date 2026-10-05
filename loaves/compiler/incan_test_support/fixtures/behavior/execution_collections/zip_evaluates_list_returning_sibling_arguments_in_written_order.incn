@@ -1,0 +1,31 @@
+# behavior: zip evaluates list returning sibling arguments in written order
+# expect-stdout:
+#   left
+#   right
+#   pair
+#   10
+
+
+"""Zip evaluates list returning sibling arguments in written order."""
+def left_values() -> list[int]:
+  """Print the argument-order marker and return the list."""
+  println("left")
+  return [10]
+
+def right_labels() -> list[str]:
+  """Print the argument-order marker and return the list."""
+  println("right")
+  return ["ten"]
+
+def zip_written_order() -> int:
+  """Evaluate list-producing arguments in written order and score their pairs."""
+  mut total = 0
+  for value, label in zip(left_values(), right_labels()):
+    println("pair")
+    total += value
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(zip_written_order())

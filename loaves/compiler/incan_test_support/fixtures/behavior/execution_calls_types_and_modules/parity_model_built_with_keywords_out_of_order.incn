@@ -1,0 +1,23 @@
+# behavior: a model built with keyword arguments in another order is passed and its fields read (parity corpus row replacement-body-v0-013)
+# expect-stdout:
+#   42
+
+"""A model built with keyword arguments in another order is passed and its fields read (parity corpus row replacement-body-v0-013)."""
+model Pair:
+    """Hold left and right used by this fixture."""
+    left: int
+    right: int
+
+def score(pair: Pair) -> int:
+    """Return the fixture expression `pair.left + pair.right`."""
+    return pair.left + pair.right
+
+def nominal_values() -> int:
+    """Construct a model with reordered keyword arguments and score its fields."""
+    pair = Pair(right=2, left=40)
+    return score(pair)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(nominal_values())

@@ -1,0 +1,16 @@
+# behavior: iterates any list of representable elements
+# expect-stdout:
+#   2
+
+"""Iterates any list of representable elements."""
+def program_result() -> int:
+  """Traverse `for value in [[1], [2, 3]]` and return `seen`."""
+  mut seen = 0
+  for value in [[1], [2, 3]]:
+    seen += 1
+  return seen
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

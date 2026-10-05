@@ -1,0 +1,21 @@
+# behavior: still refuses iteration over an unrepresentable element, as the legacy route runs it
+# expect-stdout:
+#   1
+
+
+"""Still refuses iteration over an unrepresentable element, as the legacy route runs it."""
+model Point:
+  """Hold x used by this fixture."""
+  x: int
+
+def program_result() -> int:
+  """Traverse `for value in [Point(x=1)]` and return `seen`."""
+  mut seen = 0
+  for value in [Point(x=1)]:
+    seen += 1
+  return seen
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

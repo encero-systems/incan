@@ -1,0 +1,16 @@
+# behavior: a generator expression mapped and filtered through stored closures is collected (parity corpus row replacement-body-v0-011)
+# expect-stdout:
+#   34
+
+"""A generator expression mapped and filtered through stored closures is collected (parity corpus row replacement-body-v0-011)."""
+def generator_adapters() -> int:
+    """Map and filter generated values with stored closures, then encode them."""
+    increment: (int) -> int = (value) => value + 1
+    accepted: (int) -> bool = (value) => value > 2
+    values = (value for value in range(1, 5)).map(increment).filter(accepted).collect()
+    return values[0] * 10 + values[1]
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(generator_adapters())

@@ -1,0 +1,12 @@
+# behavior: a u8 value passed into a function declared in another module comes back unchanged
+# expect-stdout:
+#   41
+
+"""A u8 value passed into a function declared in another module comes back unchanged."""
+from helper import widen
+
+
+def main() -> None:
+    """Print `widen(start)` after preparing the fixture inputs."""
+    start: u8 = 41
+    println(widen(start))

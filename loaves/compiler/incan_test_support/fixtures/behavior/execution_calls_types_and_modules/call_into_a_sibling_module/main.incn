@@ -1,0 +1,11 @@
+# behavior: a call into a sibling module returns its result
+# expect-stdout:
+#   42
+
+"""A call into a sibling module returns its result."""
+from helper import bump
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(bump(41))

@@ -1,0 +1,11 @@
+# behavior: a local that shadows an imported module name is a value, so a method the module declares is not found on it
+# expect-diagnostic: INCAN-T0001
+
+"""A local that shadows an imported module name is a value, so a method the module declares is not found on it."""
+import helper
+
+
+def main() -> int:
+    """Return `helper.bump()` from the entrypoint."""
+    helper = 41
+    return helper.bump()

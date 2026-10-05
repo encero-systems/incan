@@ -1,0 +1,20 @@
+# behavior: a u8 widened to u16 at an assignment and passed to a u16 parameter keeps its value
+# expect-stdout:
+#   255
+
+"""A u8 widened to u16 at an assignment and passed to a u16 parameter keeps its value."""
+def accept_wide(value: u16) -> u16:
+    """Return `value` for this fixture."""
+    return value
+
+
+def widen_integer(value: u8) -> u16:
+    """Widen a u8 value to u16 and pass it to the typed consumer."""
+    widened: u16 = value
+    return accept_wide(widened)
+
+
+def main() -> None:
+    """Print `widen_integer(value)` after preparing the fixture inputs."""
+    value: u8 = 255
+    println(widen_integer(value))

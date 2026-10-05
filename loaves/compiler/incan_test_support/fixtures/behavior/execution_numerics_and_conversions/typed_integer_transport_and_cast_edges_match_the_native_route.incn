@@ -1,0 +1,19 @@
+# behavior: typed integer transport and cast edges match the native route
+# expect-stdout:
+#   -170141183460469231731687303715884105728 0 -1 -1.7014118346046923e+38 3.402823669209385e+38
+
+"""Typed integer transport and cast edges match the native route."""
+def minimum() -> i128:
+    """Return the fixture expression `-170141183460469231731687303715884105728`."""
+    return -170141183460469231731687303715884105728
+
+def render() -> str:
+    """Render typed integer extremes and their numeric casts."""
+    low = minimum()
+    wide: u128 = 340282366920938463463374607431768211455
+    return f"{low} {int(low)} {int(wide)} {float(low)} {float(wide)}"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(render())

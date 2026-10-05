@@ -31,9 +31,9 @@ Start from the [design-record template](TEMPLATE.md) when proposing a new decisi
 
 ## Records
 
-| ID                                                       | Decision                                                                         | Status   | Review point  |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------- | -------- | ------------- |
-| [DD-0001](0001_gpu_target_capability_deferred.md)        | Defer GPU target capability and graphics contracts                               | Accepted | v0.8 planning |
-| [DD-0002](0002_single_pinned_rust_version.md)            | Pin one Rust version and one generated-project edition                           | Accepted | v0.7 planning |
-| [DD-0003](0003_replacement_program_output_contract.md)   | Deliver replacement program output during execution and bind it into the receipt | Draft    | v0.6          |
-| [DD-0004](0004_native_route_through_the_pinned_rustc.md) | Isolate the native compiler driver in a pinned Loaf                              | Accepted | v0.6          |
+| ID                                                       | Decision                                                                         | Status    | Review point  |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------- | --------- | ------------- |
+| [DD-0001](0001_gpu_target_capability_deferred.md)        | Defer GPU target capability and graphics contracts                               | Accepted  | v0.8 planning |
+| [DD-0002](0002_single_pinned_rust_version.md)            | Pin one Rust version and one generated-project edition                           | Accepted  | v0.7 planning |
+| [DD-0003](0003_replacement_program_output_contract.md)   | Deliver replacement program output during execution and bind it into the receipt | Withdrawn | v0.6          |
+| [DD-0004](0004_native_route_through_the_pinned_rustc.md) | Isolate the native compiler driver in a pinned Loaf                              | Accepted  | v0.6          |

@@ -3,17 +3,16 @@
 //! fixture builders and artifact readers the roots compose.
 //!
 //! This crate is a dev-dependency of every ring whose integration tests launch the compiler or read the checkout, so a
-//! root can live in the package it exercises and still share one harness. It links ring crates only; the parity
-//! corpus's two helpers (`parity_corpus`, `shadow_capability`) live beside the driver's roots, which are the only ones
-//! that use them. The behavior-fixture family (`fixtures/behavior/`, run by `behavior_fixtures`) is the route-agnostic
-//! twin corpus of the #1561 cutover.
+//! root can live in the package it exercises and still share one harness. It links ring crates only. The
+//! behavior-fixture family (`fixtures/behavior/`, run by `behavior_fixtures`) is the route-agnostic twin corpus of the
+//! #1561 cutover.
 
 pub mod behavior_fixtures;
+pub mod behavior_roots;
 pub mod builtin_stdlib;
 pub mod canonical_projection;
 pub mod cli_project;
 pub mod emitted_symbol_artifact;
-pub mod package_boundary_probe;
 pub mod package_project;
 
 use std::path::{Path, PathBuf};

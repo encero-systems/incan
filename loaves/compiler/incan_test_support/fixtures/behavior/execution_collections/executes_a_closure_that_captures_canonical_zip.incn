@@ -1,0 +1,18 @@
+# behavior: executes a closure that captures canonical zip
+# expect-stdout:
+#   9
+
+
+"""Executes a closure that captures canonical zip."""
+def captured_zip_closure() -> int:
+  """Collect zipped values captured by a closure and return the first sum."""
+  outer_pairs = zip([4], [5])
+  closure_values: () -> list[int] = () => (captured_left + captured_right for captured_left, captured_right in outer_pairs).collect()
+  captured_values = closure_values()
+  captured_first = captured_values[0]
+  return captured_first
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(captured_zip_closure())

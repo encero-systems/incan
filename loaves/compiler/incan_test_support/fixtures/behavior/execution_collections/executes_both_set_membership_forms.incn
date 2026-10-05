@@ -1,0 +1,17 @@
+# behavior: executes both set membership forms
+# expect-stdout:
+#   true
+
+
+"""Executes both set membership forms."""
+def program_result() -> bool:
+  """Check positive and negative membership in the constructed set."""
+  xs = {1, 2}
+  if 3 not in xs:
+    return 1 in xs
+  return false
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

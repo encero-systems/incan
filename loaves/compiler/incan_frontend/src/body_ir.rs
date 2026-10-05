@@ -263,6 +263,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         local_value_enum_declarations: &local_value_enum_declarations,
         module_identity: &module_identity,
         provider_operations,
+        rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
     let mut bodies = program
         .declarations
@@ -399,6 +400,8 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     module_identity: &'source str,
     /// Provider operations this compilation admits, keyed by canonical identity rather than by any spelling.
     provider_operations: &'source ProviderOperationCatalog,
+    /// The file's checked `rust.module(...)` path, which an `@rust.extern` declaration delegates into (#2023).
+    rust_module: Option<&'source str>,
 }
 
 /// Source facts a synthesized local partial needs for one target parameter.
@@ -519,6 +522,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// Locals whose value has been moved out via a full-value (non-projected) read, so scope-exit drop insertion
     /// skips them.
     moved_out: HashSet<bir::LocalId>,
+    /// `mut` parameters of non-`Copy` type: the callee borrows the caller's value (#2022), so it never drops one.
+    pub(super) borrowed_parameters: HashSet<bir::LocalId>,
     /// Locals whose current value was built by `lower_range_value` or copied from another such local. A checked
     /// `Range[T]` spelling alone is not a layout contract: parameters, call results, imports, and user
     /// declarations can use it without the four-field `AggregateKind::Range` representation. Only this
@@ -532,6 +537,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// `break value` today, or a `loop:` expression's own synthetic exit checks). Always non-empty while lowering
     /// any loop body, so [`Self::lower_break`] can look up the innermost target with `.last()`.
     loop_break_targets: Vec<Option<bir::LocalId>>,
+    /// Checked operations that run before `continue` reaches the innermost loop header. Counting ranges retain their
+    /// increment here; ordinary loops retain an empty sequence.
+    loop_continue_actions: Vec<Vec<bir::Statement>>,
     runtime_requirements: Vec<AbiV0RuntimeRequirement>,
     panic_facts: Vec<bir::PanicFact>,
     next_local: u32,
@@ -558,8 +566,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             moved_out: HashSet::new(),
+            borrowed_parameters: HashSet::new(),
             materialized_range_locals: HashSet::new(),
             loop_break_targets: Vec::new(),
+            loop_continue_actions: Vec::new(),
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             next_local: 0,
@@ -719,6 +729,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
+    /// The storage a `module.NAME` member access reads, when its base is a module binding and the checker resolved the
+    /// member to a `const` or `static` (`math.PI`, `helpers.DEFAULT_LABEL`).
+    ///
+    /// A module binding is a namespace, not a value, so the access is not a field of anything: it is the member's own
+    /// canonical global place, the same one a bare imported name would read.
+    fn module_member_place(&self, base: &ast::Spanned<ast::Expr>, access_span: ast::Span) -> Option<bir::Place> {
+        if !self
+            .type_info
+            .resolved_identity(base.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+        {
+            return None;
+        }
+        let identity = self.type_info.resolved_identity(access_span)?.clone();
+        self.global_place(identity, self.resolve_ty(access_span))
+            .map(bir::Place::from_global)
+    }
+
     /// Select a canonical module-storage root when `identity` denotes a `const` or `static`.
     fn global_place(&self, identity: CanonicalSymbolId, ty: IncanType) -> Option<bir::GlobalPlace> {
         let write_policy = match identity.kind {
@@ -773,6 +801,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// boundary, so moving a non-Copy value out of it would not even compile — the only sound way to produce an
     /// owned value from it is to clone (mirrors the existing backend ownership planner's treatment of non-Copy
     /// `self` reads in `loaves/compiler/incan_emit/src/ownership.rs`, which this module's own docs cite as precedent).
+    /// A bare read of a `mut` parameter in [`Self::borrowed_parameters`] never moves for the same reason: the caller
+    /// owns that storage and the callee holds a mutable borrow of it (RFC 129), so an owned value read from it is a
+    /// clone, and passing it on to another `mut` parameter turns that clone into a reborrow.
     /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
     /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A local with no tracked
     /// countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
@@ -802,7 +833,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 false,
             );
         };
-        if self.is_receiver_local(local) {
+        if self.is_receiver_local(local) || self.borrowed_parameters.contains(&local) {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
             } else {
@@ -874,7 +905,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|local| local.id)
             .collect();
         for id in candidates {
-            if self.moved_out.contains(&id) {
+            if self.moved_out.contains(&id) || self.borrowed_parameters.contains(&id) {
                 continue;
             }
             stmts.push(bir::Statement {

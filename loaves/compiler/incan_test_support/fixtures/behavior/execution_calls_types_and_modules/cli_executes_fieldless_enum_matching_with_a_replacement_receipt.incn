@@ -1,0 +1,26 @@
+# behavior: cli executes fieldless enum matching with a replacement receipt
+# expect-stdout:
+#   42
+
+"""Cli executes fieldless enum matching with a replacement receipt."""
+enum Signal:
+  """Represent the Ready, Stop alternatives in this fixture."""
+  Ready
+  Stop
+
+def program_result() -> int:
+  """Return the fixture expression `classify(Signal.Ready)`."""
+  return classify(Signal.Ready)
+
+def classify(signal: Signal) -> int:
+  """Match the fixture alternatives and return the selected result."""
+  match signal:
+    case Signal.Ready:
+      return 42
+    case Signal.Stop:
+      return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

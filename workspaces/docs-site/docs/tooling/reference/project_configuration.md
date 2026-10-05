@@ -86,7 +86,7 @@ requires-sdk-components = ["stdlib-web"]
 
 Compact and expanded declarations normalize into the same graph. A feature declaration uses one form or the other, not both. `default` is an ordinary feature name selected automatically unless the command or dependency edge disables defaults.
 
-Use `when feature("name"):` to attach a positive feature requirement to source declarations. See [Conditional compilation](../../language/reference/conditional_compilation.md) and [SDK components and package features](sdk_components_and_package_features.md).
+A positive feature requirement on a source declaration is spelled `when feature("name"):`. See [Conditional compilation](../../language/reference/conditional_compilation.md) and [SDK components and package features](sdk_components_and_package_features.md).
 
 ## `[sdk]`
 
@@ -167,7 +167,6 @@ headers = ["interop/include/bridge.h"]
 output = "bridge_shim"
 ```
 
-The section has one field:
 The section accepts:
 
 | Field | Type | Description |
@@ -224,7 +223,6 @@ Each `[[interop.c.targets.shims]]` entry accepts:
 
 All declared paths must be normalized relative paths to regular package files. Absolute paths, parent traversal, symlinks, directories, backslashes, and ambient search paths are rejected.
 
-`incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. This key contains resolved Oven facts and is versioned by the lockfile format. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies the lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it does not invoke Cargo or search host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
 `incan lock` writes normalized requirements and content hashes for package-owned files under the versioned `semantic.oven.interop` lock key. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
 
 For an end-to-end binding example, see [Checked C bindings](../../language/how-to/checked_c_bindings.md#freeze-oven-interop-requirements-for-a-target).
@@ -262,10 +260,9 @@ Fields:
 
 Env-level `requires-incan` narrows the project requirement for that environment. `incan env show <env>` and `incan env run <env> <script> --dry-run` display the effective requirement and whether the active compiler satisfies it; actual `incan env run` execution rejects unsatisfied constraints before spawning the script.
 
-Environment matrices are unsupported. Named environments may declare `requires-incan`.
 Environment matrices are not accepted. Named environments may declare `requires-incan`.
 
-Use the environment with:
+Environment command forms:
 
 ```bash
 incan env list
@@ -301,7 +298,7 @@ Optional companion crate configuration for library-defined DSL metadata.
 crate = "vocab_companion"
 ```
 
-Use this only for library projects that export vocab entries. Projects without custom library DSLs can omit the section entirely.
+This section is optional and applies to library projects exporting vocab entries.
 
 ### Fields
 
@@ -334,6 +331,7 @@ Incan dependency table fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `loaf` | string | Sibling-Loaf package name for a Rust-authored consumer edge. It must match the dependency key. |
 | `path` | string | Local library project path, relative to `loaf.toml`. |
 | `optional` | bool | Keep the dependency edge inactive until a package feature selects `dep:<name>`. |
 | `default-features` | bool | Select the dependency's `default` feature; defaults to `true`. |
@@ -355,6 +353,35 @@ path = "src/main.rs"
 | --- | --- | --- |
 | `name` | string | Executable name; unique among the Loaf's binary roles and limited to ASCII letters, digits, `-`, and `_`. |
 | `path` | string | Relative `.rs` source path inside the project and inside `[rust.source].root` when that root is declared; unique among the Loaf's binary roles. |
+| `unstable_features` | list of strings | Default `[]`; the only accepted capability is `rustc_private`, once. Requires both declarations below on the same unit. |
+| `toolchain_components` | list of strings | Default `[]`; the only accepted component is `rustc-dev`, once. |
+| `sysroot_dependencies` | list of strings | Default `[]`; the only accepted root is `rustc_driver`, once. |
+
+A unit requesting compiler internals declares all three capabilities together:
+
+```toml
+[[rust.bin]]
+name = "incan-rustc-driver"
+path = "src/main.rs"
+unstable_features = ["rustc_private"]
+toolchain_components = ["rustc-dev"]
+sysroot_dependencies = ["rustc_driver"]
+```
+
+Oven authorizes this selection only with pinned rustc 1.98.0 and installed rustc-dev metadata and driver library. Unknown, repeated or incomplete selections are refused. The executable root must name `extern crate rustc_driver`. Units without the declaration receive no unstable permission.
+
+For the first driver build, Oven strips ambient `RUSTC_BOOTSTRAP`, then sets it to this unit's normalized crate name on this invocation only. The invocation has a matching explicit `--crate-name` and `-Zallow-features=rustc_private`. The receipt identity records the capability, crate name, feature allowlist, bootstrap-derived `Cheat` session permission, pinned loader policy, complete compiler identity, canonical sysroot and driver library path and digest. Fact-record environments remain unable to declare `RUSTC_BOOTSTRAP`.
+
+A Rust unit's declared `[rust-dependencies]` closure is composed with its sibling Incan caller closure during the explicit bake. Dependency compilation does not receive the driver's unstable grant.
+
+A Rust-only project may consume a sibling Incan library with this dependency form:
+
+```toml
+[dependencies]
+policy = { loaf = "policy", path = "../policy" }
+```
+
+`incan oven bake --project <rust-project>` scans each Rust unit for `policy::caller::incan::<name>` paths, validates those names against the sibling library's checked public exports, emits only that caller projection, and builds both the Incan library and Rust binary through receipted direct `rustc`. The selected caller surface supports scalars, `list`, `Option`, `Result`, public-field models, positional-payload enums, and functions composed from those types. Missing, private, generic, asynchronous, callable-valued, Rust-native, or otherwise unsupported exports are refused by name before Rust compilation.
 
 A project with at least one `[[rust.bin]]` entry and no `[project.scripts].main` uses these roles for a plain `incan build`. A project with a `main` script builds that Incan entrypoint instead.
 
@@ -407,7 +434,6 @@ criterion = "0.5"
 test_helpers = { path = "../test-helpers" }
 ```
 
-Importing a dev-only crate from production code is refused at compile time.
 Importing a dev-only crate from production code is a compile-time error that names the crate and requires it to move to `[rust-dependencies]` or remain test-only.
 
 **Overlap rules**: If the same crate appears in both `[rust-dependencies]` and `[rust-dev-dependencies]`, the version, source, and default-features must match. Features are unioned, and the crate is treated as a normal dependency.
@@ -485,7 +511,6 @@ Each `arguments` entry has exactly one of `literal`, `input`, or `output`. Each 
 
 ## Legacy alias tables
 
-`[rust.dependencies]` and `[rust.dev-dependencies]` are aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`.
 `[rust.dependencies]` and `[rust.dev-dependencies]` are aliases for the canonical `[rust-dependencies]` and `[rust-dev-dependencies]` tables.
 
 ## Dependency sources
@@ -511,8 +536,6 @@ bleeding_edge = { git = "https://github.com/company/lib.git", branch = "main" }
 pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 ```
 
-!!! warning "Strict mode and git branches"
-    `--locked` and `--frozen` reject git dependencies using `branch = "..."`. Git dependencies in these modes require `tag` or `rev`.
 With `--locked` or `--frozen`, a git dependency using `branch = "..."` is rejected; the accepted immutable selectors are `tag` and `rev`.
 
 ### Path
@@ -526,14 +549,14 @@ shared_utils = { path = "../shared-utils" }
 
 ### Package renames
 
-Use `package` to use a different crate name than the dependency key. For example:
+`package` names the upstream crate when the dependency key is an alias:
 
 ```toml
 [rust-dependencies]
 json = { package = "serde_json", version = "1.0" }
 ```
 
-This lets you `import rust::json` instead of `import rust::serde_json`.
+The declared alias is the import name: `import rust::json`.
 
 ## Complete example
 

@@ -1,0 +1,16 @@
+# behavior: an f32 value passed through a function prints the same before and after the call, without widening
+# expect-stdout:
+#   1.2345679
+#   1.2345679
+
+"""An f32 value passed through a function prints the same before and after the call, without widening."""
+def identity(value: f32) -> f32:
+    """Print the typed argument and return it unchanged."""
+    println(value)
+    return value
+
+
+def main() -> None:
+    """Print `identity(value)` after preparing the fixture inputs."""
+    value: f32 = 1.2345679
+    println(identity(value))

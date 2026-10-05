@@ -1,0 +1,18 @@
+# behavior: preserves typed numeric values in print and fstring paths
+# expect-stdout:
+#   1.2345679
+
+
+"""Preserves typed numeric values in print and fstring paths."""
+def identity(value: f32) -> f32:
+  """Return `value` for this fixture."""
+  return value
+
+def program_result() -> str:
+  """Return the fixture expression `f"{identity(1.23456789)}"`."""
+  return f"{identity(1.23456789)}"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

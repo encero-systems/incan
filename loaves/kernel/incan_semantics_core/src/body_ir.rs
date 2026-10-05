@@ -42,7 +42,8 @@
 use std::fmt::Write as _;
 
 use incan_lang::errors::ErrorKind;
-use incan_lang::lang::builtins::BuiltinFnId;
+/// The compiler-owned builtin identity carried by checked named call targets.
+pub use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::errors;
 use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::numerics::NumericTypeId;
@@ -360,6 +361,29 @@ pub struct Body {
     /// [`StatementKind::Yield`] would therefore be wrong, not merely a different implementation. This is the first
     /// declaration-level fact `Body` carries; see [`Self::is_generator`]'s docs for why that one stayed derived.
     pub is_async: bool,
+    /// The Rust function this body delegates to, when the source declaration is `@rust.extern` (#2023).
+    ///
+    /// An extern declaration's source body is a `...` placeholder: what runs is the Rust item of the same name in the
+    /// module the file binds with `rust.module(...)`. Such a body carries this fact and an empty [`Self::block`], so
+    /// there is nothing a consumer could execute by mistake. A consumer either calls the named Rust item or refuses
+    /// the call; it must never run the empty block as if it were the function.
+    pub extern_delegation: Option<ExternDelegation>,
+}
+
+/// The Rust item an `@rust.extern` declaration delegates to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternDelegation {
+    /// The checked `rust.module(...)` path of the declaring file, such as `incan_std_testing`.
+    pub rust_module: String,
+    /// The Rust item's name inside that module; the source declaration's own name.
+    pub rust_item: String,
+}
+
+impl ExternDelegation {
+    /// The delegated item's Rust path, `module::item`.
+    pub fn rust_path(&self) -> String {
+        format!("{}::{}", self.rust_module, self.rust_item)
+    }
 }
 
 impl Body {
@@ -430,6 +454,9 @@ impl Body {
                 let _ = writeln!(&mut out, "    {}", param.render_snapshot());
             }
         }
+        if let Some(delegation) = &self.extern_delegation {
+            let _ = writeln!(&mut out, "  extern rust {}", delegation.rust_path());
+        }
         render_block(&mut out, &self.block, 1);
         if !self.runtime_requirements.is_empty() {
             let _ = writeln!(&mut out, "  runtime_requirements:");
@@ -444,6 +471,88 @@ impl Body {
             }
         }
         out
+    }
+}
+
+impl Body {
+    /// The description of the first construct Body IR could not represent in this body, or `None` when it
+    /// represents all of it.
+    ///
+    /// A gap is an `unsupported(..)` statement or a parameter default Body IR could not source, found anywhere in the
+    /// body: nested `if`/`loop`/`race` blocks, `match` arm guards and bodies, closure and generator bodies, and the
+    /// statements of a deferred default computation, including closures' own parameters. This is the fact a consumer
+    /// of Body IR needs before it commits to a body, and it does not depend on what any one consumer can execute.
+    pub fn first_representation_gap(&self) -> Option<&str> {
+        params_representation_gap(&self.params).or_else(|| statements_representation_gap(&self.block.stmts))
+    }
+}
+
+/// The first unrepresentable default among `params`, including inside a sourced default's own statements.
+fn params_representation_gap(params: &[CallableParam]) -> Option<&str> {
+    params.iter().find_map(|param| match &param.default {
+        CallableParamDefault::Unsupported { description, .. } => Some(description.as_str()),
+        CallableParamDefault::Source(computation) => statements_representation_gap(&computation.stmts),
+        CallableParamDefault::Required | CallableParamDefault::PartialPreset { .. } => None,
+    })
+}
+
+/// The first gap in a statement sequence; see [`Body::first_representation_gap`].
+fn statements_representation_gap(stmts: &[Statement]) -> Option<&str> {
+    stmts.iter().find_map(statement_representation_gap)
+}
+
+/// The first gap in one statement, descending into every nested block and rvalue that holds statements.
+fn statement_representation_gap(stmt: &Statement) -> Option<&str> {
+    match &stmt.kind {
+        StatementKind::Unsupported { description } => Some(description.as_str()),
+        StatementKind::Assign { rvalue, .. } => rvalue_representation_gap(rvalue),
+        StatementKind::If {
+            then_block, else_block, ..
+        } => statements_representation_gap(&then_block.stmts).or_else(|| {
+            else_block
+                .as_ref()
+                .and_then(|block| statements_representation_gap(&block.stmts))
+        }),
+        StatementKind::Loop { body } => statements_representation_gap(&body.stmts),
+        StatementKind::Race { arms, .. } => arms
+            .iter()
+            .find_map(|arm| statements_representation_gap(&arm.body.stmts)),
+        // Listed rather than matched by a wildcard: a statement kind that gains a nested block must be walked here.
+        StatementKind::Call { .. }
+        | StatementKind::Drop { .. }
+        | StatementKind::Break { .. }
+        | StatementKind::Continue
+        | StatementKind::Return { .. }
+        | StatementKind::Await { .. }
+        | StatementKind::Yield { .. }
+        | StatementKind::Assert { .. }
+        | StatementKind::Expr { .. }
+        | StatementKind::TryPropagate { .. }
+        | StatementKind::IterNext { .. } => None,
+    }
+}
+
+/// The first gap inside an rvalue: closure and generator bodies and `match` arms carry their own statements.
+fn rvalue_representation_gap(rvalue: &Rvalue) -> Option<&str> {
+    match rvalue {
+        Rvalue::Closure { params, body, .. } => {
+            params_representation_gap(params).or_else(|| statements_representation_gap(&body.stmts))
+        }
+        Rvalue::Generator { body, .. } => statements_representation_gap(&body.stmts),
+        Rvalue::Match { arms, .. } => arms.iter().find_map(|arm| {
+            statements_representation_gap(&arm.guard_stmts).or_else(|| statements_representation_gap(&arm.body_stmts))
+        }),
+        // Listed rather than matched by a wildcard, for the same reason as the statement walk.
+        Rvalue::Use(_)
+        | Rvalue::UnaryOp(..)
+        | Rvalue::BinaryOp(..)
+        | Rvalue::IsInstance { .. }
+        | Rvalue::Aggregate(..)
+        | Rvalue::Dict(_)
+        | Rvalue::ValueEnumVariant(_)
+        | Rvalue::FieldlessEnumVariant(_)
+        | Rvalue::ResultVariant(_)
+        | Rvalue::Format(_) => None,
     }
 }
 
@@ -1378,13 +1487,19 @@ pub struct CallableParam {
     pub span: HirSourceSpan,
     /// The value to use when this parameter is omitted, or the explicit reason direct evaluation is unavailable.
     pub default: CallableParamDefault,
+    /// The parameter is declared `mut` (#2022). For a non-`Copy` type the callee borrows the caller's value mutably
+    /// and its changes are visible to the caller: callers pass the argument as
+    /// [`OwnershipFact::MutBorrow`], and the callee neither owns nor drops the parameter, as the emitted route's
+    /// `&mut T` parameter does. For a `Copy` type it is a mutable local copy, so callers still pass a copy.
+    pub mutable: bool,
 }
 
 impl CallableParam {
     /// Render a deterministic maintainer-facing spelling for this parameter.
     fn render_snapshot(&self) -> String {
         format!(
-            "{}: {} local=_{} span={}..{}{}",
+            "{}{}: {} local=_{} span={}..{}{}",
+            if self.mutable { "mut " } else { "" },
             self.name,
             self.ty,
             self.local.0,
@@ -2114,6 +2229,28 @@ pub enum AggregateKind {
     /// able to read which one it is instead of having to prove where it came from.
     Range,
     Constructor(Box<ConstructorTarget>),
+    /// One variant of a source `enum`, constructed with its payload: `Shape.Circle(r)`, or `Shape.Empty` for a variant
+    /// without one.
+    ///
+    /// Operands are the payload values in declared order, none for a unit variant. This covers the enums the narrower
+    /// [`Rvalue::FieldlessEnumVariant`] and [`Rvalue::ValueEnumVariant`] forms do not. A consumer identifies the
+    /// variant by [`EnumVariantTarget::variant_canonical`], never by its spelling.
+    EnumVariant(Box<EnumVariantTarget>),
+}
+
+/// The enum and variant one [`AggregateKind::EnumVariant`] constructs, as the checker selected them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumVariantTarget {
+    /// The enum's declaration name, retained for diagnostics and malformed-Body-IR cross-checks.
+    pub enum_name: String,
+    /// The variant's declaration name, retained for diagnostics and malformed-Body-IR cross-checks.
+    pub variant_name: String,
+    /// Checker-minted identity of the owning enum, when the reference site retained one.
+    pub enum_canonical: Option<CanonicalSymbolId>,
+    /// Checker-minted identity of the selected variant: the dispatch key.
+    pub variant_canonical: CanonicalSymbolId,
+    /// Resolved binding of the aggregate's operands to the variant's declared payload positions.
+    pub binding: ArgumentBinding,
 }
 
 impl AggregateKind {
@@ -2148,6 +2285,13 @@ impl AggregateKind {
             Self::Set => "set".to_string(),
             Self::Range => "range".to_string(),
             Self::Constructor(target) => format!("constructor({}){}", target.name, target.binding.render_snapshot()),
+            Self::EnumVariant(target) => format!(
+                "enum_variant({}::{} variant_canonical={}){}",
+                target.enum_name,
+                target.variant_name,
+                target.variant_canonical.render_compact(),
+                target.binding.render_snapshot()
+            ),
         }
     }
 }
@@ -2431,6 +2575,12 @@ pub struct NamedCallableTarget {
     /// import, an alias, or a re-export, and is `None` whenever that answer is not proven. [`Self::name`] remains the
     /// call site's own spelling, so the pair records both what was written and what it means.
     pub canonical: Option<CanonicalSymbolId>,
+    /// The type an associated function is called on: `Point` in `Point.default()`, `T` in `T.default()`.
+    ///
+    /// `None` for an ordinary function call. When [`Self::canonical`] is a trait's method, this is what selects the
+    /// implementation, as `<T as Default>::default()` does in Rust; for a type's own static method it repeats the
+    /// owner.
+    pub receiver_type: Option<IncanType>,
 }
 
 /// Whether the provider owning an operation can be executed against in this compilation.
@@ -2715,9 +2865,13 @@ impl CallableTarget {
     fn render_snapshot(&self) -> String {
         match self {
             Self::Named(target) => format!(
-                "fn:{}{}{}",
+                "fn:{}{}{}{}",
                 target.name,
                 render_type_arguments(&target.type_args),
+                target
+                    .receiver_type
+                    .as_ref()
+                    .map_or_else(String::new, |ty| format!(" on {ty}")),
                 target.binding.render_snapshot()
             ),
             Self::Local(target) => format!(
@@ -2862,6 +3016,8 @@ pub enum HelperOp {
     DictContainsKey,
     /// `k not in d` on a dict, with the same `(haystack, needle)` argument order as [`Self::DictContainsKey`].
     DictNotContainsKey,
+    /// Validate normalized builtin range bounds and step using the runtime constructor's error contract.
+    RangeValidate,
 }
 
 impl HelperOp {
@@ -2893,6 +3049,7 @@ impl HelperOp {
     /// name so callers building runtime-requirement facts stay on the same helper naming as the snapshot renderer.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::RangeValidate => "range_validate",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",
@@ -3456,6 +3613,7 @@ mod tests {
             ],
             params: vec![
                 CallableParam {
+                    mutable: false,
                     local: local_x,
                     name: "x".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -3463,6 +3621,7 @@ mod tests {
                     default: CallableParamDefault::Required,
                 },
                 CallableParam {
+                    mutable: false,
                     local: local_y,
                     name: "y".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -3501,6 +3660,7 @@ mod tests {
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             is_async: false,
+            extern_delegation: None,
         }
     }
 
@@ -3713,6 +3873,7 @@ mod tests {
         );
         assert_eq!(
             CallableParam {
+                mutable: false,
                 local: LocalId(7),
                 name: "suffix".to_string(),
                 ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -3731,6 +3892,7 @@ mod tests {
     #[test]
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
+            mutable: false,
             local: LocalId(1),
             name: "limit".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -3748,6 +3910,7 @@ mod tests {
             })),
         };
         let preset = CallableParam {
+            mutable: false,
             local: LocalId(2),
             name: "method".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -3755,6 +3918,7 @@ mod tests {
             default: CallableParamDefault::PartialPreset { capture: LocalId(6) },
         };
         let unsupported = CallableParam {
+            mutable: false,
             local: LocalId(4),
             name: "payload".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Bytes),
@@ -3993,6 +4157,7 @@ mod tests {
                     place: Place::from_local(LocalId(2)),
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
+                            mutable: false,
                             local: param_local,
                             name: "z".to_string(),
                             ty: IncanType::Primitive(IncanPrimitiveType::Int),

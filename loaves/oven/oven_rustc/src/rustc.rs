@@ -7,6 +7,7 @@
 mod artifact;
 mod compiled_unit;
 mod diagnostics;
+pub mod driver_grant;
 mod inspection;
 mod manifest_cohort;
 mod manifest_materialize;
@@ -110,6 +111,8 @@ mod inspection_validation;
 mod invocation;
 mod manifest_validation;
 mod path_libraries;
+mod path_workspace;
+pub use path_workspace::effective_path_manifest;
 mod plan_building;
 mod receipt_selection;
 
@@ -133,7 +136,8 @@ pub use invocation::{
     bake_direct_rustc_run, bake_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
     bake_trusted_direct_rustc_library_with_artifact_role, bake_trusted_direct_rustc_proc_macro,
     bake_trusted_direct_rustc_proc_macro_with_artifact_role, bake_trusted_direct_rustc_run,
-    bake_trusted_direct_rustc_test, run_trusted_rustdoc_test, trusted_artifact_plan_for_source_evidence,
+    bake_trusted_direct_rustc_run_with_artifact_role, bake_trusted_direct_rustc_test, run_trusted_rustdoc_test,
+    trusted_artifact_plan_for_source_evidence,
 };
 use manifest_validation::*;
 #[cfg(test)]

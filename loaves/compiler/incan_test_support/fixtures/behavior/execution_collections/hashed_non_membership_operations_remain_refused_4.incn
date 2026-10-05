@@ -1,0 +1,9 @@
+# behavior: hashed non membership operations remain refused, as the legacy route runs it
+# expect-stdout:
+
+"""Hashed non membership operations remain refused, as the legacy route runs it."""
+def main() -> None:
+  """Return without producing output."""
+  values = {1: 2}
+  for value in values:
+    pass

@@ -1,0 +1,22 @@
+# behavior: a value enum variant passed to a function returns its value (parity corpus row replacement-body-v0-014)
+# expect-stdout:
+#   404
+
+"""A value enum variant passed to a function returns its value (parity corpus row replacement-body-v0-014)."""
+enum HttpStatus(int):
+    """Represent the Ok, NotFound alternatives in this fixture."""
+    Ok = 200
+    NotFound = 404
+
+def status_code(status: HttpStatus) -> int:
+    """Return the fixture expression `status.value()`."""
+    return status.value()
+
+def value_enum_values() -> int:
+    """Return the fixture expression `status_code(HttpStatus.NotFound)`."""
+    return status_code(HttpStatus.NotFound)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(value_enum_values())

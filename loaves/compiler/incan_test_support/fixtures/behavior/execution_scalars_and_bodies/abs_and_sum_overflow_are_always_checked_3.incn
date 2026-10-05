@@ -1,0 +1,15 @@
+# behavior: abs and sum overflow are always checked, as the legacy route runs it
+# expect-stdout:
+#   before abs
+# expect-exit: 101
+
+"""Abs and sum overflow are always checked, as the legacy route runs it."""
+def abs_min(value: int) -> int:
+    """Print the marker before taking the absolute value."""
+    println("before abs")
+    return abs(value)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(abs_min(-9223372036854775808))

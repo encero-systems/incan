@@ -1,0 +1,18 @@
+# behavior: int and float conversions are printed and returned as a formatted str (parity corpus row replacement-body-v0-022)
+# expect-stdout:
+#   converted: 42 3.14 10.0
+#   42 3.14 10.0
+
+"""Int and float conversions are printed and returned as a formatted str (parity corpus row replacement-body-v0-022)."""
+def scalar_conversions() -> str:
+    """Print converted numeric values and return their combined rendering."""
+    parsed_int = int("42")
+    parsed_float = float("3.14")
+    widened_float = float(10)
+    println(f"converted: {parsed_int} {parsed_float} {widened_float}")
+    return f"{str(parsed_int)} {parsed_float} {widened_float}"
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(scalar_conversions())

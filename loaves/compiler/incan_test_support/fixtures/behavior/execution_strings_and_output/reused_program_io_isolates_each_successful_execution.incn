@@ -1,0 +1,15 @@
+# behavior: reused program io isolates each successful execution
+# expect-stdout:
+#   success
+#   42
+
+"""Reused program io isolates each successful execution."""
+def program_result() -> int:
+  """Compute and return `42`."""
+  println("success")
+  return 42
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -1,0 +1,11 @@
+# behavior: a module-qualified call through `import helper` returns its result
+# expect-stdout:
+#   42
+
+"""A module-qualified call through `import helper` returns its result."""
+import helper
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(helper.bump(41))

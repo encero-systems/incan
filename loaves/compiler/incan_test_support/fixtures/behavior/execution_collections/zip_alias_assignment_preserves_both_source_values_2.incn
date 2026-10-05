@@ -1,0 +1,20 @@
+# behavior: zip alias assignment preserves both source values
+# expect-stdout:
+#   6
+
+"""Zip alias assignment preserves both source values."""
+def observe() -> int:
+    """Traverse the zip value and its alias, accumulating their pair sums."""
+    pairs = zip([1], [2])
+    alias = pairs
+    mut total = 0
+    for left, right in alias:
+        total += left + right
+    for other_left, other_right in pairs:
+        total += other_left + other_right
+    return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe())

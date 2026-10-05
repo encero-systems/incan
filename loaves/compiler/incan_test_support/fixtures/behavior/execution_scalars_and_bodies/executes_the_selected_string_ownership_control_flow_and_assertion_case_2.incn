@@ -1,0 +1,14 @@
+# behavior: executes the selected string ownership control flow and assertion cases
+# expect-stdout:
+#   owned
+
+"""Executes the selected string ownership control flow and assertion cases."""
+def program_result() -> str:
+  """Compute and return `value`."""
+  value = "owned"
+  return value
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

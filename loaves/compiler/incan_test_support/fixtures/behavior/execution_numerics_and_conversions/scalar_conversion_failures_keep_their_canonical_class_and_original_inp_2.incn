@@ -1,0 +1,18 @@
+# behavior: scalar conversion failures keep their canonical class and original input, stopping the program
+# expect-stdout:
+#   before conversion
+# expect-exit: 101
+# expect-stderr-contains:
+#   ValueError: cannot convert 'AssertionError overflow division by zero' to float
+
+"""Scalar conversion failures keep their canonical class and original input, stopping the program."""
+def parse(value: str) -> str:
+    """Print the conversion marker and attempt to parse the supplied text."""
+    println("before conversion")
+    parsed = float(value)
+    return str(parsed)
+
+
+def main() -> None:
+    """Run the failing scalar conversion."""
+    parse("AssertionError overflow division by zero")

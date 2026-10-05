@@ -175,7 +175,6 @@
     "normal"
    ],
    "proc-macro2": [
-    "dev",
     "normal"
    ],
    "proptest": [
@@ -238,8 +237,7 @@
     "normal"
    ],
    "sha1": [
-    "dev",
-    "normal"
+    "dev"
    ],
    "sha2": [
     "normal"
@@ -1338,6 +1336,16 @@
       "optional": false,
       "path": "loaves/oven/oven_store"
      },
+     "proc-macro2": {
+      "package": "proc-macro2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "rust_inspect": {
       "package": "rust_inspect",
       "kind": "workspace-internal",
@@ -1389,16 +1397,6 @@
       "origin": "registry",
       "workspace_inherited": true,
       "version_req": "1.0",
-      "features": [],
-      "default_features": true,
-      "optional": false
-     },
-     "sha1": {
-      "package": "sha1",
-      "kind": "third-party",
-      "origin": "registry",
-      "workspace_inherited": false,
-      "version_req": "0.10",
       "features": [],
       "default_features": true,
       "optional": false
@@ -1574,16 +1572,6 @@
       "default_features": true,
       "optional": false,
       "path": "loaves/oven/oven_store"
-     },
-     "proc-macro2": {
-      "package": "proc-macro2",
-      "kind": "third-party",
-      "origin": "registry",
-      "workspace_inherited": true,
-      "version_req": "1.0",
-      "features": [],
-      "default_features": true,
-      "optional": false
      },
      "rust_inspect": {
       "package": "rust_inspect",
@@ -1773,7 +1761,7 @@
     "rust_version": null,
     "license": "Apache-2.0",
     "publish": true,
-    "description": "Rust emission from the Incan IR, the replacement backend and backend selection",
+    "description": "Rust emission from the Incan IR and backend selection",
     "resolver": null,
     "auto_discovery_off": []
    },
@@ -3386,17 +3374,6 @@
    "default_features": [],
    "dependencies": {
     "normal": {
-     "incan_frontend": {
-      "package": "incan_frontend",
-      "kind": "workspace-internal",
-      "origin": "path",
-      "workspace_inherited": true,
-      "version_req": null,
-      "features": [],
-      "default_features": false,
-      "optional": false,
-      "path": "loaves/compiler/incan_frontend"
-     },
      "incan_lang": {
       "package": "incan_lang",
       "kind": "workspace-internal",

@@ -667,3 +667,228 @@ fn a_value_carrying_break_in_a_statement_loop_is_not_merged_into_an_enclosing_lo
     );
     Ok(())
 }
+
+/// The last statement of `block` that is not a scope drop.
+fn last_non_drop(block: &bir::Block) -> Option<&bir::Statement> {
+    block
+        .stmts
+        .iter()
+        .rev()
+        .find(|stmt| !matches!(stmt.kind, bir::StatementKind::Drop { .. }))
+}
+
+/// Whether `stmt` returns a value, directly or, for an `if`/`else`, from the tail of every branch.
+fn returns_a_value(stmt: &bir::Statement) -> bool {
+    match &stmt.kind {
+        bir::StatementKind::Return { value: Some(_) } => true,
+        bir::StatementKind::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } => {
+            last_non_drop(then_block).is_some_and(returns_a_value)
+                && last_non_drop(else_block).is_some_and(returns_a_value)
+        }
+        _ => false,
+    }
+}
+
+#[test]
+fn a_value_returning_function_returns_its_trailing_expression_issue2025() -> Result<(), Box<dyn std::error::Error>> {
+    // The checker accepts each body because its trailing expression is the function's result. Body IR must say so
+    // with a `return`, not record a discarded expression statement.
+    let cases = [
+        (
+            "pick",
+            "def pick(n: int) -> str:\n  match n:\n    1 => \"one\"\n    _ => \"other\"\n",
+        ),
+        ("next", "def next(n: int) -> int:\n  n + 1\n"),
+        (
+            "choose",
+            "def choose(n: int) -> str:\n  if n == 1:\n    \"one\"\n  else:\n    \"other\"\n",
+        ),
+        // A branch with an owned local ends in its scope's drop, after the value.
+        (
+            "first",
+            "def first(n: int) -> int:\n  if n == 1:\n    mut xs = [1]\n    xs[0]\n  else:\n    2\n",
+        ),
+    ];
+    for (name, source) in cases {
+        let module = build(source, &["m", "trailing"])?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing body")?;
+        let tail = last_non_drop(&body.block).ok_or("empty body")?;
+        assert!(
+            returns_a_value(tail),
+            "`{name}` must return its trailing value: {}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_unit_function_keeps_its_trailing_expression_statement_issue2025() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def report(n: int) -> None:\n  println(n)\n";
+    let module = build(source, &["m", "trailing_unit"])?;
+    let body = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "report")
+        .ok_or("missing body")?;
+    let tail = last_non_drop(&body.block).ok_or("empty body")?;
+    assert!(
+        matches!(tail.kind, bir::StatementKind::Expr { .. }),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// Counting-loop continue edges advance the index, while an inner ordinary loop keeps its own header semantics.
+#[test]
+fn range_continue_retains_increment_without_leaking_into_nested_loops() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def f() -> int:\n",
+        "    mut total = 0\n",
+        "    for i in 0..3:\n",
+        "        if i == 1:\n",
+        "            continue\n",
+        "        while false:\n",
+        "            continue\n",
+        "        total += i\n",
+        "    return total\n",
+    );
+    let module = build(source, &["m", "range_continue"])?;
+    let body = module.bodies.first().ok_or("missing function body")?;
+    let counting = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing counting loop")?;
+    let continued = counting
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::If { then_block, .. }
+                if then_block
+                    .stmts
+                    .iter()
+                    .any(|statement| matches!(statement.kind, bir::StatementKind::Continue)) =>
+            {
+                Some(then_block)
+            }
+            _ => None,
+        })
+        .ok_or("missing continue branch")?;
+    let before_continue = continued.stmts.as_slice();
+    assert!(
+        matches!(
+            before_continue,
+            [
+                ..,
+                bir::Statement {
+                    kind: bir::StatementKind::Assign {
+                        rvalue: bir::Rvalue::BinaryOp(bir::BinOp::Add, _, _),
+                        ..
+                    },
+                    ..
+                },
+                bir::Statement {
+                    kind: bir::StatementKind::Assign { .. },
+                    ..
+                },
+                bir::Statement {
+                    kind: bir::StatementKind::Continue,
+                    ..
+                }
+            ]
+        ),
+        "continue branch: {before_continue:#?}"
+    );
+    let inner = counting
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing inner loop")?;
+    let continue_position = inner
+        .stmts
+        .iter()
+        .position(|statement| matches!(statement.kind, bir::StatementKind::Continue))
+        .ok_or("missing inner continue")?;
+    assert!(!inner.stmts[..continue_position].iter().any(|statement| matches!(
+        statement.kind,
+        bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::BinaryOp(bir::BinOp::Add, _, _),
+            ..
+        }
+    )));
+    Ok(())
+}
+
+/// Builtin identity, retained argument timing, and signed exhaustion are facts of the checked producer.
+#[test]
+fn builtin_range_retains_bounds_validation_and_signed_exhaustion() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def total(end: int) -> int:\n  mut acc = 0\n  for i in range(5, end, -2):\n    if i == 3:\n      continue\n    acc += i\n  return acc\n",
+        &["m", "builtin_range"],
+    )?;
+    let body = body_named(&module, "total")?;
+    let validation = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| {
+            matches!(
+                statement.kind,
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Helper(bir::HelperOp::RangeValidate),
+                    may_panic: true,
+                    ..
+                }
+            )
+        })
+        .ok_or("builtin range must retain constructor validation")?;
+    let iteration = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| matches!(statement.kind, bir::StatementKind::Loop { .. }))
+        .ok_or("builtin range must normalize to a counting loop")?;
+    assert!(validation < iteration);
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("iter_next("), "{snapshot}");
+    assert!(
+        snapshot.contains(" >= "),
+        "positive steps must retain exclusive exhaustion: {snapshot}"
+    );
+    assert!(
+        snapshot.contains(" <= "),
+        "negative steps must retain exclusive exhaustion: {snapshot}"
+    );
+    assert!(snapshot.contains("range_validate"), "{snapshot}");
+    Ok(())
+}
+
+/// A source-local function named range grants no builtin normalization authority.
+#[test]
+fn same_spelled_range_function_keeps_its_checked_iteration_target() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def range(end: int) -> list[int]:\n  return [end]\n\ndef main() -> None:\n  for item in range(3):\n    println(item)\n",
+        &["m", "shadowed_range"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("range_validate"), "{snapshot}");
+    assert!(snapshot.contains("iter_next("), "{snapshot}");
+    Ok(())
+}

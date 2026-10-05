@@ -1,0 +1,13 @@
+# behavior: uses python signed floor division and modulo
+# expect-stdout:
+#   -3
+
+"""Uses python signed floor division and modulo."""
+def program_result() -> int:
+  """Return the fixture expression `7 // -3`."""
+  return 7 // -3
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

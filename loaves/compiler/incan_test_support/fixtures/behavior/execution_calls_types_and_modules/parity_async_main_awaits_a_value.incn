@@ -1,0 +1,16 @@
+# behavior: an async main awaits an async function's value (parity corpus case 10)
+# expect-stdout:
+#   7
+
+"""An async main awaits an async function's value (parity corpus case 10)."""
+import std.async
+
+async def fetch() -> int:
+    """Return `7` for this fixture."""
+    return 7
+
+
+async def main() -> None:
+    """Print `value` after preparing the fixture inputs."""
+    value = await fetch()
+    println(value)

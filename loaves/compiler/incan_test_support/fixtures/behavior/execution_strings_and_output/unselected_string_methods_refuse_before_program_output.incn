@@ -1,0 +1,15 @@
+# behavior: unselected string methods refuse before program output, as the legacy route runs it
+# expect-stdout:
+#   must not run
+#   x
+
+"""Unselected string methods refuse before program output, as the legacy route runs it."""
+def result(text: str) -> str:
+    """Print the marker before calling the string method under test."""
+    println("must not run")
+    return text.to_string()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(result("x"))

@@ -1,0 +1,19 @@
+# behavior: slicing a list field of a model gives a new list
+# expect-stdout:
+#   [40]
+
+"""Slicing a list field of a model gives a new list."""
+model Bucket:
+    """Hold values used by this fixture."""
+    values: list[int]
+
+
+def program_result() -> list[int]:
+    """Compute and return `bucket.values[0:1]`."""
+    bucket = Bucket(values=[40, 2])
+    return bucket.values[0:1]
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

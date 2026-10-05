@@ -1,0 +1,29 @@
+# behavior: enumerate lists are zero based and preserve tuple forms
+# expect-stdout:
+#   0
+#   10
+#   1
+#   20
+#   34
+
+
+"""Enumerate lists are zero based and preserve tuple forms."""
+def enumerate_profile() -> int:
+  """Print enumeration indices and values while summing them."""
+  values = [10, 20]
+  mut total = 0
+  for pair in enumerate(values):
+    println(pair.0)
+    println(pair.1)
+    total += pair.0 + pair.1
+  empty: list[int] = []
+  for empty_index, empty_value in enumerate(empty):
+    total += empty_index + empty_value
+  for index, value in enumerate([3]):
+    total += index + value
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(enumerate_profile())

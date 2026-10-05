@@ -1,0 +1,17 @@
+# behavior: set and dict membership execute from retained helper calls
+# expect-stdout:
+#   42
+
+"""Set and dict membership execute from retained helper calls."""
+def program_result() -> int:
+  """Return 42 when the set and dictionary membership checks hold, or zero."""
+  values = {1, 2, 3}
+  names = {"key": "value"}
+  if 2 in values and 4 not in values and "key" in names and "value" not in names:
+    return 42
+  return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -1,0 +1,20 @@
+# behavior: executes list concatenation and membership
+# expect-stdout:
+#   4
+
+
+"""Executes list concatenation and membership."""
+def program_result() -> int:
+  """Return the fourth joined list item when membership checks hold, or zero."""
+  xs = [1, 2]
+  ys = [3, 4]
+  joined = xs + ys
+  if 3 in joined:
+    if 9 not in joined:
+      return joined[3]
+  return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

@@ -1,0 +1,21 @@
+# behavior: refuses corrupted enumerate iter next destinations in top level and deferred frames
+# expect-stdout:
+#   5
+
+
+"""Refuses corrupted enumerate iter next destinations in top level and deferred frames."""
+def generated_enumerate_item() -> Generator[int]:
+  """Yield the fixture values for lazy iteration."""
+  for generated_index, generated_value in enumerate([5]):
+    yield generated_index + generated_value
+
+def generated_enumerate_entry() -> int:
+  """Collect the enumeration generator and return its first value."""
+  generated_values = generated_enumerate_item().collect()
+  generated_first = generated_values[0]
+  return generated_first
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(generated_enumerate_entry())

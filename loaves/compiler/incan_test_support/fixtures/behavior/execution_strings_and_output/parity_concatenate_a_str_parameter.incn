@@ -1,0 +1,13 @@
+# behavior: a function concatenates a literal with its str parameter (parity corpus row replacement-body-v0-002)
+# expect-stdout:
+#   hello, Ada
+
+"""A function concatenates a literal with its str parameter (parity corpus row replacement-body-v0-002)."""
+def greet(name: str) -> str:
+    """Return the fixture expression `"hello, " + name`."""
+    return "hello, " + name
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(greet("Ada"))

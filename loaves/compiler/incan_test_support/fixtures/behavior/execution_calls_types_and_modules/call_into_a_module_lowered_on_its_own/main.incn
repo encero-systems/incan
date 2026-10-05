@@ -1,0 +1,16 @@
+# behavior: a call into a provider module returns the provider's result
+# expect-stdout:
+#   7
+
+"""A call into a provider module returns the provider's result."""
+from cross_module_provider import provide
+
+
+def program_result() -> int:
+    """Return the fixture expression `provide()`."""
+    return provide()
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

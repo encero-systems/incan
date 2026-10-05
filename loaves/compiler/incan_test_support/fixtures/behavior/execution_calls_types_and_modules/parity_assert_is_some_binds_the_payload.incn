@@ -1,0 +1,14 @@
+# behavior: `assert o is Some(v)` binds the payload for the statements after it (parity corpus case 20)
+# expect-stdout:
+#   x
+
+"""`assert o is Some(v)` binds the payload for the statements after it (parity corpus case 20)."""
+def run(o: Option[str]) -> None:
+    """Bind the Some payload and print it after the assertion."""
+    assert o is Some(v)
+    println(v)
+
+
+def main() -> None:
+    """Call `run(Some("x"))` with the fixture inputs."""
+    run(Some("x"))

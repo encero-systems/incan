@@ -1,0 +1,13 @@
+# behavior: abs and sum safe values execute normally
+# expect-stdout:
+#   15
+
+"""Abs and sum safe values execute normally."""
+def observe(value: int) -> int:
+    """Return the fixture expression `abs(value) + sum([1, 2, 3])`."""
+    return abs(value) + sum([1, 2, 3])
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(observe(-9))

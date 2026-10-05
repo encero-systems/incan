@@ -1,0 +1,14 @@
+# behavior: a filtered generator expression collected into a list is indexed (parity corpus row replacement-body-v0-007)
+# expect-stdout:
+#   70
+
+"""A filtered generator expression collected into a list is indexed (parity corpus row replacement-body-v0-007)."""
+def collect_lazy_values() -> int:
+    """Collect the filtered, scaled generator and sum its elements."""
+    values = (value * 10 for value in range(1, 5) if value > 2).collect()
+    return values[0] + values[1]
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(collect_lazy_values())

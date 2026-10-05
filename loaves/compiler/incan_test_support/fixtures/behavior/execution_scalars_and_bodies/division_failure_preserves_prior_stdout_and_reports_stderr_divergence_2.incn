@@ -1,0 +1,15 @@
+# behavior: division failure preserves prior stdout and reports stderr divergence, as the legacy route runs it
+# expect-stdout:
+#   before division
+# expect-exit: 101
+
+"""Division failure preserves prior stdout and reports stderr divergence, as the legacy route runs it."""
+def divide(a: int, b: int) -> int:
+    """Print the division marker before floor division."""
+    println("before division")
+    return a // b
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(divide(1, 0))

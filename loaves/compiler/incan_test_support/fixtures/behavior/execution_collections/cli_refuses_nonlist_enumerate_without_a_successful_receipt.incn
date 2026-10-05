@@ -1,0 +1,19 @@
+# behavior: cli refuses nonlist enumerate without a successful receipt, as the legacy route runs it
+# expect-stdout:
+#   must not run
+#   0
+
+
+"""Cli refuses nonlist enumerate without a successful receipt, as the legacy route runs it."""
+def program_result() -> int:
+  """Traverse `for pair in enumerate("x")` and return `total`."""
+  println("must not run")
+  mut total = 0
+  for pair in enumerate("x"):
+    total += pair.0
+  return total
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

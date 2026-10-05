@@ -112,58 +112,18 @@
       "split_target": "",
       "twin": "dies"
     },
-    "loaves/compiler/incan_driver/src/backend/shadow/abs_sum_profile_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/backend/shadow/enumerate_zip_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/backend/shadow/json_stringify_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/backend/shadow/legacy_oven.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/backend/shadow/tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
     "loaves/compiler/incan_driver/src/build/bake.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/caller_facet.rs": {
+      "disposition": "keep",
+      "notes": "checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -300,14 +260,6 @@
     "loaves/compiler/incan_driver/src/build/publication.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/build/replacement.rs": {
-      "disposition": "keep",
-      "notes": "replacement build pipeline (session projection, exact numeric report).",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -452,14 +404,6 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_driver/src/replacement_compatibility.rs": {
-      "disposition": "keep",
-      "notes": "replacement compatibility inventory collector and validator.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
     "loaves/compiler/incan_driver/src/rust_inspect_workspace.rs": {
       "disposition": "unaffected",
       "notes": "generated rust-inspect Cargo workspace that feeds the checker with Rust metadata; not the Rust backend.",
@@ -481,14 +425,6 @@
           "notes": "twinned by the module fixture that runs the same program and `codec` module: typed `BinaryWrite`/`BinaryRead` calls, `chunks` and `File`/`Path` reads and writes print the same three lines; the generated `std.io`/`std.fs` mount and the rustc build die with the Rust-source backend (#1561)."
         }
       },
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/shadow_support.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
       "twin": ""
     },
     "loaves/compiler/incan_driver/src/testing/discovery.rs": {
@@ -519,6 +455,14 @@
       "disposition": "keep",
       "notes": "typecheck over the import graph.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs": {
+      "disposition": "keep",
+      "notes": "Real borrowed Body IR module and statement enum across an Oven-built Incan caller boundary",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -622,26 +566,26 @@
       "split_target": "",
       "twin": "dies"
     },
-    "loaves/compiler/incan_driver/tests/parity_corpus_tests/corpus_proofs.rs": {
-      "disposition": "re-point",
-      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); corpus validation: the red-state schema proof, the green-state structural and behavioral proofs, the replacement rows' receipt-bound evidence and the CI summary.",
-      "owner": 1561,
+    "loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs": {
+      "disposition": "keep",
+      "notes": "public Incan scalar native-plan contract and required sibling dependency boundary",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_driver/tests/parity_corpus_tests/paired_row_proofs.rs": {
-      "disposition": "re-point",
-      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the paired-comparison rows: these tests assert a green (or explicitly unavailable) legacy-vs-replacement shadow comparison through `shadow_support::compare_source_observable`, the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs": {
+      "disposition": "keep",
+      "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_driver/tests/parity_corpus_tests/rfc_120_proofs.rs": {
-      "disposition": "re-point",
-      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the RFC 120 coverage and evidence proofs.",
-      "owner": 1561,
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs": {
+      "disposition": "keep",
+      "notes": "Direct-route census refusal grouping and bounded process capture; route-independent measurement support",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -662,312 +606,10 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_tests.rs": {
+    "loaves/compiler/incan_driver/tests/rust_caller_project_tests.rs": {
       "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/async_tasks_and_race.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); async tasks and `race`, direct and through the CLI.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/bodies_bindings_and_scalars.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); core body execution, bindings, projections and scalars.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/callables_and_generators.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); named calls, closures, partials, callable defaults and generators.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_nominal_and_enum_values.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven nominal and enum programs with their receipts and refusals.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_refusals_shadow_and_boundaries.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven refusals without a receipt, shadow requests that stay explicitly non-green, module and Rust interop boundaries.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/collections_strings_and_print.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); collections, strings, scalar JSON and `print`; one test compares against the legacy backend and retires to its behavior fixture.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "tests": {
-        "both_backends_render_a_multi_argument_print_the_same_way": {
-          "disposition": "retire",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/println_multi_argument.incn",
-          "notes": "compared the replacement executor's rendering of `println(\"count\", 3, true)` with the IrCodegen placeholder count; the twin runs the program and reads `count 3 true` from its stdout, and the replacement-only half stays in the keep sibling replacement_executes_print_by_recording_its_output."
-        }
-      },
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/modules_and_sessions.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); the execution graph's cross-module resolution and the CLI-driven module, facade and session tests.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/nominal_and_enum_values.rs": {
-      "disposition": "keep",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); source-local nominal models and enums through a direct callable, with the identity and layout refusals.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "tests": {
-        "replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "generated-text hit is a diagnostic string"
-        }
-      },
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_bool_truthiness_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_bool_truthiness_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_collection_len_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_collection_len_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_compatibility_registry_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_boundary_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_parity_cases.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_example_coverage.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_hashed_container_boundary_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_hashed_execution_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_hashed_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_isinstance_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_isinstance_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_program_io_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_scalar_conversion_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_scalar_conversion_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_sorted_int_list_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_sorted_int_list_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_stream_writer_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_string_helper_execution_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_string_helper_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_string_len_execution_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_string_len_shadow_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/replacement_typed_numeric_tests.rs": {
-      "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/tests/shadow_comparison_tests.rs": {
-      "disposition": "re-point",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
-      "owner": 1561,
+      "notes": "receipt-bound direct-rustc Rust caller facet integration, refusal, runtime, and identity coverage",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -3096,54 +2738,6 @@
       },
       "twin": ""
     },
-    "loaves/compiler/incan_emit/src/replacement/executable_resolution_tests.rs": {
-      "disposition": "keep",
-      "notes": "replacement route (executable resolution, provider preflight, source profile).",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_emit/src/replacement/hashed/tests.rs": {
-      "disposition": "keep",
-      "notes": "replacement route (executable resolution, provider preflight, source profile).",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_emit/src/replacement/mod.rs": {
-      "disposition": "keep",
-      "notes": "replacement route (executable resolution, provider preflight, source profile).",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_emit/src/replacement/provider/tests.rs": {
-      "disposition": "keep",
-      "notes": "replacement route (executable resolution, provider preflight, source profile).",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_emit/src/replacement/provider/tests/host_preflight_tests.rs": {
-      "disposition": "keep",
-      "notes": "replacement route (executable resolution, provider preflight, source profile).",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_emit/src/replacement/source_profile.rs": {
-      "disposition": "keep",
-      "notes": "replacement route (executable resolution, provider preflight, source profile).",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
     "loaves/compiler/incan_emit/src/selection.rs": {
       "disposition": "keep",
       "notes": "backend selection policy (replacement vs legacy); survives as the replacement route's own selection.",
@@ -3252,12 +2846,12 @@
           "notes": "Runs comprehensions that change their items through derived iterables and dict comprehensions over a list; the fixture prints each result and the changed lists.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
         },
-        "generic_list_comprehension_copies_bounded_items_issue1983": {
-          "notes": "Builds and runs a Clone-bounded generic function whose list comprehension copies elements so the source remains available; the fixture runs the same bounded reuse and prints both lengths.",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/generic_list_comprehension_consumes_parameter.incn"
-        },
         "generic_list_comprehension_consumes_its_parameter_issue1983": {
           "notes": "Builds and runs an unbounded generic function whose list comprehension consumes its owned list parameter; the fixture runs the same program and prints the result length.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/generic_list_comprehension_consumes_parameter.incn"
+        },
+        "generic_list_comprehension_copies_bounded_items_issue1983": {
+          "notes": "Builds and runs a Clone-bounded generic function whose list comprehension copies elements so the source remains available; the fixture runs the same bounded reuse and prints both lengths.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/generic_list_comprehension_consumes_parameter.incn"
         }
       }
@@ -4102,13 +3696,13 @@
       "split_target": "",
       "twin": "",
       "tests": {
-        "an_empty_list_keeps_the_import_of_its_expected_model_element_type": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
-          "notes": "The module fixture explicitly imports a model used only as the destination-provided element type of an empty list and runs the constructor whose generated Rust names it."
-        },
         "a_type_the_module_imports_keeps_its_import_beside_an_unimported_one_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
           "notes": "The module fixture imports one declaration under another name and fills a list of it beside empty lists of types it does not import; the fixture prints each result."
+        },
+        "an_empty_list_keeps_the_import_of_its_expected_model_element_type": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
+          "notes": "The module fixture explicitly imports a model used only as the destination-provided element type of an empty list and runs the constructor whose generated Rust names it."
         },
         "empty_collections_and_none_for_types_the_module_does_not_import_build_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import",
@@ -5610,6 +5204,14 @@
           "notes": "twinned by the program summing a stored enumerate through an alias and a direct enumerate loop, plus `len` of a stored enumerate; the `.collect::<Vec<_>>()` assertions die."
         }
       },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/tests/executable_resolution_tests.rs": {
+      "disposition": "keep",
+      "notes": "RFC 123 executable resolution: checked producers publish an executable representation, and a consumer resolves exactly the public closure it needs, as whole Body IR bodies under their canonical package identities, or a package-level refusal; moved from the Body IR interpreter's unit tests when it was removed (#1337 stage 2), so it asserts what a resolved fragment hands its consumer rather than an interpreted value. No generated Rust except one native bridge-root check.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
       "twin": ""
     },
     "loaves/compiler/incan_emit/tests/fallible_entrypoint_codegen_tests.rs": {
@@ -8636,6 +8238,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_test_support/src/behavior_roots.rs": {
+      "disposition": "unaffected",
+      "notes": "test-support generator for the behavior roots: renders one root per declared behavior area with one case per fixture, and checks the checked-in roots against that rendering (`make behavior-roots` rewrites them). Its tests read the tree and render text; no compiler call.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_test_support/src/builtin_stdlib.rs": {
       "disposition": "unaffected",
       "notes": "test-support helper for the builtin stdlib inventory.",
@@ -9442,11 +9052,27 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/driver_grant.rs": {
+      "disposition": "keep",
+      "notes": "declared unit grant scope, ambient stripping and receipt identity",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/inspection.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/path_workspace.rs": {
+      "disposition": "keep",
+      "notes": "Selected workspace inheritance, path anchoring, missing authority and override refusals",
+      "owner": 1337,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },
@@ -10020,23 +9646,87 @@
     },
     "loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not.",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_dependencies area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. A project fixture's in-fixture providers are baked first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities). The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/behavior_cli_logic_comparisons_and_patterns_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the cli area as a program and compares its observables; the route changes under it, the fixtures do not.",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_logic_comparisons_and_patterns area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/behavior_codegen_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/behavior_cli_modules_and_declarations_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the codegen_functions_and_aliases, codegen_modules_and_imports, codegen_models_and_collections and codegen_dependencies areas as a program and compares its observables, one libtest case per area; the observables stay the same when the Rust-source backend is removed (#654).",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_modules_and_declarations area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_cli_refusals_mutation_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_refusals_mutation area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_cli_refusals_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_refusals area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_cli_refusals_values_and_calls_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_refusals_values_and_calls area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_cli_values_and_calls_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_values_and_calls area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_codegen_dependencies_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the codegen_dependencies area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. A project fixture's in-fixture providers are baked first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities). The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_codegen_functions_and_aliases_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the codegen_functions_and_aliases area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_codegen_models_and_collections_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the codegen_models_and_collections area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_codegen_modules_and_imports_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the codegen_modules_and_imports area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -10044,39 +9734,135 @@
     },
     "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not.",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the driver area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/behavior_emit_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/behavior_emit_calls_and_builtins_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the emit_calls_and_builtins, emit_declarations_and_modules and emit_dependency_unions_and_surfaces areas as a program (one libtest case per area) and compares its observables, which stay the same when the Rust-source backend is removed (#654).",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the emit_calls_and_builtins area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_emit_declarations_and_modules_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the emit_declarations_and_modules area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_emit_dependency_unions_and_surfaces_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the emit_dependency_unions_and_surfaces area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. A project fixture's in-fixture providers are baked first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities). The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_execution_calls_types_and_modules_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the execution_calls_types_and_modules area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. These are the Body IR interpreter's test programs, carried over before it is removed (#1337 stage 2). The route changes under it, the fixtures do not.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_execution_collections_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the execution_collections area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. These are the Body IR interpreter's test programs, carried over before it is removed (#1337 stage 2). The route changes under it, the fixtures do not.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_execution_numerics_and_conversions_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the execution_numerics_and_conversions area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. These are the Body IR interpreter's test programs, carried over before it is removed (#1337 stage 2). The route changes under it, the fixtures do not.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_execution_scalars_and_bodies_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the execution_scalars_and_bodies area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. These are the Body IR interpreter's test programs, carried over before it is removed (#1337 stage 2). The route changes under it, the fixtures do not.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_execution_strings_and_output_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the execution_strings_and_output area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. These are the Body IR interpreter's test programs, carried over before it is removed (#1337 stage 2). The route changes under it, the fixtures do not.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
     "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not.",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the harness area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. They are the harness's self-proof, one per shape of the format. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/behavior_lowering_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/behavior_lowering_declarations_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the three lowering_* areas as a program (one libtest case per leaf area), baking a project fixture's in-fixture providers first with no Cargo authority, and compares its observables, which stay the same when the Rust-source backend is removed (#654).",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the lowering_declarations area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/behavior_ownership_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/behavior_lowering_dependencies_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the four ownership_* areas as a program (one case per area) and compares its observables, which stay the same when the Rust-source backend is removed (#654).",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the lowering_dependencies area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. A project fixture's in-fixture providers are baked first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities). The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_lowering_expressions_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the lowering_expressions area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_ownership_numerics_and_bounds_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the ownership_numerics_and_bounds area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_ownership_parameters_and_receivers_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the ownership_parameters_and_receivers area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_ownership_string_boundaries_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the ownership_string_boundaries area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_ownership_values_and_fields_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the ownership_values_and_fields area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -10084,15 +9870,71 @@
     },
     "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not.",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the smoke area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_collections_and_strings_tests.rs": {
       "disposition": "re-point",
-      "notes": "runs every behavior fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not.",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_collections_and_strings area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_enums_and_matching_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_enums_and_matching area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_functions_and_projections_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_functions_and_projections area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_models_and_classes_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_models_and_classes area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_newtypes_and_serde_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_newtypes_and_serde area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_stdlib_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_stdlib area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_traits_and_generics_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_traits_and_generics area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_values_and_control_flow_tests.rs": {
+      "disposition": "re-point",
+      "notes": "generated by `make behavior-roots`: one case per behavior fixture of the snapshots_values_and_control_flow area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -11499,12 +11341,6 @@
       "owner": 1561,
       "pattern": "**/*.incn"
     },
-    "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines": {
-      "disposition": "unaffected",
-      "notes": "frozen v0.5.0 migration baseline, decoded through the checked capability-metadata path (no generated Rust); retained only until the v0.5 replacement migration closes, per the compatibility inventory's retirement line, then removed from the collector.",
-      "owner": 1561,
-      "pattern": "**/*.incn"
-    },
     "loaves/compiler/incan_driver/tests/fixtures": {
       "disposition": "re-point",
       "notes": "driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class.",
@@ -11613,6 +11449,36 @@
       "owner": 1561,
       "pattern": "<name>.incn or <name>/"
     },
+    "loaves/compiler/incan_test_support/fixtures/behavior/execution_calls_types_and_modules": {
+      "disposition": "keep",
+      "notes": "behavior fixtures carrying over the Body IR interpreter's test programs (calls, callables, generators, nominal types, enums, isinstance, async, modules, features and source declarations), those it refused included, with the legacy route's observed result where the interpreter gave none, before the interpreter is removed (#1337 stage 2); run by behavior_execution_tests.rs.",
+      "owner": 1337,
+      "pattern": "<name>.incn or <name>/"
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/execution_collections": {
+      "disposition": "keep",
+      "notes": "behavior fixtures carrying over the Body IR interpreter's collection test programs (len, sorting, hashed containers, enumerate and zip), those it refused included, with the legacy route's observed result, before the interpreter is removed (#1337 stage 2); run by behavior_execution_tests.rs.",
+      "owner": 1337,
+      "pattern": "<name>.incn or <name>/"
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/execution_numerics_and_conversions": {
+      "disposition": "keep",
+      "notes": "behavior fixtures carrying over the Body IR interpreter's typed-numeric and scalar-conversion test programs, those it refused included, with the legacy route's observed result, before the interpreter is removed (#1337 stage 2); run by behavior_execution_tests.rs.",
+      "owner": 1337,
+      "pattern": "<name>.incn or <name>/"
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/execution_scalars_and_bodies": {
+      "disposition": "keep",
+      "notes": "behavior fixtures carrying over the Body IR interpreter's scalar, binding and body test programs (including checked arithmetic that stops the program, and programs its source profile refused, which the legacy route runs) before the interpreter is removed (#1337 stage 2); run by behavior_execution_tests.rs.",
+      "owner": 1337,
+      "pattern": "<name>.incn or <name>/"
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/execution_strings_and_output": {
+      "disposition": "keep",
+      "notes": "behavior fixtures carrying over the Body IR interpreter's string, printing and output test programs, those it refused included, with the legacy route's observed result, before the interpreter is removed (#1337 stage 2); run by behavior_execution_tests.rs.",
+      "owner": 1337,
+      "pattern": "<name>.incn or <name>/"
+    },
     "loaves/compiler/incan_test_support/fixtures/behavior/harness": {
       "disposition": "re-point",
       "notes": "the behavior-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures.",
@@ -11714,6 +11580,12 @@
       "notes": "behavior fixtures twinning codegen snapshot tests over literals, operators, numerics, assignments, control flow, consts and statics; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
       "pattern": "<name>.incn or <name>/"
+    },
+    "loaves/compiler/incan_test_support/fixtures/capability_baselines": {
+      "disposition": "unaffected",
+      "notes": "the v0.5.0 capability catalog, read by loaves/toolchain/incan-cli/tests/example_capability_coverage.rs to measure which documented capabilities the example corpus demonstrates; no generated Rust.",
+      "owner": 1561,
+      "pattern": "**/*.incn"
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "disposition": "keep",

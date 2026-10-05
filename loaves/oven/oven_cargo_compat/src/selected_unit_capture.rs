@@ -157,6 +157,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                     &package.name,
                     &expected_crate_name,
                     rustc_host,
+                    &build_script_records,
                 );
                 if comparison.same_package_and_crate && !comparison.failures.is_empty() {
                     near_mismatches.push(format!("invocation {index} failed {}", comparison.failures.join(", ")));
@@ -369,7 +370,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                     .unwrap_or(rustc_host)
                     .to_string(),
             ),
-            features: rustc_feature_cfgs(&invocation.arguments),
+            features: cargo_artifact_features(artifact),
             dependencies,
         });
     }
@@ -436,7 +437,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         unit.artifact_paths = item.aliases.iter().chain(&item.emitted).cloned().collect();
         unit.artifact_paths.sort();
         unit.artifact_paths.dedup();
-        unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
+        unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments, &cargo_artifact_features(item.artifact));
         unit.compiler_arguments = rustc_rebuild_arguments(&item.invocation.arguments)?;
         unit.compiler_crate_type = observed_crate_types(item.invocation).into_iter().next();
         unit.compiler_paths = Some(captured_compiler_paths(item.invocation)?);
@@ -660,7 +661,7 @@ fn stdin_probe_output_path(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
     (lexically_beneath(&output, out_root) && output != out_root).then_some(output)
 }
 
-/// Bind a bounded stdin probe to its captured source digest and its one output beneath the package OUT_DIR.
+/// Bind a bounded stdin probe to its source and either captured file output or explicit stdout result.
 ///
 /// The output's own spelling (`-o`) or its directory (`--out-dir`) is recorded relative to `OUT_DIR`, so the identity
 /// does not depend on where the publisher's scratch target lives.
@@ -673,6 +674,9 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         return None;
+    }
+    if stdout_stdin_probe(invocation) {
+        return stdout_stdin_probe_digest(invocation);
     }
     let output = stdin_probe_output_path(invocation, out_root)?;
     let relative = output.strip_prefix(out_root).ok()?;
@@ -709,6 +713,43 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
         "environment": environment,
         "source_digest": source_digest,
         "output_digest": captured.digest,
+    }))
+    .ok()?;
+    Some(digest_bytes(&encoded))
+}
+
+/// Recognize only a metadata stdin probe with an explicit stdout output and no output directory.
+fn stdout_stdin_probe(invocation: &OvenLegacyRustcInvocation) -> bool {
+    super::rustc_trace::rustc_positional_source(&invocation.arguments) == Some("-")
+        && comma_separated_argument_values(&invocation.arguments, "--emit") == ["metadata"]
+        && argument_value(&invocation.arguments, "-o") == Some("-")
+        && argument_value(&invocation.arguments, "--out-dir").is_none()
+}
+
+/// Bind stdout probes to explicit compiler results; stdout is inherited and is not captured by the trace.
+/// File-output evidence cannot be substituted for stdout evidence.
+fn stdout_stdin_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Option<String> {
+    if invocation.stdin_probe_output.is_some() {
+        return None;
+    }
+    let exit_code = invocation.exit_code?;
+    let arguments = invocation
+        .arguments
+        .iter()
+        .enumerate()
+        .map(|(index, _)| portable_probe_argument(&invocation.arguments, index))
+        .collect::<Vec<_>>();
+    let environment = invocation
+        .environment
+        .iter()
+        .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
+        .collect::<BTreeMap<_, _>>();
+    let encoded = canonical_json_bytes(&serde_json::json!({
+        "arguments": arguments,
+        "environment": environment,
+        "source_digest": invocation.stdin_digest,
+        "exit_code": exit_code,
+        "output": "stdout",
     }))
     .ok()?;
     Some(digest_bytes(&encoded))
@@ -823,6 +864,40 @@ struct ArtifactInvocationComparison {
     emitted: Option<Vec<PathBuf>>,
 }
 
+/// Retain Cargo's declared features separately from cfgs emitted by a build script.
+fn cargo_artifact_features(artifact: &CargoCompilerArtifact) -> Vec<String> {
+    let mut features = artifact.features.clone();
+    features.sort();
+    features.dedup();
+    features
+}
+
+/// Admit feature-shaped build-script cfgs only from the consumer's exact package and OUT_DIR record.
+///
+/// Some packages emit `feature="rust_1_40"` without declaring a Cargo feature of that name. The compiled unit's
+/// Cargo feature identity must stay unchanged; the script's separate cfg facts authorize the additional rustc cfg.
+/// A script's own compilation does not consume its execution output, and unrelated script variants grant nothing.
+fn expected_feature_cfgs(
+    artifact: &CargoCompilerArtifact,
+    invocation: &OvenLegacyRustcInvocation,
+    build_scripts: &BTreeMap<(String, PathBuf), CargoBuildScriptExecuted>,
+) -> Vec<String> {
+    let mut features = cargo_artifact_features(artifact);
+    if !artifact.target.kind.iter().any(|kind| kind == "custom-build")
+        && let Some(out_dir) = invocation.environment.get("OUT_DIR")
+        && let Some(record) = build_scripts.get(&(artifact.package_id.clone(), PathBuf::from(out_dir)))
+    {
+        features.extend(record.cfgs.iter().filter_map(|cfg| {
+            cfg.strip_prefix("feature=\"")
+                .and_then(|value| value.strip_suffix('"'))
+                .map(ToString::to_string)
+        }));
+    }
+    features.sort();
+    features.dedup();
+    features
+}
+
 /// Compare every independent identity criterion so a failed exact join retains useful evidence.
 fn compare_artifact_invocation(
     invocation: &OvenLegacyRustcInvocation,
@@ -831,6 +906,7 @@ fn compare_artifact_invocation(
     expected_package: &str,
     expected_crate_name: &str,
     rustc_host: &str,
+    build_scripts: &BTreeMap<(String, PathBuf), CargoBuildScriptExecuted>,
 ) -> ArtifactInvocationComparison {
     let package_matches = invocation.environment.get("CARGO_PKG_NAME").map(String::as_str) == Some(expected_package);
     let crate_matches = argument_value(&invocation.arguments, "--crate-name") == Some(expected_crate_name);
@@ -872,9 +948,7 @@ fn compare_artifact_invocation(
             observed_crate_types(invocation)
         ));
     }
-    let mut artifact_features = artifact.features.clone();
-    artifact_features.sort();
-    artifact_features.dedup();
+    let artifact_features = expected_feature_cfgs(artifact, invocation, build_scripts);
     if artifact_features != rustc_feature_cfgs(&invocation.arguments) {
         failures.push(format!(
             "feature cfgs (artifact `{:?}`, rustc `{:?}`)",
@@ -1119,11 +1193,14 @@ fn rustc_feature_cfgs(arguments: &[String]) -> Vec<String> {
     features
 }
 
-/// Return sorted unique non-feature cfg values passed to one exact rustc invocation.
-fn rustc_non_feature_cfgs(arguments: &[String]) -> Vec<String> {
+/// Retain every cfg not already represented by a declared Cargo feature, including feature-shaped script cfgs.
+fn rustc_non_feature_cfgs(arguments: &[String], cargo_features: &[String]) -> Vec<String> {
     let mut cfg = argument_values(arguments, "--cfg")
         .into_iter()
-        .filter(|value| !(value.starts_with("feature=\"") && value.ends_with('"')))
+        .filter(|value| {
+            let feature = value.strip_prefix("feature=\"").and_then(|name| name.strip_suffix('"'));
+            !feature.is_some_and(|name| cargo_features.iter().any(|feature| feature == name))
+        })
         .collect::<Vec<_>>();
     cfg.sort();
     cfg.dedup();
@@ -2774,6 +2851,7 @@ mod tests {
         let invocation = OvenLegacyRustcInvocation {
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -2802,6 +2880,61 @@ mod tests {
         assert!(invocation_artifact_paths(&invocation, &artifact, "fixture-host").is_some());
         fs::write(&artifact.filenames[0], b"tampered alias bytes")?;
         assert!(invocation_artifact_paths(&invocation, &artifact, "fixture-host").is_none());
+        Ok(())
+    }
+
+    /// Script-emitted feature-shaped cfgs require an exact consumer package/OUT_DIR witness and remain separate facts.
+    #[test]
+    fn feature_shaped_script_cfgs_require_exact_consumer_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let artifact = serde_json::from_value::<CargoCompilerArtifact>(serde_json::json!({
+            "reason": "compiler-artifact", "package_id": "scripted@1.2.3",
+            "target": { "name": "scripted", "kind": ["lib"], "crate_types": ["lib"], "src_path": "/source/lib.rs" },
+            "features": ["default"], "filenames": [], "profile": {"test": false}
+        }))?;
+        let record = serde_json::from_value::<CargoBuildScriptExecuted>(serde_json::json!({
+            "reason": "build-script-executed", "package_id": "scripted@1.2.3", "out_dir": "/build/script/out",
+            "cfgs": ["feature=\"rust_1_40\"", "platform_probe"]
+        }))?;
+        let records = BTreeMap::from([((record.package_id.clone(), record.out_dir.clone()), record)]);
+        let mut invocation = OvenLegacyRustcInvocation {
+            reason: "incan-rustc-invocation".into(),
+            rustc: "/verified/rustc".into(),
+            working_directory: "/source".into(),
+            arguments: vec![
+                "--cfg".into(),
+                "feature=\"default\"".into(),
+                "--cfg".into(),
+                "feature=\"rust_1_40\"".into(),
+                "--cfg".into(),
+                "platform_probe".into(),
+            ],
+            environment: BTreeMap::from([("OUT_DIR".into(), "/build/script/out".into())]),
+            stdin_digest: None,
+            stdin_probe_output: None,
+            exit_code: Some(0),
+        };
+        assert_eq!(
+            expected_feature_cfgs(&artifact, &invocation, &records),
+            vec!["default", "rust_1_40"]
+        );
+        assert_eq!(cargo_artifact_features(&artifact), vec!["default"]);
+        assert_eq!(
+            rustc_non_feature_cfgs(&invocation.arguments, &artifact.features),
+            vec!["feature=\"rust_1_40\"", "platform_probe"]
+        );
+        invocation
+            .environment
+            .insert("OUT_DIR".into(), "/build/other/out".into());
+        assert_eq!(expected_feature_cfgs(&artifact, &invocation, &records), vec!["default"]);
+        invocation
+            .environment
+            .insert("OUT_DIR".into(), "/build/script/out".into());
+        let mut other = artifact.clone();
+        other.package_id = "other@1.2.3".into();
+        assert_eq!(expected_feature_cfgs(&other, &invocation, &records), vec!["default"]);
+        other = artifact;
+        other.target.kind = vec!["custom-build".into()];
+        assert_eq!(expected_feature_cfgs(&other, &invocation, &records), vec!["default"]);
         Ok(())
     }
 
@@ -2850,6 +2983,7 @@ mod tests {
             ]),
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
         };
         let expected_manifest = package_root.to_string_lossy();
         let comparison = compare_artifact_invocation(
@@ -2859,10 +2993,53 @@ mod tests {
             "scripted",
             "build_script_build",
             "fixture-host",
+            &BTreeMap::new(),
         );
         assert!(comparison.same_package_and_crate);
         assert!(comparison.failures.is_empty(), "{:?}", comparison.failures);
         assert_eq!(comparison.emitted, Some(vec![artifact_path]));
+        Ok(())
+    }
+
+    /// Stdout admission requires build-script context, source evidence, and an explicit result.
+    #[test]
+    fn stdout_stdin_probe_binds_source_and_result() -> Result<(), Box<dyn std::error::Error>> {
+        let mut invocation = OvenLegacyRustcInvocation {
+            reason: "incan-rustc-invocation".into(),
+            rustc: "/verified/rustc".into(),
+            working_directory: "/package".into(),
+            arguments: ["--crate-type=rlib", "--emit=metadata", "-o", "-", "-"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            environment: BTreeMap::from([
+                ("CARGO_MANIFEST_DIR".into(), "/package".into()),
+                ("OUT_DIR".into(), "/target/out".into()),
+                ("CARGO_PKG_NAME".into(), "rustix".into()),
+                ("CARGO_PKG_VERSION".into(), "1.0.0".into()),
+            ]),
+            stdin_digest: Some(digest_bytes(b"pub fn probe() {}")),
+            stdin_probe_output: None,
+            exit_code: Some(0),
+        };
+        let original = build_script_tool_probe_digest(&invocation).ok_or("stdout probe refused")?;
+        invocation.stdin_digest = Some(digest_bytes(b"pub fn changed() {}"));
+        assert_ne!(build_script_tool_probe_digest(&invocation).as_ref(), Some(&original));
+        invocation.stdin_digest = Some(digest_bytes(b"pub fn probe() {}"));
+        invocation.exit_code = Some(1);
+        assert_ne!(build_script_tool_probe_digest(&invocation).as_ref(), Some(&original));
+        invocation.exit_code = None;
+        assert!(build_script_tool_probe_digest(&invocation).is_none());
+        invocation.exit_code = Some(0);
+        invocation.environment.remove("OUT_DIR");
+        assert!(build_script_tool_probe_digest(&invocation).is_none());
+        invocation.environment.insert("OUT_DIR".into(), "/relocated/out".into());
+        invocation
+            .environment
+            .insert("CARGO_MANIFEST_DIR".into(), "/relocated/package".into());
+        assert_eq!(build_script_tool_probe_digest(&invocation).as_ref(), Some(&original));
+        invocation.arguments[1] = "--emit=link".into();
+        assert!(build_script_tool_probe_digest(&invocation).is_none());
         Ok(())
     }
 
@@ -2878,6 +3055,7 @@ mod tests {
         let invocation = OvenLegacyRustcInvocation {
             stdin_digest: None,
             stdin_probe_output: None,
+            exit_code: Some(0),
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -3060,6 +3238,7 @@ mod tests {
         let probe = |root: &Path, out_dir: &Path| OvenLegacyRustcInvocation {
             stdin_digest: Some(digest_bytes(b"pub fn probe() {}")),
             stdin_probe_output: None,
+            exit_code: Some(0),
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: root.to_string_lossy().to_string(),

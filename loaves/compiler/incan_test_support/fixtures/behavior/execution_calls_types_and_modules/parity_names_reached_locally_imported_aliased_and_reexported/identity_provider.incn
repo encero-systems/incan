@@ -1,0 +1,44 @@
+"""Provide the sibling declarations used by the fixture."""
+pub def imported_lexical(value: int) -> int:
+    """Return `value` for this fixture."""
+    return value
+
+pub def aliased_lexical(value: int) -> int:
+    """Return `value` for this fixture."""
+    return value
+
+pub def relayed_lexical(value: int) -> int:
+    """Return `value` for this fixture."""
+    return value
+
+pub model ImportedMember:
+    """Hold the values used by this fixture."""
+    pub value: int
+
+    def read(self) -> int:
+        """Return `self.value` for this fixture."""
+        return self.value
+
+pub model AliasedMember:
+    """Hold the values used by this fixture."""
+    pub value: int
+
+    def read(self) -> int:
+        """Return `self.value` for this fixture."""
+        return self.value
+
+pub model RelayedMember:
+    """Hold the values used by this fixture."""
+    pub value: int
+
+    def read(self) -> int:
+        """Return `self.value` for this fixture."""
+        return self.value
+
+pub def imported_path(value: int) -> int:
+    """Return `value` for this fixture."""
+    return value
+
+pub def aliased_path(value: int) -> int:
+    """Return `value` for this fixture."""
+    return value

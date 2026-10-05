@@ -1,0 +1,15 @@
+# behavior: executes standalone tuple projection
+# expect-stdout:
+#   1
+
+
+"""Executes standalone tuple projection."""
+def program_result() -> int:
+  """Compute and return `pair.0`."""
+  pair = (1, 2)
+  return pair.0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

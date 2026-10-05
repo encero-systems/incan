@@ -1,0 +1,14 @@
+# behavior: an assertion that holds is followed by a floor division (parity corpus row replacement-body-v0-005)
+# expect-stdout:
+#   42
+
+"""An assertion that holds is followed by a floor division (parity corpus row replacement-body-v0-005)."""
+def guarded_floor_div(a: int, b: int) -> int:
+    """Require a nonzero divisor before floor division."""
+    assert b != 0
+    return a // b
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(guarded_floor_div(84, 2))
