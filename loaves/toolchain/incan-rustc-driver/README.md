@@ -6,8 +6,18 @@ The executable has a scalar conformance invocation (`SOURCE CRATE OUTPUT SYSROOT
 
 Build-time identity inputs are `INCAN_DRIVER_SYSROOT`, `INCAN_DRIVER_RUSTC_IDENTITY` (complete `rustc -vV` output), `INCAN_DRIVER_LIBRARY` (a relative sysroot library path), and `INCAN_DRIVER_LIBRARY_DIGEST` (SHA-256 of those exact library bytes). Missing inputs are refusals. These inputs and declared unit permissions must enter Oven's build identity; setting them as untracked ambient variables is insufficient.
 
-## Delivery boundary
+## Oven build and conformance
 
-The native sources are not yet build-verified. Oven recognizes the manifest's unit capabilities but currently refuses them before creating receipts or outputs, because this project planner does not select an identity-bound seed compiler. Pinned stable rustc rejects the first `rustc_private` unit with E0554. The spike seeds its driver with `RUSTC_BOOTSTRAP=1`; that route is forbidden here. An approved seed artifact and its Oven provider/identity contract are needed to complete the build path. Oven must also compose the Rust unit's own registry dependencies (`thiserror`, `sha2`) with its Incan caller closure; the stage 3b-0 planner currently consumes only the sibling library's closure.
+The manifest declares `rustc_private`, `rustc-dev`, and `rustc_driver` on the executable unit. Oven requires pinned rustc 1.98.0 with rustc-dev installed. It strips ambient bootstrap permission, then grants only the declared normalized crate name with `-Zallow-features=rustc_private`. The grant is receipt-bound and records rustc's bootstrap-derived `Cheat` permission. Driver-built Rust units use the session callback instead.
 
-A native binary, native output assertion, overflow-span assertion, or one-bake end-to-end result is not claimed until that build path is wired and run.
+Oven composes the executable's `thiserror` and `sha2` closure with its sibling Incan plan caller closure. The first driver build does not require a preexisting driver. At startup, the executable checks the complete compiler identity, canonical sysroot, and the path and bytes of the loaded rustc-dev driver library. Ambient bootstrap permission is a startup refusal.
+
+The scalar conformance root builds the plan and driver in one Oven invocation, prepares the Incan-authored output fixture through its caller facet, and checks debug and release native output, overflow source location, malformed-plan refusal and startup refusal:
+
+```sh
+make test-one TEST_ROOT=loaves/compiler/incan_driver/tests/native_driver_project_tests.rs
+```
+
+The root selects installed rustc 1.98.0 with rustc-dev, because ordinary compiler-suite compiler closures omit rustc-dev metadata. Its publisher capability applies only to explicit Oven bakes.
+
+This hand-filled scalar plan does not supply Body IR lowering or a resident driver. Those remain stages 3c and 3d; the normal compiler route has not changed.

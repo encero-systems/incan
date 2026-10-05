@@ -560,7 +560,15 @@
     },
     "loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs": {
       "disposition": "keep",
-      "notes": "public Incan scalar native-plan contract and fail-closed unseeded-driver capability boundary",
+      "notes": "public Incan scalar native-plan contract and required sibling dependency boundary",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs": {
+      "disposition": "keep",
+      "notes": "Oven-built pinned native driver scalar output, overflow span, typed dangling-block and startup refusals",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -9024,6 +9032,14 @@
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (compiler-closure retention) with a `#[cfg(all(test, unix))]` region over a synthetic sysroot, measured by that region. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/driver_grant.rs": {
+      "disposition": "keep",
+      "notes": "declared unit grant scope, ambient stripping and receipt identity",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""

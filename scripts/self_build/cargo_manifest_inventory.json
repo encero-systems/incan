@@ -175,7 +175,6 @@
     "normal"
    ],
    "proc-macro2": [
-    "dev",
     "normal"
    ],
    "proptest": [
@@ -1337,6 +1336,16 @@
       "optional": false,
       "path": "loaves/oven/oven_store"
      },
+     "proc-macro2": {
+      "package": "proc-macro2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "rust_inspect": {
       "package": "rust_inspect",
       "kind": "workspace-internal",
@@ -1563,16 +1572,6 @@
       "default_features": true,
       "optional": false,
       "path": "loaves/oven/oven_store"
-     },
-     "proc-macro2": {
-      "package": "proc-macro2",
-      "kind": "third-party",
-      "origin": "registry",
-      "workspace_inherited": true,
-      "version_req": "1.0",
-      "features": [],
-      "default_features": true,
-      "optional": false
      },
      "rust_inspect": {
       "package": "rust_inspect",
