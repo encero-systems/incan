@@ -378,6 +378,14 @@ pub enum OvenCommand {
         /// Explicit Cargo for compiler-suite roots that deliberately exercise the Loaf baker
         #[arg(long = "fixture-cargo", value_name = "PATH", hide = true)]
         fixture_cargo: Option<PathBuf>,
+        /// Checkout-owned directory, kept across runs, where explicit-bake roots reuse their baked fixtures
+        #[arg(
+            long = "explicit-bake-workspace",
+            value_name = "PATH",
+            requires = "fixture_cargo",
+            hide = true
+        )]
+        explicit_bake_workspace: Option<PathBuf>,
         /// Caller-owned direct-rustc libtest output path
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,

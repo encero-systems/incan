@@ -26,6 +26,8 @@ INCAN_TEST_OVEN_RELEASE_COMPILER_BIN ?= $(TARGET_DIR)/debug/incan
 INCAN_TEST_OVEN_RELEASE_POLICY_HOME ?= $(TARGET_DIR)/oven-alpha-release-policy-home
 INCAN_TEST_OVEN_RELEASE_POLICY_REPORT ?= $(TARGET_DIR)/oven-alpha-release-policy.json
 INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(TARGET_DIR)/oven-compiler-suite-store
+# Kept across runs: explicit-bake roots (the native driver root bakes the whole compiler) reuse their fixture state.
+INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE ?= $(TARGET_DIR)/oven-explicit-bake-workspace
 # Caller-owned compiler-suite outputs are one-use. `test-oven` creates a fresh directory below this root and removes
 # it after reporting its physical disk use, so repeated local runs cannot reuse a stale test binary or accumulate it.
 INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT ?= $(TARGET_DIR)
@@ -477,6 +479,7 @@ test-oven-replay:
 			INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
 			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
 				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
+				--explicit-bake-workspace "$(INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE)" \
 				--output "$$suite_output" \
 				--store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
 				$(INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS) \
@@ -854,6 +857,7 @@ test-one: test-prewarm-oven-loafs
 			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
 			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
 				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
+				--explicit-bake-workspace "$(INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE)" \
 				--target "$(TEST_ROOT)" $(if $(TEST_EXACT),--exact "$(TEST_EXACT)") \
 				--output "$$root_output" --store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
 				--format text; \

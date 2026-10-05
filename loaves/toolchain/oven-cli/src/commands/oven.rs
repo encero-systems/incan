@@ -101,10 +101,10 @@ use oven_rustc::rustc::{
 };
 use oven_store::compiler_suite_env::{
     OVEN_COMPILER_SUITE_CAPABILITY_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV,
-    OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV, OVEN_COMPILER_SUITE_FIXTURE_CARGO_LOG_ENV,
-    OVEN_COMPILER_SUITE_FIXTURE_CARGO_REAL_ENV, OVEN_COMPILER_SUITE_FIXTURE_RUSTC_REAL_ENV,
-    OVEN_COMPILER_SUITE_RUSTC_ENV, OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OvenCompilerSuiteCapability,
-    OvenCompilerSuiteTargetCapabilities,
+    OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_WORKSPACE_ENV,
+    OVEN_COMPILER_SUITE_FIXTURE_CARGO_LOG_ENV, OVEN_COMPILER_SUITE_FIXTURE_CARGO_REAL_ENV,
+    OVEN_COMPILER_SUITE_FIXTURE_RUSTC_REAL_ENV, OVEN_COMPILER_SUITE_RUSTC_ENV,
+    OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OvenCompilerSuiteCapability, OvenCompilerSuiteTargetCapabilities,
 };
 use oven_store::progress::{PhaseProgress, announce as announce_oven_progress, elapsed_detail};
 use oven_store::store::{
@@ -858,7 +858,11 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         .fixture_cargo
         .as_deref()
         .map(|cargo| prepare_compiler_suite_fixture_cargo_proxy(&output_directory, cargo))
-        .transpose()?;
+        .transpose()?
+        .map(|mut proxy| {
+            proxy.explicit_bake_workspace = options.explicit_bake_workspace.clone();
+            proxy
+        });
     let stored_sdk_inventory = fs::canonicalize(compiler_suite_file(
         &artifact_root,
         &suite.sdk_inventory_relative_path,
@@ -6213,6 +6217,7 @@ mod tests {
             real_rustc: PathBuf::from("/fixture/real/rustc"),
             home: PathBuf::from("/fixture/home"),
             log: PathBuf::from("/fixture/invocations.log"),
+            explicit_bake_workspace: Some(PathBuf::from("/fixture/workspace")),
         };
         apply_compiler_suite_target_capabilities(&target, &mut environment, Some(&fixture))?;
         assert_eq!(environment.get("CARGO"), Some(&"/fixture/proxy/cargo".to_string()));
@@ -6237,6 +6242,14 @@ mod tests {
         assert_eq!(
             ordinary_environment.get(oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV),
             Some(&"/fixture/home".to_string())
+        );
+        assert_eq!(
+            ordinary_environment.get(oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_EXPLICIT_BAKE_WORKSPACE_ENV),
+            Some(&"/fixture/workspace/loaves__toolchain__incan-cli__tests__cli_provider_boundary_tests".to_string())
+        );
+        assert!(
+            !environment.contains_key(oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_EXPLICIT_BAKE_WORKSPACE_ENV),
+            "only explicit-bake roots receive a kept workspace"
         );
         assert!(
             !ordinary_environment.contains_key("RUSTC"),
