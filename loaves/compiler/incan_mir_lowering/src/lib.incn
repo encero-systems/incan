@@ -659,7 +659,7 @@ def lower_named_target(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Resolve a same-module canonical target and verify its direct identity before emitting a call."""
+    """Resolve a canonical local body or frontend-proven stdlib delegation without call-site spelling dispatch."""
     if len(target.type_args) != 0:
         return Err("unsupported Body IR generic NamedCallableTarget")
     match target.builtin:
@@ -685,8 +685,44 @@ def lower_named_target(
                             output = plan_place(slot, span)
                     terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
                     return Ok(None)
-                None => return Err("unsupported Body IR imported or unresolved canonical call target")
+                None =>
+                    return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
+
+
+def lower_stdlib_delegation(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Consume the frontend's exact source-to-native delegation and retain declaration-order argument binding."""
+    for delegation in module.stdlib_delegations:
+        match target.canonical:
+            Some(identity) =>
+                if identity != delegation.canonical:
+                    continue
+            None => return Err("unsupported Body IR unproven stdlib call target")
+        match target.direct_call_id:
+            Some(_identity) => return Err("Body IR imported delegation has a local call identity")
+            None => pass
+        mut parameters: list[PlanType] = []
+        for parameter in delegation.parameters:
+            parameters.append(scalar_type(parameter)?)
+        result = scalar_type(delegation.return_type)?
+        operands = ordered_arguments(target.binding, arguments, len(parameters), span)?
+        mut output = temporary(builder, result, span)
+        match destination:
+            Some(place) => output = scalar_place(place, span)?
+            None => pass
+        match delegation.rust_path():
+            Some(path) =>
+                external_call(builder, path, parameters, result, operands, output, span)
+                return Ok(None)
+            None => return Err("unsupported Body IR stdlib delegation native identity")
+    return Err("unsupported Body IR imported or unresolved canonical call target")
 
 
 from rust::incan_semantics_core::body_ir import (
