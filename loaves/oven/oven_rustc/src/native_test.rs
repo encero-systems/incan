@@ -348,7 +348,8 @@ pub fn run_native_test_batch(
 /// This is the narrow diagnostic counterpart to the complete-root runner. Every requested name must occur in the
 /// same verified inventory before any case starts. The cases then run sequentially from the same executable while
 /// retaining normal Cargo sanitization, output capture, and process-group deadlines. Their terminal summaries and
-/// timings are aggregated without manufacturing one root per selected case.
+/// timings are aggregated without manufacturing one root per selected case. A named case runs even when it is
+/// marked `#[ignore]`: naming it is the explicit request the attribute waits for.
 ///
 /// `root_label` names the root in progress output. The suite reaches this path with several roots in flight, so an
 /// unlabeled line here would be correct and unattributable in exactly the way the complete-root runner's label
@@ -425,7 +426,8 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
             }
         };
         let mut command = Command::new(&executable);
-        command.args(["--exact", &exact_name]);
+        // Naming a case selects it: an `#[ignore]` case such as an explicit full census runs when named.
+        command.args(["--exact", &exact_name, "--include-ignored"]);
         if let Some(working_directory) = working_directory {
             command.current_dir(working_directory);
         }
@@ -1869,9 +1871,9 @@ mod tests {
                printf '%s\\n' 'exact::selected: test' 'exact::other: test'\n\
                exit 0\n\
              fi\n\
-             if [ \"$1\" = \"--exact\" ] && [ \"$2\" = \"exact::selected\" ] && [ \"$9\" = \"--logfile\" ]; then\n\
+             if [ \"$1\" = \"--exact\" ] && [ \"$2\" = \"exact::selected\" ] && [ \"$3\" = \"--include-ignored\" ] && [ \"${10}\" = \"--logfile\" ]; then\n\
                pwd > \"$INCAN_TEST_EXACT_WORKING_DIRECTORY_MARKER\"\n\
-               printf '%s\\n' 'ok exact::selected <0.000s>' > \"${10}\"\n\
+               printf '%s\\n' 'ok exact::selected <0.000s>' > \"${11}\"\n\
                printf '%s\\n' 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s'\n\
                exit 0\n\
              fi\n\
@@ -1936,23 +1938,23 @@ mod tests {
                printf cargo > \"$INCAN_TEST_CARGO_MARKER\"\n\
                exit 97\n\
              fi\n\
-             if [ \"$1\" != \"--exact\" ] || [ \"$3\" != \"-Z\" ] || [ \"$#\" -ne 10 ]; then\n\
+             if [ \"$1\" != \"--exact\" ] || [ \"$3\" != \"--include-ignored\" ] || [ \"$4\" != \"-Z\" ] || [ \"$#\" -ne 11 ]; then\n\
                printf 'unexpected native test arguments: %s\\n' \"$*\" >&2\n\
                exit 62\n\
              fi\n\
              printf '%s\\n' \"$2\" >> \"$INCAN_TEST_EXECUTION_LOG\"\n\
              case \"$2\" in\n\
                exact::green)\n\
-                 printf '%s\\n' 'ok exact::green <0.000s>' > \"${10}\"\n\
+                 printf '%s\\n' 'ok exact::green <0.000s>' > \"${11}\"\n\
                  printf '%s\\n' 'incan-test-command-timing {\"test_name\":\"exact::green\",\"command\":\"incan build\",\"elapsed_ms\":9}'\n\
                  printf '%s\\n' 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s'\n\
                  exit 0;;\n\
                exact::failed)\n\
-                 printf '%s\\n' 'failed exact::failed <0.000s>' > \"${10}\"\n\
+                 printf '%s\\n' 'failed exact::failed <0.000s>' > \"${11}\"\n\
                  printf '%s\\n' 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s'\n\
                  exit 1;;\n\
                exact::ignored)\n\
-                 printf '%s\\n' 'ignored exact::ignored' > \"${10}\"\n\
+                 printf '%s\\n' 'ignored exact::ignored' > \"${11}\"\n\
                  printf '%s\\n' 'test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 2 filtered out; finished in 0.00s'\n\
                  exit 0;;\n\
              esac\n\
