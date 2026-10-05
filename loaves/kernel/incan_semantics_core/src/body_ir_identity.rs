@@ -79,6 +79,8 @@ impl BodyIrModule {
         ) == Some(declaration.direct_declaration_id.clone())
             && declaration.canonical.declaration_name == declaration.name
             && declaration.fields.len() == declaration.field_identities.len()
+            && declaration.fields.len() == declaration.field_types.len()
+            && declaration.fields.len() == declaration.field_public.len()
             && declaration.fields.iter().collect::<BTreeSet<_>>().len() == declaration.fields.len()
             && declaration.field_identities.iter().collect::<BTreeSet<_>>().len() == declaration.field_identities.len()
             && declaration

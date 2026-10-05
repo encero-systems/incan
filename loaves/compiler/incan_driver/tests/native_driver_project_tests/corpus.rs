@@ -153,3 +153,59 @@ pub(super) fn check_benchmark(
     );
     Ok(())
 }
+
+/// Exercise the plain nominal contract with reversed written field order and a returned model.
+pub(super) fn check_plain_model(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let closure = runtime_closure(runtime, "release")?;
+    let project = root.join("plain-model");
+    fs::create_dir_all(&project)?;
+    let source = project.join("plain_model.incn");
+    fs::write(
+        &source,
+        "model Point:\n  x: int\n  y: int\n  label: str\n\ndef shifted(point: Point) -> Point:\n  return Point(label=point.label, y=point.y, x=point.x + 2)\n\ndef main() -> None:\n  mut point = Point(label=\"model\", y=7, x=3)\n  point.x += 4\n  point.label = \"updated\"\n  next = shifted(point)\n  println(point.x)\n  println(next.x)\n  println(next.y)\n  println(next.label)\n",
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "plain model native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "plain model legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/plain_model")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "plain model legacy execution");
+    success(&actual, "plain model native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "plain model output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"7\n9\n7\nupdated\n");
+
+    // A newly admitted model must not let an unadmitted numeric coercion escape as an invalid plan.
+    let division = project.join("integer_division.incn");
+    fs::write(
+        &division,
+        "model Reading:\n  value: int\n\ndef main() -> None:\n  reading = Reading(value=10)\n  println(str(reading.value / 2))\n",
+    )?;
+    let refused = compile_source(driver, &division, &project.join("division"), sysroot, &closure)?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR non-float true division operands"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
+}

@@ -29,7 +29,21 @@ fn checked_module(source: &str, name: &str) -> Result<BodyIrModule, String> {
         let kind = match &declaration.node {
             Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Import(_) | Declaration::Const(_) => continue,
             Declaration::Static(_) => "Static",
-            Declaration::Model(_) => "Model",
+            Declaration::Model(model) => {
+                if !incan_frontend::body_ir::is_direct_replacement_plain_model(model) {
+                    return Err(format!(
+                        "unsupported source nonplain Model {} on the native route",
+                        model.name
+                    ));
+                }
+                if model.fields.iter().any(|field| field.node.default.is_some()) {
+                    return Err(format!(
+                        "unsupported source Model defaults on {} on the native route",
+                        model.name
+                    ));
+                }
+                continue;
+            }
             Declaration::Class(_) => "Class",
             Declaration::Enum(_) => "Enum",
             Declaration::Trait(_) => "Trait",

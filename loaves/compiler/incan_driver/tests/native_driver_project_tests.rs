@@ -267,8 +267,19 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
     Ok(())
 }
 
-/// Keep explicitly requested diagnostic evidence outside wrapper scratch; ordinary test runs clean their fixtures.
+/// Retain requested evidence or replay an existing fixture graph serially; each bake still validates current copied
+/// sources.
 fn fixture_root() -> Result<(PathBuf, Option<tempfile::TempDir>), Box<dyn std::error::Error>> {
+    if let Some(path) = std::env::var_os("INCAN_NATIVE_DRIVER_REPLAY") {
+        let path = PathBuf::from(path);
+        for project in ["library", "lowering", "driver"] {
+            if !path.join(project).join("loaf.toml").is_file() {
+                return Err(format!("native driver replay requires a retained {project} fixture").into());
+            }
+        }
+        eprintln!("replaying native driver fixture: {}", path.display());
+        return Ok((path, None));
+    }
     if let Some(parent) = std::env::var_os("INCAN_NATIVE_DRIVER_EVIDENCE") {
         fs::create_dir_all(&parent)?;
         let path = tempfile::tempdir_in(parent)?.keep();
@@ -408,4 +419,24 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
 #[ignore = "explicit full direct-route census"]
 fn direct_route_fixture_census() -> Result<(), Box<dyn std::error::Error>> {
     census::run()
+}
+
+/// Prove named construction, field mutation, argument passing, returned models, and final drops against legacy.
+#[test]
+fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, _temporary) = fixture_root()?;
+    let repo = support::repo_root();
+    let driver = prepare_source_driver(&root, &repo)?;
+    let home = root.join("home");
+    bake(&root.join("library"), &home)?;
+    bake(&root.join("lowering"), &home)?;
+    bake(&driver, &home)?;
+    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
+    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    corpus::check_plain_model(
+        &driver.join("target/rust/release/incan-rustc-driver"),
+        &root,
+        &sysroot,
+        &runtime,
+    )
 }
