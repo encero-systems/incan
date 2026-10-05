@@ -531,3 +531,15 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
         &fixture.formatting,
     )
 }
+
+/// Prove list indexing, mutation, shared parameters, owned returns and iteration against legacy.
+#[test]
+fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_lists(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("lists")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}

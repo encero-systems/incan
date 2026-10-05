@@ -802,9 +802,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// boundary, so moving a non-Copy value out of it would not even compile — the only sound way to produce an
     /// owned value from it is to clone (mirrors the existing backend ownership planner's treatment of non-Copy
     /// `self` reads in `loaves/compiler/incan_emit/src/ownership.rs`, which this module's own docs cite as precedent).
-    /// A bare read of a `mut` parameter in [`Self::borrowed_parameters`] never moves for the same reason: the caller
-    /// owns that storage and the callee holds a mutable borrow of it (RFC 129), so an owned value read from it is a
-    /// clone, and passing it on to another `mut` parameter turns that clone into a reborrow.
+    /// A bare read of caller-owned parameter storage, identified by [`Self::is_borrowed_parameter`], never moves for
+    /// the same reason: a list parameter is a shared binding, or a mutable borrow when declared `mut` (RFC 129).
+    /// An owned value read from it clones; passing it on to a `mut` parameter instead retains a reborrow fact.
     /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
     /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A local with no tracked
     /// countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
@@ -834,7 +834,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 false,
             );
         };
-        if self.is_receiver_local(local) || self.borrowed_parameters.contains(&local) {
+        if self.is_receiver_local(local) || self.is_borrowed_parameter(local) {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
             } else {
@@ -865,6 +865,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals
             .get(local.index())
             .is_some_and(|decl| matches!(decl.origin, bir::LocalOrigin::Receiver { .. }))
+    }
+
+    /// Identify caller-owned parameter storage, including shared list bindings (RFC 129).
+    ///
+    /// A list parameter never owns the caller's vector: its mutability selects the borrow kind, not ownership.
+    /// Reads that require an owned value therefore clone even at last use, and scope exit must not drop it.
+    fn is_borrowed_parameter(&self, local: bir::LocalId) -> bool {
+        self.borrowed_parameters.contains(&local)
+            || self.locals.get(local.index()).is_some_and(|decl| {
+                matches!(decl.origin, bir::LocalOrigin::Parameter)
+                    && matches!(&decl.ty, IncanType::Generic { base, .. } if collections::from_str(base) == Some(CollectionTypeId::List))
+            })
     }
 
     /// Build the operand for a freshly created temporary's single, immediate use.
@@ -906,7 +918,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|local| local.id)
             .collect();
         for id in candidates {
-            if self.moved_out.contains(&id) || self.borrowed_parameters.contains(&id) {
+            if self.moved_out.contains(&id) || self.is_borrowed_parameter(id) {
                 continue;
             }
             stmts.push(bir::Statement {
