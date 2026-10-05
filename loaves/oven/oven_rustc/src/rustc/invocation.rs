@@ -586,6 +586,7 @@ pub(super) fn bake_direct_rustc(
         })?;
     verify_rustc_identity(rustc, &receipt.intent.toolchain)?;
     validate_rust_identifier(crate_name)?;
+    super::driver_grant::apply_driver_grant(&mut Command::new(rustc), receipt, crate_name)?;
     validate_edition(edition)?;
     let source = verified_regular_file(source, "source")?;
     let output = caller_output_path(output, artifact_root)?;
@@ -754,6 +755,7 @@ fn compile_direct_rustc_output(
         let value = resolve_compile_environment_value(name, value, source)?;
         command.env(name, value);
     }
+    super::driver_grant::apply_driver_grant(&mut command, receipt, crate_name)?;
     for feature in features {
         command.arg("--cfg").arg(format!("feature={feature:?}"));
     }

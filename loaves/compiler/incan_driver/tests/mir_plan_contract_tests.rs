@@ -62,9 +62,9 @@ fn scalar_plan_exports_are_public_and_representable() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// A unit requesting rustc internals must fail before receipts or outputs without a selected seed compiler.
+/// A declared driver still requires its sibling Incan plan dependency before baking.
 #[test]
-fn a_native_driver_unit_is_refused_before_baking_without_a_seed() -> Result<(), Box<dyn std::error::Error>> {
+fn a_native_driver_unit_requires_an_incan_dependency() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let project = temporary.path();
     fs::create_dir_all(project.join("src"))?;
@@ -87,7 +87,7 @@ sysroot_dependencies = ["rustc_driver"]
         Err(error) => error.to_string(),
         Ok(_) => return Err("an unseeded driver was unexpectedly baked".into()),
     };
-    assert!(error.contains("no seed compiler"), "{error}");
+    assert!(error.contains("must declare an Incan"), "{error}");
     assert!(!Path::new(project).join("target").exists());
     Ok(())
 }
