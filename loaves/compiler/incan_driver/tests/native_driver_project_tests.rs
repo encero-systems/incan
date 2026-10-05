@@ -1,5 +1,8 @@
 //! Oven-built pinned driver conformance at the Incan-plan-to-MIR boundary.
 
+#[path = "native_driver_project_tests/corpus.rs"]
+mod corpus;
+
 use incan_test_support as support;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -137,32 +140,58 @@ fn check_startup_refusals(
     Ok(())
 }
 
-/// One Oven invocation builds the Incan plan and driver, then native output, spans and typed refusals are checked.
-#[test]
-fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
-    let temporary = tempfile::tempdir()?;
-    let repo = support::repo_root();
-    let root = temporary.path();
+/// Prepare one source-only driver graph whose plan and lowering share the same semantics-core declaration.
+fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let driver_source = repo.join("loaves/toolchain/incan-rustc-driver");
     let driver = root.join("driver");
-    copy_tree(&driver_source.join("src"), &driver.join("src"))?;
-    fs::write(
-        driver.join("loaf.toml"),
-        fs::read_to_string(driver_source.join("loaf.toml"))?.replace("../../compiler/incan_mir_plan", "../library"),
-    )?;
     let library = root.join("library");
+    let lowering = root.join("lowering");
+    copy_tree(&driver_source.join("src"), &driver.join("src"))?;
     fs::create_dir_all(&library)?;
+    fs::create_dir_all(&lowering)?;
     fs::copy(
         repo.join("loaves/compiler/incan_mir_plan/loaf.toml"),
         library.join("loaf.toml"),
     )?;
     copy_tree(&repo.join("loaves/compiler/incan_mir_plan/src"), &library.join("src"))?;
+    let core = repo.join("loaves/kernel/incan_semantics_core");
+    let frontend = repo.join("loaves/compiler/incan_frontend");
+    let core = core.to_str().ok_or("semantics-core path is not UTF-8")?;
+    let frontend = frontend.to_str().ok_or("frontend path is not UTF-8")?;
+    let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
+        .replace("../incan_mir_plan", "../library")
+        .replace("../../kernel/incan_semantics_core", core);
+    fs::write(lowering.join("loaf.toml"), manifest)?;
+    copy_tree(
+        &repo.join("loaves/compiler/incan_mir_lowering/src"),
+        &lowering.join("src"),
+    )?;
+    let manifest = fs::read_to_string(driver_source.join("loaf.toml"))?
+        .replace("../../compiler/incan_mir_plan", "../library")
+        .replace("../../compiler/incan_mir_lowering", "../lowering")
+        .replace("../../kernel/incan_semantics_core", core)
+        .replace("../../compiler/incan_frontend", frontend);
+    fs::write(driver.join("loaf.toml"), manifest)?;
+    Ok(driver)
+}
+
+/// Publish the compiler Loafs, then reuse one driver bake for native output, spans, and typed refusals.
+#[test]
+fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, _temporary) = fixture_root()?;
+    let repo = support::repo_root();
+    let root = root.as_path();
+    let driver_source = repo.join("loaves/toolchain/incan-rustc-driver");
+    let driver = prepare_source_driver(root, &repo)?;
     let runtime = root.join("runtime");
     copy_tree(&driver_source.join("tests/fixtures/native_output"), &runtime)?;
     let source = root.join("scalar.incn");
     fs::copy(driver_source.join("tests/fixtures/scalar.incn"), &source)?;
     let home = root.join("home");
+    bake(&root.join("library"), &home)?;
+    bake(&root.join("lowering"), &home)?;
     bake(&driver, &home)?;
+    let formatting = prepare_formatting_runtime(root, &repo, &home)?;
     let runtime_caller = root.join("runtime-caller");
     fs::create_dir_all(runtime_caller.join("src"))?;
     fs::write(
@@ -228,6 +257,92 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
             }
         }
         check_startup_refusals(&binary, &source, root, &sysroot, &runtime_rlib)?;
+        check_source_pipeline(&binary, root, &sysroot, &formatting, profile)?;
     }
+    let release = driver.join("target/rust/release/incan-rustc-driver");
+    corpus::check_fib(&release, root, &sysroot, &formatting)?;
+    Ok(())
+}
+
+/// Keep explicitly requested diagnostic evidence outside wrapper scratch; ordinary test runs clean their fixtures.
+fn fixture_root() -> Result<(PathBuf, Option<tempfile::TempDir>), Box<dyn std::error::Error>> {
+    if let Some(parent) = std::env::var_os("INCAN_NATIVE_DRIVER_EVIDENCE") {
+        fs::create_dir_all(&parent)?;
+        let path = tempfile::tempdir_in(parent)?.keep();
+        eprintln!("retained native driver fixture: {}", path.display());
+        Ok((path, None))
+    } else {
+        let directory = tempfile::tempdir()?;
+        Ok((directory.path().to_path_buf(), Some(directory)))
+    }
+}
+
+/// Materialize the authored Incan runtime through a real caller dependency, retaining its native closure.
+fn prepare_formatting_runtime(root: &Path, repo: &Path, home: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let runtime = root.join("formatting-runtime");
+    let original = repo.join("loaves/compiler/incan_native_runtime");
+    copy_tree(&original.join("src"), &runtime.join("src"))?;
+    fs::copy(original.join("loaf.toml"), runtime.join("loaf.toml"))?;
+    let caller = root.join("formatting-caller");
+    fs::create_dir_all(caller.join("src"))?;
+    fs::write(
+        caller.join("loaf.toml"),
+        "[project]\nname = \"formatting-caller\"\n[dependencies]\nincan_native_runtime = { loaf = \"incan_native_runtime\", path = \"../formatting-runtime\" }\n[[rust.bin]]\nname = \"formatting-caller\"\npath = \"src/main.rs\"\n",
+    )?;
+    fs::write(
+        caller.join("src/main.rs"),
+        "/// Link the selected runtime without printing during fixture setup.\nfn main() { let _function: fn(String) = incan_native_runtime::caller::incan::println_text; }\n",
+    )?;
+    bake(&caller, home)?;
+    Ok(runtime)
+}
+
+/// Exercise real checking and Incan lowering, including branches, calls, ranges, conversions, and formatting.
+fn check_source_pipeline(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+    profile: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = root.join("checked-source.incn");
+    fs::write(
+        &source,
+        "def twice(mut n: int) -> int:\n  n += n\n  return n\n\ndef main() -> None:\n  mut total = 0\n  for i in range(5, -1, -2):\n    if i == 3:\n      continue\n    total += twice(i)\n  println(f\"total={total} float={float(total)} div={-7 // 3} mod={-7 % 3}\")\n",
+    )?;
+    let receipt_path = oven_store::default_receipt_path(runtime);
+    let receipt_path = if profile == "debug" {
+        receipt_path.with_file_name("library-debug-receipt.json")
+    } else {
+        receipt_path
+    };
+    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
+    let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
+        .ok_or("formatting runtime has no retained native closure")?;
+    let binary = root.join(format!("checked-source-{profile}"));
+    let library = runtime
+        .join("target/lib/oven")
+        .join(profile)
+        .join("libincan_native_runtime.rlib");
+    let mut command = Command::new(driver);
+    command
+        .env_remove("RUSTC_BOOTSTRAP")
+        .args(["--source"])
+        .arg(&source)
+        .arg("checked_source")
+        .arg(&binary)
+        .arg(sysroot)
+        .arg("--extern")
+        .arg(format!("incan_native_runtime={}", library.display()));
+    for (name, artifact) in &closure.artifact_plan.externs {
+        command.arg("--extern").arg(format!("{name}={}", artifact.display()));
+    }
+    for directory in &closure.artifact_plan.dependency_search_paths {
+        command.arg("--search").arg(directory);
+    }
+    success(&command.output()?, "checked source native compilation");
+    let run = Command::new(binary).output()?;
+    success(&run, "checked source execution");
+    assert_eq!(String::from_utf8(run.stdout)?, "total=12 float=12.0 div=-3 mod=2\n");
     Ok(())
 }

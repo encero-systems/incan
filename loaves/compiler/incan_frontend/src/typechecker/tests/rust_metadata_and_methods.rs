@@ -901,6 +901,7 @@ def render(value: Label) -> str:
 }
 
 #[cfg(feature = "rust_inspect")]
+/// Owned and explicitly borrowed Rust-backed fields retain their payload type through nested matches.
 #[test]
 fn test_rust_field_access_preserves_type_for_nested_match_binding() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
@@ -919,6 +920,20 @@ type Kind = rusttype RustKind:
     ...
 
 def f(x: Envelope) -> None:
+  match x.kind:
+    Some(Kind.A(inner)) =>
+      _ = id(inner)
+    None =>
+      _ = 0
+
+def shared(x: &Envelope) -> None:
+  match x.kind:
+    Some(Kind.A(inner)) =>
+      _ = id(inner)
+    None =>
+      _ = 0
+
+def writable(x: &mut Envelope) -> None:
   match x.kind:
     Some(Kind.A(inner)) =>
       _ = id(inner)

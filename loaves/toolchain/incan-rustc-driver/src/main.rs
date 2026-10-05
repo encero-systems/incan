@@ -19,6 +19,7 @@ mod bodies;
 mod callees;
 mod declarations;
 mod error;
+mod frontend;
 mod identity;
 mod plan;
 mod spans;
@@ -28,7 +29,7 @@ mod unit;
 mod validation;
 mod values;
 
-use incan_mir_plan::caller::incan::scalar_example;
+use incan_mir_lowering::caller::incan::scalar_example;
 use std::path::{Path, PathBuf};
 
 /// Take the hand-filled fixture plan from Incan and compile it through the native boundary.
@@ -36,6 +37,9 @@ use std::path::{Path, PathBuf};
 /// Arguments are source, crate name, output, sysroot, runtime rlib, optional mode, and admitted dependency directories.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--source") {
+        return frontend::compile(&args[1..]);
+    }
     if args.first().is_some_and(|arg| arg == "--rust-unit") {
         let separator = args
             .iter()

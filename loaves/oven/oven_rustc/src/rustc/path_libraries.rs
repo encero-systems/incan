@@ -271,6 +271,7 @@ fn parse_path_rust_library(
         field: "path Rust dependency Cargo.toml",
         message: format!("{} is invalid TOML: {error}", manifest_path.display()),
     })?;
+    let manifest = super::path_workspace::effective_path_manifest(&manifest_path, manifest)?;
     if manifest.get("target").is_some() {
         return Err(OvenRustcError::InvalidInput {
             field: "path Rust dependency Cargo.toml",
@@ -463,6 +464,7 @@ fn compile_path_rust_library(
         field: "path Rust dependency",
         message: error.to_string(),
     })?;
+    let manifest_digest = digest_bytes(parsed.manifest.to_string().as_bytes());
     let child_digest_records = child_dependencies
         .iter()
         .map(|(name, output)| {
@@ -476,7 +478,7 @@ fn compile_path_rust_library(
     let toolchain = rustc_identity(rustc)?;
     let identity = digest_bytes(
         format!(
-            "{source_digest}\n{target}\n{profile}\n{toolchain}\n{}",
+            "{source_digest}\n{manifest_digest}\n{target}\n{profile}\n{toolchain}\n{}",
             child_digest_records.join("\n")
         )
         .as_bytes(),

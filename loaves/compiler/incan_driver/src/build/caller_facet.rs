@@ -75,6 +75,19 @@ pub fn select_checked_caller_exports(
     requested: &BTreeSet<String>,
     checked_exports: &[CheckedNamedExport],
 ) -> Result<CallerFacetSelection, String> {
+    select_checked_caller_exports_with_body_ir(library, requested, checked_exports, false)
+}
+
+/// Select the caller surface with a separately proven, identical Body IR dependency.
+///
+/// The caller baker may enable this only after both manifests name the same canonical semantics-core path with the
+/// same configuration. No other Rust-native path is admitted, and references retain their shared-borrow contract.
+pub fn select_checked_caller_exports_with_body_ir(
+    library: &str,
+    requested: &BTreeSet<String>,
+    checked_exports: &[CheckedNamedExport],
+    body_ir_identity: bool,
+) -> Result<CallerFacetSelection, String> {
     let exports_by_name = checked_exports
         .iter()
         .map(|export| (export.name.as_str(), export))
@@ -86,11 +99,11 @@ pub fn select_checked_caller_exports(
             .ok_or_else(|| format!("caller export `{library}::{name}` is missing or is not public"))?;
         if !is_root_declaration(export) {
             return Err(format!(
-                "caller export `{library}::{name}` is not declared in the library entrypoint: `caller::incan` \
-                 re-exports entrypoint declarations under their own names, not aliases, re-exports or submodule items"
+                "caller export `{library}::{name}` is not exposed by the library entrypoint under its original name: \
+                 `caller::incan` requires a direct declaration or a checked same-name packaged public import"
             ));
         }
-        export_representability(export, &exports_by_name)
+        export_representability(export, &exports_by_name, body_ir_identity)
             .map_err(|reason| format!("caller export `{library}::{name}` is not representable: {reason}"))?;
         selected.push(name.clone());
     }
@@ -100,20 +113,33 @@ pub fn select_checked_caller_exports(
     })
 }
 
-/// Whether `export` exposes its own declaration from the library entrypoint under its own name.
+/// Whether the generated entrypoint exposes the checked declaration under its original public name.
 ///
-/// The caller namespace re-exports each selected item as `crate::<name>`, which names exactly such a declaration in
-/// the generated crate. An alias, a re-export or a submodule declaration lives at another path, so it is refused
-/// rather than projected under a path that does not name it.
+/// The caller namespace uses `crate::<name>`. A direct entrypoint declaration and a same-name packaged public import
+/// both exist there: emission exposes the latter with `pub use`. Its original model, enum, or function shape must
+/// have been retained by the checked provider projection. Opaque aliases, renames, and nested exports are refused.
 fn is_root_declaration(export: &CheckedNamedExport) -> bool {
-    matches!(export.identity.projection, CheckedExportProjection::Direct)
-        && matches!(export.identity.source_path.as_slice(), [name] if *name == export.name)
+    match &export.identity.projection {
+        CheckedExportProjection::Direct => {
+            matches!(export.identity.source_path.as_slice(), [name] if *name == export.name)
+        }
+        CheckedExportProjection::Reexport { target_path } => {
+            matches!(target_path.as_slice(), [namespace, _, name] if namespace == "pub" && name == &export.name)
+                && export.identity.source_path == *target_path
+                && matches!(
+                    export.kind,
+                    CheckedExportKind::Model(_) | CheckedExportKind::Enum(_) | CheckedExportKind::Function(_)
+                )
+        }
+        _ => false,
+    }
 }
 
 /// Validate one selected checked export and every nominal type reachable from its public shape.
 fn export_representability(
     export: &CheckedNamedExport,
     exports: &BTreeMap<&str, &CheckedNamedExport>,
+    body_ir_identity: bool,
 ) -> Result<(), String> {
     match &export.kind {
         CheckedExportKind::Function(function) => {
@@ -124,9 +150,9 @@ fn export_representability(
                 return Err("functions with type parameters are unsupported".to_string());
             }
             for parameter in &function.params {
-                type_representability(&parameter.ty, exports, &mut BTreeSet::new())?;
+                type_representability(&parameter.ty, exports, &mut BTreeSet::new(), body_ir_identity)?;
             }
-            type_representability(&function.return_type, exports, &mut BTreeSet::new())
+            type_representability(&function.return_type, exports, &mut BTreeSet::new(), body_ir_identity)
         }
         CheckedExportKind::Model(model) => {
             if !model.type_params.is_empty() {
@@ -136,7 +162,7 @@ fn export_representability(
                 if field.visibility != Visibility::Public {
                     return Err(format!("model field `{}` is not public", field.name));
                 }
-                type_representability(&field.ty, exports, &mut BTreeSet::new())?;
+                type_representability(&field.ty, exports, &mut BTreeSet::new(), body_ir_identity)?;
             }
             Ok(())
         }
@@ -146,13 +172,17 @@ fn export_representability(
             }
             for variant in &enum_export.variants {
                 for field in &variant.fields {
-                    type_representability(field, exports, &mut BTreeSet::new())?;
+                    type_representability(field, exports, &mut BTreeSet::new(), body_ir_identity)?;
                 }
             }
             Ok(())
         }
         CheckedExportKind::Newtype(newtype) if newtype.is_rusttype => {
-            Err("rusttype exports are unsupported".to_string())
+            if body_ir_identity && newtype.type_params.is_empty() && is_body_ir_rust_path(&newtype.underlying) {
+                type_representability(&newtype.underlying, exports, &mut BTreeSet::new(), true)
+            } else {
+                Err("rusttype exports are unsupported".to_string())
+            }
         }
         _ => Err("this declaration kind is outside the bounded caller ABI".to_string()),
     }
@@ -163,6 +193,7 @@ fn type_representability(
     ty: &ResolvedType,
     exports: &BTreeMap<&str, &CheckedNamedExport>,
     visiting: &mut BTreeSet<String>,
+    body_ir_identity: bool,
 ) -> Result<(), String> {
     match ty {
         ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Str | ResolvedType::Unit => Ok(()),
@@ -173,7 +204,7 @@ fn type_representability(
             ) =>
         {
             for argument in arguments {
-                type_representability(argument, exports, visiting)?;
+                type_representability(argument, exports, visiting, body_ir_identity)?;
             }
             Ok(())
         }
@@ -184,15 +215,47 @@ fn type_representability(
             let export = exports
                 .get(name.as_str())
                 .ok_or_else(|| format!("nominal type `{name}` is not a checked public export"))?;
-            let result = export_representability(export, exports);
+            let result = export_representability(export, exports, body_ir_identity);
             visiting.remove(name);
             result
         }
         ResolvedType::Function(_, _) => Err("closure or callable values are unsupported".to_string()),
+        ResolvedType::Ref(inner) if body_ir_identity && is_body_ir_caller_type(inner, exports) => {
+            type_representability(inner, exports, visiting, true)
+        }
+        ty if body_ir_identity && is_body_ir_rust_path(ty) => Ok(()),
         ResolvedType::RustPath(_) => Err("Rust-native types are unsupported".to_string()),
         ResolvedType::TypeVar(_) => Err("type parameters are unsupported".to_string()),
         other => Err(format!("type `{other}` is unsupported")),
     }
+}
+
+/// Recognize only the canonical real Body IR paths admitted by the dependency-identity witness.
+fn is_body_ir_rust_path(ty: &ResolvedType) -> bool {
+    let ResolvedType::RustPath(path) = ty else {
+        return false;
+    };
+    let path = path.trim_start_matches("::");
+    let path = path.strip_prefix("rust::").unwrap_or(path);
+    matches!(
+        path,
+        "incan_semantics_core::body_ir::BodyIrModule" | "incan_semantics_core::body_ir::StatementKind"
+    )
+}
+
+/// Follow one public Rust-backed alias when deciding whether a shared reference belongs to the Body IR exception.
+fn is_body_ir_caller_type(ty: &ResolvedType, exports: &BTreeMap<&str, &CheckedNamedExport>) -> bool {
+    if is_body_ir_rust_path(ty) {
+        return true;
+    }
+    let ResolvedType::Named(name) = ty else {
+        return false;
+    };
+    exports.get(name.as_str()).is_some_and(|export| {
+        matches!(&export.kind,
+        CheckedExportKind::Newtype(newtype) if newtype.is_rusttype && newtype.type_params.is_empty()
+            && is_body_ir_rust_path(&newtype.underlying))
+    })
 }
 
 /// Tokenize source paths with Rust's token grammar, excluding comments and every literal form.
@@ -266,7 +329,7 @@ mod tests {
     use incan_frontend::typechecker::TypeChecker;
     use incan_frontend::{lexer, parser};
 
-    use super::{scan_rust_caller_paths, select_checked_caller_exports};
+    use super::{scan_rust_caller_paths, select_checked_caller_exports, select_checked_caller_exports_with_body_ir};
     use incan_frontend::library_exports::CheckedExportProjection;
 
     #[test]
@@ -300,6 +363,22 @@ const RAW: &str = r##"a quote " hidden::caller::incan::ignored"##;
         let requested = BTreeSet::from(["Op".to_string(), "Plan".to_string(), "make_plan".to_string()]);
         let selected = select_checked_caller_exports("policy", &requested, &exports)?;
         assert_eq!(selected.exports, vec!["Op", "Plan", "make_plan"]);
+        Ok(())
+    }
+
+    /// Rust-backed Body IR references require identity evidence and do not admit arbitrary Rust paths.
+    #[test]
+    fn body_ir_caller_requires_dependency_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "from rust::incan_semantics_core::body_ir import BodyIrModule as RustModule\npub type Module = rusttype RustModule\npub def inspect(module: &Module) -> bool:\n    return True\n";
+        let exports = checked_exports(source)?;
+        let requested = BTreeSet::from(["inspect".to_string()]);
+        assert!(select_checked_caller_exports("lowering", &requested, &exports).is_err());
+        select_checked_caller_exports_with_body_ir("lowering", &requested, &exports, true)?;
+        let other = source
+            .replace("incan_semantics_core::body_ir", "other")
+            .replace("BodyIrModule", "OtherType");
+        let exports = checked_exports(&other)?;
+        assert!(select_checked_caller_exports_with_body_ir("lowering", &requested, &exports, true).is_err());
         Ok(())
     }
 
@@ -346,6 +425,34 @@ const RAW: &str = r##"a quote " hidden::caller::incan::ignored"##;
             assert!(
                 refused.contains("answer") && refused.contains("library entrypoint"),
                 "{refused}"
+            );
+        }
+        Ok(())
+    }
+
+    /// A checked same-name packaged model keeps its recursive ABI checks; aliases cannot bypass those checks.
+    #[test]
+    fn checked_packaged_facade_requires_public_fields_and_original_name() -> Result<(), Box<dyn std::error::Error>> {
+        for (source, admitted) in [
+            ("pub model Plan:\n    pub value: int\n", true),
+            ("pub model Plan:\n    value: int\n", false),
+        ] {
+            let mut exports = checked_exports(source)?;
+            for export in &mut exports {
+                let path = vec!["pub".into(), "provider".into(), "Plan".into()];
+                export.identity.source_path = path.clone();
+                export.identity.projection = CheckedExportProjection::Reexport { target_path: path };
+            }
+            let requested = BTreeSet::from(["Plan".into()]);
+            assert_eq!(
+                select_checked_caller_exports("facade", &requested, &exports).is_ok(),
+                admitted
+            );
+            for export in &mut exports {
+                export.name = "RenamedPlan".into();
+            }
+            assert!(
+                select_checked_caller_exports("facade", &BTreeSet::from(["RenamedPlan".into()]), &exports).is_err()
             );
         }
         Ok(())
