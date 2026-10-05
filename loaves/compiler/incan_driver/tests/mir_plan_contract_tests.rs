@@ -113,10 +113,9 @@ fn hand_filled_scalar_plans_cross_the_oven_caller_boundary() -> Result<(), Box<d
     let manifest = fs::read_to_string(fixture.join("loaf.toml"))?.replace("../../../../incan_mir_plan", "../library");
     fs::write(consumer.join("loaf.toml"), manifest)?;
     fs::copy(fixture.join("src/main.rs"), consumer.join("src/main.rs"))?;
-    fs::copy(
-        repo.join("loaves/toolchain/incan-rustc-driver/src/plan.rs"),
-        consumer.join("src/plan.rs"),
-    )?;
+    // The fixture's own plan module names only `incan_mir_plan`; the driver's names the lowering Loaf that
+    // re-exports the plan, which this consumer does not depend on.
+    fs::copy(fixture.join("src/plan.rs"), consumer.join("src/plan.rs"))?;
     let baked = support::repo_command()
         .args(["oven", "bake", "--project"])
         .arg(&consumer)

@@ -3,6 +3,8 @@
 use crate::error::PlanError;
 use crate::plan::{BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, UnaryOp};
 use crate::spans::Sources;
+use crate::types::native_type;
+use rustc_index::IndexVec;
 use rustc_abi::FieldIdx;
 use rustc_middle::mir::{self, interpret::Scalar};
 use rustc_middle::ty::TyCtxt;
@@ -37,13 +39,13 @@ pub fn operand<'tcx>(
     Ok(match &value.kind {
         OperandKind::Copy(value) => mir::Operand::Copy(place(tcx, value)?),
         OperandKind::Move(value) => mir::Operand::Move(place(tcx, value)?),
-        OperandKind::Literal(value) => constant(tcx, value, span),
+        OperandKind::Literal(value) => constant(tcx, value, span)?,
     })
 }
 
 /// Encode fixed-width scalar constants without changing their bit representation.
-fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> mir::Operand<'tcx> {
-    match value {
+fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir::Operand<'tcx>, PlanError> {
+    Ok(match value {
         Constant::Int(value) => mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span),
         Constant::Float(value) => {
             mir::Operand::const_from_scalar(tcx, tcx.types.f64, Scalar::from_u64(value.to_bits()), span)
@@ -54,7 +56,17 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> mir::Opera
             user_ty: None,
             const_: mir::Const::Val(mir::ConstValue::ZeroSized, tcx.types.unit),
         })),
-    }
+        Constant::Text(text) => {
+            let alloc_id = tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
+            let meta = u64::try_from(text.len()).map_err(|_| PlanError::Invalid {
+                function: "text".into(), reason: "string literal length exceeds the native representation".into(),
+            })?;
+            mir::Operand::Constant(Box::new(mir::ConstOperand {
+                span, user_ty: None,
+                const_: mir::Const::Val(mir::ConstValue::Slice { alloc_id, meta }, native_type(tcx, &PlanType::StrRef)?),
+            }))
+        }
+    })
 }
 
 /// Map an operation name; overflow variants are selected only for int arithmetic.
@@ -98,6 +110,20 @@ pub fn rvalue<'tcx>(
         RvalueKind::Binary(op, left, right) => mir::Rvalue::BinaryOp(
             binary(op, matches!(destination_type, PlanType::CheckedInt)),
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
+        ),
+        RvalueKind::Array(elements) => {
+            let element = match destination_type {
+                PlanType::StringArray(_) => native_type(tcx, &PlanType::String)?,
+                PlanType::StrArray(_) => native_type(tcx, &PlanType::StrRef)?,
+                _ => return Err(PlanError::Invalid { function: "array".into(), reason: "array expression requires a formatting array destination".into() }),
+            };
+            let operands = elements.iter().map(|value| operand(tcx, sources, value)).collect::<Result<Vec<_>, _>>()?;
+            mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Array(element)), IndexVec::from_raw(operands))
+        }
+        RvalueKind::Borrow(value) => mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?),
+        RvalueKind::UnsizeSlice(value) => mir::Rvalue::Cast(
+            mir::CastKind::PointerCoercion(rustc_middle::ty::adjustment::PointerCoercion::Unsize, mir::CoercionSource::Implicit),
+            operand(tcx, sources, value)?, native_type(tcx, destination_type)?,
         ),
     })
 }

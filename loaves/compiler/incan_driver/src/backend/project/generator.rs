@@ -654,7 +654,10 @@ impl ProjectGenerator {
     /// SDK Cargo path and relocatable descriptor projected onto the logically equivalent active inventory artifact.
     pub(crate) fn dependencies_with_sdk_rebindings(&self) -> io::Result<(Vec<DependencySpec>, Vec<DependencySpec>)> {
         if self.sdk_artifact_projections.is_empty() {
-            return Ok((self.dependencies.clone(), self.dev_dependencies.clone()));
+            return Ok((
+                self.project_body_ir_dependencies(self.dependencies.clone())?,
+                self.project_body_ir_dependencies(self.dev_dependencies.clone())?,
+            ));
         }
         let projected = self.sdk_projection_shadow_roots()?;
         let mut materialized = BTreeSet::new();
@@ -676,7 +679,10 @@ impl ProjectGenerator {
                 })
                 .collect()
         };
-        Ok((redirect(&self.dependencies), redirect(&self.dev_dependencies)))
+        Ok((
+            self.project_body_ir_dependencies(redirect(&self.dependencies))?,
+            self.project_body_ir_dependencies(redirect(&self.dev_dependencies))?,
+        ))
     }
 
     /// Return the exact normal dependency specifications used by generated Cargo metadata after SDK projection.

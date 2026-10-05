@@ -18,6 +18,7 @@
 //! - [`cargo_toml`] — `Cargo.toml` rendering and dependency formatting
 //! - [`runner`] — Cargo-lock projection support for the explicit publisher boundary
 
+mod body_ir_projection;
 pub mod cargo_toml;
 pub mod generator;
 pub mod lock_projection;

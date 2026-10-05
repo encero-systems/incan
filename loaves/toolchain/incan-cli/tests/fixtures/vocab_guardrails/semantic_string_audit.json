@@ -7,6 +7,12 @@
       "expected_fingerprint": "0xca7bf27488024e44"
     },
     {
+      "path": "loaves/compiler/incan_driver/src/backend/project/body_ir_projection.rs",
+      "category": "the incan_lang kernel crate the Body IR projection selects from the host closure",
+      "expected_count": 1,
+      "expected_fingerprint": "0xd800ab5e92c05535"
+    },
+    {
       "path": "loaves/compiler/incan_driver/src/backend/project/generator.rs",
       "category": "generated project layout: std path roots, the target directory, the lock format marker, dependency table names, entry module names and the stdlib module",
       "expected_count": 7,
@@ -20,15 +26,15 @@
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/bake.rs",
-      "category": "Oven bake profile selection and Rust unit source-file discovery",
-      "expected_count": 4,
-      "expected_fingerprint": "0xc51a2922e665fdb0"
+      "category": "Oven bake profile selection, Rust unit source-file discovery, the semantics-core host cohort crate and `pub::` caller re-export paths",
+      "expected_count": 6,
+      "expected_fingerprint": "0xe7614ec6a7b73121"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/caller_facet.rs",
-      "category": "Rust caller-path tokens (`<library>::caller::incan::<name>`, `::`, braces and commas) read from Rust-authored caller units",
-      "expected_count": 8,
-      "expected_fingerprint": "0x484c602b727809c2"
+      "category": "Rust caller-path tokens (`<library>::caller::incan::<name>`, `::`, braces and commas) read from Rust-authored caller units, and `pub::` re-export target paths",
+      "expected_count": 9,
+      "expected_fingerprint": "0x24f26d3289453548"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/library_project.rs",
@@ -340,7 +346,7 @@
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/access.rs",
       "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, C output-slot boundary classification, and the copy completing a dict get read from static storage",
       "expected_count": 53,
-      "expected_fingerprint": "0x97792d11cf8c8cf5"
+      "expected_fingerprint": "0xc45c1813fb812cb3"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/basics.rs",

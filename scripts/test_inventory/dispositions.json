@@ -459,6 +459,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs": {
+      "disposition": "keep",
+      "notes": "Real borrowed Body IR module and statement enum across an Oven-built Incan caller boundary",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/duration_artifact_tests.rs": {
       "disposition": "re-point",
       "notes": "runs a program and checks the duration artifact.",
@@ -568,7 +576,7 @@
     },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs": {
       "disposition": "keep",
-      "notes": "Oven-built pinned native driver scalar output, overflow span, typed dangling-block and startup refusals",
+      "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and complete exact-output single-file behavior corpus",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -9049,6 +9057,14 @@
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/path_workspace.rs": {
+      "disposition": "keep",
+      "notes": "Selected workspace inheritance, path anchoring, missing authority and override refusals",
+      "owner": 1337,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },

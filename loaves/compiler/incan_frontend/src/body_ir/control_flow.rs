@@ -8,9 +8,8 @@ use super::*;
 
 /// Where one range-shaped `for` loop takes its bounds, step, and inclusivity from.
 ///
-/// The two variants are the two ways the surface can spell a range in iterable position, and they differ only in
-/// where those facts live: written into the header, or carried by an already-built range value. Both drive the
-/// same normalized counting loop -- see [`BodyBuilder::lower_range_counting_loop`].
+/// Inline headers, materialized aggregates, and checker-proven builtin calls retain their own bound evaluation
+/// timing and layout authority while driving the same normalized counting loop.
 enum RangeLoopSource<'ast> {
     /// An inline `start..end` / `start..=end` loop header, still holding its un-lowered bound expressions.
     Header {
@@ -20,6 +19,15 @@ enum RangeLoopSource<'ast> {
     },
     /// A materialized [`bir::AggregateKind::Range`] value, read back through its own declared fields.
     Value(bir::Place),
+    /// Checked builtin range arguments, snapshotted in source order before the first iteration.
+    Builtin(Box<BuiltinRangeBounds>),
+}
+
+/// Scalar operands retained once from a checked builtin call; boxed together to keep range classification compact.
+struct BuiltinRangeBounds {
+    start: bir::Operand,
+    end: bir::Operand,
+    step: bir::Operand,
 }
 
 /// Read a counting loop's index local.
@@ -215,10 +223,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // same restoration for names declared in its body.
         let enclosing_bindings = self.bindings.clone();
         self.loop_break_targets.push(break_target);
+        self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
         lower_body(self, loop_scope, &mut body_stmts);
         self.insert_scope_drops(&mut body_stmts, loop_scope);
         self.loop_break_targets.pop();
+        self.loop_continue_actions.pop();
         self.materialized_range_locals =
             intersect_range_layouts(vec![range_layouts_before, self.materialized_range_locals.clone()]);
         self.bindings = enclosing_bindings;
@@ -497,7 +507,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // loop locals themselves in Body IR for the loop's statements to reference.
         let enclosing_bindings = self.bindings.clone();
         let range_layouts_before = self.materialized_range_locals.clone();
-        let range = match self.range_loop_source(&for_stmt.iter, &iter_ty) {
+        let range = match self.range_loop_source(&for_stmt.iter, &iter_ty, scope, out) {
             Ok(range) => range,
             Err(reason) => {
                 self.push_unsupported_stmt(reason, span, out);
@@ -568,14 +578,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// range needs an independently proven local [`bir::AggregateKind::Range`] producer. A `Range[T]` type spelling
     /// alone cannot prove the aggregate layout: parameters, call results, imported values, and user declarations
     /// may carry it without `start`/`end`/`step`/`inclusive` fields. Those cases refuse visibly rather than inventing
-    /// a private range ABI. The `range()` builtin resolves to a different type and keeps its existing iteration path.
+    /// a private range ABI. A checker-proven inline `range()` call instead retains scalar bounds evaluated once and an
+    /// explicit constructor validation fact; an unproven same-spelled call keeps general iteration.
     fn range_loop_source<'ast>(
-        &self,
+        &mut self,
         iter_expr: &'ast ast::Spanned<ast::Expr>,
         iter_ty: &IncanType,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
     ) -> Result<Option<RangeLoopSource<'ast>>, String> {
         if let Some((start, end, inclusive)) = inline_range_parts(iter_expr) {
             return Ok(Some(RangeLoopSource::Header { start, end, inclusive }));
+        }
+        if let Some(range) = self.builtin_range_loop_source(iter_expr, scope, out)? {
+            return Ok(Some(range));
         }
         if range_value_element_type(iter_ty).is_none() {
             return Ok(None);
@@ -584,6 +600,132 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return Err("range value without a source-local Body IR range aggregate".to_string());
         };
         Ok(Some(RangeLoopSource::Value(place)))
+    }
+
+    /// Normalize only a checker-proven builtin range call, retaining argument evaluation before iteration.
+    ///
+    /// This is a representation of builtin iterator facts, not recognition of a same-spelled user function.
+    /// Bounds and step are copied into fresh locals once; a constructor validation call preserves the zero-step
+    /// error before any iteration. Bound range values and other iterators keep their distinct existing paths.
+    fn builtin_range_loop_source(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<Option<RangeLoopSource<'static>>, String> {
+        if let ast::Expr::Paren(inner) = &expr.node {
+            return self.builtin_range_loop_source(inner, scope, out);
+        }
+        let ast::Expr::Call(callee, type_args, args) = &expr.node else {
+            return Ok(None);
+        };
+        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Range) {
+            return Ok(None);
+        }
+        let ast::Expr::Ident(name) = &callee.node else {
+            return Err("unsupported builtin range callee shape".into());
+        };
+        let declaration = self.declared_slots_for_direct_call(name, callee.span, expr.span)?;
+        if declaration.builtin != Some(bir::BuiltinFnId::Range) || !type_args.is_empty() {
+            return Err("builtin range lacks a matching checked canonical identity".into());
+        }
+        if args.is_empty() || args.len() > 3 || args.iter().any(|arg| !matches!(arg, ast::CallArg::Positional(_))) {
+            return Err("unsupported builtin range argument binding".into());
+        }
+        let span = hir_span(expr.span);
+        let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
+        let mut values = Vec::new();
+        for argument in args {
+            let ast::CallArg::Positional(argument) = argument else {
+                return Err("unsupported builtin range argument".into());
+            };
+            let operand = self.lower_expr_to_operand(argument, scope, out);
+            values.push(self.push_assign_temp(bir::Rvalue::Use(operand), int_ty.clone(), scope, span, out));
+        }
+        let (start, end, step) = match values.as_slice() {
+            [end] => (
+                bir::Operand::Constant(bir::Constant::Int(0)),
+                end.clone(),
+                bir::Operand::Constant(bir::Constant::Int(1)),
+            ),
+            [start, end] => (
+                start.clone(),
+                end.clone(),
+                bir::Operand::Constant(bir::Constant::Int(1)),
+            ),
+            [start, end, step] => (start.clone(), end.clone(), step.clone()),
+            _ => return Err("unsupported builtin range arity".into()),
+        };
+        let helper = bir::HelperOp::RangeValidate;
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().into()));
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+        self.panic_facts.push(bir::PanicFact {
+            span,
+            reason: bir::PanicReason::HelperMayPanic(helper),
+        });
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Call {
+                destination: None,
+                callee: bir::Callee::Helper(helper),
+                args: fixed_elements(vec![start.clone(), end.clone(), step.clone()]),
+                may_panic: true,
+            },
+            span,
+        });
+        Ok(Some(RangeLoopSource::Builtin(Box::new(BuiltinRangeBounds {
+            start,
+            end,
+            step,
+        }))))
+    }
+
+    /// Select positive-step or negative-step exhaustion from the retained scalar builtin arguments.
+    fn builtin_range_stop_condition(
+        &mut self,
+        end: &bir::Operand,
+        step: &bir::Operand,
+        index: bir::LocalId,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let bool_ty = IncanType::Primitive(IncanPrimitiveType::Bool);
+        let positive = self.push_assign_temp(
+            bir::Rvalue::BinaryOp(
+                bir::BinOp::Gt,
+                step.clone(),
+                bir::Operand::Constant(bir::Constant::Int(0)),
+            ),
+            bool_ty.clone(),
+            scope,
+            span,
+            out,
+        );
+        let condition = self.new_temp(bool_ty, scope, span);
+        let positive_scope = self.new_scope(Some(scope), span);
+        let negative_scope = self.new_scope(Some(scope), span);
+        let stop = |op| bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(condition),
+                rvalue: bir::Rvalue::BinaryOp(op, index_read(index), end.clone()),
+            },
+            span,
+        };
+        out.push(bir::Statement {
+            kind: bir::StatementKind::If {
+                cond: positive,
+                then_block: bir::Block {
+                    scope: positive_scope,
+                    stmts: vec![stop(bir::BinOp::Ge)],
+                },
+                else_block: Some(bir::Block {
+                    scope: negative_scope,
+                    stmts: vec![stop(bir::BinOp::Le)],
+                }),
+            },
+            span,
+        });
+        bir::Operand::place(bir::Place::from_local(condition), bir::OwnershipFact::Copy, false)
     }
 
     /// Whether `expr` is a source-local value whose current Body-IR representation has the declared range layout.
@@ -698,6 +840,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Retain the range's checked index update as operations shared by fallthrough and each `continue` edge.
+    fn range_increment_steps(
+        &mut self,
+        source: &RangeLoopSource<'_>,
+        idx_local: bir::LocalId,
+        loop_scope: bir::ScopeId,
+        span: HirSourceSpan,
+    ) -> Vec<bir::Statement> {
+        let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
+        let mut body_stmts = Vec::new();
+        let step = match source {
+            RangeLoopSource::Header { .. } => bir::Operand::Constant(bir::Constant::Int(RANGE_UNIT_STEP)),
+            RangeLoopSource::Builtin(bounds) => bounds.step.clone(),
+            RangeLoopSource::Value(range) => {
+                self.read_range_field(range, bir::AggregateKind::RANGE_FIELD_STEP, &int_ty)
+            }
+        };
+        let incremented = self.push_assign_temp(
+            bir::Rvalue::BinaryOp(bir::BinOp::Add, index_read(idx_local), step),
+            int_ty,
+            loop_scope,
+            span,
+            &mut body_stmts,
+        );
+        body_stmts.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(idx_local),
+                rvalue: bir::Rvalue::Use(incremented),
+            },
+            span,
+        });
+        body_stmts
+    }
+
     /// Lower one range-shaped `for` loop into the normalized counting `Loop` both range spellings share: seed an
     /// index from the range's start, break once it reaches the end, bind the loop pattern from the index, run the
     /// body, then advance the index by the range's step.
@@ -705,8 +881,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Where the two spellings get those three pieces from is the only difference, and each is taken from
     /// `source`: an inline header lowers its own AST sub-expressions and knows its step and inclusivity
     /// statically, while a range value reads them back off the place it was materialized into. The `end` bound is
-    /// evaluated *inside* the loop body in both cases, preserving the inline form's established re-evaluation
-    /// timing rather than hoisting it.
+    /// evaluated *inside* the loop for the header and aggregate forms, preserving their established timing.
+    /// A checker-proven builtin call instead snapshots its arguments before iteration and uses signed exhaustion.
     fn lower_range_counting_loop(
         &mut self,
         for_stmt: &ast::ForStmt,
@@ -719,6 +895,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let start_operand = match source {
             RangeLoopSource::Header { start, .. } => self.lower_expr_to_operand(start, scope, out),
+            RangeLoopSource::Builtin(bounds) => bounds.start.clone(),
             RangeLoopSource::Value(range) => {
                 self.read_range_field(range, bir::AggregateKind::RANGE_FIELD_START, &int_ty)
             }
@@ -735,6 +912,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let loop_scope = self.new_scope(Some(scope), span);
         // `for` never produces a value from `break` (same reasoning as `while` -- see `Self::lower_while`).
         self.loop_break_targets.push(None);
+        self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
 
         let cond = match source {
@@ -752,6 +930,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             RangeLoopSource::Value(range) => {
                 self.range_value_stop_condition(range, idx_local, loop_scope, span, &mut body_stmts)
             }
+            RangeLoopSource::Builtin(bounds) => self.builtin_range_stop_condition(
+                &bounds.end,
+                &bounds.step,
+                idx_local,
+                loop_scope,
+                span,
+                &mut body_stmts,
+            ),
         };
         let break_scope = self.new_scope(Some(loop_scope), span);
         body_stmts.push(bir::Statement {
@@ -797,30 +983,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
+        let increment = self.range_increment_steps(source, idx_local, loop_scope, span);
+        if let Some(actions) = self.loop_continue_actions.last_mut() {
+            *actions = increment;
+        }
         self.lower_block_into(&for_stmt.body, loop_scope, &mut body_stmts);
         self.insert_scope_drops(&mut body_stmts, loop_scope);
-
-        let step = match source {
-            RangeLoopSource::Header { .. } => bir::Operand::Constant(bir::Constant::Int(RANGE_UNIT_STEP)),
-            RangeLoopSource::Value(range) => {
-                self.read_range_field(range, bir::AggregateKind::RANGE_FIELD_STEP, &int_ty)
-            }
-        };
-        let incremented = self.push_assign_temp(
-            bir::Rvalue::BinaryOp(bir::BinOp::Add, index_read(idx_local), step),
-            int_ty,
-            loop_scope,
-            span,
-            &mut body_stmts,
-        );
-        body_stmts.push(bir::Statement {
-            kind: bir::StatementKind::Assign {
-                place: bir::Place::from_local(idx_local),
-                rvalue: bir::Rvalue::Use(incremented),
-            },
-            span,
-        });
+        if let Some(actions) = self.loop_continue_actions.last() {
+            body_stmts.extend(actions.iter().cloned());
+        }
         self.loop_break_targets.pop();
+        self.loop_continue_actions.pop();
 
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
@@ -1015,6 +1188,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         self.loop_break_targets.push(None);
+        self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
 
         let iter_protocol = match &protocol {
@@ -1039,6 +1213,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         body_fn(self, loop_scope, &mut body_stmts);
         self.loop_break_targets.pop();
+        self.loop_continue_actions.pop();
 
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {

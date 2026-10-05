@@ -125,7 +125,11 @@ impl OvenCompilerSuiteTargetCapabilities {
         let explicit_bake_cargo = target_kind == "test"
             && match package_name {
                 "incan_driver" => {
-                    source_relative_path == "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs"
+                    matches!(
+                        source_relative_path,
+                        "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs"
+                            | "loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs"
+                    )
                 }
                 "incan-cli" => EXPLICIT_CLI_BAKE_ROOTS.contains(&source_relative_path),
                 _ => false,

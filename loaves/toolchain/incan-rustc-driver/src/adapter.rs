@@ -2,7 +2,7 @@
 
 use crate::error::PlanError;
 use crate::identity::{self, IdentityError};
-use crate::plan::Plan;
+use crate::plan::{Plan, PlanType};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, validation};
 use rustc_ast as ast;
@@ -10,7 +10,7 @@ use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
 use rustc_interface::interface;
 use rustc_middle::mir::Body;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_session::config::Input;
 use rustc_span::FileName;
 use std::collections::BTreeSet;
@@ -23,6 +23,14 @@ static COMPILATION: Mutex<()> = Mutex::new(());
 static PLAN: Mutex<Option<Arc<Plan>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
+
+/// Preserve a typed plan refusal when an admitted external signature cannot name its native representation.
+fn native_type_or_refuse<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Ty<'tcx> {
+    match types::native_type(tcx, ty) {
+        Ok(ty) => ty,
+        Err(error) => refuse(tcx, error),
+    }
+}
 
 /// Typed refusals and native compiler failures remain distinct at the executable boundary.
 #[derive(Debug, thiserror::Error)]
@@ -138,14 +146,14 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(def) => def,
                 Err(error) => refuse(tcx, error),
             };
-            let signature = tcx.fn_sig(def).instantiate_identity().skip_binder();
+            let signature = tcx.instantiate_bound_regions_with_erased(tcx.fn_sig(def).instantiate_identity().skip_normalization());
             let parameters: Vec<_> = external
                 .parameters
                 .iter()
-                .map(|ty| types::native_type(tcx, ty))
+                .map(|ty| native_type_or_refuse(tcx, ty))
                 .collect();
             if signature.inputs() != parameters
-                || signature.output() != types::native_type(tcx, &external.return_type)
+                || signature.output() != native_type_or_refuse(tcx, &external.return_type)
                 || signature.c_variadic()
                 || signature.safety().is_unsafe()
             {
@@ -195,6 +203,8 @@ pub fn compile(
         "allow".into(),
         "-C".into(),
         "overflow-checks=yes".into(),
+        "-C".into(),
+        "opt-level=3".into(),
         "-C".into(),
         "debuginfo=2".into(),
         "-o".into(),

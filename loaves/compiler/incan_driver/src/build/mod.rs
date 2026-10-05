@@ -160,6 +160,8 @@ pub struct InlineCommandProject {
 /// The legacy publisher may still retain Cargo-only preparation state. Normal `incan build --lib`, however, always
 /// carries an Oven selection and compiles through direct `rustc` without entering that state.
 pub struct PreparedLibraryProject {
+    /// Public declarations from the same fully inspected checking pass that produced the provider artifact.
+    pub checked_exports: Vec<incan_frontend::library_exports::CheckedNamedExport>,
     pub generator: ProjectGenerator,
     pub project_root: PathBuf,
     pub entrypoint: PathBuf,

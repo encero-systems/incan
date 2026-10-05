@@ -16,6 +16,15 @@ enum Scalar {
     Bool,
     Unit,
     CheckedInt,
+    String,
+    StringRef,
+    StrRef,
+    StringArray(i64),
+    StrArray(i64),
+    StringArrayRef(i64),
+    StrArrayRef(i64),
+    StringSlice,
+    StrSlice,
 }
 
 /// Compare source-authored types without requiring a Rust derive on Incan types.
@@ -26,6 +35,15 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Bool => Scalar::Bool,
         PlanType::Unit => Scalar::Unit,
         PlanType::CheckedInt => Scalar::CheckedInt,
+        PlanType::String => Scalar::String,
+        PlanType::StringRef => Scalar::StringRef,
+        PlanType::StrRef => Scalar::StrRef,
+        PlanType::StringArray(count) => Scalar::StringArray(*count),
+        PlanType::StrArray(count) => Scalar::StrArray(*count),
+        PlanType::StringArrayRef(count) => Scalar::StringArrayRef(*count),
+        PlanType::StrArrayRef(count) => Scalar::StrArrayRef(*count),
+        PlanType::StringSlice => Scalar::StringSlice,
+        PlanType::StrSlice => Scalar::StrSlice,
     }
 }
 
@@ -59,12 +77,12 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
                 reason: "invalid or duplicate canonical external path".into(),
             });
         }
-        if external.parameters.iter().any(|ty| scalar(ty) == Scalar::CheckedInt)
-            || scalar(&external.return_type) == Scalar::CheckedInt
+        if external.parameters.iter().any(|ty| !external_signature_type(scalar(ty)))
+            || !external_signature_type(scalar(&external.return_type))
         {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
-                reason: "checked pairs cannot cross a function signature".into(),
+                reason: "checked pairs and formatting arrays cannot cross a function signature".into(),
             });
         }
     }
@@ -117,7 +135,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         return Err(invalid(function, "locals must include return place and all parameters"));
     }
     if scalar(&function.locals[0].ty) != scalar(&function.return_type)
-        || scalar(&function.return_type) == Scalar::CheckedInt
+        || !source_signature_type(scalar(&function.return_type))
     {
         return Err(invalid(function, "return local must match a scalar return type"));
     }
@@ -127,7 +145,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         if !identifier(&parameter.name) || !parameters.insert(&parameter.name) {
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
-        if scalar(&parameter.ty) == Scalar::CheckedInt
+        if !source_signature_type(scalar(&parameter.ty))
             || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
         {
             return Err(invalid(function, "parameter local differs from its declaration"));
@@ -135,6 +153,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
     }
     for local in &function.locals {
         span(&local.span)?;
+        validate_array_length(function, scalar(&local.ty))?;
     }
     for block in &function.blocks {
         span(&block.span)?;
@@ -143,8 +162,9 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
             match &statement.kind {
                 StatementKind::Assign(destination, value) => {
                     span(&value.span)?;
-                    let result = rvalue(function, &value.kind)?;
-                    require(function, place(function, destination)?, result, "assignment")?;
+                    let expected = place(function, destination)?;
+                    let result = rvalue(function, &value.kind, expected)?;
+                    require(function, expected, result, "assignment")?;
                 }
                 StatementKind::StorageLive(index) | StatementKind::StorageDead(index) => {
                     local(function, *index)?;
@@ -219,12 +239,20 @@ fn unwind(function: &Function, action: &Unwind, cleanup: bool) -> Result<(), Pla
 fn operand(function: &Function, value: &Operand) -> Result<Scalar, PlanError> {
     span(&value.span)?;
     match &value.kind {
-        OperandKind::Copy(value) | OperandKind::Move(value) => place(function, value),
+        OperandKind::Copy(value) => {
+            let ty = place(function, value)?;
+            if matches!(ty, Scalar::String | Scalar::StringArray(_)) {
+                return Err(invalid(function, "owned formatting values cannot be copied"));
+            }
+            Ok(ty)
+        }
+        OperandKind::Move(value) => place(function, value),
         OperandKind::Literal(value) => Ok(match value {
             Constant::Int(_) => Scalar::Int,
             Constant::Float(_) => Scalar::Float,
             Constant::Bool(_) => Scalar::Bool,
             Constant::Unit => Scalar::Unit,
+            Constant::Text(_) => Scalar::StrRef,
         }),
     }
 }
@@ -241,7 +269,7 @@ fn require(function: &Function, actual: Scalar, expected: Scalar, context: &str)
 }
 
 /// Type scalar rvalues, including the checked integer pair rustc produces for arithmetic.
-fn rvalue(function: &Function, value: &RvalueKind) -> Result<Scalar, PlanError> {
+fn rvalue(function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
         RvalueKind::Use(value) => operand(function, value),
         RvalueKind::IntToFloat(value) => {
@@ -261,7 +289,55 @@ fn rvalue(function: &Function, value: &RvalueKind) -> Result<Scalar, PlanError> 
             require(function, operand(function, right)?, ty, "binary operands")?;
             binary_result(function, op, ty)
         }
+        RvalueKind::Array(elements) => validate_array(function, elements, expected),
+        RvalueKind::Borrow(value) => match place(function, value)? {
+            Scalar::String => Ok(Scalar::StringRef),
+            Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
+            Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
+            _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
+        },
+        RvalueKind::UnsizeSlice(value) => match operand(function, value)? {
+            Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
+            Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
+            _ => Err(invalid(function, "slice coercion requires a shared formatting-array reference")),
+        },
     }
+}
+
+/// Source functions expose only scalar or owned text values; formatting arrays and references stay body-internal.
+fn source_signature_type(ty: Scalar) -> bool {
+    matches!(ty, Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String)
+}
+
+/// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
+fn external_signature_type(ty: Scalar) -> bool {
+    source_signature_type(ty) || matches!(ty, Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice)
+}
+
+/// Refuse an invalid dimension before constructing native array constants, including unused locals.
+fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
+    match ty {
+        Scalar::StringArray(count) | Scalar::StrArray(count) | Scalar::StringArrayRef(count) | Scalar::StrArrayRef(count) if count < 0 => {
+            Err(invalid(function, "formatting array length must be nonnegative"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Check a formatting array's exact length and each element against its declared destination type.
+fn validate_array(function: &Function, values: &[Operand], expected: Scalar) -> Result<Scalar, PlanError> {
+    let (element, count) = match expected {
+        Scalar::StringArray(count) => (Scalar::String, count),
+        Scalar::StrArray(count) => (Scalar::StrRef, count),
+        _ => return Err(invalid(function, "array expression requires a formatting-array destination")),
+    };
+    if usize::try_from(count).ok() != Some(values.len()) {
+        return Err(invalid(function, "formatting array length differs from its elements"));
+    }
+    for value in values {
+        require(function, operand(function, value)?, element, "formatting array element")?;
+    }
+    Ok(expected)
 }
 
 /// Arithmetic on int is always checked; floating arithmetic follows rustc's IEEE operations.

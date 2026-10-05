@@ -537,6 +537,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// `break value` today, or a `loop:` expression's own synthetic exit checks). Always non-empty while lowering
     /// any loop body, so [`Self::lower_break`] can look up the innermost target with `.last()`.
     loop_break_targets: Vec<Option<bir::LocalId>>,
+    /// Checked operations that run before `continue` reaches the innermost loop header. Counting ranges retain their
+    /// increment here; ordinary loops retain an empty sequence.
+    loop_continue_actions: Vec<Vec<bir::Statement>>,
     runtime_requirements: Vec<AbiV0RuntimeRequirement>,
     panic_facts: Vec<bir::PanicFact>,
     next_local: u32,
@@ -566,6 +569,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             borrowed_parameters: HashSet::new(),
             materialized_range_locals: HashSet::new(),
             loop_break_targets: Vec::new(),
+            loop_continue_actions: Vec::new(),
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             next_local: 0,

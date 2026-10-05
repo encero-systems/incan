@@ -48,7 +48,7 @@ pub fn body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, function: &Function) -> Re
         .iter()
         .map(|local| {
             Ok(mir::LocalDecl::new(
-                types::native_type(tcx, &local.ty),
+                types::native_type(tcx, &local.ty)?,
                 sources.span(&local.span)?,
             ))
         })
