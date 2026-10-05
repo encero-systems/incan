@@ -1,0 +1,46 @@
+"""Monomorphic text boundaries retaining the legacy runtime semantics."""
+
+from rust::incan_std_core::strings import (
+    str_concat as runtime_concat,
+    str_eq as runtime_equal,
+    str_ne as runtime_unequal,
+    str_lt as runtime_less,
+    str_le as runtime_less_equal,
+    str_gt as runtime_greater,
+    str_ge as runtime_greater_equal,
+)
+
+
+pub def concat_text(left: &str, right: &str) -> str:
+    """Concatenate shared text with the same helper selected by legacy emission."""
+    return runtime_concat(left, right)
+
+
+pub def equal_text(left: &str, right: &str) -> bool:
+    """Compare shared text for equality through the canonical string runtime."""
+    return runtime_equal(left, right)
+
+
+pub def unequal_text(left: &str, right: &str) -> bool:
+    """Compare shared text for inequality through the canonical string runtime."""
+    return runtime_unequal(left, right)
+
+
+pub def less_text(left: &str, right: &str) -> bool:
+    """Compare shared text in lexical order through the canonical string runtime."""
+    return runtime_less(left, right)
+
+
+pub def less_equal_text(left: &str, right: &str) -> bool:
+    """Compare shared text in inclusive lexical order through the canonical string runtime."""
+    return runtime_less_equal(left, right)
+
+
+pub def greater_text(left: &str, right: &str) -> bool:
+    """Compare shared text in reverse lexical order through the canonical string runtime."""
+    return runtime_greater(left, right)
+
+
+pub def greater_equal_text(left: &str, right: &str) -> bool:
+    """Compare shared text in inclusive reverse lexical order through the canonical string runtime."""
+    return runtime_greater_equal(left, right)
