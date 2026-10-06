@@ -1066,53 +1066,44 @@ impl SdkCompiledClosure {
     }
 }
 
-/// Hash only the selected target sysroot libraries, excluding optional tools, source and extra installed targets.
+/// Hash exactly the target standard library a unit links: the files the `rust-std` component manifest lists.
+///
+/// Optional components install into the same directories (`rustc-dev` alone adds hundreds of compiler-internal
+/// libraries beside std), so walking the directory would make a unit's identity depend on which components a machine
+/// happens to have. The `rust-std-<target>` manifest names the std set every install of the release shares; each
+/// listed file is hashed by its sysroot-relative path and bytes, and a missing or escaping entry refuses.
 fn compiler_closure_digest(rustc: &Path, target: &str) -> Result<String, Error> {
     let rustc = std::fs::canonicalize(rustc)?;
     let root = rustc.parent().and_then(Path::parent).ok_or("compiler has no sysroot")?;
+    let manifest = root.join("lib/rustlib").join(format!("manifest-rust-std-{target}"));
+    let listing = std::fs::read_to_string(&manifest)
+        .map_err(|error| format!("compiler has no rust-std manifest for {target}: {error}"))?;
     let mut records = BTreeMap::new();
-    compiler_library_records(
-        root,
-        &root.join("lib/rustlib").join(target).join("lib"),
-        &mut BTreeSet::new(),
-        &mut records,
-    )?;
+    for line in listing.lines() {
+        let Some(relative) = line.strip_prefix("file:") else {
+            continue;
+        };
+        records.insert(relative.to_string(), std_library_digest(root, relative)?);
+    }
+    if records.is_empty() {
+        return Err(format!("rust-std manifest for {target} lists no files").into());
+    }
     Ok(digest_bytes(&serde_json::to_vec(&records)?))
 }
 
-/// Collect compiler library bytes while rejecting external symlinks, cycles and special files.
-fn compiler_library_records(
-    root: &Path,
-    current: &Path,
-    active: &mut BTreeSet<PathBuf>,
-    records: &mut BTreeMap<String, String>,
-) -> Result<(), Error> {
-    let resolved = std::fs::canonicalize(current)?;
-    if !resolved.starts_with(root) {
-        return Err("compiler library alias escapes the selected sysroot".into());
+/// Digest one manifest-listed std file, refusing a path that leaves the sysroot or is not a regular file.
+fn std_library_digest(root: &Path, relative: &str) -> Result<String, Error> {
+    if Path::new(relative)
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("rust-std manifest entry is not sysroot-relative: {relative}").into());
     }
-    let metadata = std::fs::metadata(&resolved)?;
-    if metadata.is_dir() {
-        if !active.insert(resolved.clone()) {
-            return Err("cycle in compiler library aliases".into());
-        }
-        for entry in std::fs::read_dir(&resolved)? {
-            let name = entry?.file_name();
-            if matches!(name.to_str(), Some("src" | "Cargo.toml" | "Cargo.lock")) {
-                continue;
-            }
-            compiler_library_records(root, &current.join(name), active, records)?;
-        }
-        active.remove(&resolved);
-    } else if metadata.is_file() {
-        records.insert(
-            current.strip_prefix(root)?.to_string_lossy().into_owned(),
-            digest_bytes(&std::fs::read(resolved)?),
-        );
-    } else {
-        return Err("compiler closure contains a special file".into());
+    let resolved = std::fs::canonicalize(root.join(relative))?;
+    if !resolved.starts_with(root) || !std::fs::metadata(&resolved)?.is_file() {
+        return Err(format!("rust-std manifest entry is not a sysroot file: {relative}").into());
     }
-    Ok(())
+    Ok(digest_bytes(&std::fs::read(resolved)?))
 }
 
 #[cfg(test)]
@@ -1129,10 +1120,22 @@ mod tests {
         std::fs::write(&rustc, b"compiler")?;
         let library = root.path().join("lib/rustlib/selected/lib/libstd.rlib");
         std::fs::write(&library, b"selected library")?;
+        std::fs::write(
+            root.path().join("lib/rustlib/manifest-rust-std-selected"),
+            b"file:lib/rustlib/selected/lib/libstd.rlib\n",
+        )?;
         let first = compiler_closure_digest(&rustc, "selected")?;
         std::fs::create_dir_all(root.path().join("lib/rustlib/extra/lib"))?;
         std::fs::write(root.path().join("lib/rustlib/extra/lib/libstd.rlib"), b"extra target")?;
-        std::fs::write(root.path().join("lib/rustlib/components"), b"rust-src\nclippy\n")?;
+        std::fs::write(
+            root.path().join("lib/rustlib/components"),
+            b"rust-src\nclippy\nrustc-dev\n",
+        )?;
+        // rustc-dev installs compiler-internal libraries beside std; they are not part of what a unit links.
+        std::fs::write(
+            root.path().join("lib/rustlib/selected/lib/librustc_driver.rlib"),
+            b"compiler internals",
+        )?;
         assert_eq!(first, compiler_closure_digest(&rustc, "selected")?);
         std::fs::write(&library, b"changed selected library")?;
         assert_ne!(first, compiler_closure_digest(&rustc, "selected")?);

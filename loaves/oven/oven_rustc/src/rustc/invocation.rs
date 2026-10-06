@@ -713,7 +713,11 @@ fn compile_direct_rustc_output(
 
     let mut command = Command::new(rustc);
     if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
+        // Adopted units compile under a fixed environment so no ambient variable reaches their bytes. Rustc still
+        // invokes the system linker (`cc`) for proc-macro and other linked outputs; a fixed system search path finds
+        // it on every host without making the ambient PATH an input.
         command.env_clear();
+        command.env("PATH", "/usr/bin:/bin");
     }
     if test_harness {
         command.arg("--test");
@@ -734,6 +738,7 @@ fn compile_direct_rustc_output(
             command.args(["--crate-type", "proc-macro", "--extern", "proc_macro"]);
         }
     }
+    apply_portable_install_name(&mut command, output_kind, &receipt.intent.target, output);
     if prefer_dynamic {
         // Cargo emits both flags for a proc-macro libtest. `proc_macro` is provided by the receipt-selected Rust
         // toolchain sysroot rather than a Cargo target artifact, so it is intentionally not represented as a stored
@@ -756,6 +761,12 @@ fn compile_direct_rustc_output(
     clear_inherited_cargo_environment(&mut command);
     apply_sdk_compilation_policy(&mut command, receipt)?;
     apply_portable_source_paths(&mut command, receipt, artifact_root, rustc)?;
+    if !prefer_dynamic {
+        // Dynamic test harnesses embed the sysroot in their runtime search path, so they keep the installed one.
+        let std_sysroot = super::toolchain::normalized_std_sysroot(rustc, &receipt.intent.target)?;
+        command.arg("--sysroot").arg(&std_sysroot);
+        command.arg(format!("--remap-path-prefix={}=/oven/sysroot", std_sysroot.display()));
+    }
     for (name, value) in &plan.compile_environment {
         let value = resolve_compile_environment_value(name, value, source)?;
         command.env(name, value);
@@ -874,6 +885,37 @@ pub(super) fn write_caller_output_record(
         source,
     })?;
     fs::rename(&temporary, &path).map_err(|source| OvenRustcError::Io { path, source })
+}
+
+/// Give an Apple dynamic library a location-independent install name.
+///
+/// The Apple linker records a dylib's own path as its install name, so a proc-macro or dylib built in two store roots
+/// differs by that path, and every crate that depends on it inherits the difference through its crate hash. Rustc
+/// loads proc macros by path, never through the install name, so `@rpath/<file>` is safe and stable on every host.
+fn apply_portable_install_name(
+    command: &mut Command,
+    output_kind: OvenDirectRustcOutputKind,
+    target: &str,
+    output: &Path,
+) {
+    let dynamic = matches!(
+        output_kind,
+        OvenDirectRustcOutputKind::ProcMacro | OvenDirectRustcOutputKind::Dylib
+    );
+    if !dynamic || !target.contains("-apple-") {
+        return;
+    }
+    if let Some(file_name) = output.file_name().and_then(|name| name.to_str()) {
+        command
+            .arg("-C")
+            .arg(format!("link-arg=-Wl,-install_name,@rpath/{file_name}"));
+    }
+    if matches!(output_kind, OvenDirectRustcOutputKind::ProcMacro) {
+        // The Apple debug map records the absolute path of every linked object and rlib, which differs per store
+        // root, and the linker derives the output UUID before any later strip. A proc macro only runs inside rustc
+        // at build time, so the linker is told to emit no debug map at all (`-S`).
+        command.args(["-C", "link-arg=-Wl,-S"]);
+    }
 }
 
 /// Remove physical source, working-directory and installed Rust source paths from compiler outputs.

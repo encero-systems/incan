@@ -2594,8 +2594,8 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/rustc/tests/receipts_and_inspection.rs` | 10 | 714 | 714 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/tests/registry_and_toolchain.rs` | 25 | 1222 | 1222 | unaffected | - | - | - | #1561 | run 1 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/tests/source_roles.rs` | 11 | 1201 | 1201 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/rustc/toolchain.rs` | 5 | 659 | 73 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/sdk_closure.rs` | 6 | 1278 | 160 | unaffected | - | - | - | #1698 | - | Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior. |
+| `loaves/oven/oven_rustc/src/rustc/toolchain.rs` | 5 | 725 | 73 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+| `loaves/oven/oven_rustc/src/sdk_closure.rs` | 6 | 1281 | 172 | unaffected | - | - | - | #1698 | - | Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior. |
 | `loaves/oven/oven_rustc/src/sdk_closure/local.rs` | 3 | 395 | 113 | unaffected | - | - | - | #1698 | - | Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata. |
 | `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 1 | 200 | 24 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
 

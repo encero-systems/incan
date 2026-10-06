@@ -445,6 +445,72 @@ pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     Ok(sysroot)
 }
 
+/// A sysroot holding exactly the selected compiler's `rust-std` component for one target, for `--sysroot`.
+///
+/// Rustc searches its whole target library directory for crates, and optional components install into that same
+/// directory: `rustc-dev` alone adds hundreds of compiler-internal libraries beside std, and their presence changes
+/// the metadata rustc writes for an ordinary dependency. Compiling against a sysroot that holds only the files the
+/// `rust-std-<target>` manifest lists makes a unit's bytes independent of which components a machine installed.
+/// The directory is keyed by the compiler commit and the manifest digest, built once per temporary root, and reused.
+pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, OvenRustcError> {
+    let sysroot = rustc_sysroot(rustc)?;
+    let manifest_path = sysroot.join("lib/rustlib").join(format!("manifest-rust-std-{target}"));
+    let manifest = fs::read(&manifest_path).map_err(|source| OvenRustcError::Io {
+        path: manifest_path.clone(),
+        source,
+    })?;
+    let commit = rustc_commit_hash(rustc).unwrap_or_else(|| "unknown".to_string());
+    let key = oven_store::digest_bytes(&[commit.as_bytes(), b"\0", &manifest].concat()).replace(':', "-");
+    let root = env::temp_dir().join("incan-oven-std-sysroot").join(&key);
+    if root.join(".complete").is_file() {
+        return Ok(root);
+    }
+    let staging = root.with_extension(format!("staging-{}", std::process::id()));
+    copy_listed_std_files(&sysroot, &manifest, &staging)?;
+    fs::write(staging.join(".complete"), b"").map_err(|source| OvenRustcError::Io {
+        path: staging.clone(),
+        source,
+    })?;
+    match fs::rename(&staging, &root) {
+        Ok(()) => Ok(root),
+        // A concurrent build published the same content first; its copy is equivalent.
+        Err(_) if root.join(".complete").is_file() => {
+            let _ = fs::remove_dir_all(&staging);
+            Ok(root)
+        }
+        Err(source) => Err(OvenRustcError::Io { path: root, source }),
+    }
+}
+
+/// Copy each `file:` entry of a `rust-std` manifest from the sysroot into a staging sysroot at the same relative path.
+fn copy_listed_std_files(sysroot: &Path, manifest: &[u8], staging: &Path) -> Result<(), OvenRustcError> {
+    let listing = String::from_utf8_lossy(manifest);
+    for relative in listing.lines().filter_map(|line| line.strip_prefix("file:")) {
+        if Path::new(relative)
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "rust-std manifest",
+                message: format!("entry is not sysroot-relative: {relative}"),
+            });
+        }
+        let destination = staging.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let source_path = sysroot.join(relative);
+        fs::copy(&source_path, &destination).map_err(|source| OvenRustcError::Io {
+            path: source_path,
+            source,
+        })?;
+    }
+    Ok(())
+}
+
 /// Resolve the Rustdoc executable from the same verified sysroot as a receipt-selected compiler.
 pub fn rustdoc_for_rustc(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     let rustdoc = rustc_sysroot(rustc)?.join("bin/rustdoc");
