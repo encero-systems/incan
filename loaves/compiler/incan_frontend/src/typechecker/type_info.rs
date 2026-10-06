@@ -666,6 +666,11 @@ pub struct TraitArtifacts {
     /// so lowering cannot look them up in the current module's span-keyed declaration table. This checked map carries
     /// the already-resolved identity across that boundary without reconstructing it from either spelling.
     pub method_identities: HashMap<(String, String), CanonicalSymbolId>,
+    /// Checked trait slots selected by calls on an open `Self` receiver, keyed by the whole call span.
+    ///
+    /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
+    /// resolved call identities because legacy default expansion selects each adopter's implementation later.
+    pub self_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
 }
 
 /// Derive expansion metadata imported from dependency modules and manifests.
@@ -914,6 +919,10 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Checked payload types keyed by their source annotation span; direct lowering never resolves raw annotations.
+    pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
+    /// Explicit and automatic native derives selected by checking for each source enum.
+    pub enum_derives: HashMap<String, Vec<String>>,
     /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.

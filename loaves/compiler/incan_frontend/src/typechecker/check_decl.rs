@@ -4919,6 +4919,10 @@ impl TypeChecker {
         for variant in active_variants {
             for field_ty in &variant.node.fields {
                 let resolved = self.resolve_type_checked(field_ty);
+                self.type_info
+                    .declarations
+                    .enum_payload_types
+                    .insert((field_ty.span.start, field_ty.span.end), resolved.clone());
                 if matches!(resolved, ResolvedType::Unknown) {
                     self.errors
                         .push(errors::unknown_symbol(&format!("{:?}", field_ty.node), field_ty.span));
@@ -4949,6 +4953,19 @@ impl TypeChecker {
             self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
+            let mut native_derives = derives.clone();
+            for automatic in ["Debug", "Clone"] {
+                if !native_derives.iter().any(|name| name == automatic) {
+                    native_derives.push(automatic.to_owned());
+                }
+            }
+            if Self::enum_has_automatic_partial_eq(&info) && !native_derives.iter().any(|name| name == "PartialEq") {
+                native_derives.push("PartialEq".to_owned());
+            }
+            self.type_info
+                .declarations
+                .enum_derives
+                .insert(en.name.clone(), native_derives);
             let method_spans = Self::method_decl_spans_by_name(&en.methods);
             self.validate_multi_instantiation_trait_surface(
                 &en.name,

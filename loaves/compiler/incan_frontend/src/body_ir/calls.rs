@@ -4,6 +4,23 @@ use super::args::*;
 use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
+
+/// Read receiver exclusivity from the canonical builtin collection registry, never from a source method's spelling.
+fn collection_method_changes_receiver(identity: &CanonicalSymbolId) -> bool {
+    if identity.origin != incan_semantics_core::SymbolOrigin::Builtin {
+        return false;
+    }
+    let Some((family, member)) = identity.declaration_name.split_once('.') else {
+        return false;
+    };
+    match family {
+        "List" => list_methods::from_str(member).is_some_and(list_methods::changes_receiver),
+        "Set" => set_methods::from_str(member).is_some_and(set_methods::changes_receiver),
+        "Dict" => dict_methods::from_str(member).is_some_and(dict_methods::changes_receiver),
+        _ => false,
+    }
+}
 
 /// The type a `Type.member(..)` call is made on, when its receiver names a type rather than a value.
 ///
@@ -729,6 +746,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let name = name.clone();
 
+        // The checked constructor identity distinguishes this conversion from a same-spelled source callable.
+        if type_args.is_empty()
+            && self.type_info.resolved_collection_constructor(span) == Some(CollectionTypeId::Set)
+            && let [ast::CallArg::Positional(source)] = args
+        {
+            return self.lower_set_constructor_source(source, span, scope, out);
+        }
+
         // A retained zero-argument constructor fact distinguishes builtin construction from a same-spelled source
         // callable. Only empty List/Set/Dict construction is admitted here; iterable conversions stay on their
         // existing path.
@@ -1102,7 +1127,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Lower a method call `recv.name(args)` to a [`bir::Callee::Method`] call, with the receiver prepended to
-    /// `args[0]` as a [`bir::OwnershipFact::Borrow`] operand (see the inline comment on the receiver-borrow decision
+    /// `args[0]` as a shared or exclusive borrow operand (see the inline comment on the receiver-borrow decision
     /// below).
     ///
     /// Argument binding goes through the same [`plan_declared_args`] planner every other call shape uses, against
@@ -1173,13 +1198,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.lower_expr_to_operand(recv, scope, out)
         } else {
             let recv_place = self.lower_expr_to_place(recv, scope, out);
-            let builtin_list_receiver = self.type_info.resolved_identity(span).is_some_and(|identity| {
-                identity.origin == incan_semantics_core::SymbolOrigin::Builtin
-                    && identity.declaration_name.starts_with("List.")
-            });
-            let fact = if builtin_list_receiver
-                && incan_lang::lang::surface::list_methods::from_str(name)
-                    .is_some_and(incan_lang::lang::surface::list_methods::changes_receiver)
+            let fact = if self
+                .type_info
+                .resolved_identity(span)
+                .is_some_and(collection_method_changes_receiver)
             {
                 bir::OwnershipFact::MutBorrow
             } else {
@@ -1217,7 +1239,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
-                canonical: self.type_info.resolved_identity(span).cloned(),
+                canonical: self
+                    .type_info
+                    .resolved_identity(span)
+                    .or_else(|| {
+                        self.type_info
+                            .traits
+                            .self_method_identities
+                            .get(&(span.start, span.end))
+                    })
+                    .cloned(),
                 type_args: resolved_type_args,
                 binding,
             }),

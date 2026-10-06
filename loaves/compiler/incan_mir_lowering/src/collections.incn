@@ -1,0 +1,289 @@
+"""Checked set and dictionary layouts sharing the list plan's primitive leaf vocabulary."""
+
+from pub::incan_mir_plan import (
+    ListLeaf,
+    PlanType,
+    Operand,
+    OperandKind,
+    ExternalFunction,
+    CalleeKind,
+    RvalueKind,
+    Place,
+    Projection,
+    SourceSpan,
+)
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, terminate_call, read_place, drop_owned, forget_owned, value_type
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Operand as RustOperand,
+    OwnershipFact,
+)
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+
+
+pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
+    """Admit only legacy primitive representations; floating point keys lack Eq and Hash."""
+    match ty:
+        RustType.Primitive(primitive) =>
+            match primitive:
+                Primitive.Int => return Ok(ListLeaf.Int)
+                Primitive.Bool => return Ok(ListLeaf.Bool)
+                Primitive.Str => return Ok(ListLeaf.Str)
+                Primitive.Float =>
+                    if not hashed:
+                        return Ok(ListLeaf.Float)
+                _ => pass
+        _ => pass
+    return Err(f"unsupported Body IR collection leaf {ty}")
+
+
+pub def leaf_type(leaf: ListLeaf) -> PlanType:
+    """Recover a primitive element without encoding leaf kinds as numeric tags."""
+    match leaf:
+        ListLeaf.Int => return PlanType.Int
+        ListLeaf.Float => return PlanType.Float
+        ListLeaf.Bool => return PlanType.Bool
+        ListLeaf.Str => return PlanType.String
+
+
+pub def collection_owned(ty: PlanType) -> PlanType:
+    """Recover the owner representation behind any checked collection borrow."""
+    match ty:
+        PlanType.SetRef(leaf) => return PlanType.Set(leaf)
+        PlanType.SetMutRef(leaf) => return PlanType.Set(leaf)
+        PlanType.DictRef(key, value) => return PlanType.Dict(key, value)
+        PlanType.DictMutRef(key, value) => return PlanType.Dict(key, value)
+        _ => return ty
+
+
+pub def is_collection(ty: PlanType) -> bool:
+    """Recognize the new hashed collection representations independently of lists."""
+    match collection_owned(ty):
+        PlanType.Set(_leaf) => return true
+        PlanType.Dict(_key, _value) => return true
+        _ => return false
+
+
+pub def collection_reference(ty: PlanType, mutable: bool) -> PlanType:
+    """Keep source parameter storage caller-owned with its checked exclusivity."""
+    match collection_owned(ty):
+        PlanType.Set(leaf) =>
+            if mutable:
+                return PlanType.SetMutRef(leaf)
+            return PlanType.SetRef(leaf)
+        PlanType.Dict(key, value) =>
+            if mutable:
+                return PlanType.DictMutRef(key, value)
+            return PlanType.DictRef(key, value)
+        _ => return ty
+
+
+pub def collection_arguments(ty: PlanType) -> list[PlanType]:
+    """Retain exactly the runtime's generic type arguments, including dictionary values."""
+    match collection_owned(ty):
+        PlanType.Set(leaf) => return [leaf_type(leaf)]
+        PlanType.Dict(key, value) => return [leaf_type(key), leaf_type(value)]
+        _ => return []
+
+
+pub def collection_name(ty: PlanType, operation: str) -> Result[str, str]:
+    """Select a typed runtime wrapper only after collection layout admission."""
+    match collection_owned(ty):
+        PlanType.Set(_leaf) => return Ok(f"{operation}_set")
+        PlanType.Dict(_key, _value) => return Ok(f"{operation}_dict")
+        _ => return Err("unsupported Body IR noncollection runtime operation")
+
+
+pub def is_owned_collection(ty: PlanType) -> bool:
+    """Owned lists, sets and dictionaries belong in the frame's drop ledger."""
+    match ty:
+        PlanType.List(_leaf, _depth) => return true
+        _ => return is_collection(ty) and collection_owned(ty) == ty
+
+
+pub def collection_call(
+    mut builder: Builder,
+    ty: PlanType,
+    operation: str,
+    parameters: list[PlanType],
+    result: PlanType,
+    operands: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Retain hashed runtime signatures with exactly their checked generic instantiation."""
+    if len(parameters) != len(operands):
+        return Err("unsupported Body IR collection runtime arity")
+    for index in range(len(operands)):
+        if value_type(builder, operands[index])? != parameters[index]:
+            return Err("unsupported Body IR collection runtime argument coercion")
+    arguments = collection_arguments(ty)
+    path = f"incan_native_runtime::{collection_name(ty, operation)?}"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=arguments, parameters=parameters, return_type=result, span=span),
+    )
+    mut callee = CalleeKind.Instantiated(path, arguments[0])
+    if len(arguments) == 2:
+        callee = CalleeKind.InstantiatedPair(path, arguments[0], arguments[1])
+    terminate_call(builder, callee, operands, destination, span)
+    if result == PlanType.String or is_owned_collection(result):
+        builder.owned.append(destination.local)
+    return Ok(None)
+
+
+pub def borrow_collection(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow owners and reborrow parameters, never copying an exclusive reference."""
+    ty = builder.locals[place.local].ty
+    mut source = place
+    if collection_owned(ty) != ty:
+        if mutable and ty != collection_reference(ty, true):
+            return Err("unsupported Body IR mutable access through shared collection parameter")
+        source.projection = Projection.Deref(collection_owned(ty))
+    reference = temporary(builder, collection_reference(ty, mutable), span)
+    mut operation = RvalueKind.Borrow(source)
+    if mutable:
+        operation = RvalueKind.MutBorrow(source)
+    builder.emit(plan_assign(reference, operation, span))
+    return Ok(read_place(reference, mutable, span))
+
+
+pub def insert_collection(
+    mut builder: Builder,
+    receiver: Place,
+    values: list[Operand],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Insert already evaluated operands through a short exclusive borrow."""
+    types = collection_arguments(builder.locals[receiver.local].ty)
+    if len(values) != len(types):
+        return Err("unsupported Body IR collection insert arity")
+    for index in range(len(values)):
+        if value_type(builder, values[index])? != types[index]:
+            return Err("unsupported Body IR collection element coercion")
+    ty = builder.locals[receiver.local].ty
+    reference = borrow_collection(builder, receiver, true, span)?
+    mut parameters = [collection_reference(ty, true)]
+    parameters.extend(collection_arguments(ty))
+    mut operands = [reference]
+    operands.extend(values)
+    unit = temporary(builder, PlanType.Unit, span)
+    return collection_call(builder, ty, "insert", parameters, PlanType.Unit, operands, unit, span)
+
+
+pub def begin_collection(mut builder: Builder, destination: Place, span: SourceSpan) -> Result[Place, str]:
+    """Allocate a typed owner for a checked literal without overwriting a live destination."""
+    ty = builder.locals[destination.local].ty
+    owned = collection_owned(ty)
+    if ty != owned:
+        return Err("unsupported Body IR whole borrowed collection assignment")
+    output = temporary(builder, ty, span)
+    collection_call(builder, ty, "empty", [], ty, [], output, span)?
+    return Ok(output)
+
+
+pub def finish_collection(mut builder: Builder, destination: Place, output: Place, span: SourceSpan) -> None:
+    """Replace a collection binding only after its complete value is initialized."""
+    drop_owned(builder, destination.local, span)
+    forget_owned(builder, output.local)
+    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
+    builder.owned.append(destination.local)
+
+
+pub def transfer_collection(
+    mut builder: Builder,
+    destination: Place,
+    argument: Operand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Transfer an already materialized owned collection, preserving the drop ledger."""
+    ty = builder.locals[destination.local].ty
+    owned = collection_owned(ty)
+    if ty != owned:
+        return Err("unsupported Body IR whole borrowed collection assignment")
+    match argument.kind:
+        OperandKind.Move(place) => forget_owned(builder, place.local)
+        _ => return Err("unsupported Body IR collection transfer without owned value")
+    drop_owned(builder, destination.local, span)
+    builder.emit(plan_assign(destination, RvalueKind.Use(argument), span))
+    builder.owned.append(destination.local)
+    return Ok(None)
+
+
+pub def dictionary_method_signature(
+    ty: PlanType,
+    member: str,
+    arity: int,
+) -> Result[tuple[str, list[PlanType], PlanType], str]:
+    """Select canonical dictionary methods without extending the source method registry."""
+    match collection_owned(ty):
+        PlanType.Dict(key, value) =>
+            if member == "Dict.get":
+                if arity != 3:
+                    return Err("unsupported Body IR optional dictionary get")
+                return Ok(("default", collection_arguments(ty), leaf_type(value)))
+            if arity != 1:
+                return Err(f"unsupported Body IR dictionary method arity {member}")
+            if member == "Dict.keys":
+                return Ok(("keys", [], PlanType.List(key, 1)))
+            if member == "Dict.values":
+                return Ok(("values", [], PlanType.List(value, 1)))
+            return Err(f"unsupported Body IR dictionary Method {member}")
+        _ => return Err(f"unsupported Body IR set Method {member}")
+
+
+pub def require_mutable_receiver(arguments: &list[RustArgumentElement]) -> Result[None, str]:
+    """Require the frontend's exclusive-access decision before mutating a method receiver."""
+    if len(arguments) == 0:
+        return Err("unsupported Body IR collection method without receiver")
+    match arguments[0].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    if read.fact == OwnershipFact.MutBorrow:
+                        return Ok(None)
+                _ => pass
+        None => pass
+    return Err("unsupported Body IR collection receiver without mutable borrow fact")
+
+
+pub def extend_collection(
+    mut builder: Builder,
+    destination: Place,
+    source: Operand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Splice one checked owner into a set constructor or dictionary literal, then consume that owner."""
+    mut source_place = destination
+    match source.kind:
+        OperandKind.Move(place) =>
+            source_place = place
+        _ => return Err("unsupported Body IR collection spread without owned source")
+    ty = builder.locals[destination.local].ty
+    source_type = builder.locals[source_place.local].ty
+    mut operation = "extend"
+    mut source_reference_type = collection_reference(source_type, false)
+    if source_type != collection_owned(ty):
+        match ty:
+            PlanType.Set(leaf) =>
+                if source_type != PlanType.List(leaf, 1):
+                    return Err("unsupported Body IR set constructor source")
+                operation = "extend_list"
+                source_reference_type = PlanType.ListRef(leaf, 1)
+            _ => return Err("unsupported Body IR dictionary spread source")
+    reference = temporary(builder, source_reference_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(source_place), span))
+    receiver = borrow_collection(builder, destination, true, span)?
+    output = temporary(builder, PlanType.Unit, span)
+    collection_call(
+        builder,
+        ty,
+        operation,
+        [collection_reference(ty, true), source_reference_type],
+        PlanType.Unit,
+        [receiver, read_place(reference, false, span)],
+        output,
+        span,
+    )?
+    drop_owned(builder, source_place.local, span)
+    return Ok(None)

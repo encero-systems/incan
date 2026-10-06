@@ -841,6 +841,7 @@ fn a_spread_with_no_proven_shape_stays_on_the_runtime_arity_path() -> Result<(),
     Ok(())
 }
 
+/// Keyword spreads preserve their marker while cloning caller-owned dictionary storage.
 #[test]
 fn a_standalone_keyword_spread_call_lowers() -> Result<(), Box<dyn std::error::Error>> {
     let source =
@@ -853,7 +854,7 @@ fn a_standalone_keyword_spread_call_lowers() -> Result<(), Box<dyn std::error::E
         "a keyword spread call must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(**move(_0, last_use))"),
+        snapshot.contains("call fn:log unbound(**clone(_0))"),
         "a keyword spread must render with its own marker and ownership fact: {snapshot}"
     );
     Ok(())
@@ -894,6 +895,7 @@ fn multiple_spreads_each_keep_their_own_element() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+/// A cloned dictionary spread keeps its written precedence before an overriding key.
 #[test]
 fn a_dict_spread_keeps_its_written_position_before_an_overriding_key() -> Result<(), Box<dyn std::error::Error>> {
     // The override rule is what makes this meaningful: entries take effect in order and a later entry wins,
@@ -907,12 +909,13 @@ fn a_dict_spread_keeps_its_written_position_before_an_overriding_key() -> Result
         "a dict spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("dict[**move(_0, last_use), const(\"a\"): const(1)]"),
+        snapshot.contains("dict[**clone(_0), const(\"a\"): const(1)]"),
         "the spread must precede the overriding key and stay a distinct entry: {snapshot}"
     );
     Ok(())
 }
 
+/// A cloned dictionary spread keeps its written precedence after a literal key.
 #[test]
 fn a_dict_spread_after_a_literal_key_keeps_that_order() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(d: dict[str, int]) -> None:\n  out = {\"a\": 1, **d}\n  return\n";
@@ -920,7 +923,7 @@ fn a_dict_spread_after_a_literal_key_keeps_that_order() -> Result<(), Box<dyn st
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("dict[const(\"a\"): const(1), **move(_0, last_use)]"),
+        snapshot.contains("dict[const(\"a\"): const(1), **clone(_0)]"),
         "written entry order decides precedence, so it must survive lowering: {snapshot}"
     );
     Ok(())
@@ -946,7 +949,7 @@ fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(),
     Ok(())
 }
 
-/// Preserve written argument order while shared list parameter reads retain caller storage.
+/// Preserve written argument order while shared list and dictionary reads retain caller storage.
 #[test]
 fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::error::Error>> {
     // The issue's combined form. A named argument here has no declared slot to bind to, because the spread
@@ -960,7 +963,7 @@ fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::e
         "the combined call form must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(const(1), *clone(_0), b=const(2), **move(_1, last_use))"),
+        snapshot.contains("call fn:log unbound(const(1), *clone(_0), b=const(2), **clone(_1))"),
         "positional, spread, named, and keyword-spread arguments must each keep their written form and order: {snapshot}"
     );
     Ok(())
@@ -1286,5 +1289,47 @@ fn source_local_class_retains_checked_layout_and_receiver_facts() -> Result<(), 
     let mut tampered = declaration.clone();
     tampered.canonical.kind = SemanticSourceTargetKind::Trait;
     assert!(!module.is_well_formed_nominal_declaration(&tampered));
+    Ok(())
+}
+
+/// Direct enum layouts retain checker payload types, derives and owner/member identity without raw annotation lookup.
+#[test]
+fn native_enum_layout_retains_payloads_and_checked_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "enum Shape:\n  Empty\n  Pair(int, str)\n\ndef main() -> None:\n  value = Shape.Pair(7, \"seven\")\n",
+        &["m", "enum_layout"],
+    )?;
+    let declaration = module.enum_declarations.first().ok_or("missing enum layout")?;
+    assert!(module.is_well_formed_native_enum_declaration(declaration));
+    assert_eq!(declaration.name, "Shape");
+    assert_eq!(declaration.variants[0].name, "Empty");
+    assert!(declaration.variants[0].fields.is_empty());
+    assert_eq!(
+        declaration.variants[1].fields,
+        vec![
+            IncanType::Primitive(IncanPrimitiveType::Int),
+            IncanType::Primitive(IncanPrimitiveType::Str)
+        ]
+    );
+    assert_eq!(declaration.derives, ["Debug", "Clone", "PartialEq"]);
+    let constructor = body_named(&module, "main")?
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("missing enum constructor")?;
+    assert_eq!(constructor.binding, bir::ArgumentBinding::resolved_positional(2));
+    let mut malformed = declaration.clone();
+    malformed.variants[1].canonical = malformed.variants[0].canonical.clone();
+    assert!(!module.is_well_formed_native_enum_declaration(&malformed));
+    malformed = declaration.clone();
+    malformed.variants[1].name = "Foreign".to_owned();
+    assert!(!module.is_well_formed_native_enum_declaration(&malformed));
     Ok(())
 }

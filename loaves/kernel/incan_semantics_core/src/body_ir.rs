@@ -58,6 +58,9 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
+    #[serde(default)]
+    pub enum_declarations: Vec<EnumDeclaration>,
     /// Checked stdlib wrappers that forward every parameter unchanged to a Rust function. Other imported
     /// implementations are absent and must refuse.
     #[serde(default)]
@@ -87,6 +90,12 @@ pub struct BodyIrModule {
     /// zero-argument `.value()` surface. Package aliases retain these canonical contexts. Ordinary enums, payload
     /// variants, behavior-bearing enums, and generic enums remain absent and must refuse.
     pub value_enum_declarations: Vec<ValueEnumDeclaration>,
+    /// Canonical source-local trait owners; method identity validation uses their physical declaration spans.
+    #[serde(default)]
+    pub trait_declarations: Vec<CanonicalSymbolId>,
+    /// Checked concrete trait slots and the implementation body selected for each adopter.
+    #[serde(default)]
+    pub trait_implementations: Vec<TraitImplementation>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
 }
@@ -201,10 +210,21 @@ impl BodyIrModule {
     }
 }
 
+/// One non-generic concrete adopter's implementation of a source-local trait method.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitImplementation {
+    /// Concrete nominal owner, matched against the retained layout registry.
+    pub owner: CanonicalSymbolId,
+    /// Trait slot identity minted by the checker.
+    pub method: CanonicalSymbolId,
+    /// Implementing method identity, or the trait slot itself for an inherited default.
+    pub implementation: CanonicalSymbolId,
+}
+
 /// The exact local declaration and canonical field layout for one direct-executable plain model or class.
 ///
-/// The record belongs to its declaring module and excludes enums, generic nominals, inheritance, traits, and
-/// behavior-bearing models. Class methods remain separate canonical bodies with receiver origins. A consumer may load
+/// The record belongs to its declaring module and excludes enums, generic nominals, and inheritance. Nominal methods
+/// and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
@@ -255,6 +275,36 @@ pub struct FieldlessEnumDeclaration {
     pub name: String,
     /// Canonical zero-payload variants in source declaration order.
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
+}
+
+/// Canonical layout of a normal source enum without methods, aliases, or generic substitution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumDeclaration {
+    /// Exact source-local declaration identity derived from the enum's span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Exact checker identity of the enum owner.
+    pub canonical: CanonicalSymbolId,
+    /// Source name, cross-checked against constructor diagnostics.
+    pub name: String,
+    /// Checked source visibility.
+    pub public: bool,
+    /// Source-ordered variants; native discriminants use these exact indices.
+    pub variants: Vec<EnumVariantDeclaration>,
+    /// Explicit and automatic derives selected by the checker.
+    pub derives: Vec<String>,
+}
+
+/// One canonical variant and its checked positional payload layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumVariantDeclaration {
+    /// Exact source-local declaration identity derived from the variant's span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Checker-selected variant identity; construction and patterns dispatch by this fact.
+    pub canonical: CanonicalSymbolId,
+    /// Source variant name, used only after identity resolution.
+    pub name: String,
+    /// Checked payload types in declaration order.
+    pub fields: Vec<IncanType>,
 }
 
 /// One canonical zero-payload member of a retained fieldless normal enum.
@@ -4376,9 +4426,12 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            enum_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
+            trait_declarations: Vec::new(),
+            trait_implementations: Vec::new(),
             bodies: vec![sample_body()],
         };
         let snapshot = module.render_snapshot();

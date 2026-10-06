@@ -792,8 +792,11 @@ mod tests {
     /// Synthetic module context used only for codec and public-closure invariants.
     fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
+            trait_declarations: Vec::new(),
+            trait_implementations: Vec::new(),
             module_id: CompilerNodeId::module("lib"),
             stdlib_delegations: Vec::new(),
+            enum_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),

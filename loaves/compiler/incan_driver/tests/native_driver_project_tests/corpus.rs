@@ -1,4 +1,4 @@
-//! Unchanged compute benchmark proof using the Oven-built driver and authored formatting runtime.
+//! Native/legacy output comparisons using the Oven-built driver and authored formatting runtime.
 
 use super::*;
 
@@ -504,5 +504,203 @@ fn check_numeric_failure(
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains(message), "{name}: {error}");
     }
+    Ok(())
+}
+
+/// Prove required/default trait methods, receiver borrowing, field writes, and static dispatch against legacy.
+pub(super) fn check_source_trait(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let closure = runtime_closure(runtime, "release")?;
+    let project = root.join("source-trait");
+    fs::create_dir_all(&project)?;
+    let source = project.join("source_trait.incn");
+    fs::write(
+        &source,
+        r#"trait Reading:
+  def get(self) -> int: ...
+  def bump(mut self, amount: int) -> None: ...
+  def seed() -> int: ...
+
+  def advance(mut self) -> None:
+    self.bump(1)
+
+  def doubled(self) -> int:
+    return self.get() + self.get()
+
+  def offset() -> int:
+    return 3
+
+class Counter with Reading:
+  value: int
+
+  def get(self) -> int:
+    return self.value
+
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+  def seed() -> int:
+    return 5
+
+model Other with Reading:
+  value: int
+
+  def get(self) -> int:
+    return self.value + 1
+
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+  def seed() -> int:
+    return 6
+
+def main() -> None:
+  mut counter = Counter(value=7)
+  println(counter.get())
+  println(counter.doubled())
+  other = Other(value=8)
+  println(other.get())
+  println(other.doubled())
+  println(Other.offset())
+  println(Counter.seed())
+  println(Other.seed())
+  counter.advance()
+  println(counter.get())
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "source trait native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "source trait legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/source_trait")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source trait legacy execution");
+    success(&actual, "source trait native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "source trait output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"7\n14\n9\n18\n3\n5\n6\n8\n");
+
+    Ok(())
+}
+
+/// Hash collections must keep legacy key membership, overwrites, and caller-owned mutation.
+///
+/// Dictionary traversal uses the admitted `keys()` method: legacy bare dictionary iteration emits entries despite
+/// the frontend's key item type, so indexing with that loop binding cannot compile on the comparison route.
+pub(super) fn check_collections(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("collections");
+    fs::create_dir_all(&project)?;
+    let source = project.join("collections.incn");
+    fs::write(
+        &source,
+        r#"
+def add(mut values: Set[int]) -> None:
+    values.add(7)
+
+def copied(values: Dict[str, int]) -> Dict[str, int]:
+    return values
+
+def main() -> None:
+    mut numbers = {1, 2, 2}
+    println(len(numbers))
+    println(2 in numbers)
+    println(9 not in numbers)
+    add(numbers)
+    println(numbers.contains(7))
+    mut mapping = {"one": 1, "two": 2, "one": 3}
+    mapping.insert("three", 4)
+    mapping["two"] = 8
+    println(mapping["two"])
+    println(mapping["one"])
+    println("three" in mapping)
+    println("absent" not in mapping)
+    println(len(mapping))
+    copy = copied(mapping)
+    println(copy["one"])
+    words = {"first", "second"}
+    println("first" in words)
+    flags = {true, false}
+    println(len(flags))
+    fractions = {1: 1.5, 2: 2.5}
+    println(fractions[2])
+    empty_numbers: Set[int] = Set()
+    empty_mapping: Dict[str, int] = Dict()
+    println(len(empty_numbers))
+    println(len(empty_mapping))
+    println(mapping.get("absent", 11))
+    println(mapping.get("one", 12))
+    println(len(mapping.keys()))
+    println(len(mapping.values()))
+    mut total = 0
+    for number in numbers:
+        total += number
+    println(total)
+    mut mapped_total = 0
+    for key in mapping.keys():
+        mapped_total += mapping[key]
+    println(mapped_total)
+    inputs = ["a", "b", "a"]
+    unique = Set(inputs)
+    println(len(inputs))
+    println(len(unique))
+    copied_set = set(unique)
+    println(len(copied_set))
+    spread = {**mapping, "two": 19}
+    println(spread["two"])
+    println(mapping["two"])
+    for word in {"single"}:
+        println(word)
+
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "native collections compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy collections compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/collections")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy collections execution");
+    success(&actual, "native collections execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "collections output must be byte-identical"
+    );
+    assert_eq!(
+        actual.stdout,
+        b"2\ntrue\ntrue\ntrue\n8\n3\ntrue\ntrue\n3\n3\ntrue\n2\n2.5\n0\n0\n11\n3\n3\n3\n10\n15\n3\n2\n2\n19\n8\nsingle\n"
+    );
     Ok(())
 }

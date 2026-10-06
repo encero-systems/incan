@@ -3,6 +3,76 @@
 
 use super::*;
 
+/// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.
+pub(super) fn collect_local_enum_declarations(
+    program: &ast::Program,
+    module_identity: &str,
+    type_info: &TypeCheckInfo,
+) -> Vec<bir::EnumDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Enum(value) = &declaration.node else {
+                return None;
+            };
+            if !is_direct_native_enum(value) {
+                return None;
+            }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            let variants = value
+                .variants
+                .iter()
+                .map(|variant| {
+                    let canonical = type_info
+                        .declarations
+                        .member_declaration_identities
+                        .get(&(variant.span.start, variant.span.end))?
+                        .clone();
+                    let fields = variant
+                        .node
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            type_info
+                                .declarations
+                                .enum_payload_types
+                                .get(&(field.span.start, field.span.end))
+                                .map(semantic_type_from_resolved)
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(bir::EnumVariantDeclaration {
+                        direct_declaration_id: CompilerNodeId::declaration_span(
+                            module_identity,
+                            variant.span.start,
+                            variant.span.end,
+                        ),
+                        canonical,
+                        name: variant.node.name.clone(),
+                        fields,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::EnumDeclaration {
+                direct_declaration_id: CompilerNodeId::declaration_span(
+                    module_identity,
+                    declaration.span.start,
+                    declaration.span.end,
+                ),
+                canonical,
+                name: value.name.clone(),
+                public: value.visibility == ast::Visibility::Public,
+                variants,
+                derives: type_info.declarations.enum_derives.get(&value.name)?.clone(),
+            })
+        })
+        .collect()
+}
+
 /// Collect the source expressions a synthesized local partial needs to retain target defaults in Body IR.
 pub(super) fn collect_function_default_sources(program: &ast::Program) -> FunctionDefaultSources {
     program
@@ -273,4 +343,97 @@ pub(super) fn collect_local_value_enum_declarations(
             })
         })
         .collect()
+}
+
+/// Retain physical source trait owners so consumers can validate their default-method bodies.
+pub(super) fn collect_local_trait_declarations(
+    program: &ast::Program,
+    type_info: &TypeCheckInfo,
+) -> Vec<CanonicalSymbolId> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            if !matches!(declaration.node, ast::Declaration::Trait(_)) {
+                return None;
+            }
+            type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))
+                .cloned()
+        })
+        .collect()
+}
+
+/// Retain non-generic local trait slots and their checked concrete implementation identities.
+///
+/// Successful typechecking already proves adoption and method compatibility. This registry retains only local,
+/// unambiguous method declarations; imported, generic, and overloaded implementations never gain a guessed target.
+pub(super) fn collect_local_trait_implementations(
+    program: &ast::Program,
+    type_info: &TypeCheckInfo,
+) -> Vec<bir::TraitImplementation> {
+    let mut implementations = Vec::new();
+    for declaration in &program.declarations {
+        let (adoptions, methods) = match &declaration.node {
+            ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => {
+                (&model.traits, &model.methods)
+            }
+            ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),
+            _ => continue,
+        };
+        let Some(owner) = type_info
+            .declarations
+            .declaration_identities
+            .get(&(declaration.span.start, declaration.span.end))
+        else {
+            continue;
+        };
+        for adoption in adoptions {
+            if !adoption.node.type_args.is_empty() {
+                continue;
+            }
+            let Some(trait_decl) = program.declarations.iter().find_map(|item| match &item.node {
+                ast::Declaration::Trait(trait_decl)
+                    if trait_decl.name == adoption.node.name && trait_decl.type_params.is_empty() =>
+                {
+                    Some(trait_decl)
+                }
+                _ => None,
+            }) else {
+                continue;
+            };
+            for slot in &trait_decl.methods {
+                let Some(method) = type_info
+                    .traits
+                    .method_identities
+                    .get(&(trait_decl.name.clone(), slot.node.name.clone()))
+                else {
+                    continue;
+                };
+                let candidates = methods
+                    .iter()
+                    .filter(|candidate| candidate.node.name == slot.node.name)
+                    .collect::<Vec<_>>();
+                let implementation = match candidates.as_slice() {
+                    [candidate] => type_info
+                        .declarations
+                        .method_bindings_by_span
+                        .get(&(candidate.span.start, candidate.span.end))
+                        .and_then(|binding| binding.identity.as_ref()),
+                    [] if slot.node.body.is_some() => Some(method),
+                    _ => None,
+                };
+                if let Some(implementation) = implementation {
+                    implementations.push(bir::TraitImplementation {
+                        owner: owner.clone(),
+                        method: method.clone(),
+                        implementation: implementation.clone(),
+                    });
+                }
+            }
+        }
+    }
+    implementations
 }

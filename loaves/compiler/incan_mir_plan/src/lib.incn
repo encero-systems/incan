@@ -18,7 +18,7 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """The primitive element at the bottom of a homogeneous, possibly nested, list."""
+    """Primitive leaves shared by lists, sets, and dictionary keys and values."""
 
     Int
     Float
@@ -48,7 +48,9 @@ pub enum SizedNumeric:
 @derive(Clone, PartialEq)
 pub enum PlanType:
     """
-    Scalar types plus the owned text, fixed arrays, and shared slices used by formatting.
+    Scalar and source nominal types plus the owned text, fixed arrays, and shared slices used by formatting.
+
+    EnumTag is rustc's native discriminant type and stays body-internal; TagToInt explicitly converts it to source int.
 
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Array lengths are exact nonnegative counts. CheckedInt and arrays are body
     temporaries; shared slice variants already include their reference. StringRef
@@ -56,6 +58,8 @@ pub enum PlanType:
     List stores its primitive leaf element and a positive nesting
     depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
+    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their
+    reference variants preserve caller-owned storage. Float keys are not admitted.
     """
 
     Int
@@ -76,6 +80,7 @@ pub enum PlanType:
     Bool
     Unit
     CheckedNumeric(SizedNumeric)
+    EnumTag
     CheckedInt
     String
     StringRef
@@ -84,6 +89,8 @@ pub enum PlanType:
     StrArray(int)
     StringArrayRef(int)
     StrArrayRef(int)
+    Enum(int, str)
+    EnumRef(int, str)
     Model(int, str)
     ModelRef(int, str)
     ModelMutRef(int, str)
@@ -93,6 +100,12 @@ pub enum PlanType:
     List(ListLeaf, int)
     ListRef(ListLeaf, int)
     ListMutRef(ListLeaf, int)
+    Set(ListLeaf)
+    SetRef(ListLeaf)
+    SetMutRef(ListLeaf)
+    Dict(ListLeaf, ListLeaf)
+    DictRef(ListLeaf, ListLeaf)
+    DictMutRef(ListLeaf, ListLeaf)
 
 
 @derive(Clone, PartialEq)
@@ -114,12 +127,13 @@ pub model Local:
 
 @derive(Clone, PartialEq)
 pub enum Projection:
-    """Whole local, checked component, nominal field, or typed list/receiver dereference."""
+    """Whole local, checked component, typed reference dereference, nominal field, or downcast enum payload."""
 
     Whole
     NumericValue(PlanType)
     Value
     Overflow
+    VariantField(int, int, PlanType)
     Field(int, PlanType)
     Deref(PlanType)
     DerefField(int, PlanType)
@@ -197,6 +211,9 @@ pub enum RvalueKind:
     """
     An explicit native expression assigned to a checked place.
 
+    Enum construction names the owner and variant indices. Discriminant reads without moving the enum; VariantField
+    projections are valid only on the selected variant branch.
+
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
@@ -211,6 +228,9 @@ pub enum RvalueKind:
     FloatToInt(Operand)
     BoolToInt(Operand)
     Array(list[Operand])
+    Enum(int, int, list[Operand])
+    Discriminant(Place)
+    TagToInt(Operand)
     Model(int, list[Operand])
     Borrow(Place)
     MutBorrow(Place)
@@ -244,12 +264,14 @@ pub model Statement:
 
 @derive(Clone, PartialEq)
 pub enum CalleeKind:
-    """A planned function, canonical external path, checked model clone, or one-argument generic external instantiation."""
+    """A planned function, canonical external path, checked model clone, or explicit generic external instantiation."""
 
     Planned(str)
     External(str)
+    CloneEnum(int, str)
     CloneModel(int, str)
     Instantiated(str, PlanType)
+    InstantiatedPair(str, PlanType, PlanType)
 
 
 @derive(Clone, PartialEq)
@@ -322,12 +344,13 @@ pub model Function:
 @derive(Clone, PartialEq)
 pub model Plan:
     """
-    A native crate with scalar functions and plain models; external functions are admitted by canonical path.
+    A native crate with scalar functions, plain models and normal enums; external functions are admitted by canonical path.
 
     External declarations give validation a signature and explicit type arguments before rustc runs. The
     adapter verifies those signatures against the loaded dependency metadata.
     """
 
+    pub enums: list[EnumDeclaration]
     pub models: list[ModelDeclaration]
     pub functions: list[Function]
     pub externals: list[ExternalFunction]
@@ -478,4 +501,23 @@ pub def scalar_example(file: str, output_function: str, overflow: bool, dangling
         span=location,
     )
     output = ExternalFunction(path=output_function, parameters=[PlanType.Int], return_type=PlanType.Unit, span=location)
-    return Plan(models=[], functions=[addition, entry], externals=[output], span=location)
+    return Plan(enums=[], models=[], functions=[addition, entry], externals=[output], span=location)
+
+
+@derive(Clone, PartialEq)
+pub model EnumDeclaration:
+    """Checked normal enum layout; variant indices follow source declaration order."""
+
+    pub name: str
+    pub public: bool
+    pub variants: list[EnumVariant]
+    pub derives: list[str]
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model EnumVariant:
+    """One unit or positional payload variant; its field types are checker facts."""
+
+    pub name: str
+    pub fields: list[PlanType]
