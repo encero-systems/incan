@@ -79,8 +79,8 @@ pub fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory
 /// This is the resolution every command that must not launch the provider builder uses (the Oven `run`, `build`,
 /// `oven bake`, test collection and formatting). It finds what [`prepare_or_discover_sdk_inventory`] would return
 /// whenever that needs no build: an installed or explicitly named inventory first, then the source checkout's
-/// published one. Only an unpublished checkout still yields `None`, so a program `incan check` accepted parses the
-/// same way here, with the standard library's vocabulary (#1774).
+/// receipt-sealed source publication. A checkout with only a compatibility publication still yields `None`;
+/// consumers cannot replace sealed native authority with that publisher's Cargo-based identity.
 pub fn discover_or_reuse_published_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     if let Some(inventory) = discover_active_sdk_inventory()? {
         return Ok(Some(inventory));

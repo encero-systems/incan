@@ -53,22 +53,16 @@ pub fn prepare_sdk_provider_inventory_in_store(
     )
 }
 
-/// Return the SDK inventory the source checkout's providers are already published under, without building or
-/// locking anything.
+/// Return the receipt-sealed SDK inventory published for this source checkout, without building or locking.
 ///
-/// `incan check` publishes the checkout's component providers on demand ([`prepare_sdk_provider_inventory`]), while
-/// the Oven commands (`run`, `build`, `oven bake`, test collection) must never launch that builder on a miss. Before
-/// #1774 they therefore saw no inventory at all in a source checkout, parsed without the syntax the standard library's
-/// vocabulary providers add (`binding` from `std.interop`), and refused a file `incan check` had just accepted. This
-/// lookup lets them reuse exactly the inventory the check path published: same stdlib root, builder, store and
-/// identity, and nothing when that identity has not been published. Inside a provider build, or outside a source
-/// checkout, there is nothing to reuse.
+/// Oven consumers never launch the compatibility component publisher on a miss. Their source inventory must bind
+/// the same stdlib source bytes, compiler, profile, and retained native receipts as the sealed publication.
+/// Compatibility inventories produced with Cargo metadata do not satisfy this source-discovery contract.
 ///
-/// Reuse never makes a command fail that ran before it existed: a checkout whose publication inputs cannot be
-/// resolved, or whose identity cannot be computed (a standard-library or compiler source that does not parse
-/// mid-edit makes the compiler effect digest fail), is reported as having no published inventory, which is what these
-/// commands saw before. Only a published inventory that exists and fails to load is an error, as it is for
-/// `incan check`.
+/// Source reuse requires the sealed publisher's native-receipt catalog. Without it there is no SDK inventory to
+/// reuse; consumers must not probe legacy Cargo-based identities to find one. Installed and explicitly selected
+/// inventories are discovered before this helper. A corrupt sealed catalog is reported rather than replaced by
+/// development workspace resolution.
 pub fn find_published_sdk_provider_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(None);
@@ -81,9 +75,20 @@ pub fn find_published_sdk_provider_inventory() -> ProviderResult<Option<Arc<SdkI
     let Ok(publication) = SdkProviderPublication::resolve(None, None) else {
         return Ok(None);
     };
-    let Ok(identity) = publication.store_identity() else {
+    let receipts_path = publication.store_root.join(".sealed-native-receipts.json");
+    if !receipts_path.is_file() {
         return Ok(None);
-    };
+    }
+    let receipts = fs::read(&receipts_path)
+        .map_err(|error| ProviderError::failure(format!("failed to read sealed SDK native receipts: {error}")))?;
+    let receipts = serde_json::from_slice::<std::collections::BTreeMap<String, String>>(&receipts)
+        .map_err(|error| ProviderError::failure(format!("invalid sealed SDK native receipts: {error}")))?;
+    let identity = crate::sdk_store::sdk_provider_sealed_store_identity(
+        &publication.stdlib_root,
+        &publication.executable,
+        &publication.distribution_profile,
+        &receipts,
+    )?;
     load_published_sdk_inventory(&publication.store_root, &identity)
 }
 
@@ -152,11 +157,6 @@ impl SdkProviderPublication {
             distribution_profile,
         })
     }
-
-    /// Compute the store identity these inputs publish under.
-    fn store_identity(&self) -> ProviderResult<String> {
-        published_sdk_store_identity(&self.stdlib_root, &self.executable, &self.distribution_profile)
-    }
 }
 
 /// Compute the store identity the SDK providers built from these sources are published under.
@@ -164,6 +164,7 @@ impl SdkProviderPublication {
 /// This is the identity [`prepare_sdk_provider_inventory_from_sources`] publishes under. Computing it may write the
 /// compiler effect-digest memo beside the store (`sdk_store::sdk_provider_effect_digest`), which is a cache, not a
 /// publication.
+#[cfg(test)]
 fn published_sdk_store_identity(
     stdlib_root: &Path,
     executable: &Path,

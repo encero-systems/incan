@@ -185,6 +185,57 @@ pub const OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER: &str = ".incan_oven_cargo_rust
 pub const OVEN_DIRECT_INSPECTION_AUTHORITY_FILE: &str = ".incan_oven_rust_sources.json";
 /// Frozen adopted-unit graph published beside the source authority by the SDK closure compiler.
 pub const OVEN_DIRECT_LOAF_PROJECT_FILE: &str = ".incan_oven_loaf_project.json";
+
+/// Marker forbidding Cargo declarations and locks in a direct SDK inspection workspace.
+pub const OVEN_LOAF_ONLY_INSPECTION_MARKER: &str = ".incan_loaf_only_inspection";
+
+/// Read source coordinates from a Loaf declaration before considering explicit compatibility metadata.
+///
+/// SDK inspection probes require Loaf declarations; missing declarations cannot trigger a Cargo reader. Retained
+/// SDK units also carry their normalized Loaf source coordinates, including embedded language-registry inputs.
+pub(crate) fn read_inspection_source_manifest(root: &Path) -> Result<toml::Value, RustMetadataError> {
+    if root.join("loaf.toml").is_file() {
+        return loaf_manifest::read_loaf_manifest(root);
+    }
+    if root.join(OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file() {
+        return Err(RustMetadataError::LoadWorkspace {
+            path: root.to_path_buf(),
+            message: "Loaf-only inspection cannot read a Cargo source manifest".to_string(),
+        });
+    }
+    if let Some(sysroot) = active_sysroot()
+        && root.starts_with(sysroot.join("lib/rustlib/src/rust/library"))
+    {
+        let name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| RustMetadataError::LoadWorkspace {
+                path: root.to_path_buf(),
+                message: "sysroot source has no crate name".to_string(),
+            })?;
+        return Ok(toml::Value::Table(toml::map::Map::from_iter([
+            (
+                "package".to_string(),
+                toml::Value::Table(toml::map::Map::from_iter([
+                    ("name".to_string(), toml::Value::String(name.to_string())),
+                    ("edition".to_string(), toml::Value::String("2024".to_string())),
+                ])),
+            ),
+            (
+                "lib".to_string(),
+                toml::Value::Table(toml::map::Map::from_iter([
+                    ("name".to_string(), toml::Value::String(name.to_string())),
+                    ("path".to_string(), toml::Value::String("src/lib.rs".to_string())),
+                ])),
+            ),
+        ])));
+    }
+    let path = root.join("Cargo.toml");
+    toml::from_str(&fs::read_to_string(&path)?).map_err(|error| RustMetadataError::LoadWorkspace {
+        path,
+        message: format!("invalid compatibility inspection source manifest: {error}"),
+    })
+}
 /// Sealed build-script output directories (one absolute `OUT_DIR` per line) a direct-inspection workspace may read.
 ///
 /// Normal Oven commands never run Cargo, so generated Rust such as prost's `include!`d modules is reachable only
@@ -300,16 +351,16 @@ enum OvenInspectionSourceValidation {
     SealedOvenSelection,
 }
 
-/// Exact registry source selected from one leased Loaf or the explicit baker's locked metadata.
+/// Exact source selected from one leased registry Loaf or locally compiled SDK facet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenInspectionRegistrySource {
     /// Cargo package name recorded by the publisher.
     pub package: String,
     /// Exact package version selected by the publisher.
     pub version: String,
-    /// Cargo registry identity from the publisher lock.
+    /// Registry identity from the publisher lock, or `sdk+native` for receipt-sealed local SDK sources.
     pub registry: String,
-    /// Registry archive checksum from the publisher lock.
+    /// Registry archive checksum, or the complete source-tree digest for a local SDK facet.
     pub checksum: String,
     /// Exact unified feature set compiled into the selected Loaf leaf.
     pub features: Vec<String>,
@@ -831,7 +882,10 @@ impl RustWorkspace {
         }
 
         /// Load and validate the compiler-authored registry-source authority for this projection.
-        fn load_source_authority(manifest_dir: &Path) -> Result<OvenInspectionSourceAuthority, RustMetadataError> {
+        fn load_source_authority(
+            manifest_dir: &Path,
+            loaf_only: bool,
+        ) -> Result<OvenInspectionSourceAuthority, RustMetadataError> {
             let path = manifest_dir.join(OVEN_DIRECT_INSPECTION_AUTHORITY_FILE);
             if !path.is_file() {
                 return Ok(OvenInspectionSourceAuthority {
@@ -856,17 +910,35 @@ impl RustWorkspace {
                     ),
                 });
             }
+            if loaf_only
+                && !authority.sources.is_empty()
+                && authority.source_validation != OvenInspectionSourceValidation::SealedOvenSelection
+            {
+                return Err(RustMetadataError::LoadWorkspace {
+                    path,
+                    message: "Loaf-only inspection requires receipt-sealed source publication".to_string(),
+                });
+            }
             let mut identities = BTreeMap::new();
             for source in &authority.sources {
                 if source.package.trim().is_empty()
                     || Version::parse(&source.version).is_err()
-                    || !source.registry.starts_with("registry+")
+                    || !(source.registry.starts_with("registry+") || source.registry == "sdk+native")
                     || source.checksum.trim().is_empty()
                     || source.source_digest.trim().is_empty()
                 {
                     return Err(RustMetadataError::LoadWorkspace {
                         path: source.source_root.clone(),
                         message: "Oven Rust source authority contains an incomplete registry identity".to_string(),
+                    });
+                }
+                if source.registry == "sdk+native"
+                    && (source.checksum != source.source_digest
+                        || authority.source_validation != OvenInspectionSourceValidation::SealedOvenSelection)
+                {
+                    return Err(RustMetadataError::LoadWorkspace {
+                        path: source.source_root.clone(),
+                        message: "local SDK inspection source requires its receipt-sealed source digest".to_string(),
                     });
                 }
                 let root = source.source_root.canonicalize()?;
@@ -1249,7 +1321,8 @@ impl RustWorkspace {
             }
         }
 
-        let authority = load_source_authority(manifest_dir)?;
+        let loaf_only = manifest_dir.join(OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file();
+        let authority = load_source_authority(manifest_dir, loaf_only)?;
         let frozen_project = manifest_dir.join(OVEN_DIRECT_LOAF_PROJECT_FILE);
         if frozen_project.is_file() {
             let mut graph: serde_json::Value =
@@ -1273,7 +1346,35 @@ impl RustWorkspace {
                 message: format!("cannot encode sealed Loaf inspection graph: {error}"),
             });
         }
-        let lock = load_lock(manifest_dir)?;
+        if loaf_only && !authority.sources.is_empty() {
+            return Err(RustMetadataError::LoadWorkspace {
+                path: frozen_project,
+                message: "Loaf-only inspection requires the sealed frozen graph for its selected SDK sources"
+                    .to_string(),
+            });
+        }
+        if loaf_only && !manifest_dir.join("loaf.toml").is_file() {
+            return Err(RustMetadataError::LoadWorkspace {
+                path: manifest_dir.to_path_buf(),
+                message: "Loaf-only inspection has no authored probe declaration".to_string(),
+            });
+        }
+        if loaf_only {
+            let probe = loaf_manifest::read_loaf_manifest(manifest_dir)?;
+            if ["dependencies", "dev-dependencies", "target"].iter().any(|section| {
+                probe
+                    .get(section)
+                    .and_then(toml::Value::as_table)
+                    .is_some_and(|table| !table.is_empty())
+            }) {
+                return Err(RustMetadataError::LoadWorkspace {
+                    path: manifest_dir.to_path_buf(),
+                    message: "Loaf-only inspection cannot rediscover dependencies without a sealed frozen graph"
+                        .to_string(),
+                });
+            }
+        }
+        let lock = if loaf_only { None } else { load_lock(manifest_dir)? };
         let mut graph = OvenProjectGraphBuilder {
             crates: Vec::new(),
             indices: HashMap::new(),
@@ -1501,9 +1602,9 @@ mod tests {
     use std::fs;
 
     use super::{
-        OVEN_DIRECT_INSPECTION_MARKER, OvenInspectionRegistrySource, RustWorkspace, digest_oven_source_tree,
-        proc_macro_server_candidates, sysroot_project_graph, write_oven_inspection_source_authority,
-        write_sealed_oven_inspection_source_authority,
+        OVEN_DIRECT_INSPECTION_MARKER, OVEN_LOAF_ONLY_INSPECTION_MARKER, OvenInspectionRegistrySource, RustWorkspace,
+        digest_oven_source_tree, proc_macro_server_candidates, sysroot_project_graph,
+        write_oven_inspection_source_authority, write_sealed_oven_inspection_source_authority,
     };
 
     use tempfile::tempdir;
@@ -1637,6 +1738,32 @@ mod tests {
             RustWorkspace::oven_direct_inspection_active(workspace.path()),
             "the compiler-authored marker must select the direct rust-project route"
         );
+        Ok(())
+    }
+
+    /// Loaf-only probes ignore poisoned Cargo metadata and refuse dependency rediscovery without a frozen graph.
+    #[test]
+    fn loaf_only_probe_never_reads_a_cargo_lock_or_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempdir()?;
+        fs::create_dir(workspace.path().join("src"))?;
+        let declaration =
+            "[project]\nname='probe'\nversion='0.0.0'\n[rust]\nname='probe'\ntype='lib'\nedition='2024'\n";
+        fs::write(workspace.path().join("loaf.toml"), declaration)?;
+        fs::write(workspace.path().join("src/lib.rs"), "pub fn probe() {}")?;
+        fs::write(workspace.path().join(OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")?;
+        fs::write(workspace.path().join("Cargo.toml"), "not valid TOML")?;
+        fs::write(workspace.path().join("Cargo.lock"), "not valid TOML")?;
+        let payload = RustWorkspace::oven_project_json_payload_with_source_authority(workspace.path())?;
+        let graph: serde_json::Value = serde_json::from_slice(&payload)?;
+        assert_eq!(graph["crates"][0]["display_name"], "probe");
+        fs::write(
+            workspace.path().join("loaf.toml"),
+            format!("{declaration}\n[dependencies]\nserde={{loaf='crates-io/serde', version='1'}}\n"),
+        )?;
+        let error = RustWorkspace::oven_project_json_payload_with_source_authority(workspace.path())
+            .err()
+            .ok_or("unfrozen dependency graph was accepted")?;
+        assert!(error.to_string().contains("sealed frozen graph"));
         Ok(())
     }
 

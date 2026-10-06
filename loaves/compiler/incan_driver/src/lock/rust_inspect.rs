@@ -68,20 +68,35 @@ pub fn prepare_rust_inspect_workspace(
         return Ok(None);
     }
 
-    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace_with_cargo_package_name(
-        project_root,
-        project_name,
-        cargo_package_name,
-        rust_edition,
-        resolved,
-        project_requirements,
-        lock_payload,
-        cargo_lock_projection_root,
-        clear_cargo_lock,
-        cargo_target_dir,
-        &cargo_policy_flags,
-        rust_derive_probe_paths,
-    )?;
+    let rust_inspect_manifest_dir = if direct_oven_inspection {
+        let empty_inputs = std::collections::BTreeMap::new();
+        let inputs = oven_source_authority
+            .as_ref()
+            .map(|authority| authority.build_unit_inputs)
+            .unwrap_or(&empty_inputs);
+        crate::rust_inspect_workspace::ensure_direct_rust_inspect_workspace(
+            project_root,
+            project_name,
+            rust_edition.as_deref(),
+            rust_derive_probe_paths,
+            inputs,
+        )?
+    } else {
+        ensure_rust_inspect_workspace_with_cargo_package_name(
+            project_root,
+            project_name,
+            cargo_package_name,
+            rust_edition,
+            resolved,
+            project_requirements,
+            lock_payload,
+            cargo_lock_projection_root,
+            clear_cargo_lock,
+            cargo_target_dir,
+            &cargo_policy_flags,
+            rust_derive_probe_paths,
+        )?
+    };
     let mut source_loaf = None;
     let mut project_source_authorities = None;
     if direct_oven_inspection {

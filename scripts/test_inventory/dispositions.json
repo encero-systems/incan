@@ -412,6 +412,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/sdk_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "A locally compiled SDK facet seals its native source identity and loads a frozen inspection graph without Cargo metadata.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/session.rs": {
       "disposition": "keep",
       "notes": "CompilationSession analysis (provider plan reuse, feature projection); one test builds a consumer's generated Rust with the standard library mounted from source.",
@@ -9215,6 +9223,14 @@
     "loaves/oven/oven_rustc/src/sdk_closure.rs": {
       "disposition": "unaffected",
       "notes": "Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/local.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",

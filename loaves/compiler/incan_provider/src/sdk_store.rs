@@ -265,6 +265,87 @@ pub fn sdk_provider_store_identity(
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Key a sealed SDK publication on its seed, authored sources, compiler bytes, and selected native receipts.
+///
+/// The map keys identify complete native bindings, including domain and features, and values are the receipts of
+/// those retained units. This separate boundary does not consult development Cargo configuration or effect-digest
+/// caches. Callers must retain the native selections throughout publication; an empty map cannot authorize an SDK.
+pub fn sdk_provider_sealed_store_identity(
+    stdlib_root: &Path,
+    executable: &Path,
+    distribution_profile: &str,
+    native_receipts: &std::collections::BTreeMap<String, String>,
+) -> ProviderResult<String> {
+    if native_receipts.is_empty() || !stdlib_root.join("sdk-lock.json").is_file() {
+        return Err(ProviderError::failure(
+            "sealed SDK publication requires its seed and retained native receipts",
+        ));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-sdk-sealed-provider-store-v1\0");
+    hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
+    hasher.update(incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
+    hasher.update(distribution_profile.as_bytes());
+    hasher.update([0]);
+    hasher.update(sdk_provider_compiler_digest(executable)?);
+    hash_sealed_sdk_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    for (binding, receipt) in native_receipts {
+        if binding.is_empty()
+            || !receipt.starts_with("sha256:")
+            || receipt.len() != 71
+            || !receipt[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(ProviderError::failure(
+                "sealed SDK native binding has no complete receipt identity",
+            ));
+        }
+        hasher.update(binding.as_bytes());
+        hasher.update([0]);
+        hasher.update(receipt.as_bytes());
+        hasher.update([0xff]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Hash a portable SDK source tree while leaving Cargo metadata, build scripts, and generated targets inert.
+fn hash_sealed_sdk_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> ProviderResult<()> {
+    let mut entries = fs::read_dir(current)
+        .map_err(|error| ProviderError::failure(error.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if matches!(
+            entry.file_name().to_str(),
+            Some("target" | "Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock" | "build.rs")
+        ) {
+            continue;
+        }
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update([0]);
+        if kind.is_dir() {
+            hasher.update(b"directory\0");
+            hash_sealed_sdk_source_tree(root, &path, hasher)?;
+        } else if kind.is_file() {
+            hasher.update(b"file\0");
+            hasher.update(fs::read(&path).map_err(|error| ProviderError::failure(error.to_string()))?);
+        } else {
+            return Err(ProviderError::failure(
+                "sealed SDK source tree contains a link or special file",
+            ));
+        }
+        hasher.update([0xff]);
+    }
+    Ok(())
+}
+
 /// Fold publication policy omitted by the semantic source digest, with deterministic relative paths.
 ///
 /// Component configuration lives under the stdlib tree. Rust effect roots additionally inherit crate/workspace
@@ -667,6 +748,41 @@ pub fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> ProviderRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sealed publication ignores Cargo bytes and partitions identities on sources and native receipts.
+    #[test]
+    fn sealed_sdk_identity_uses_sources_and_native_receipts() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let stdlib = root.path().join("stdlib");
+        fs::create_dir(&stdlib)?;
+        fs::write(stdlib.join("sdk-lock.json"), "sealed seed")?;
+        fs::write(stdlib.join("module.incn"), "pub def value() -> int:\n  return 1\n")?;
+        let executable = root.path().join("incan");
+        fs::write(&executable, "compiler bytes")?;
+        let mut receipts =
+            std::collections::BTreeMap::from([("core target []".to_string(), format!("sha256:{}", "1".repeat(64)))]);
+        let first = sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?;
+        fs::write(stdlib.join("Cargo.toml"), "invalid TOML")?;
+        fs::write(stdlib.join("Cargo.lock"), "unrelated Cargo closure")?;
+        fs::write(stdlib.join("build.rs"), "compile_error!(\"must not run\");")?;
+        assert_eq!(
+            first,
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?
+        );
+        receipts.insert("core target []".to_string(), format!("sha256:{}", "2".repeat(64)));
+        let changed_native = sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?;
+        assert_ne!(first, changed_native);
+        fs::write(stdlib.join("module.incn"), "pub def value() -> int:\n  return 2\n")?;
+        assert_ne!(
+            changed_native,
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?
+        );
+        assert!(
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &std::collections::BTreeMap::new())
+                .is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn sdk_provider_builder_selects_the_real_cli_for_tests_and_utilities() -> Result<(), Box<dyn std::error::Error>> {

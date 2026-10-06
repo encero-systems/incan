@@ -20,7 +20,10 @@ use std::path::{Path, PathBuf};
 type Error = Box<dyn std::error::Error>;
 const INDEX_COMMIT: &str = "178df58e4d8bf6109ef271e0d2fb2cc1d7abbf95";
 
+mod local;
 mod native;
+
+pub use local::compile_local_sdk_facet;
 
 struct CompileContext<'a> {
     rustc: &'a Path,

@@ -1674,6 +1674,22 @@
       "loaf": "crates-io/zstd",
       "target_predicates": [],
       "version": "0.13.3"
+    },
+    {
+      "archive_digest": "sha256:a8a606533b95b09dae0cef1dc2652b46c0cf9b8b87b2aab87daae57ed482affb",
+      "domain": "host",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ],
+      "loaf": "crates-io/syn",
+      "target_predicates": [],
+      "version": "2.0.119"
     }
   ]
 }
