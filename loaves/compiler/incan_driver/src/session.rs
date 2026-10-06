@@ -244,6 +244,47 @@ pub struct CompilationSession {
 }
 
 impl CompilationSession {
+    /// Prepare the CLI check path's Rust metadata context from this session's manifest and selected providers.
+    /// Both diagnostics and native Body IR consumers must use this boundary before analysis so Rust signatures and
+    /// derives are checked under the same defaults. The returned lease must remain alive through checking; programs
+    /// without metadata queries need no workspace.
+    #[cfg(feature = "rust_inspect")]
+    pub fn prepare_check_rust_inspection(
+        &self,
+        entry_path: &Path,
+        modules: &[ParsedModule],
+    ) -> CliResult<Option<crate::lock::PreparedRustInspectTypecheckWorkspace>> {
+        let project_root = resolve_project_root(entry_path);
+        let provider_plan = self.provider_plan_for_modules(modules)?;
+        let project_name = self
+            .manifest
+            .as_ref()
+            .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
+            .or_else(|| {
+                entry_path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| "incan_check".to_string());
+        let cargo_features = oven_model::lock::CargoFeatureSelection::default().normalized();
+        let cargo_policy = crate::cargo_policy::CargoPolicy::default();
+        crate::lock::rust_inspect::prepare_rust_inspect_typecheck_workspace(crate::lock::RustInspectTypecheckRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            manifest: self.manifest.as_ref(),
+            modules,
+            library_manifest_index: &self.library_manifest_index,
+            cargo_features: &cargo_features,
+            cargo_policy: &cargo_policy,
+            rust_edition: self
+                .manifest
+                .as_ref()
+                .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone())),
+            provider_plan: &provider_plan,
+        })
+    }
+
     /// Discover project-level compilation context for an explicit Incan package-feature selection.
     pub fn discover_with_feature_selection(entry_path: &Path, feature_selection: &FeatureSelection) -> CliResult<Self> {
         Self::discover_with_selections(entry_path, feature_selection, None)
