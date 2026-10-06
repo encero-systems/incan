@@ -24,6 +24,16 @@ pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>,
     let place = mir::Place::from(local);
     Ok(match &value.projection {
         Projection::Whole => place,
+        Projection::VariantField(variant, slot, ty) => {
+            let downcast = place.project_deeper(
+                &[mir::ProjectionElem::Downcast(
+                    None,
+                    rustc_abi::VariantIdx::from_usize(index(*variant)?),
+                )],
+                tcx,
+            );
+            tcx.mk_place_field(downcast, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
+        }
         Projection::Field(slot, ty) => {
             tcx.mk_place_field(place, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
         }
@@ -104,6 +114,10 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
+        RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
+        RvalueKind::TagToInt(value) => {
+            mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
+        }
         RvalueKind::Use(value) => mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes),
         RvalueKind::IntToFloat(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
@@ -119,7 +133,7 @@ pub fn rvalue<'tcx>(
             binary(op, matches!(destination_type, PlanType::CheckedInt)),
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
         ),
-        RvalueKind::Model(_, elements) => {
+        RvalueKind::Model(_, elements) | RvalueKind::Enum(_, _, elements) => {
             let ty = native_type(tcx, destination_type)?;
             let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
                 return Err(PlanError::Invalid {
@@ -134,7 +148,10 @@ pub fn rvalue<'tcx>(
             mir::Rvalue::Aggregate(
                 Box::new(mir::AggregateKind::Adt(
                     definition.did(),
-                    rustc_abi::VariantIdx::from_u32(0),
+                    rustc_abi::VariantIdx::from_usize(match value {
+                        RvalueKind::Enum(_, variant, _) => index(*variant)?,
+                        _ => 0,
+                    }),
                     *args,
                     None,
                     None,

@@ -20,7 +20,7 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 PlanType::Int => "i64",
                 PlanType::Float => "f64",
                 PlanType::String => "String",
-                PlanType::Model(_, name) => name.as_str(),
+                PlanType::Model(_, name) | PlanType::Enum(_, name) => name.as_str(),
                 _ => "bool",
             };
             ast::TyKind::Path(None, ast::Path::from_ident(ident(name, span)))
@@ -315,4 +315,96 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
         ast::AttrStyle::Outer,
         span,
     )
+}
+
+/// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
+pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
+    let variants = value
+        .variants
+        .iter()
+        .map(|variant| {
+            let fields = variant
+                .fields
+                .iter()
+                .map(|field| ast::FieldDef {
+                    attrs: ThinVec::new(),
+                    id: ast::DUMMY_NODE_ID,
+                    span,
+                    vis: visibility(false, span),
+                    mut_restriction: ast::MutRestriction {
+                        kind: ast::RestrictionKind::Unrestricted,
+                        span,
+                        tokens: None,
+                    },
+                    safety: ast::Safety::Default,
+                    ident: None,
+                    ty: ty(field, span),
+                    default: None,
+                    is_placeholder: false,
+                })
+                .collect();
+            ast::Variant {
+                attrs: ThinVec::new(),
+                id: ast::DUMMY_NODE_ID,
+                span,
+                vis: visibility(false, span),
+                ident: ident(&variant.name, span),
+                data: if variant.fields.is_empty() {
+                    ast::VariantData::Unit(ast::DUMMY_NODE_ID)
+                } else {
+                    ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
+                },
+                disr_expr: None,
+                is_placeholder: false,
+            }
+        })
+        .collect();
+    let mut declaration = item(
+        ast::ItemKind::Enum(
+            ident(&value.name, span),
+            ast::Generics::default(),
+            ast::EnumDef { variants },
+        ),
+        span,
+    );
+    declaration.vis = visibility(value.public, span);
+    declaration.tokens = Some(enum_tokens(value, span));
+    declaration
+}
+
+/// Preserve enum tokens for derives from the exact planned layout without parsing generated Rust source.
+fn enum_tokens(value: &crate::plan::EnumDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
+    use ast::token::{Delimiter, Token, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
+    let mut variants = Vec::new();
+    for variant in &value.variants {
+        variants.push(name_token(&variant.name, span));
+        if !variant.fields.is_empty() {
+            let mut fields = Vec::new();
+            for field in &variant.fields {
+                fields.extend(type_tokens(&ty(field, span)));
+                fields.push(AttrTokenTree::Token(Token::new(TokenKind::Comma, span), Spacing::Alone));
+            }
+            variants.push(AttrTokenTree::Delimited(
+                DelimSpan::from_single(span),
+                DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+                Delimiter::Parenthesis,
+                AttrTokenStream::new(fields),
+            ));
+        }
+        variants.push(AttrTokenTree::Token(Token::new(TokenKind::Comma, span), Spacing::Alone));
+    }
+    let mut tokens = Vec::new();
+    if value.public {
+        tokens.push(keyword_token("pub", span));
+    }
+    tokens.push(keyword_token("enum", span));
+    tokens.push(name_token(&value.name, span));
+    tokens.push(AttrTokenTree::Delimited(
+        DelimSpan::from_single(span),
+        DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+        Delimiter::Brace,
+        AttrTokenStream::new(variants),
+    ));
+    LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
 }

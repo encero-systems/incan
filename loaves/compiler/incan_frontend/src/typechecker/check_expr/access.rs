@@ -6581,8 +6581,12 @@ impl TypeChecker {
             && (enum_info.variants.iter().any(|v| v == method) || enum_info.variant_aliases.contains_key(method))
         {
             let variant_identity = enum_info.variant_identities.get(method).cloned();
+            let variant_params = self.checked_enum_variant_parameters(enum_name, method);
             // Args were checked above; no strict arity enforcement here.
             let _ = &arg_types; // keep for potential future validation
+            if let Some(parameters) = variant_params {
+                self.type_info.record_call_site_callable_params_exact(span, &parameters);
+            }
             if let Some(identity) = variant_identity {
                 self.type_info.record_resolved_identity(span, identity);
             }

@@ -58,6 +58,9 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
+    #[serde(default)]
+    pub enum_declarations: Vec<EnumDeclaration>,
     /// Checked stdlib wrappers that forward every parameter unchanged to a Rust function. Other imported
     /// implementations are absent and must refuse.
     #[serde(default)]
@@ -255,6 +258,36 @@ pub struct FieldlessEnumDeclaration {
     pub name: String,
     /// Canonical zero-payload variants in source declaration order.
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
+}
+
+/// Canonical layout of a normal source enum without methods, aliases, or generic substitution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumDeclaration {
+    /// Exact source-local declaration identity derived from the enum's span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Exact checker identity of the enum owner.
+    pub canonical: CanonicalSymbolId,
+    /// Source name, cross-checked against constructor diagnostics.
+    pub name: String,
+    /// Checked source visibility.
+    pub public: bool,
+    /// Source-ordered variants; native discriminants use these exact indices.
+    pub variants: Vec<EnumVariantDeclaration>,
+    /// Explicit and automatic derives selected by the checker.
+    pub derives: Vec<String>,
+}
+
+/// One canonical variant and its checked positional payload layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumVariantDeclaration {
+    /// Exact source-local declaration identity derived from the variant's span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Checker-selected variant identity; construction and patterns dispatch by this fact.
+    pub canonical: CanonicalSymbolId,
+    /// Source variant name, used only after identity resolution.
+    pub name: String,
+    /// Checked payload types in declaration order.
+    pub fields: Vec<IncanType>,
 }
 
 /// One canonical zero-payload member of a retained fieldless normal enum.
@@ -4376,6 +4409,7 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            enum_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),

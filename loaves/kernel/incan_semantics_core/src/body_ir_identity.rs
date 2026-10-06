@@ -16,6 +16,44 @@ use crate::{
 };
 
 impl BodyIrModule {
+    /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.
+    pub fn is_well_formed_native_enum_declaration(&self, declaration: &crate::body_ir::EnumDeclaration) -> bool {
+        self.declaration_id_for_canonical(
+            &declaration.canonical,
+            SymbolNamespace::OrdinaryLexical,
+            SemanticSourceTargetKind::Enum,
+        ) == Some(declaration.direct_declaration_id.clone())
+            && declaration.canonical.declaration_name == declaration.name
+            && !declaration.variants.is_empty()
+            && declaration
+                .variants
+                .iter()
+                .map(|value| &value.name)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == declaration.variants.len()
+            && declaration
+                .variants
+                .iter()
+                .map(|value| &value.canonical)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == declaration.variants.len()
+            && declaration.variants.iter().all(|variant| {
+                variant.canonical.namespace == SymbolNamespace::Member
+                    && variant.canonical.kind == SemanticSourceTargetKind::Variant
+                    && variant.canonical.scope_discriminant.is_none()
+                    && variant.canonical.origin == declaration.canonical.origin
+                    && variant.direct_declaration_id
+                        == CompilerNodeId::declaration_span(
+                            self.module_id.path(),
+                            variant.canonical.declaration_span.start,
+                            variant.canonical.declaration_span.end,
+                        )
+                    && declares_member(&declaration.canonical, &variant.canonical)
+                    && variant.canonical.declaration_name == variant.name
+            })
+    }
     /// Whether `id` is a span-derived declaration identity of exactly the shape lowering emits for this module.
     pub fn is_own_span_declaration_id(&self, id: &CompilerNodeId) -> bool {
         if self.module_id.kind() != CompilerNodeKind::Module || id.kind() != CompilerNodeKind::Declaration {

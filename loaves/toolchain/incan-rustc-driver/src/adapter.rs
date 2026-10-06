@@ -113,6 +113,21 @@ impl rustc_driver::Callbacks for Callbacks {
         krate: &mut ast::Crate,
     ) -> rustc_driver::Compilation {
         let sources = Sources::new(compiler.sess.source_map());
+        for value in &self.plan.enums {
+            let span = match sources.span(&value.span) {
+                Ok(span) => span,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
+            let mut item = declarations::enum_declaration(value, span);
+            for derive in &value.derives {
+                item.attrs.push(declarations::derive_attribute(
+                    &compiler.sess.psess.attr_id_generator,
+                    derive,
+                    span,
+                ));
+            }
+            krate.items.push(item);
+        }
         for model in &self.plan.models {
             let span = match sources.span(&model.span) {
                 Ok(span) => span,

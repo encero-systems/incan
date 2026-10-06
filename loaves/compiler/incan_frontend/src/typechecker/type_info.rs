@@ -914,6 +914,10 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Checked payload types keyed by their source annotation span; direct lowering never resolves raw annotations.
+    pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
+    /// Explicit and automatic native derives selected by checking for each source enum.
+    pub enum_derives: HashMap<String, Vec<String>>,
     /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.

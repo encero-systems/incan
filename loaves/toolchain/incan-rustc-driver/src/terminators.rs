@@ -92,6 +92,9 @@ fn call_operand<'tcx>(
     callee: &crate::plan::Callee,
 ) -> Result<mir::Operand<'tcx>, PlanError> {
     let mut arguments = Vec::new();
+    if let crate::plan::CalleeKind::CloneEnum(_, name) = &callee.kind {
+        arguments.push(crate::types::enum_type(tcx, name)?.into());
+    }
     if let crate::plan::CalleeKind::CloneModel(_, name) = &callee.kind {
         arguments.push(crate::types::model_type(tcx, name)?.into());
     }

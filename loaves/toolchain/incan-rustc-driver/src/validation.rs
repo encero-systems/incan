@@ -15,6 +15,9 @@ enum Scalar {
     Float,
     Bool,
     Unit,
+    EnumTag,
+    Enum(i64),
+    EnumRef(i64),
     CheckedInt,
     String,
     StringRef,
@@ -32,6 +35,9 @@ enum Scalar {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::EnumTag => Scalar::EnumTag,
+        PlanType::Enum(index, _) => Scalar::Enum(*index),
+        PlanType::EnumRef(index, _) => Scalar::EnumRef(*index),
         PlanType::Model(index, _) => Scalar::Model(*index),
         PlanType::ModelRef(index, _) => Scalar::ModelRef(*index),
         PlanType::Int => Scalar::Int,
@@ -72,6 +78,7 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
         }
     }
     validate_models(plan)?;
+    validate_enums(plan)?;
     let mut paths = BTreeSet::new();
     for external in &plan.externals {
         span(&external.span)?;
@@ -213,6 +220,19 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
     let ty = local(function, value.local)?;
     match &value.projection {
         Projection::Whole => Ok(ty),
+        Projection::VariantField(variant, slot, field_type) => {
+            let Scalar::Enum(owner) = ty else {
+                return Err(invalid(function, "variant projection requires an enum owner"));
+            };
+            let declaration = enum_declaration(plan, owner).ok_or_else(|| invalid(function, "unknown enum owner"))?;
+            let field = usize::try_from(*variant)
+                .ok()
+                .and_then(|index| declaration.variants.get(index))
+                .and_then(|variant| usize::try_from(*slot).ok().and_then(|index| variant.fields.get(index)))
+                .ok_or_else(|| invalid(function, "unknown enum payload field"))?;
+            require(function, scalar(field_type), scalar(field), "enum payload projection")?;
+            Ok(scalar(field_type))
+        }
         Projection::Field(slot, field_type) => {
             let Scalar::Model(owner) = ty else {
                 return Err(invalid(function, "field projection requires a model owner"));
@@ -262,6 +282,10 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
     match &value.kind {
         OperandKind::Copy(value) => {
             let ty = place(plan, function, value)?;
+            if matches!(ty, Scalar::Enum(index) if enum_declaration(plan, index).is_none_or(|value| !value.derives.iter().any(|name| name == "Copy")))
+            {
+                return Err(invalid(function, "non-Copy enum cannot be copied"));
+            }
             if matches!(ty, Scalar::String | Scalar::StringArray(_) | Scalar::Model(_)) {
                 return Err(invalid(function, "owned formatting values cannot be copied"));
             }
@@ -293,6 +317,42 @@ fn require(function: &Function, actual: Scalar, expected: Scalar, context: &str)
 fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
         RvalueKind::Use(value) => operand(plan, function, value),
+        RvalueKind::Discriminant(value) => {
+            if !matches!(place(plan, function, value)?, Scalar::Enum(_)) {
+                return Err(invalid(function, "discriminant requires an enum"));
+            }
+            Ok(Scalar::EnumTag)
+        }
+        RvalueKind::TagToInt(value) => {
+            require(
+                function,
+                operand(plan, function, value)?,
+                Scalar::EnumTag,
+                "discriminant conversion",
+            )?;
+            Ok(Scalar::Int)
+        }
+        RvalueKind::Enum(owner, variant, elements) => {
+            require(function, expected, Scalar::Enum(*owner), "enum aggregate destination")?;
+            let declaration =
+                enum_declaration(plan, *owner).ok_or_else(|| invalid(function, "unknown constructed enum"))?;
+            let variant = usize::try_from(*variant)
+                .ok()
+                .and_then(|index| declaration.variants.get(index))
+                .ok_or_else(|| invalid(function, "unknown constructed variant"))?;
+            if variant.fields.len() != elements.len() {
+                return Err(invalid(function, "enum payload count differs from declaration"));
+            }
+            for (element, field) in elements.iter().zip(&variant.fields) {
+                require(
+                    function,
+                    operand(plan, function, element)?,
+                    scalar(field),
+                    "enum payload",
+                )?;
+            }
+            Ok(expected)
+        }
         RvalueKind::IntToFloat(value) => {
             require(function, operand(plan, function, value)?, Scalar::Int, "int-to-float")?;
             Ok(Scalar::Float)
@@ -328,6 +388,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(expected)
         }
         RvalueKind::Borrow(value) => match place(plan, function, value)? {
+            Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
             Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
             Scalar::String => Ok(Scalar::StringRef),
             Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
@@ -349,7 +410,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
 fn source_signature_type(ty: Scalar) -> bool {
     matches!(
         ty,
-        Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String | Scalar::Model(_)
+        Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String | Scalar::Model(_) | Scalar::Enum(_)
     )
 }
 
@@ -440,6 +501,13 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
                     .collect(),
                 scalar(&function.return_type),
             ))
+        }
+        CalleeKind::CloneEnum(index, name) => {
+            let declaration = enum_declaration(plan, *index).ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            if declaration.name != *name || !declaration.derives.iter().any(|derive| derive == "Clone") {
+                return Err(PlanError::UnknownCallee(name.clone()));
+            }
+            Ok((vec![Scalar::EnumRef(*index)], Scalar::Enum(*index)))
         }
         CalleeKind::CloneModel(index, name) => {
             let declaration = model(plan, *index).ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
@@ -542,6 +610,14 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
 
 /// Ensure every nominal type's diagnostic spelling agrees with its indexed declaration.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
+    if let PlanType::Enum(index, name) | PlanType::EnumRef(index, name) = ty {
+        if enum_declaration(plan, *index).is_none_or(|declaration| declaration.name != *name) {
+            return Err(PlanError::Invalid {
+                function: name.clone(),
+                reason: "enum type differs from its declaration".into(),
+            });
+        }
+    }
     if let PlanType::Model(index, name) | PlanType::ModelRef(index, name) = ty {
         if model(plan, *index).is_none_or(|declaration| declaration.name != *name) {
             return Err(PlanError::Invalid {
@@ -584,6 +660,58 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                         function: declaration.name.clone(),
                         reason: "unsupported recursive or forward model field".into(),
                     });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a source enum layout by its validated plan index.
+fn enum_declaration(plan: &Plan, index: i64) -> Option<&crate::plan::EnumDeclaration> {
+    usize::try_from(index).ok().and_then(|index| plan.enums.get(index))
+}
+
+/// Reject malformed layouts, unsupported derives and forward or recursive payload layouts before rustc runs.
+fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
+    let mut names: BTreeSet<_> = plan
+        .functions
+        .iter()
+        .map(|value| &value.name)
+        .chain(plan.models.iter().map(|value| &value.name))
+        .collect();
+    for (index, declaration) in plan.enums.iter().enumerate() {
+        span(&declaration.span)?;
+        let error = || PlanError::Invalid {
+            function: declaration.name.clone(),
+            reason: "invalid or unsupported enum declaration".into(),
+        };
+        if !identifier(&declaration.name)
+            || !names.insert(&declaration.name)
+            || declaration.variants.is_empty()
+            || declaration.derives.iter().any(|name| {
+                !matches!(
+                    name.as_str(),
+                    "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
+                )
+            })
+        {
+            return Err(error());
+        }
+        let mut variants = BTreeSet::new();
+        for variant in &declaration.variants {
+            if !identifier(&variant.name) || !variants.insert(&variant.name) {
+                return Err(error());
+            }
+            for field in &variant.fields {
+                validate_model_type(plan, field)?;
+                if !source_signature_type(scalar(field)) {
+                    return Err(error());
+                }
+                if let PlanType::Enum(owner, _) = field {
+                    if usize::try_from(*owner).ok().is_none_or(|owner| owner >= index) {
+                        return Err(error());
+                    }
                 }
             }
         }
