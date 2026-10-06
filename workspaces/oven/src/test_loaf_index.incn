@@ -1,0 +1,77 @@
+"""Exercise typed JSON-line intake at the Loaf/provider boundary."""
+
+from std.testing import fail, fail_t
+from std.fs import Path
+from manifest_errors import IntakeError
+from loaf_index import read_index, decode_line, LoafVersion
+from loaf_facts import feature_name_closure
+
+
+def require_ok[T](result: Result[T, IntakeError]) -> T:
+    """Expose a structured refusal as a test failure without panicking."""
+    match result:
+        Ok(value) => return value
+        Err(error) => return fail_t[T](error.message())
+
+
+pub def test_pinned_lines_keep_yank_and_facts() -> None:
+    """The reader retains every version, leaving yank selection to the resolver."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    assert len(records) == 2
+    assert records[1].yanked
+    assert records[0].facts == [["default", "std"]]
+
+
+pub def test_unknown_construct_names_loaf_field_and_line() -> None:
+    """Unsupported semantics must not disappear during index projection."""
+    match decode_line("{\"build-dependencies\":[]}", "test/bad", 7):
+        Ok(_) => fail("unsupported index field was accepted")
+        Err(error) =>
+            assert "test/bad:line 7" in error.message()
+            assert "build-dependencies" in error.message()
+
+
+pub def test_path_traversal_refuses_before_io() -> None:
+    """A provider name cannot escape the caller's index pin directory."""
+    match read_index("tests/fixtures/loaf-index", "test/../secret"):
+        Ok(_) => fail("traversal accepted")
+        Err(error) =>
+            assert "name" in error.message()
+
+
+pub def test_fact_closure_keeps_default_intent() -> None:
+    """The facts check expands feature names and never silently enables defaults."""
+    record = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))[0]
+    assert feature_name_closure(record.catalog.features, ["default"]) == ["default", "std"]
+    assert feature_name_closure(record.catalog.features, ["extra"]) == ["extra"]
+
+
+def root_source() -> str:
+    """Retain fixture text so malformed variants use the same otherwise-valid catalog."""
+    match Path("tests/fixtures/loaf-index/index/test/root").read_text("utf-8", "strict"):
+        Ok(source) => return source
+        Err(error) => return fail_t[str](error.message())
+
+
+def require_refusal(source: str, field: str) -> None:
+    """Require a located grammar refusal for a mutation of the valid synthetic root."""
+    match decode_line(source, "test/root", 11):
+        Ok(_) => fail("malformed declaration accepted")
+        Err(error) =>
+            assert "test/root:line 11" in error.message()
+            assert field in error.message()
+
+
+pub def test_inactive_feature_and_noncanonical_target_are_refused() -> None:
+    """No selected-feature or selected-target condition can hide malformed declarations."""
+    require_refusal(root_source().replace("leaf/extra", "missing/extra"), "features")
+    require_refusal(root_source().replace("cfg(unix)", "cfg( unix )"), "target")
+
+
+pub def test_multi_entry_keys_remain_distinct_declarations() -> None:
+    """The repeated alias retains target predicates and feature lists separately."""
+    record = require_ok(decode_line(root_source(), "test/root", 1))
+    assert len(record.catalog.dependencies) == 3
+    assert record.catalog.dependencies[0].alias == record.catalog.dependencies[1].alias
+    assert record.catalog.dependencies[0].features == []
+    assert record.catalog.dependencies[1].features == ["std"]

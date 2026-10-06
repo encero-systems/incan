@@ -1,0 +1,24 @@
+"""Pure feature-table closure checks independent of Rust inspection and source selection."""
+
+from loaf_facts import feature_name_closure, closure_violations
+
+
+pub def test_feature_closure_does_not_infer_defaults() -> None:
+    """A declared default is enabled only by explicit recorded membership."""
+    features = {"default": ["std"], "std": [], "derive": ["dep:derive", "derive?/full"]}
+    assert feature_name_closure(features, ["derive"]) == ["derive"]
+    assert feature_name_closure(features, ["default"]) == ["default", "std"]
+
+
+pub def test_cycles_terminate_and_duplicate_bindings_are_reported() -> None:
+    """Closure is set-shaped, but distinct recorded bindings keep separate violation lines."""
+    features = {"first": ["second"], "second": ["first"]}
+    assert feature_name_closure(features, ["first"]) == ["first", "second"]
+    violations = closure_violations("test/cycle", "1.0.0", features, [["first"], ["first"]])
+    assert len(violations) == 2
+    assert violations[0] == violations[1]
+
+
+pub def test_closed_recorded_set_passes_unchanged() -> None:
+    """Dependency tokens never enter a local cfg feature closure."""
+    assert closure_violations("test/closed", "1.0.0", {"std": ["other/std"]}, [["std"]]) == []

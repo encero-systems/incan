@@ -1,0 +1,70 @@
+"""Pure Incan audit of every binding in the supplied pin, independent of Rust inspection authority."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.environ import args
+from loaf_facts import closure_violations
+
+
+def field(value: JsonValue, name: str) -> Result[JsonValue, str]:
+    """Refuse omitted fields rather than making absent evidence look like an empty set."""
+    if let Some(item) = value.get(name):
+        return Ok(item)
+    return Err(f"missing {name}")
+
+
+def text(value: JsonValue) -> Result[str, str]:
+    """Require string facts rather than coercing arbitrary values."""
+    if let Some(item) = value.as_str():
+        return Ok(item)
+    return Err("expected string")
+
+
+def array(value: JsonValue) -> Result[list[JsonValue], str]:
+    """Require a JSON array at the evidence boundary."""
+    if let Some(items) = value.as_array():
+        return Ok(items)
+    return Err("expected array")
+
+
+def strings(value: JsonValue) -> Result[list[str], str]:
+    """Retain recorded order for verbatim violation reporting."""
+    mut result: list[str] = []
+    for item in array(value)?:
+        result.append(text(item)?)
+    return Ok(result)
+
+
+pub def main() -> Result[None, str]:
+    """Audit the named pin files; print every violation and exact coverage counts."""
+    arguments = args().map_err((e) => e.message())?
+    if len(arguments) != 3:
+        return Err("usage: audit PIN_DIRECTORY NAMES_FILE")
+    names = Path(arguments[2]).read_text("utf-8", "strict").map_err((e) => e.message())?
+    mut versions = 0
+    mut fact_count = 0
+    mut violations = 0
+    for name in names.split("\n"):
+        if name == "":
+            continue
+        source = Path(f"{arguments[1]}/index/{name}").read_text("utf-8", "strict").map_err((e) => e.message())?
+        for line in source.split("\n"):
+            if line == "":
+                continue
+            value = parse(line).map_err((e) => e.message())?
+            loaf = text(field(value, "name")?)?
+            version = text(field(value, "vers")?)?
+            table = field(value, "features")?
+            mut features: Dict[str, list[str]] = {}
+            for key in table.keys():
+                features[key] = strings(field(table, key)?)?
+            mut facts: list[list[str]] = []
+            for fact in array(field(value, "facts")?)?:
+                facts.append(strings(field(fact, "features")?)?)
+            versions += 1
+            fact_count += len(facts)
+            for violation in closure_violations(loaf, version, features, facts):
+                println(violation)
+                violations += 1
+    println(f"versions={versions}; facts={fact_count}; violations={violations}")
+    return Ok(None)

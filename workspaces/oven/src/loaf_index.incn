@@ -1,0 +1,315 @@
+"""Decode pinned Loaf index declarations without inspecting upstream package metadata."""
+
+from std.json import JsonValue, parse
+from rust_activation import (
+    validate_feature_declarations,
+    version_matches,
+    target_matches,
+    TargetConfiguration,
+    CfgSnapshot,
+)
+from std import toml
+from std.fs import Path
+from manifest_errors import IntakeError, IntakeErrorKind
+from plan import SelectionError
+from plan_json import array, boolean, field, strings, text_field
+from rust_source import (
+    RustDependencyCatalog,
+    RustDependencyDeclaration,
+    RustDependencyRole,
+    RustDependencySource,
+    RustRegistryRequest,
+)
+
+const ARCHIVE_DIGEST_PREFIX: str = "sha256:"
+const SHA256_HEX_LENGTH: int = 64
+
+
+@derive(Eq)
+pub enum LoafRustKind(str):
+    """The only Rust unit kinds accepted by the adopted-Loaf grammar."""
+
+    Library = "lib"
+    ProcMacro = "proc-macro"
+
+
+pub model LoafVersion:
+    """One version's source coordinates and activation declarations, with recorded binding feature sets."""
+
+    pub loaf: str
+    pub version: str
+    pub checksum: str
+    pub yanked: bool
+    pub kind: LoafRustKind
+    pub edition: str
+    pub catalog: RustDependencyCatalog
+    pub facts: list[list[str]]
+
+
+def invalid(loaf: str, line: int, path: list[str], detail: str) -> IntakeError:
+    """Keep the named Loaf and one-based JSON-line location on every refusal."""
+    return IntakeError(
+        kind=IntakeErrorKind.Invalid,
+        manifest=f"{loaf}:line {line}",
+        field=path,
+        location=None,
+        detail=detail,
+    )
+
+
+def wire_error(loaf: str, line: int, error: SelectionError) -> IntakeError:
+    """Preserve the structural decoder's exact field path."""
+    return invalid(loaf, line, error.fields, "invalid or missing index field")
+
+
+def canonical_condition(condition: str) -> str:
+    """Normalize only whitespace outside literals; cfg parsing remains the shared activation policy's job."""
+    mut compact = ""
+    mut quoted = false
+    mut escaped = false
+    for character in condition:
+        if quoted:
+            compact += character
+            if character == "\"" and not escaped:
+                quoted = false
+            if character == "\\" and not escaped:
+                escaped = true
+            else:
+                escaped = false
+        elif character == "\"":
+            quoted = true
+            compact += character
+        elif character not in " \t\r\n":
+            compact += character
+    mut canonical = ""
+    quoted = false
+    escaped = false
+    for character in compact:
+        if not quoted and character == ",":
+            canonical += ", "
+        elif not quoted and character == "=":
+            canonical += " = "
+        else:
+            canonical += character
+        if character == "\"" and not escaped:
+            quoted = not quoted
+        if character == "\\" and not escaped:
+            escaped = true
+        else:
+            escaped = false
+    return canonical
+
+
+def allowed(value: JsonValue, names: list[str], loaf: str, line: int, path: list[str]) -> Result[None, IntakeError]:
+    """Reject unsupported fields rather than silently translating their meaning."""
+    if not value.is_object():
+        return Err(invalid(loaf, line, path, "expected object"))
+    for key in value.keys():
+        if key not in names:
+            return Err(invalid(loaf, line, path + [key], "outside Rust-facet index grammar"))
+    return Ok(None)
+
+
+def validate_forwarding(catalog: RustDependencyCatalog, loaf: str, line: int) -> Result[None, IntakeError]:
+    """A strong feature of an optional dependency must carry explicit activation in its local feature closure."""
+    for name in catalog.features.keys():
+        if name == "" or "/" in name or "?" in name or ":" in name:
+            return Err(invalid(loaf, line, ["features", name], "malformed feature name"))
+        mut names = [name]
+        mut members: list[str] = []
+        mut cursor = 0
+        while cursor < len(names):
+            current = names[cursor]
+            cursor += 1
+            for member in catalog.features[current]:
+                members.append(member)
+                if member in catalog.features and member not in names:
+                    names.append(member)
+        for member in members:
+            parts = member.split("/")
+            if len(parts) != 2 or parts[0].endswith("?"):
+                continue
+            for declaration in catalog.dependencies:
+                if declaration.alias == parts[0] and declaration.optional == Some(true):
+                    if f"dep:{parts[0]}" not in members:
+                        return Err(
+                            invalid(
+                                loaf,
+                                line,
+                                ["features", name],
+                                "optional dependency feature requires dep: activation",
+                            ),
+                        )
+    return Ok(None)
+
+
+def dependency(value: JsonValue, loaf: str, line: int, index: int) -> Result[RustDependencyDeclaration, IntakeError]:
+    """Map one Loaf slot directly into the shared activation catalog, preserving repeated keys."""
+    path = ["deps", str(index)]
+    allowed(value, ["name", "loaf", "req", "features", "default-features", "optional", "target"], loaf, line, path)?
+    alias = text_field(value, "name", path).map_err((e) => wire_error(loaf, line, e))?
+    child = text_field(value, "loaf", path).map_err((e) => wire_error(loaf, line, e))?
+    requirement = text_field(value, "req", path).map_err((e) => wire_error(loaf, line, e))?
+    if alias == "" or child == "" or requirement == "":
+        return Err(invalid(loaf, line, path, "empty dependency coordinate"))
+    mut target: Option[str] = None
+    if let Some(_) = value.get("target"):
+        condition = text_field(value, "target", path).map_err((e) => wire_error(loaf, line, e))?
+        if condition == "" or (condition.startswith("cfg(") and canonical_condition(condition) != condition):
+            return Err(invalid(loaf, line, path + ["target"], "target predicate must be canonical"))
+        syntax_context = TargetConfiguration(triple="validation-only", cfg=Some(CfgSnapshot(flags=[], values={})))
+        target_matches(condition, syntax_context, loaf, path + ["target"]).map_err(
+            (e) => invalid(loaf, line, e.field, e.detail),
+        )?
+        target = Some(condition)
+    features = strings(field(value, "features", path).map_err((e) => wire_error(loaf, line, e))?, path + ["features"]).map_err(
+        (e) => wire_error(loaf, line, e),
+    )?
+    defaults = boolean(
+        field(value, "default-features", path).map_err((e) => wire_error(loaf, line, e))?,
+        path + ["default-features"],
+    ).map_err((e) => wire_error(loaf, line, e))?
+    optional = boolean(field(value, "optional", path).map_err((e) => wire_error(loaf, line, e))?, path + ["optional"]).map_err(
+        (e) => wire_error(loaf, line, e),
+    )?
+    return Ok(
+        RustDependencyDeclaration(
+            index=index,
+            field=path,
+            role=RustDependencyRole.Normal,
+            target_condition=target,
+            alias=alias,
+            package=child,
+            version_requirement=Some(requirement),
+            features=features,
+            default_features=Some(defaults),
+            optional=Some(optional),
+            source=RustDependencySource.Registry(RustRegistryRequest.Default),
+        ),
+    )
+
+
+pub def read_root_requests(source: str, owner: str) -> Result[list[RustDependencyDeclaration], IntakeError]:
+    """Decode a root dependency array using exactly the index's declaration grammar."""
+    value = parse(source).map_err((e) => invalid(owner, 1, [], e.message()))?
+    entries = array(value, ["deps"]).map_err((e) => wire_error(owner, 1, e))?
+    mut requests: list[RustDependencyDeclaration] = []
+    for index in range(len(entries)):
+        requests.append(dependency(entries[index], owner, 1, index)?)
+    return Ok(requests)
+
+
+pub def decode_line(source: str, loaf: str, line: int) -> Result[LoafVersion, IntakeError]:
+    """Read the adopted index shape; provenance and facts remain data, never execution authority."""
+    value = parse(source).map_err((e) => invalid(loaf, line, [], e.message()))?
+    allowed(
+        value,
+        ["name", "vers", "cksum", "yanked", "rust", "deps", "features", "facts", "adopted", "advisories", "assets", "facets", "manifest", "publisher"],
+        loaf,
+        line,
+        [],
+    )?
+    name = text_field(value, "name", []).map_err((e) => wire_error(loaf, line, e))?
+    if name != loaf:
+        return Err(invalid(loaf, line, ["name"], "index name disagrees with requested Loaf"))
+    version = text_field(value, "vers", []).map_err((e) => wire_error(loaf, line, e))?
+    checksum = text_field(value, "cksum", []).map_err((e) => wire_error(loaf, line, e))?
+    if not checksum.startswith(ARCHIVE_DIGEST_PREFIX) or len(checksum) != len(ARCHIVE_DIGEST_PREFIX) + SHA256_HEX_LENGTH:
+        return Err(invalid(loaf, line, ["cksum"], "expected sha256 archive digest"))
+    for character in checksum[len(ARCHIVE_DIGEST_PREFIX):]:
+        if character not in "0123456789abcdef":
+            return Err(invalid(loaf, line, ["cksum"], "expected lowercase hexadecimal digest"))
+    yanked = boolean(field(value, "yanked", []).map_err((e) => wire_error(loaf, line, e))?, ["yanked"]).map_err(
+        (e) => wire_error(loaf, line, e),
+    )?
+    rust_table = field(value, "rust", []).map_err((e) => wire_error(loaf, line, e))?
+    allowed(rust_table, ["name", "type", "edition"], loaf, line, ["rust"])?
+    library = text_field(rust_table, "name", ["rust"]).map_err((e) => wire_error(loaf, line, e))?
+    edition = text_field(rust_table, "edition", ["rust"]).map_err((e) => wire_error(loaf, line, e))?
+    if edition not in ["2015", "2018", "2021", "2024"] or library == "":
+        return Err(invalid(loaf, line, ["rust"], "unsupported edition or empty Rust name"))
+    kind_name = text_field(rust_table, "type", ["rust"]).map_err((e) => wire_error(loaf, line, e))?
+    mut kind = LoafRustKind.Library
+    if kind_name == "proc-macro":
+        kind = LoafRustKind.ProcMacro
+    elif kind_name != "lib":
+        return Err(invalid(loaf, line, ["rust", "type"], "unsupported Rust unit type"))
+    deps = array(field(value, "deps", []).map_err((e) => wire_error(loaf, line, e))?, ["deps"]).map_err(
+        (e) => wire_error(loaf, line, e),
+    )?
+    mut declarations: list[RustDependencyDeclaration] = []
+    for index in range(len(deps)):
+        declarations.append(dependency(deps[index], loaf, line, index)?)
+    table = field(value, "features", []).map_err((e) => wire_error(loaf, line, e))?
+    if not table.is_object():
+        return Err(invalid(loaf, line, ["features"], "expected feature table"))
+    mut features: Dict[str, list[str]] = {}
+    for key in table.keys():
+        features[key] = strings(
+            field(table, key, ["features"]).map_err((e) => wire_error(loaf, line, e))?,
+            ["features", key],
+        ).map_err((e) => wire_error(loaf, line, e))?
+    mut facts: list[list[str]] = []
+    entries = array(field(value, "facts", []).map_err((e) => wire_error(loaf, line, e))?, ["facts"]).map_err(
+        (e) => wire_error(loaf, line, e),
+    )?
+    for item in entries:
+        facts.append(
+            strings(field(item, "features", ["facts"]).map_err((e) => wire_error(loaf, line, e))?, ["facts", "features"]).map_err(
+                (e) => wire_error(loaf, line, e),
+            )?,
+        )
+    document = toml.parse("").map_err((e) => invalid(loaf, line, [], e.message()))?
+    catalog = RustDependencyCatalog(
+        document=document,
+        dependencies=declarations,
+        features=features,
+        library_name=Some(library),
+    )
+    version_matches("*", version, loaf).map_err((e) => invalid(loaf, line, ["vers"], e.message()))?
+    for declaration in declarations:
+        if let Some(requirement) = declaration.version_requirement:
+            version_matches(requirement, version, loaf).map_err(
+                (e) => invalid(loaf, line, declaration.field + ["req"], e.message()),
+            )?
+    validate_feature_declarations(catalog, loaf).map_err((e) => invalid(loaf, line, e.field, e.detail))?
+    validate_forwarding(catalog, loaf, line)?
+    return Ok(
+        LoafVersion(
+            loaf=loaf,
+            version=version,
+            checksum=checksum,
+            yanked=yanked,
+            kind=kind,
+            edition=edition,
+            catalog=catalog,
+            facts=facts,
+        ),
+    )
+
+
+pub def read_index(pin_directory: str, loaf: str) -> Result[list[LoafVersion], IntakeError]:
+    """Read only a named index file below a caller-supplied immutable pin directory."""
+    parts = loaf.split("/")
+    if len(parts) not in [1, 2] or ".." in loaf or "\\" in loaf:
+        return Err(invalid(loaf, 0, ["name"], "expected scope/name without traversal"))
+    for part in parts:
+        if part == "" or part == "." or part != part.strip():
+            return Err(invalid(loaf, 0, ["name"], "empty or malformed name component"))
+    mut index_name = loaf
+    if len(parts) == 1:
+        index_name = f"-/{loaf}"
+    source = Path(f"{pin_directory}/index/{index_name}")
+        .read_text("utf-8", "strict")
+        .map_err((e) => invalid(loaf, 0, [], e.message()))?
+    mut records: list[LoafVersion] = []
+    lines = source.split("\n")
+    for index in range(len(lines)):
+        if index == len(lines) - 1 and lines[index] == "":
+            continue
+        record = decode_line(lines[index], loaf, index + 1)?
+        for earlier in records:
+            if earlier.version == record.version:
+                return Err(invalid(loaf, index + 1, ["vers"], "duplicate immutable version"))
+        records.append(record)
+    return Ok(records)

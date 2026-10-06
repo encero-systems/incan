@@ -1,0 +1,36 @@
+"""Check adoption's recorded feature-name closure independently of version selection."""
+
+
+pub def feature_name_closure(features: Dict[str, list[str]], recorded: list[str]) -> list[str]:
+    """
+    Expand only local feature-name members, preserving the binding's explicit default intent.
+
+    Dependency tokens cannot add local cfg features. In particular defaults are never inferred merely because a
+    version declares a default feature; they enter this walk only when the recorded set contains them.
+    """
+    mut closure = recorded
+    mut cursor = 0
+    while cursor < len(closure):
+        feature = closure[cursor]
+        cursor += 1
+        if feature not in features:
+            continue
+        for member in features[feature]:
+            if member in features and member not in closure:
+                closure.append(member)
+    return sorted(closure)
+
+
+pub def closure_violations(
+    loaf: str,
+    version: str,
+    features: Dict[str, list[str]],
+    facts: list[list[str]],
+) -> list[str]:
+    """Return every mismatched binding verbatim without coalescing duplicate fact entries."""
+    mut violations: list[str] = []
+    for recorded in facts:
+        closure = feature_name_closure(features, recorded)
+        if sorted(recorded) != closure:
+            violations.append(f"{loaf} {version}: recorded={recorded}; closure={closure}")
+    return violations

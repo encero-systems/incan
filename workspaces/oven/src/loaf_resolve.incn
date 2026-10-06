@@ -1,0 +1,349 @@
+"""Select pinned Loaf versions alongside the shared host/target activation policy."""
+
+from rust::semver import Version
+from std.json import JsonValue
+from std import toml
+from loaf_index import LoafVersion, LoafRustKind
+from manifest_errors import IntakeError, IntakeErrorKind
+from rust_activation import (
+    activate_unit,
+    version_matches,
+    target_matches,
+    ActivationContext,
+    DependencyDomain,
+    SlotActivation,
+)
+from rust_graph import NodeDemand, merged
+from rust_source import RustDependencyDeclaration, RustDependencyCatalog
+
+const MAX_ROUNDS: int = 256
+
+
+pub model LoafDemand:
+    """All incoming constraints on one Loaf/domain; requirements must hold together."""
+
+    pub loaf: str
+    pub domain: DependencyDomain
+    pub requirements: list[str]
+    pub intent: NodeDemand
+
+
+pub model ResolvedLoaf:
+    """Selected source identity and settled activation, never a build-fact admission."""
+
+    pub record: LoafVersion
+    pub domain: DependencyDomain
+    pub features: list[str]
+    pub predicates: list[EvaluatedLoafPredicate]
+
+
+pub model EvaluatedLoafPredicate:
+    """One original declaration's target predicate evaluated in its parent's domain."""
+
+    pub declaration: int
+    pub target: str
+    pub matches: bool
+
+
+def evaluated_predicates(
+    record: LoafVersion,
+    context: ActivationContext,
+) -> Result[list[EvaluatedLoafPredicate], IntakeError]:
+    """Use the same evaluator as activation, retaining false predicates as lock evidence."""
+    mut target = context.target
+    if context.domain == DependencyDomain.Host:
+        target = context.host
+    mut predicates: list[EvaluatedLoafPredicate] = []
+    for declaration in record.catalog.dependencies:
+        if let Some(condition) = declaration.target_condition:
+            applies = target_matches(condition, target, record.loaf, declaration.field + ["target"])?
+            predicates.append(EvaluatedLoafPredicate(declaration=declaration.index, target=condition, matches=applies))
+    return Ok(predicates)
+
+
+def refusal(loaf: str, requirements: list[str], detail: str) -> IntakeError:
+    """Name the complete conflicting incoming requirement set."""
+    return IntakeError(
+        kind=IntakeErrorKind.Invalid,
+        manifest=loaf,
+        field=["requirements"],
+        location=None,
+        detail=f"{detail}: {requirements}",
+    )
+
+
+def key(loaf: str, domain: DependencyDomain) -> str:
+    """Domain separation applies even when host and target triples coincide."""
+    return f"{loaf}@{domain.value()}"
+
+
+pub def select_version(
+    records: list[LoafVersion],
+    loaf: str,
+    requirements: list[str],
+) -> Result[LoafVersion, IntakeError]:
+    """Choose the highest non-yanked candidate satisfying every incoming comparator."""
+    mut chosen: Option[LoafVersion] = None
+    for record in records:
+        if record.loaf != loaf or record.yanked:
+            continue
+        mut matches = true
+        for requirement in requirements:
+            if not version_matches(requirement, record.version, loaf)?:
+                matches = false
+        if not matches:
+            continue
+        candidate = Version.parse(record.version).map_err((e) => refusal(loaf, requirements, str(e)))?
+        match chosen:
+            None =>
+                chosen = Some(record)
+            Some(previous) =>
+                earlier = Version.parse(previous.version).map_err((e) => refusal(loaf, requirements, str(e)))?
+                if candidate > earlier:
+                    chosen = Some(record)
+    if let Some(record) = chosen:
+        return Ok(record)
+    return Err(refusal(loaf, requirements, "no non-yanked version satisfies incoming requirements"))
+
+
+def compatibility(version: str) -> str:
+    """Separate semver breaking lines: major, zero-major minor, and zero-major/minor patch."""
+    parts = version.split(".")
+    if parts[0] != "0":
+        return parts[0]
+    if parts[1] != "0":
+        return f"0.{parts[1]}"
+    return f"0.0.{parts[2].split("-")[0].split("+")[0]}"
+
+
+def add_demand(
+    records: list[LoafVersion],
+    demands: Dict[str, LoafDemand],
+    addition: LoafDemand,
+) -> Result[Dict[str, LoafDemand], IntakeError]:
+    """
+    Reuse graph demand union within the incoming requirement's highest compatible semver line.
+
+    Incompatible lines remain independent. A conflict within one line refuses instead of selecting two compatible
+    versions; choosing an older line for a broad comparator would require backtracking.
+    """
+    candidate = select_version(records, addition.loaf, addition.requirements)?
+    identity = f"{key(addition.loaf, addition.domain)}:{compatibility(candidate.version)}"
+    mut accumulated = demands
+    if identity not in accumulated:
+        accumulated[identity] = addition
+        return Ok(accumulated)
+    old = accumulated[identity]
+    mut requirements = old.requirements
+    for requirement in addition.requirements:
+        if requirement not in requirements:
+            requirements.append(requirement)
+    mut intent = old.intent
+    if let Some(union) = merged(old.intent, addition.intent):
+        intent = union
+    accumulated[identity] = LoafDemand(loaf=old.loaf, domain=old.domain, requirements=requirements, intent=intent)
+    return Ok(accumulated)
+
+
+def incoming(
+    slot: RustDependencyDeclaration,
+    features: list[str],
+    defaults: bool,
+    domain: DependencyDomain,
+) -> LoafDemand:
+    """Turn an active declaration into an exact domain request."""
+    mut requirements: list[str] = []
+    if let Some(requirement) = slot.version_requirement:
+        requirements.append(requirement)
+    return LoafDemand(
+        loaf=slot.package,
+        domain=domain,
+        requirements=requirements,
+        intent=NodeDemand(features=features, default_features=defaults),
+    )
+
+
+def fingerprint(demands: Dict[str, LoafDemand], units: list[ResolvedLoaf]) -> str:
+    """Include selected versions and authored demand so version changes cannot masquerade as convergence."""
+    mut parts: list[str] = []
+    for identity in sorted([item for item in demands.keys()]):
+        demand = demands[identity]
+        parts.append(
+            f"{identity}:{sorted(demand.requirements)}:{sorted(demand.intent.features)}:{demand.intent.default_features}",
+        )
+    for unit in units:
+        parts.append(f"{key(unit.record.loaf, unit.domain)}:{unit.record.version}:{sorted(unit.features)}")
+    return str(parts)
+
+
+def shared_version(
+    records: list[LoafVersion],
+    demand: LoafDemand,
+    demands: Dict[str, LoafDemand],
+) -> Result[LoafVersion, IntakeError]:
+    """Share source versions across domains while keeping feature demands independent."""
+    candidate = select_version(records, demand.loaf, demand.requirements)?
+    line = compatibility(candidate.version)
+    mut requirements: list[str] = []
+    for identity in sorted([item for item in demands.keys()]):
+        incoming_demand = demands[identity]
+        if incoming_demand.loaf != demand.loaf:
+            continue
+        incoming_candidate = select_version(records, incoming_demand.loaf, incoming_demand.requirements)?
+        if compatibility(incoming_candidate.version) == line:
+            for requirement in incoming_demand.requirements:
+                if requirement not in requirements:
+                    requirements.append(requirement)
+    return select_version(records, demand.loaf, requirements)
+
+
+model ResolutionRound:
+    """Only roots and edges reached under the current selected versions survive into the next round."""
+
+    demands: Dict[str, LoafDemand]
+    units: list[ResolvedLoaf]
+
+
+def demand_state(demand: LoafDemand) -> str:
+    """A repeated node is reevaluated only when an incoming constraint or feature intent grows."""
+    return f"{sorted(demand.requirements)}:{sorted(demand.intent.features)}:{demand.intent.default_features}"
+
+
+def resolve_round(
+    records: list[LoafVersion],
+    roots: Dict[str, LoafDemand],
+    prior: Dict[str, LoafDemand],
+    base: ActivationContext,
+) -> Result[ResolutionRound, IntakeError]:
+    """Walk from roots using prior version choices and current feature demand, dropping unreachable cycles."""
+    mut demands = roots
+    mut queue = sorted([item for item in roots.keys()])
+    mut cursor = 0
+    mut visited: Dict[str, str] = {}
+    mut selected: Dict[str, ResolvedLoaf] = {}
+    while cursor < len(queue):
+        identity = queue[cursor]
+        cursor += 1
+        demand = demands[identity]
+        state = demand_state(demand)
+        if identity in visited and visited[identity] == state:
+            continue
+        visited[identity] = state
+        mut record = shared_version(records, demand, demands)?
+        if identity in prior:
+            record = shared_version(records, prior[identity], prior)?
+        context = ActivationContext(
+            host=base.host,
+            target=base.target,
+            purpose=base.purpose,
+            domain=demand.domain,
+            requested_features=demand.intent.features,
+            default_features=demand.intent.default_features,
+            build_unit_present=false,
+        )
+        activation = activate_unit(record.catalog, context, record.loaf)?
+        selected[identity] = ResolvedLoaf(
+            record=record,
+            domain=demand.domain,
+            features=sorted(activation.effective_features),
+            predicates=evaluated_predicates(record, context)?,
+        )
+        for slot in activation.slots:
+            match slot.activation:
+                SlotActivation.Active(features, defaults, domain) =>
+                    declaration = record.catalog.dependencies[slot.index]
+                    addition = incoming(declaration, features, defaults, domain)
+                    child = select_version(records, addition.loaf, addition.requirements)?
+                    mut child_domain = domain
+                    if child.kind == LoafRustKind.ProcMacro:
+                        child_domain = DependencyDomain.Host
+                    normalized = incoming(declaration, features, defaults, child_domain)
+                    demands = add_demand(records, demands, normalized)?
+                    child_key = f"{key(child.loaf, child_domain)}:{compatibility(child.version)}"
+                    if child_key not in visited or visited[child_key] != demand_state(demands[child_key]):
+                        queue.append(child_key)
+                SlotActivation.Inactive(_) => pass
+    return Ok(
+        ResolutionRound(demands=demands, units=[selected[item] for item in sorted([name for name in selected.keys()])]),
+    )
+
+
+pub def resolve(
+    records: list[LoafVersion],
+    roots: list[LoafDemand],
+    base: ActivationContext,
+) -> Result[list[ResolvedLoaf], IntakeError]:
+    """
+    Rebuild active edges each round, retracting stale version edges rather than retaining obsolete constraints.
+
+    Semver breaking lines resolve independently. Broad requirements choose their highest available line; conflicts
+    refuse rather than backtracking across previously chosen lines.
+    """
+    mut root_demands: Dict[str, LoafDemand] = {}
+    for root in roots:
+        candidate = select_version(records, root.loaf, root.requirements)?
+        mut domain = root.domain
+        if candidate.kind == LoafRustKind.ProcMacro:
+            domain = DependencyDomain.Host
+        normalized = LoafDemand(loaf=root.loaf, domain=domain, requirements=root.requirements, intent=root.intent)
+        root_demands = add_demand(records, root_demands, normalized)?
+    mut demands = root_demands
+    mut previous = ""
+    for _ in range(MAX_ROUNDS):
+        round = resolve_round(records, root_demands, demands, base)?
+        for identity in round.demands.keys():
+            shared_version(records, round.demands[identity], round.demands)?
+        state = fingerprint(round.demands, round.units)
+        if state == previous:
+            return Ok(round.units)
+        previous = state
+        demands = round.demands
+    return Err(refusal("index", [], "selection and feature activation did not converge"))
+
+
+pub def resolution_json(units: list[ResolvedLoaf]) -> JsonValue:
+    """Encode deterministic source-resolution data; this does not claim registry signature or build-fact admission."""
+    mut records: list[JsonValue] = []
+    for unit in units:
+        records.append(
+            JsonValue.object(
+                {"loaf": JsonValue.string(unit.record.loaf), "version": JsonValue.string(unit.record.version), "archive_digest": JsonValue.string(
+                    unit.record.checksum,
+                ), "domain": JsonValue.string(unit.domain.value()), "features": JsonValue.array(
+                    [JsonValue.string(name) for name in sorted(unit.features)],
+                ), "target_predicates": JsonValue.array(
+                    [JsonValue.object(
+                        {"declaration": JsonValue.int(predicate.declaration), "target": JsonValue.string(
+                            predicate.target,
+                        ), "matches": JsonValue.bool(predicate.matches)},
+                    ) for predicate in unit.predicates],
+                )},
+            ),
+        )
+    return JsonValue.object(
+        {"schema": JsonValue.string("incan.oven.loaf-resolution/1"), "units": JsonValue.array(records)},
+    )
+
+
+pub def resolve_requests(
+    records: list[LoafVersion],
+    requests: list[RustDependencyDeclaration],
+    root_features: Dict[str, list[str]],
+    base: ActivationContext,
+) -> Result[list[ResolvedLoaf], IntakeError]:
+    """
+    Activate the project's root requests using the same feature/target policy as transitive declarations.
+
+    `root_features` and `base` retain the project's own feature table and selection intent. Child feature requests
+    remain on each dependency declaration; only active root slots participate in source selection.
+    """
+    document = toml.parse("").map_err((e) => refusal("roots", [], e.message()))?
+    catalog = RustDependencyCatalog(document=document, dependencies=requests, features=root_features, library_name=None)
+    activation = activate_unit(catalog, base, "roots")?
+    mut roots: list[LoafDemand] = []
+    for slot in activation.slots:
+        match slot.activation:
+            SlotActivation.Active(features, defaults, domain) =>
+                roots.append(incoming(requests[slot.index], features, defaults, domain))
+            SlotActivation.Inactive(_) => pass
+    return resolve(records, roots, base)

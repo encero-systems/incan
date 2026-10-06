@@ -170,7 +170,7 @@ def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:
         Predicate.ProcMacro => return None
 
 
-def target_matches(
+pub def target_matches(
     condition: str,
     target: TargetConfiguration,
     manifest: str,
@@ -449,3 +449,12 @@ pub def version_matches(requirement: str, selected_version: str, manifest: str) 
         .parse(selected_version)
         .map_err((error) => refusal(manifest, ["selected-version"], IntakeErrorKind.Invalid, str(error)))?
     return Ok(wanted.matches(selected))
+
+
+pub def validate_feature_declarations(catalog: RustDependencyCatalog, manifest: str) -> Result[None, IntakeError]:
+    """Validate all feature members independently of target selection and authored feature demand.
+
+    Registry readers use the same grammar as activation so an inactive feature cannot conceal an unsupported token.
+    """
+    feature_catalog(catalog, manifest)?
+    return Ok(None)
