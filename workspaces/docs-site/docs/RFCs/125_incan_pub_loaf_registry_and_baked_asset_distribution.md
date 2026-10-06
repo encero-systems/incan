@@ -145,6 +145,8 @@ The reservation of unscoped names for the toolchain is `incan.pub` policy. A reg
 
 A source Loaf is the archive `oven publish` produces from a project root. It must contain the project's `loaf.toml` and the sources the manifest's facets select. When the Loaf publishes an RFC 123 executable representation for an Incan facet, the source Loaf carries it; a Loaf may publish none, and the routes that need one refuse it as RFC 123 specifies rather than the registry rejecting the publication. It must not contain generated Rust as its compatibility contract; generated Rust may be present only as an inspection artifact with provenance, as RFC 034 already required. The source Loaf's identity is the SHA-256 digest of the archive.
 
+The archive is a deterministic, uncompressed POSIX tar: entries are sorted by path bytes, paths are relative to the Loaf root with `loaf.toml` at the root, and every entry is a regular file with mode `0644` or `0755`, modification time `0`, owner and group ids `0`, and empty owner and group names. The digest covers the tar bytes; compression applies only in transport, so the digest never depends on a compressor and an identical re-adoption or re-publication produces the same identity.
+
 Every source Loaf must be signed by its publisher. Signing uses keyless certificates issued against an OpenID Connect identity and recorded in a public transparency log. The registry must verify on publish that the certificate identity is authorized for the scope, that the signature covers the archive digest, and that the transparency-log inclusion is valid. The registry must reject unsigned source Loaves.
 
 ### Baked assets
@@ -171,9 +173,10 @@ The registry must publish a sparse index: one file per package at `index/<scope>
 | `vers` | the version |
 | `cksum` | the source Loaf digest, `sha256:` prefixed |
 | `facets` | the facet kinds the Loaf declares, such as `incan`, `rust` |
-| `deps` | the version's Loaf dependencies with their requirements, features, `default-features`, `optional`, and `target` predicates, as the manifest declares them |
+| `rust` | for a Loaf with a Rust facet, its `[rust]` table (`name`, `type`, `edition`), so the resolver can tell a host edge from index lines alone |
+| `deps` | the version's Loaf dependencies as the manifest declares them, each `{name, loaf, req, features, default-features, optional, target}`: `name` is the extern key, `req` the RFC 119 version requirement, and `target` absent when unconditional |
 | `features` | the version's feature table in the RFC 119 grammar, so the whole graph resolves from index lines before any record or archive is fetched |
-| `adopted` | for an adopted Loaf, the upstream registry, package, version, and checksum; absent for a published Loaf |
+| `adopted` | for an adopted Loaf, `{registry, package, version, checksum}` with a `sha256:` prefixed checksum of the upstream archive; absent for a published Loaf |
 | `requires` | toolchain requirements, at least the compiler and Oven ranges |
 | `yanked` | whether a yank event is in effect |
 | `publisher` | the signing identity of the source Loaf |
