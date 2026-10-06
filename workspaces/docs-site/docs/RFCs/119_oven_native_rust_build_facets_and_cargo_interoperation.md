@@ -193,7 +193,7 @@ Oven consumes Rust libraries from the crates.io ecosystem because they are part 
 
 This grammar is the whole contract between a Loaf registry that adopts a Rust package and the Oven resolver that reads it. The registry writes it; Oven reads nothing else.
 
-1. **Rust table.** `[rust]` declares the Loaf's own Rust unit when convention cannot: `name` (the name Rust code uses for this unit, defaulting to the project name with `-` replaced by `_`), `type` (`"lib"` by default, or `"proc-macro"`), and `edition`. The root is `[rust.source] root` or the conventional `src/lib.rs`. A `proc-macro` Loaf is always compiled as a host unit.
+1. **Rust table.** `[rust]` declares the Loaf's own Rust unit when convention cannot: `name` (the name Rust code uses for this unit, defaulting to the project name with `-` replaced by `_`), `type` (`"lib"` by default, or `"proc-macro"`), and `edition`. The root is `[rust.source] root` or the conventional `src/lib.rs`. A `proc-macro` Loaf is always compiled as a host unit. `build-script` (`true` or `false`) states whether the upstream package declared a build script, wherever its file lives; a registry that adopts a package always writes it. Where it is `true`, Oven compiles a binding only with a recorded fact for that exact binding and otherwise refuses it by name; whether the Loaf has any facts at all does not matter.
 2. **Features.** `[project.features]` uses RFC 114's grammar, extended with one member form:
 
     ```text
