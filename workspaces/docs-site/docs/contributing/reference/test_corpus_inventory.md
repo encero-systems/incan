@@ -132,7 +132,7 @@ The collector counts these in the text of each test function and of the file-loc
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_driver/src/backend/c_abi.rs` | 11 | 1074 | 333 | unaffected | - | - | - | #1561 | - | clang verification of checked C signatures; not the Rust backend. |
-| `loaves/compiler/incan_driver/src/backend/project/body_ir_projection.rs` | 3 | 410 | 56 | keep | - | - | - | #1337 | run 1 | Compiler host closure preserves checked-in CLI registry patches and rejects compile-time manifest-root captures while preserving child-process environment controls. |
+| `loaves/compiler/incan_driver/src/backend/project/body_ir_projection.rs` | 3 | 426 | 56 | keep | - | - | - | #1337 | run 1 | Compiler host closure preserves checked-in CLI registry patches and rejects compile-time manifest-root captures while preserving child-process environment controls. |
 | `loaves/compiler/incan_driver/src/backend/project/cargo_toml.rs` | 22 | 1058 | 675 | retire | 0/22 | 22 | - | #1561 | run 20 | generated Cargo project shape; dies with the generated-project route |
 | `loaves/compiler/incan_driver/src/backend/project/generator.rs` | 22 | 3263 | 1380 | retire (retire 22) | 3/22 | 19 | - | #1561 | codegen 5, text 9, run 20, checker 4 | generated Cargo project shape; dies with the generated-project route |
 | `loaves/compiler/incan_driver/src/backend/project/lock_projection.rs` | 9 | 816 | 349 | retire | 0/9 | 9 | - | #1561 | - | generated Cargo project shape; dies with the generated-project route |
@@ -180,7 +180,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/testing/module_graph.rs` | 3 | 412 | 128 | keep | - | - | - | #1561 | checker 1, parser 3 | test-runner module graph through the parser. |
 | `loaves/compiler/incan_driver/src/tests/executable_session.rs` | 1 | 74 | 74 | keep | - | - | - | #1561 | replacement 1, checker 1 | canonical frames through a checked cycle. |
 | `loaves/compiler/incan_driver/src/typecheck.rs` | 3 | 356 | 73 | keep | - | - | - | #1561 | checker 2 | typecheck over the import graph. |
-| `loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs` | 1 | 145 | 145 | keep | - | - | - | #1337 | run 1, replacement 1 | Real borrowed Body IR module and statement enum across an Oven-built Incan caller boundary |
+| `loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs` | 1 | 154 | 154 | keep | - | - | - | #1337 | run 1, replacement 1 | Real borrowed Body IR module and statement enum across an Oven-built Incan caller boundary |
 | `loaves/compiler/incan_driver/tests/duration_artifact_tests.rs` | 1 | 67 | 67 | re-point | - | - | - | #1561 | run 1 | runs a program and checks the duration artifact. |
 | `loaves/compiler/incan_driver/tests/emitted_symbol_projection_tests.rs` | 1 | 38 | 38 | retire | 0/1 | 1 | - | #1561 | - | RFC 120 emitted symbol projection and demangling; generated Rust shape. |
 | `loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/consumer/src/lib.rs` | 1 | 47 | 47 | retire | 0/1 | 1 | - | #1561 | - | fixture consumer of generated_rust_native_consumer_tests; follows its owner. |
@@ -2570,7 +2570,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/oven/oven_rustc/src/loaf.rs` | 30 | 4835 | 1424 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/loaf_mirror.rs` | 9 | 758 | 429 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/native_test.rs` | 34 | 2881 | 1419 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level. |
+| `loaves/oven/oven_rustc/src/native_test.rs` | 34 | 2883 | 1419 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/native_test/case_slice.rs` | 5 | 174 | 87 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/native_test/evidence.rs` | 4 | 258 | 74 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/plan/composition.rs` | 11 | 1906 | 894 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -3221,7 +3221,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 59 | 6905 | 3364 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 59 | 6911 | 3364 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/case_partition.rs` | 6 | 379 | 171 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs` | 9 | 1131 | 332 | unaffected | - | - | - | #1561 | - | Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/gate.rs` | 5 | 779 | 289 | unaffected | - | - | - | #1561 | - | Oven release gate; validates data-driven checkout pins and semantic registry evidence, no compiler semantics. Reviewed at crate level. |
