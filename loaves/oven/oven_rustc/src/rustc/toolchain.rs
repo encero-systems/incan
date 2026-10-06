@@ -488,11 +488,12 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
 /// Rustc finds its own sysroot from where its driver library really lives, and from that sysroot it decides whether
 /// the optional `rust-src` component is installed; with it, std's source files enter a crate's metadata differently
 /// and the crate hash changes. Running the copy inside the normalized sysroot, which never holds `rust-src`, makes
-/// that decision the same on every host.
-pub fn normalized_rustc(std_sysroot: &Path) -> PathBuf {
-    std_sysroot
+/// that decision the same on every host. `None` when the selected toolchain had no executable to copy.
+pub fn normalized_rustc(std_sysroot: &Path) -> Option<PathBuf> {
+    let executable = std_sysroot
         .join("bin")
-        .join(if cfg!(windows) { "rustc.exe" } else { "rustc" })
+        .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+    executable.is_file().then_some(executable)
 }
 
 /// Place the compiler executable and its runtime libraries in a staging sysroot.
@@ -501,17 +502,22 @@ pub fn normalized_rustc(std_sysroot: &Path) -> PathBuf {
 /// its sysroot; every other top-level runtime library (LLVM, sanitizer runtimes) is linked to the installed file.
 fn copy_compiler_runtime(sysroot: &Path, staging: &Path) -> Result<(), OvenRustcError> {
     let executable = if cfg!(windows) { "rustc.exe" } else { "rustc" };
+    let installed = sysroot.join("bin").join(executable);
+    let library = sysroot.join("lib");
+    if !installed.is_file() || !library.is_dir() {
+        // A toolchain without its own executable beside the libraries (a proxy or test fixture) keeps running the
+        // selected compiler with `--sysroot`; `normalized_rustc` then reports no copied executable.
+        return Ok(());
+    }
     let bin = staging.join("bin");
     fs::create_dir_all(&bin).map_err(|source| OvenRustcError::Io {
         path: bin.clone(),
         source,
     })?;
-    let installed = sysroot.join("bin").join(executable);
     fs::copy(&installed, bin.join(executable)).map_err(|source| OvenRustcError::Io {
         path: installed,
         source,
     })?;
-    let library = sysroot.join("lib");
     let entries = fs::read_dir(&library).map_err(|source| OvenRustcError::Io {
         path: library.clone(),
         source,

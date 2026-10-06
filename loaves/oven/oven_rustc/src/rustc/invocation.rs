@@ -718,8 +718,8 @@ fn compile_direct_rustc_output(
     } else {
         Some(super::toolchain::normalized_std_sysroot(rustc, &receipt.intent.target)?)
     };
-    let mut command = match &std_sysroot {
-        Some(std_sysroot) => Command::new(super::toolchain::normalized_rustc(std_sysroot)),
+    let mut command = match std_sysroot.as_deref().and_then(super::toolchain::normalized_rustc) {
+        Some(normalized) => Command::new(normalized),
         None => Command::new(rustc),
     };
     if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
