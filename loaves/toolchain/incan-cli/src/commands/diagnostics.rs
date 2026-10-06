@@ -186,7 +186,7 @@ pub(crate) fn check_path_report_with_interop_target_selection(
         cargo_policy: &cargo_policy,
         rust_edition: manifest
             .as_ref()
-            .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone())),
+            .and_then(|manifest| manifest.rust_edition().map(str::to_string)),
         provider_plan: &provider_plan,
     })?;
 

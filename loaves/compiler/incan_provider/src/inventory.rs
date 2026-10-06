@@ -350,7 +350,7 @@ fn extend_requirements_with_source_stdlib_namespaces(
         let Some(namespace) = stdlib::find_namespace(&root) else {
             continue;
         };
-        for dependency in stdlib_namespace_cargo_dependencies(namespace) {
+        for dependency in stdlib_namespace_cargo_dependencies(namespace)? {
             link_backend_cargo_dependency(
                 requirements,
                 &dependency,
@@ -417,34 +417,31 @@ fn link_backend_cargo_dependency(
 /// crates from the registry. An SDK component records it as the implementation facet of each namespace root it
 /// claims, and a consumer that compiles the namespace from source links the same list, so both routes name the same
 /// crates with the same coordinates.
-pub fn stdlib_namespace_cargo_dependencies(namespace: &stdlib::StdlibNamespace) -> Vec<ProviderCargoDependency> {
-    namespace
+pub fn stdlib_namespace_cargo_dependencies(
+    namespace: &stdlib::StdlibNamespace,
+) -> ProviderResult<Vec<ProviderCargoDependency>> {
+    let mut dependencies = namespace
         .facet
         .map(stdlib_facet_cargo_dependency)
         .into_iter()
-        .chain(namespace.extra_crate_deps.iter().map(|dependency| {
-            ProviderCargoDependency {
-                crate_name: dependency.crate_name.to_string(),
-                package: stdlib::extra_crate_package_alias(dependency.crate_name).map(str::to_string),
-                version: match dependency.source {
-                    stdlib::StdlibExtraCrateSource::Version(version) => Some(version.to_string()),
-                    stdlib::StdlibExtraCrateSource::Path(_) => None,
+        .collect::<Vec<_>>();
+    for dependency in namespace.extra_crate_deps {
+        let spec = crate::requirements::dependency_spec_from_stdlib_dep(dependency)?;
+        dependencies.push(ProviderCargoDependency {
+            crate_name: spec.crate_name,
+            package: spec.package,
+            version: spec.version,
+            features: spec.features.into_iter().collect(),
+            default_features: spec.default_features,
+            source: match dependency.source {
+                stdlib::StdlibExtraCrateSource::Declared => ProviderCargoDependencySource::Registry,
+                stdlib::StdlibExtraCrateSource::Path(relative_path) => ProviderCargoDependencySource::Toolchain {
+                    relative_path: relative_path.to_string(),
                 },
-                features: dependency
-                    .features
-                    .iter()
-                    .map(|feature| (*feature).to_string())
-                    .collect(),
-                default_features: true,
-                source: match dependency.source {
-                    stdlib::StdlibExtraCrateSource::Version(_) => ProviderCargoDependencySource::Registry,
-                    stdlib::StdlibExtraCrateSource::Path(relative_path) => ProviderCargoDependencySource::Toolchain {
-                        relative_path: relative_path.to_string(),
-                    },
-                },
-            }
-        }))
-        .collect()
+            },
+        });
+    }
+    Ok(dependencies)
 }
 
 /// The Cargo dependency on one standard-library runtime facet.
@@ -1173,7 +1170,7 @@ import std.traits
                 id: format!("rust_{root}"),
                 required_modules: BTreeSet::from([vec![root.to_string()]]),
                 required_features: BTreeSet::new(),
-                backend_requirements: stdlib_namespace_cargo_dependencies(namespace)
+                backend_requirements: stdlib_namespace_cargo_dependencies(namespace)?
                     .into_iter()
                     .map(|dependency| BackendImplementationRequirement::CargoDependency { dependency })
                     .collect(),

@@ -500,7 +500,7 @@ pub fn prepare_library_project_with_caller_facet(
             project_root: &project_root,
             project_name: project_name.as_str(),
             cargo_package_name: &lock_cargo_package_name,
-            rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+            rust_edition: manifest.rust_edition().map(str::to_string),
             resolved: &resolved,
             project_requirements: &project_requirements,
             lock_payload: lock_payload_for_typecheck.clone(),
@@ -864,7 +864,7 @@ pub fn prepare_library_project_with_caller_facet(
     generator.set_include_dev_dependencies(
         lock_payload_for_typecheck.is_some() || oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
     );
-    let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
+    let rust_edition = manifest.rust_edition().map(str::to_string);
     generator.set_rust_edition(rust_edition.clone());
     #[cfg(feature = "rust_inspect")]
     if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir.as_ref() {

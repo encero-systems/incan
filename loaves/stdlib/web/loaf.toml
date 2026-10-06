@@ -20,4 +20,4 @@ components = ["stdlib-data", "stdlib-async"]
 axum = { loaf = "crates-io/axum", version = "0.8", features = [], default-features = true }
 inventory = { loaf = "crates-io/inventory", version = "0.3", features = [], default-features = true }
 tokio = { loaf = "crates-io/tokio", version = "1", features = ["net", "rt-multi-thread"], default-features = true }
-incan_web_macros = { path = "../derive/incan_web_macros" }
+incan_web_macros = { loaf = "incan_web_macros", path = "../derive/incan_web_macros" }
