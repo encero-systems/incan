@@ -1,6 +1,7 @@
 //! Selecting the receipt-bound plan a command executes against, and the test-dependency envelope a test run adds to it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::backend::ProjectGenerator;
@@ -283,31 +284,34 @@ pub fn prepare_oven_test_dependency_envelope(
         receipt_request.with_build_unit_input("project-owner-identity", baked_project_owner_identity(project_root)?);
     receipt_request = receipt_request.with_build_unit_input("rust-dependencies", publisher_dependency_surface_digest);
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
-    let plan_selection = if publisher_dependencies
-        .iter()
-        .all(|dependency| matches!(dependency.source, DependencySource::Registry))
-        && let Some(loaf) = resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &publisher_dependencies)
-            .map_err(|error| CliError::failure(error.to_string()))?
-    {
-        OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(loaf))
-    } else {
-        let base_loaf = project_extension_base_loaf(&receipt)?;
-        let materialization = bake_generated_project_test_dependency_plan(
-            store,
-            &receipt,
-            generator.output_dir(),
-            &generator.crate_root_path(),
-            &rustc,
-            base_loaf.as_ref(),
-        )?;
-        select_published_project_plan(store, &receipt, materialization)?
-            .ok_or_else(|| {
-                CliError::failure(
-                    "the explicit Oven project bake completed without its checked test dependency envelope",
-                )
-            })?
-            .plan_selection
-    };
+    let plan_selection =
+        if let Some(selected) = suite_owned_generated_project_plan(&receipt, &publisher_dependencies, &rustc)? {
+            selected.plan_selection
+        } else if publisher_dependencies
+            .iter()
+            .all(|dependency| matches!(dependency.source, DependencySource::Registry))
+            && let Some(loaf) = resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &publisher_dependencies)
+                .map_err(|error| CliError::failure(error.to_string()))?
+        {
+            OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(loaf))
+        } else {
+            let base_loaf = project_extension_base_loaf(&receipt)?;
+            let materialization = bake_generated_project_test_dependency_plan(
+                store,
+                &receipt,
+                generator.output_dir(),
+                &generator.crate_root_path(),
+                &rustc,
+                base_loaf.as_ref(),
+            )?;
+            select_published_project_plan(store, &receipt, materialization)?
+                .ok_or_else(|| {
+                    CliError::failure(
+                        "the explicit Oven project bake completed without its checked test dependency envelope",
+                    )
+                })?
+                .plan_selection
+        };
     remove_completed_generated_cargo_lock(generator.output_dir())?;
     Ok(PreparedOvenTestDependencyEnvelope {
         receipt,
@@ -317,6 +321,56 @@ pub fn prepare_oven_test_dependency_envelope(
         provider_entries,
         plan_selection,
     })
+}
+
+/// Select a sealed native base and suite-owned compiler paths without a compatibility publisher.
+///
+/// Public provider paths remain explicit caller-owned inputs for the existing direct materializer. Registry and
+/// compiler path misses refuse by name; the scheduler's exact feature variants are the only compiler path authority.
+fn suite_owned_generated_project_plan(
+    receipt: &oven_store::OvenReceipt,
+    dependencies: &[DependencySpec],
+    rustc: &Path,
+) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    if std::env::var_os(oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV).is_none() {
+        return Ok(None);
+    }
+    let registry = dependencies
+        .iter()
+        .filter(|dependency| matches!(dependency.source, DependencySource::Registry))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut loaf = resolve_compiler_owned_loaf_for_registry_dependencies(receipt, &registry)
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "suite explicit bake has no sealed registry closure for {}; Cargo fallback is forbidden",
+                registry
+                    .iter()
+                    .map(|dependency| dependency.crate_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+    let compiler_root = std::env::var_os("INCAN_SOURCE_ROOT")
+        .and_then(|root| fs::canonicalize(root).ok())
+        .ok_or_else(|| CliError::failure("suite explicit bake has no compiler source root"))?;
+    let paths = dependencies.iter().filter(|dependency| {
+        matches!(&dependency.source, DependencySource::Path { path } if fs::canonicalize(path).ok().is_some_and(|path| path.starts_with(&compiler_root)))
+    }).cloned().collect::<Vec<_>>();
+    crate::build::bake::attach_suite_rust_unit_dependencies(
+        &mut loaf.artifact_plan,
+        &paths,
+        rustc,
+        &receipt.intent.target,
+        &receipt.intent.profile,
+        &loaf.registry_leaves,
+    )?;
+    Ok(Some(OvenDirectRustcPlanPreparation {
+        plan_selection: OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(loaf)),
+        materialization: OvenToolchainMaterialization::ToolchainLoaf,
+        cargo_process_started: false,
+    }))
 }
 
 /// Select a plan for an explicit project bake, reusing only an exact project Loaf before publishing once.
@@ -346,6 +400,11 @@ pub fn select_or_bake_generated_project_plan(
         // closure: that would duplicate release-owned bytes without adding project authority.
         if let Some(selected) =
             select_published_project_extension_plan(store, receipt, OvenToolchainMaterialization::Reused)?
+        {
+            return Ok(Some(selected));
+        }
+        if mode == OvenProjectPlanMode::ExplicitBake
+            && let Some(selected) = suite_owned_generated_project_plan(receipt, dependency_surface.selection, rustc)?
         {
             return Ok(Some(selected));
         }

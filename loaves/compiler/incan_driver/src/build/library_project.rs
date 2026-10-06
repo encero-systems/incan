@@ -1155,7 +1155,7 @@ pub fn prepare_library_project_with_caller_facet(
                 &artifact_plan,
                 plan_selection.seals_current_project_path_dependencies(),
             );
-            let selected_path_authority = compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
+            let selected_path_authority = compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan))?;
             record_timing(
                 &mut timings_ms,
                 "library_oven_validate_direct_rustc_plan",

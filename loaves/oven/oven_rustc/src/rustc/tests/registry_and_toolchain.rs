@@ -2,6 +2,63 @@
 
 use super::*;
 
+/// Registry cohort admission compares target units at one version without conflating host tools or other versions.
+#[test]
+fn suite_registry_cohort_refuses_conflicting_target_instances() -> Result<(), Box<dyn std::error::Error>> {
+    use oven_model::compiler_suite_env::{
+        OvenCompilerSuiteRustUnitArtifact, OvenCompilerSuiteRustUnitRegistryArtifact,
+    };
+    let workspace = tempfile::tempdir()?;
+    let output = workspace.path().join("libitoa-suite.rlib");
+    fs::write(&output, "suite")?;
+    let leaf = OvenRustcRegistryLeaf {
+        domain: Default::default(),
+        crate_kind: Default::default(),
+        selected_unit_identity: None,
+        package: "itoa".to_string(),
+        version: "1.0.18".to_string(),
+        crate_name: "itoa".to_string(),
+        features: Vec::new(),
+        source: fixture_registry_source(),
+        artifact: OvenRustcArtifactExtern {
+            crate_name: "itoa".to_string(),
+            relative_path: "libitoa-sealed.rlib".to_string(),
+            digest: digest_bytes(b"sealed"),
+        },
+    };
+    let mut instance = OvenCompilerSuiteRustUnitRegistryArtifact {
+        package: "itoa".to_string(),
+        version: "1.0.18".to_string(),
+        host: false,
+        consumers: vec!["consumer".to_string()],
+        artifact: OvenCompilerSuiteRustUnitArtifact {
+            crate_name: "itoa".to_string(),
+            output,
+            digest: digest_bytes(b"suite"),
+        },
+    };
+    let error = match crate::rustc::validate_selected_registry_instances(
+        std::slice::from_ref(&leaf),
+        std::slice::from_ref(&instance),
+    ) {
+        Err(error) => error.to_string(),
+        Ok(()) => return Err("conflicting target instance was accepted".into()),
+    };
+    assert!(error.contains("itoa"));
+    assert!(error.contains(&digest_bytes(b"sealed")));
+    assert!(error.contains(&digest_bytes(b"suite")));
+    instance.host = true;
+    crate::rustc::validate_selected_registry_instances(std::slice::from_ref(&leaf), std::slice::from_ref(&instance))?;
+    instance.host = false;
+    instance.version = "2.0.0".to_string();
+    crate::rustc::validate_selected_registry_instances(std::slice::from_ref(&leaf), std::slice::from_ref(&instance))?;
+    instance.version = leaf.version.clone();
+    instance.artifact.digest = leaf.artifact.digest.clone();
+    fs::write(&instance.artifact.output, "sealed")?;
+    crate::rustc::validate_selected_registry_instances(&[leaf], &[instance])?;
+    Ok(())
+}
+
 #[test]
 fn selects_the_highest_sealed_registry_leaf_matching_the_declared_requirement() -> Result<(), Box<dyn std::error::Error>>
 {

@@ -11341,6 +11341,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/suite_rust_units.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven workspace feature planning for exact Rust-unit dependency variants; no compiler semantics.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/tools.rs": {
       "disposition": "unaffected",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build.",

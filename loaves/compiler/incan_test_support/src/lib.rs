@@ -219,6 +219,9 @@ pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::R
     if !oven_compiler_suite_is_active() {
         return Ok(());
     }
+    if std::env::var_os(oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV).is_some() {
+        return Ok(());
+    }
     let required = |name: &str| {
         std::env::var_os(name).filter(|value| !value.is_empty()).ok_or_else(|| {
             std::io::Error::other(format!(

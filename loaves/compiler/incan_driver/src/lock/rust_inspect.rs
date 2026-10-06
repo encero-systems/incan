@@ -166,6 +166,19 @@ pub fn prepare_rust_inspect_workspace(
                     )?;
                     source_loaf = Some(selected);
                 } else {
+                    if std::env::var_os(oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV)
+                        .is_some()
+                    {
+                        return Err(CliError::failure(format!(
+                            "suite Rust-unit bake has no sealed inspection sources for {}; Cargo fallback is forbidden",
+                            authority_request
+                                .registry_dependencies
+                                .iter()
+                                .map(|dependency| dependency.crate_name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )));
+                    }
                     let release_loaf = resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])
                         .map_err(|error| CliError::failure(error.to_string()))?;
                     let release_registry_lock = release_loaf
@@ -202,7 +215,9 @@ pub fn prepare_rust_inspect_workspace(
                 ));
             }
         }
-        if explicit_oven_bake {
+        if explicit_oven_bake
+            && std::env::var_os(oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV).is_none()
+        {
             mark_oven_cargo_bootstrap_rust_inspection(&rust_inspect_manifest_dir)?;
         } else {
             mark_oven_direct_rust_inspection(&rust_inspect_manifest_dir)?;

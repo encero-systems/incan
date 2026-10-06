@@ -18,6 +18,7 @@ mod sdk_handoff;
 mod suite_environment;
 mod suite_execution;
 mod suite_retention;
+mod suite_rust_units;
 mod support;
 
 pub use equivalence::oven_equivalence;
@@ -1078,6 +1079,18 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                     .get(&shard.stored.manifest.identity)
                     .map(|slices| slices.iter().map(|slice| Some(*slice)).collect::<Vec<_>>())
                     .unwrap_or_else(|| vec![None]);
+                let mut child_environment = environment.clone();
+                if matches!(shard.payload.target.source_relative_path.as_str(),
+                    "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs"
+                        | "loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs") {
+                    let capability = suite_rust_units::prepare_rust_unit_capability(
+                        &options.compiler_root, &shard.payload.workspace_libraries, &shard.payload.artifact_closure,
+                        &shard.stored.manifest.intent, &receipt, &shard.stored.artifact_root, &rustc,
+                        &shard_output.join("rust-unit-variants"), foundation_references, foundations,
+                        &mut workspace_library_cache,
+                    )?;
+                    child_environment.insert(oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV.to_string(), capability);
+                }
                 for case_slice in slices {
                     let child_output = match case_slice {
                         Some((slice_index, _)) => shard_output.with_file_name(format!("{index:04}-slice{slice_index}")),
@@ -1091,7 +1104,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                         &rustc,
                         &options.compiler_root,
                         &child_output,
-                        &environment,
+                        &child_environment,
                         &binary_outputs,
                         &shard.payload.workspace_libraries,
                         workspace_library_outputs.clone(),
@@ -2370,31 +2383,7 @@ fn bake_planned_compiler_suite_workspace_libraries(
     foundations: Option<&BTreeMap<String, CompilerSuiteFoundationExecution>>,
     workspace_library_cache: &mut BTreeMap<String, OvenCallerOwnedRustcLibrary>,
 ) -> CliResult<BTreeMap<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>> {
-    let mut pending = BTreeMap::<OvenCompilerWorkspaceLibraryKey, &OvenCompilerWorkspaceLibrary>::new();
-    for library in libraries {
-        if !matches!(library.key.target_kind.as_str(), "lib" | "proc-macro") {
-            return Err(CliError::failure(format!(
-                "stored compiler-suite workspace library `{}` has unsupported target kind `{}`",
-                library.key.crate_name, library.key.target_kind
-            )));
-        }
-        if pending.insert(library.key.clone(), library).is_some() {
-            return Err(CliError::failure(format!(
-                "stored compiler-suite workspace library `{}` is declared more than once",
-                library.key.crate_name
-            )));
-        }
-    }
-    for library in pending.values() {
-        for dependency in &library.dependencies {
-            if !pending.contains_key(dependency) {
-                return Err(CliError::failure(format!(
-                    "stored compiler-suite workspace library `{}` requires undeclared workspace library `{}`",
-                    library.key.crate_name, dependency.crate_name
-                )));
-            }
-        }
-    }
+    let mut pending = compiler_suite_workspace_library_pending(libraries)?;
     let closure_identity = compiler_suite_artifact_closure_cache_identity(closure)?;
 
     let mut outputs = BTreeMap::<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>::new();
@@ -2451,8 +2440,16 @@ fn bake_planned_compiler_suite_workspace_libraries(
                     })
                 })
                 .collect::<CliResult<Vec<_>>>()?;
-            let cache_key = compiler_suite_workspace_library_cache_key(
+            let unit_receipt = compiler_suite_workspace_unit_receipt(
                 receipt,
+                library,
+                compiler_root,
+                intent,
+                &closure_identity,
+                &dependency_recipe_keys,
+            )?;
+            let cache_key = compiler_suite_workspace_library_cache_key(
+                &unit_receipt,
                 library,
                 &closure_identity,
                 foundation_references,
@@ -2463,59 +2460,189 @@ fn bake_planned_compiler_suite_workspace_libraries(
                 output_recipe_keys.insert(library.key.clone(), cache_key);
                 continue;
             }
-            let artifacts = closure.manifest_for_workspace_library(library, intent.clone());
-            let mut artifact_plan = match foundations {
-                Some(foundations) => {
-                    compiler_suite_composed_artifact_plan(&artifacts, foundation_references, foundations, intent)?
-                }
-                None => artifacts
-                    .materialize_trusted_store(artifact_root, intent)
-                    .map_err(oven_error)?,
-            };
-            attach_caller_owned_rustc_libraries(&mut artifact_plan, &dependencies).map_err(oven_error)?;
-            let source = compiler_suite_workspace_library_source(compiler_root, library)?;
-            let output =
-                output_directory
-                    .join("workspace-libraries")
-                    .join(compiler_suite_workspace_library_output_name(
-                        outputs.len(),
-                        &library.key,
-                    ));
-            let request = OvenTrustedDirectRustcTargetRequest {
-                receipt,
-                artifacts: &artifacts,
+            let output = bake_compiler_suite_workspace_unit(
+                libraries,
+                library,
+                closure,
+                intent,
+                &unit_receipt,
                 artifact_root,
-                artifact_plan: Some(&artifact_plan),
                 rustc,
-                source: &source,
-                output: &output,
-                crate_name: &library.key.crate_name,
-                edition: &library.edition,
-                source_evidence_key: &library.source_evidence_key,
-                features: &library.key.features,
-                prefer_dynamic: compiler_suite_workspace_library_uses_dylib(&library.key),
-            };
-            let bake = match library.key.target_kind.as_str() {
-                "lib" if compiler_suite_workspace_library_uses_dylib(&library.key) => {
-                    bake_trusted_direct_rustc_dylib(&request)
-                }
-                "lib" => bake_trusted_direct_rustc_library(&request),
-                "proc-macro" => bake_trusted_direct_rustc_proc_macro(&request),
-                _ => unreachable!("target kind was validated before scheduling"),
-            }
-            .map_err(oven_error)?;
-            let output = OvenCallerOwnedRustcLibrary {
-                crate_name: library.key.crate_name.clone(),
-                output: bake.output,
-                digest: bake.output_digest,
-                expose_extern: true,
-            };
+                compiler_root,
+                output_directory,
+                foundation_references,
+                foundations,
+                &outputs,
+                &dependencies,
+                &cache_key,
+            )?;
             workspace_library_cache.insert(cache_key.clone(), output.clone());
             output_recipe_keys.insert(library.key.clone(), cache_key);
             outputs.insert(key, output);
         }
     }
     Ok(outputs)
+}
+
+/// Validate the admitted workspace DAG before any native unit is compiled.
+fn compiler_suite_workspace_library_pending(
+    libraries: &[OvenCompilerWorkspaceLibrary],
+) -> CliResult<BTreeMap<OvenCompilerWorkspaceLibraryKey, &OvenCompilerWorkspaceLibrary>> {
+    let mut pending = BTreeMap::<OvenCompilerWorkspaceLibraryKey, &OvenCompilerWorkspaceLibrary>::new();
+    for library in libraries {
+        if !matches!(library.key.target_kind.as_str(), "lib" | "proc-macro") {
+            return Err(CliError::failure(format!(
+                "stored compiler-suite workspace library `{}` has unsupported target kind `{}`",
+                library.key.crate_name, library.key.target_kind
+            )));
+        }
+        if pending.insert(library.key.clone(), library).is_some() {
+            return Err(CliError::failure(format!(
+                "stored compiler-suite workspace library `{}` is declared more than once",
+                library.key.crate_name
+            )));
+        }
+    }
+    for library in pending.values() {
+        for dependency in &library.dependencies {
+            if !pending.contains_key(dependency) {
+                return Err(CliError::failure(format!(
+                    "stored compiler-suite workspace library `{}` requires undeclared workspace library `{}`",
+                    library.key.crate_name, dependency.crate_name
+                )));
+            }
+        }
+    }
+    Ok(pending)
+}
+
+/// Materialize one exact workspace unit after its direct and transitive dependencies have been scheduled.
+#[allow(clippy::too_many_arguments)]
+fn bake_compiler_suite_workspace_unit(
+    libraries: &[OvenCompilerWorkspaceLibrary],
+    library: &OvenCompilerWorkspaceLibrary,
+    closure: &oven_cargo_compat::OvenCompilerTestSuiteArtifactClosure,
+    intent: &OvenBuildIntent,
+    unit_receipt: &OvenReceipt,
+    artifact_root: &Path,
+    rustc: &Path,
+    compiler_root: &Path,
+    output_directory: &Path,
+    foundation_references: &[OvenCompilerTestSuiteFoundationReference],
+    foundations: Option<&BTreeMap<String, CompilerSuiteFoundationExecution>>,
+    outputs: &BTreeMap<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>,
+    dependencies: &[OvenCallerOwnedRustcLibrary],
+    cache_key: &str,
+) -> CliResult<OvenCallerOwnedRustcLibrary> {
+    let artifacts = closure.manifest_for_workspace_library(library, intent.clone());
+    let mut artifact_plan = match foundations {
+        Some(foundations) => {
+            compiler_suite_composed_artifact_plan(&artifacts, foundation_references, foundations, intent)?
+        }
+        None => artifacts
+            .materialize_trusted_store(artifact_root, intent)
+            .map_err(oven_error)?,
+    };
+    attach_caller_owned_rustc_libraries(&mut artifact_plan, dependencies).map_err(oven_error)?;
+    for dependency in compiler_suite_workspace_library_dependency_closure(libraries, &library.key)? {
+        if let Some(output) = outputs.get(&dependency.key)
+            && let Some(parent) = output.output.parent()
+        {
+            artifact_plan.retain_caller_dependency_search_path(parent.to_path_buf());
+        }
+    }
+    let source = compiler_suite_workspace_library_source(compiler_root, library)?;
+    let retained_root = env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .map(|root| root.join("oven-workspace-units").join(cache_key.replace(':', "-")));
+    let output = retained_root
+        .as_deref()
+        .unwrap_or(output_directory)
+        .join("workspace-libraries")
+        .join(compiler_suite_workspace_library_output_name(0, &library.key));
+    let request = OvenTrustedDirectRustcTargetRequest {
+        receipt: unit_receipt,
+        artifacts: &artifacts,
+        artifact_root,
+        artifact_plan: Some(&artifact_plan),
+        rustc,
+        source: &source,
+        output: &output,
+        crate_name: &library.key.crate_name,
+        edition: &library.edition,
+        source_evidence_key: &library.source_evidence_key,
+        features: &library.key.features,
+        prefer_dynamic: compiler_suite_workspace_library_uses_dylib(&library.key),
+    };
+    let bake = match library.key.target_kind.as_str() {
+        "lib" if compiler_suite_workspace_library_uses_dylib(&library.key) => bake_trusted_direct_rustc_dylib(&request),
+        "lib" => bake_trusted_direct_rustc_library(&request),
+        "proc-macro" => bake_trusted_direct_rustc_proc_macro(&request),
+        _ => unreachable!("target kind was validated before scheduling"),
+    }
+    .map_err(oven_error)?;
+    announce_oven_progress(
+        if bake.reused { "REUSE" } else { "COMPILE" },
+        &format!("workspace {}", library.key.crate_name),
+        Some(&format!(
+            "{} features=[{}]",
+            intent.profile,
+            library.key.features.join(",")
+        )),
+    );
+    Ok(OvenCallerOwnedRustcLibrary {
+        crate_name: library.key.crate_name.clone(),
+        output: bake.output,
+        digest: bake.output_digest,
+        expose_extern: true,
+    })
+}
+
+/// Receipt one workspace unit's complete source tree and exact dependency recipes independently of sibling crates.
+///
+/// Parent receipt admission remains mandatory. The child receipt retains the parent's target and compiler contract,
+/// but a changed sibling source cannot invalidate this unit's native output. Dependency recipes carry transitive
+/// changes, while the source tree includes module files that Rustc reads after the library root.
+fn compiler_suite_workspace_unit_receipt(
+    parent: &OvenReceipt,
+    library: &OvenCompilerWorkspaceLibrary,
+    compiler_root: &Path,
+    intent: &OvenBuildIntent,
+    closure_identity: &str,
+    dependency_recipe_keys: &[String],
+) -> CliResult<OvenReceipt> {
+    let source = compiler_suite_workspace_library_source(compiler_root, library)?;
+    let digest = digest_bytes(&fs::read(&source).map_err(|error| CliError::failure(error.to_string()))?);
+    if parent.sources.supplemental_digests.get(&library.source_evidence_key) != Some(&digest) {
+        return Err(CliError::failure(format!(
+            "workspace unit `{}` is not authorized by its parent source receipt",
+            library.key.crate_name
+        )));
+    }
+    let root = source
+        .ancestors()
+        .skip(1)
+        .find(|path| path.join("Cargo.toml").is_file())
+        .ok_or_else(|| CliError::failure("workspace unit has no owning package manifest"))?;
+    let recipe = serde_json::to_vec(&(library, closure_identity, dependency_recipe_keys))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let mut request = oven_store::OvenGeneratedProjectRequest::new(
+        root,
+        &library.key.package_name,
+        &parent.project.version,
+        &intent.target,
+        &intent.toolchain,
+        &intent.profile,
+        intent.features.clone(),
+    )
+    .with_generated_source(&library.source_evidence_key, &source)
+    .with_generated_source("package-manifest", root.join("Cargo.toml"))
+    .with_generated_source_tree("package-source", root.join("src"))
+    .with_build_unit_input("workspace-unit-recipe", digest_bytes(&recipe));
+    if library.key.crate_name == "incan_emit" {
+        request = request.with_generated_source("embedded-zen", compiler_root.join("loaves/stdlib/zen.txt"));
+    }
+    oven_store::receipt_generated_project(&request).map_err(oven_error)
 }
 
 /// Return an invocation-local direct-Rustc workspace-library recipe identity.

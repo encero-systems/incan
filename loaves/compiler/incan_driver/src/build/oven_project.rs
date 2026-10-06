@@ -628,7 +628,7 @@ pub fn prepare_oven_project(
         &artifact_plan,
         plan_selection.seals_current_project_path_dependencies(),
     );
-    let selected_path_authority = compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
+    let selected_path_authority = compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan))?;
     caller_owned_libraries.extend(
         materialize_declared_rust_libraries_with_selected_path_authority(
             &generator.output_dir().join("oven").join("inline-rust"),

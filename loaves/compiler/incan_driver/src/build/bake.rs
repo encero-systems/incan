@@ -934,7 +934,7 @@ fn prepare_rust_unit_dependencies(
     context: &ProjectRustBakeContext<'_>,
     profile: &str,
     base_receipt: &oven_store::OvenReceipt,
-) -> CliResult<Option<(oven_store::OvenReceipt, crate::build::OvenDirectRustcPlanPreparation)>> {
+) -> CliResult<Option<(oven_store::OvenReceipt, oven_rustc::rustc::OvenRustcArtifactPlan)>> {
     if context.manifest.rust_dependencies().is_empty() {
         return Ok(None);
     }
@@ -990,34 +990,178 @@ fn prepare_rust_unit_dependencies(
     let receipt =
         oven_store::receipt_generated_project(&request).map_err(|error| CliError::failure(error.to_string()))?;
 
-    // ---- Explicit plan selection under lease ----
-    let store = open_default_oven_store()?;
-    let preparation = crate::build::plan_selection::select_or_bake_generated_project_plan(
-        OvenProjectPlanMode::ExplicitBake,
-        &store,
-        &receipt,
-        crate::build::OvenProjectDependencySurface {
-            selection: &dependencies,
-            provider_compilations: &[],
-        },
-        &generated,
-        &generator.crate_root_path(),
+    // ---- Sealed registry closure and exact suite-owned workspace variants ----
+    let registry = dependencies
+        .iter()
+        .filter(|dependency| matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
+        .cloned()
+        .collect::<Vec<_>>();
+    let loaf = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &registry)
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "Rust-unit registry dependencies have no sealed compiler Loaf: {}",
+                registry
+                    .iter()
+                    .map(|dependency| dependency.crate_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+    let selection = OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(loaf));
+    let mut plan = selection
+        .source_artifact_plan("generated-root")
+        .map_err(oven_rustc_error)?;
+    attach_suite_rust_unit_dependencies(
+        &mut plan,
+        &dependencies,
         context.rustc,
-    )?
-    .ok_or_else(|| CliError::failure("Rust unit dependency closure was not prepared"))?;
-    Ok(Some((receipt, preparation)))
+        context.target,
+        profile,
+        &selection.artifacts().registry_leaves,
+    )?;
+    let authority = registry_leaf_authority_for_plan_selection(&selection)?;
+    let selected_paths = oven_rustc::rustc::OvenSelectedPathRustcAuthority::new(&[], &plan);
+    let leaves = oven_rustc::rustc::materialize_declared_rust_libraries_with_selected_path_authority(
+        &generated.join("sealed-registry"),
+        context.rustc,
+        context.target,
+        profile,
+        &registry,
+        authority.as_ref(),
+        Some(&selected_paths),
+    )
+    .map_err(oven_rustc_error)?;
+    replace_rust_library_bindings(&mut plan, &leaves)?;
+    Ok(Some((receipt, plan)))
+}
+
+/// Attach only exact suite-selected workspace variants to a Rust-unit dependency plan.
+///
+/// The parent suite has compiled the feature-unified variants. This consumer checks the compiler, target, profile,
+/// declaration and artifact bytes before resolving through the selected-path authority; a miss never invokes Cargo.
+pub(crate) fn attach_suite_rust_unit_dependencies(
+    plan: &mut oven_rustc::rustc::OvenRustcArtifactPlan,
+    dependencies: &[oven_model::manifest::DependencySpec],
+    rustc: &Path,
+    target: &str,
+    profile: &str,
+    registry_leaves: &[oven_rustc::rustc::OvenRustcRegistryLeaf],
+) -> CliResult<()> {
+    use oven_model::compiler_suite_env::OvenCompilerSuiteRustUnitCapability;
+    use oven_model::manifest::{DependencySource, DependencySpec};
+    let paths = dependencies
+        .iter()
+        .filter(|dependency| !matches!(dependency.source, DependencySource::Registry))
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let capability = OvenCompilerSuiteRustUnitCapability::from_environment()
+        .map_err(CliError::failure)?
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "Rust-unit dependency `{}` has no suite-selected workspace variant; Cargo fallback is forbidden",
+                paths[0].crate_name
+            ))
+        })?;
+    let compiler = fs::canonicalize(rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    if capability.profile != profile || capability.target != target || capability.rustc != compiler {
+        return Err(CliError::failure(format!(
+            "Rust-unit dependency `{}` has no suite-selected variant for the requested compiler, target and `{profile}` profile",
+            paths[0].crate_name
+        )));
+    }
+    let requested = paths
+        .iter()
+        .map(|dependency| dependency.crate_name.replace('-', "_"))
+        .collect::<BTreeSet<_>>();
+    let reachable =
+        oven_rustc::rustc::selected_workspace_dependency_closure(&capability.workspace_dependency_graph, &requested)
+            .map_err(oven_rustc_error)?;
+    let registries = capability
+        .registry_instances
+        .iter()
+        .filter(|instance| instance.consumers.iter().any(|consumer| reachable.contains(consumer)))
+        .cloned()
+        .collect::<Vec<_>>();
+    oven_rustc::rustc::validate_selected_registry_instances(registry_leaves, &registries).map_err(oven_rustc_error)?;
+    let mut selected_plan = plan.clone();
+    for path in &capability.dependency_search_paths {
+        if capability.workspace_instances.iter().any(|instance| {
+            instance.output.parent() == Some(path.as_path()) && !reachable.contains(&instance.crate_name)
+        }) {
+            continue;
+        }
+        selected_plan.retain_caller_dependency_search_path(path.clone());
+    }
+    let instances = capability
+        .workspace_instances
+        .iter()
+        .filter(|instance| reachable.contains(&instance.crate_name))
+        .map(|instance| OvenCallerOwnedRustcLibrary {
+            crate_name: instance.crate_name.clone(),
+            output: instance.output.clone(),
+            digest: instance.digest.clone(),
+            expose_extern: false,
+        })
+        .collect::<Vec<_>>();
+    oven_rustc::rustc::validate_selected_workspace_instances(&selected_plan, &instances).map_err(oven_rustc_error)?;
+    let mut declared = Vec::new();
+    let mut libraries = Vec::new();
+    for selected in &capability.libraries {
+        let actual = oven_store::digest_bytes(
+            &fs::read(&selected.output).map_err(|error| CliError::failure(error.to_string()))?,
+        );
+        if actual != selected.digest {
+            return Err(CliError::failure(format!(
+                "suite-selected Rust-unit dependency `{}` changed after compilation",
+                selected.crate_name
+            )));
+        }
+        declared.push(DependencySpec {
+            crate_name: selected.crate_name.clone(),
+            version: None,
+            features: selected.requested_features.clone(),
+            default_features: selected.default_features,
+            source: DependencySource::Path {
+                path: selected.package_root.clone(),
+            },
+            optional: false,
+            package: None,
+        });
+        if requested.contains(&selected.crate_name.replace('-', "_")) {
+            libraries.push(OvenCallerOwnedRustcLibrary {
+                crate_name: selected.crate_name.replace('-', "_"),
+                output: selected.output.clone(),
+                digest: selected.digest.clone(),
+                expose_extern: true,
+            });
+        }
+    }
+    replace_rust_library_bindings(&mut selected_plan, &libraries)?;
+    let mut roots = crate::build::plan_authority::compiler_owned_roots_with_provider_plan(&selected_plan, None);
+    let compiler_root = std::env::var_os("INCAN_SOURCE_ROOT")
+        .ok_or_else(|| CliError::failure("suite-selected Rust-unit dependencies have no compiler source root"))?;
+    roots.push(fs::canonicalize(compiler_root).map_err(|error| CliError::failure(error.to_string()))?);
+    let authority = oven_rustc::rustc::OvenSelectedPathRustcAuthority::new(&roots, &selected_plan)
+        .with_declared_dependencies(&declared);
+    for dependency in paths {
+        authority
+            .resolve_declared_dependency(dependency)
+            .map_err(oven_rustc_error)?;
+    }
+    *plan = selected_plan;
+    Ok(())
 }
 
 /// Compose separately leased native closures, retaining direct roots and all transitive search bindings.
 fn compose_rust_unit_dependencies(
     plan: &mut oven_rustc::rustc::OvenRustcArtifactPlan,
-    preparation: &crate::build::OvenDirectRustcPlanPreparation,
+    preparation: &oven_rustc::rustc::OvenRustcArtifactPlan,
     manifest: &ProjectManifest,
 ) -> CliResult<()> {
-    let own = preparation
-        .plan_selection
-        .source_artifact_plan("generated-root")
-        .map_err(oven_rustc_error)?;
+    let own = preparation.clone();
     let mut libraries = Vec::new();
     let declared = manifest.declared_rust_crate_names();
     for (name, output) in &own.externs {
@@ -1119,15 +1263,7 @@ fn bake_project_rust_profile(
         .ok_or_else(|| CliError::failure(format!("caller library has no `{profile}` Oven profile")))?;
     let own_dependencies = prepare_rust_unit_dependencies(context, profile, &selected.receipt)?;
     let host_body_ir_plan = if caller_body_ir_identity(context.manifest, &prepared.project_root)? {
-        own_dependencies
-            .as_ref()
-            .map(|(_, preparation)| {
-                preparation
-                    .plan_selection
-                    .source_artifact_plan("generated-root")
-                    .map_err(oven_rustc_error)
-            })
-            .transpose()?
+        own_dependencies.as_ref().map(|(_, preparation)| preparation.clone())
     } else {
         None
     };
@@ -1169,7 +1305,10 @@ fn bake_project_rust_profile(
             format!(
                 "{}:{}",
                 dependency_receipt.identity,
-                preparation.plan_selection.report_identity()
+                oven_store::digest_bytes(
+                    &serde_json::to_vec(&preparation.caller_owned_library_digests)
+                        .map_err(|error| CliError::failure(error.to_string()))?
+                )
             ),
         )
         .map_err(|error| CliError::failure(error.to_string()))?;

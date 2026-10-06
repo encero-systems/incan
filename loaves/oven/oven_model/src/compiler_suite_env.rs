@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub const OVEN_COMPILER_SUITE_CAPABILITY_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_CAPABILITY";
 /// Environment variable carrying the separate vocabulary-companion closure.
 pub const OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_VOCAB_CAPABILITY";
+/// Exact workspace variants compiled by the suite for a nested Rust-unit bake.
+pub const OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY";
 /// Stable activation/compiler marker retained for narrow test helpers that need only the selected Rustc path.
 pub const OVEN_COMPILER_SUITE_RUSTC_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_RUSTC";
 /// Exact Cargo executable admitted only to roots whose tests exercise Cargo compatibility.
@@ -151,6 +153,97 @@ pub struct OvenCompilerSuiteCapability {
     pub rustc: PathBuf,
     pub dependency_search_paths: Vec<PathBuf>,
     pub externs: BTreeMap<String, PathBuf>,
+}
+
+/// One suite-built workspace artifact and the declared selector its unified compilation satisfies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenCompilerSuiteRustUnitLibrary {
+    /// Crate name declared by the authored Loaf.
+    pub crate_name: String,
+    /// Canonical source package selected by the authored Loaf.
+    pub package_root: PathBuf,
+    /// Explicit features declared by the authored Loaf.
+    pub requested_features: Vec<String>,
+    /// Whether the authored dependency enables its package defaults.
+    pub default_features: bool,
+    /// Resolved workspace features, including requests forwarded by other workspace dependencies.
+    pub features: Vec<String>,
+    /// Native library compiled by the suite.
+    pub output: PathBuf,
+    /// Content digest checked again by the nested consumer.
+    pub digest: String,
+}
+
+/// One transitive workspace instance selected by the parent compiler-suite invocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenCompilerSuiteRustUnitArtifact {
+    /// Rust crate name encoded in the compiled library.
+    pub crate_name: String,
+    /// Exact native artifact used by every dependent in this cohort.
+    pub output: PathBuf,
+    /// Content identity verified again before composing the graph.
+    pub digest: String,
+}
+
+/// One registry unit compiled into the suite foundation, kept distinct by package version and compilation domain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenCompilerSuiteRustUnitRegistryArtifact {
+    /// Exact package name from the publisher's artifact index.
+    pub package: String,
+    /// Exact locked package version.
+    pub version: String,
+    /// Whether this is a host artifact rather than a target library.
+    pub host: bool,
+    /// Selected workspace units that directly consume this exact foundation artifact.
+    pub consumers: Vec<String>,
+    /// Native artifact and content identity used by the compiled workspace consumers.
+    pub artifact: OvenCompilerSuiteRustUnitArtifact,
+}
+
+/// Profile-specific native workspace closure held by the parent compiler-suite invocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenCompilerSuiteRustUnitCapability {
+    /// Wire version; consumers refuse any other version.
+    pub schema_version: u32,
+    /// Compiler target of every transported unit.
+    pub target: String,
+    /// Build profile requested by the explicit bake.
+    pub profile: String,
+    /// Compiler executable used to build every transported unit.
+    pub rustc: PathBuf,
+    /// Exact declared roots and their feature-unified native artifacts.
+    pub libraries: Vec<OvenCompilerSuiteRustUnitLibrary>,
+    /// Every compiled workspace instance, including units reached only through metadata.
+    pub workspace_instances: Vec<OvenCompilerSuiteRustUnitArtifact>,
+    /// Direct dependency names for each exact workspace instance, bounding one consumer's reachable graph.
+    pub workspace_dependency_graph: BTreeMap<String, Vec<String>>,
+    /// Exact registry instances inherited by the workspace variants from their selected foundation.
+    pub registry_instances: Vec<OvenCompilerSuiteRustUnitRegistryArtifact>,
+    /// Parent-verified metadata search closure, including transitive workspace units.
+    pub dependency_search_paths: Vec<PathBuf>,
+}
+
+impl OvenCompilerSuiteRustUnitCapability {
+    /// Serialize the exact parent-owned native closure for a nested explicit baker.
+    pub fn encode(&self) -> Result<String, String> {
+        serde_json::to_string(self).map_err(|error| format!("cannot encode Rust-unit capability: {error}"))
+    }
+
+    /// Read and validate an optional native workspace closure without consulting Cargo.
+    pub fn from_environment() -> Result<Option<Self>, String> {
+        let Some(payload) = std::env::var_os(OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV) else {
+            return Ok(None);
+        };
+        let capability: Self = serde_json::from_str(&payload.to_string_lossy())
+            .map_err(|error| format!("invalid Rust-unit capability: {error}"))?;
+        if capability.schema_version != 3 {
+            return Err(format!(
+                "unsupported Rust-unit capability schema {}",
+                capability.schema_version
+            ));
+        }
+        Ok(Some(capability))
+    }
 }
 
 impl OvenCompilerSuiteCapability {

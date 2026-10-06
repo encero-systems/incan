@@ -91,7 +91,11 @@ pub fn materialize_declared_rust_libraries_with_selected_path_authority(
                 ),
             });
         }
-        if !matches!(dependency.source, DependencySource::Registry) && !dependency.features.is_empty() {
+        let selected_path = selected_path_authority.and_then(|authority| authority.resolve(&dependency));
+        if !matches!(dependency.source, DependencySource::Registry)
+            && !dependency.features.is_empty()
+            && selected_path.is_none()
+        {
             return Err(OvenRustcError::InvalidInput {
                 field: "Oven direct-rustc Rust dependency",
                 message: format!(
@@ -111,10 +115,7 @@ pub fn materialize_declared_rust_libraries_with_selected_path_authority(
         }
         let package_root = match &dependency.source {
             DependencySource::Path { path } => {
-                if selected_path_authority
-                    .and_then(|authority| authority.resolve(&dependency))
-                    .is_some()
-                {
+                if selected_path.is_some() {
                     // The final direct-Rustc plan already attaches this selected compiler-runtime extern. Keeping it
                     // out of caller-owned outputs avoids a second `--extern` with the same name.
                     continue;
@@ -812,6 +813,8 @@ pub struct OvenSelectedPathRustcAuthority {
     owned_roots: Vec<PathBuf>,
     externs: BTreeMap<String, PathBuf>,
     dependency_search_paths: Vec<PathBuf>,
+    /// Exact declared selectors for compiler workspace units; absent for the existing runtime authority.
+    declared_dependencies: Option<Vec<DependencySpec>>,
 }
 
 #[derive(Default)]
@@ -834,7 +837,34 @@ impl OvenSelectedPathRustcAuthority {
             owned_roots,
             externs: artifact_plan.externs.iter().cloned().collect(),
             dependency_search_paths,
+            declared_dependencies: None,
         }
+    }
+
+    /// Bind workspace artifacts to exact declared dependency selectors, including disabled defaults.
+    ///
+    /// The scheduler must compile the feature-unified variant before constructing this authority. Unlike the
+    /// runtime-only constructor, this form admits explicit features only when the caller repeats the exact request.
+    /// Source paths are canonicalized during resolution, so a relative spelling cannot bypass selector checks.
+    #[must_use]
+    pub fn with_declared_dependencies(mut self, dependencies: &[DependencySpec]) -> Self {
+        self.declared_dependencies = Some(dependencies.to_vec());
+        self
+    }
+
+    /// Resolve an explicitly selected compiler dependency, refusing a missing path or feature selector by name.
+    ///
+    /// This strict consumer never falls back to manifest materialization. The parent scheduler owns compilation;
+    /// nested explicit bakes may only use the exact artifact it selected.
+    pub fn resolve_declared_dependency(&self, dependency: &DependencySpec) -> Result<PathBuf, OvenRustcError> {
+        let output = self.resolve(dependency).ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "selected workspace Rust dependency",
+            message: format!(
+                "`{}` has no selected path artifact with its declared features and default-feature policy",
+                dependency.crate_name
+            ),
+        })?;
+        verified_regular_file(&output, "selected workspace Rust dependency")
     }
 
     /// Return the selected artifact only for an exact compiler-runtime dependency under a leased scheduler root.
@@ -844,6 +874,30 @@ impl OvenSelectedPathRustcAuthority {
         };
         let path = fs::canonicalize(path).ok()?;
         if !self.owned_roots.iter().any(|root| path.starts_with(root)) {
+            return None;
+        }
+        if let Some(declared) = &self.declared_dependencies {
+            let mut features = dependency.features.clone();
+            features.sort();
+            features.dedup();
+            if !declared.iter().any(|selected| {
+                let DependencySource::Path { path: selected_path } = &selected.source else {
+                    return false;
+                };
+                let mut selected_features = selected.features.clone();
+                selected_features.sort();
+                selected_features.dedup();
+                selected.crate_name == dependency.crate_name
+                    && selected.package == dependency.package
+                    && selected.default_features == dependency.default_features
+                    && selected.optional == dependency.optional
+                    && selected_features == features
+                    && fs::canonicalize(selected_path).ok().as_ref() == Some(&path)
+            }) {
+                return None;
+            }
+        } else if !dependency.features.is_empty() {
+            // A legacy runtime grant carries no feature evidence and cannot authorize an explicit variant.
             return None;
         }
         self.externs.get(&dependency.crate_name.replace('-', "_")).cloned()

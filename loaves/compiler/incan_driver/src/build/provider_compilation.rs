@@ -86,6 +86,25 @@ pub fn caller_owned_library_dependencies_for_compilation(
     dependencies
         .into_iter()
         .filter(|dependency| dependency.crate_name != "incan_derive" || has_derive)
+        .map(|mut dependency| {
+            if (dependency.crate_name == "incan_derive"
+                || incan_lang::lang::stdlib::facets::is_facet(&dependency.crate_name))
+                && plan.externs.iter().any(|(name, _)| name == &dependency.crate_name)
+                && dependency.features.is_empty()
+                && dependency.default_features
+                && !dependency.optional
+                && let DependencySource::Path { path } = &dependency.source
+                && let Ok(root) = fs::canonicalize(oven_model::toolchain_layout::resolve_toolchain_crate_path(
+                    &dependency.crate_name,
+                ))
+                && compiler_runtime_sources_equivalent(path, &root).is_ok_and(|equivalent| equivalent)
+            {
+                // The admitted provider's macro/source/lock requirement was checked before composition. Use its
+                // active source coordinate so a pruned historical SDK path never reaches path materialization.
+                dependency.source = DependencySource::Path { path: root };
+            }
+            dependency
+        })
         .collect()
 }
 
@@ -177,11 +196,16 @@ fn checked_provider_macro_dependency(
         || dependency.optional
         || !dependency.default_features
         || !dependency.features.is_empty()
-        || fs::canonicalize(path).ok().as_ref() != Some(&root)
+        || !compiler_runtime_sources_equivalent(path, &root)?
     {
-        return Err(CliError::failure(
-            "provider incan_derive declaration differs from the compiler-owned macro source",
-        ));
+        return Err(CliError::failure(format!(
+            "provider incan_derive declaration differs from the compiler-owned macro source: declared {}, selected {}; features {:?}, default-features {}, optional {}",
+            path.display(),
+            root.display(),
+            dependency.features,
+            dependency.default_features,
+            dependency.optional,
+        )));
     }
     let matching_input = |key: &str| -> CliResult<String> {
         let expected = runtime_inputs
@@ -201,6 +225,25 @@ fn checked_provider_macro_dependency(
         core_source_digest: matching_input("runtime-source-incan-lang")?,
         runtime_lock_digest: matching_input("runtime-lock")?,
     })
+}
+
+/// Recognize a relocated compiler macro source only when its complete semantic source closure is unchanged.
+///
+/// Provider receipts still have to match the active macro, kernel and runtime-lock identities. A stored provider may
+/// retain the path of an earlier leased SDK generation; physical path equality cannot invalidate identical content.
+fn compiler_runtime_sources_equivalent(declared: &Path, selected: &Path) -> CliResult<bool> {
+    let Ok(declared) = fs::canonicalize(declared) else {
+        // A pruned historical path cannot establish source equivalence from its store coordinate alone.
+        return Ok(false);
+    };
+    if declared == selected {
+        return Ok(true);
+    }
+    let declared = oven_model::digest::digest_toolchain_source_tree(&declared)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let selected = oven_model::digest::digest_toolchain_source_tree(selected)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(declared == selected)
 }
 
 /// Validate every required package profile once for one consumer preparation.
@@ -502,6 +545,42 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    /// A relocated macro keeps its identity only until a semantic source input changes.
+    #[test]
+    fn relocated_compiler_macro_requires_identical_source_closure() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let first = workspace.path().join("first");
+        let second = workspace.path().join("second");
+        for root in [&first, &second] {
+            fs::create_dir_all(root.join("src"))?;
+            fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = 'macro_fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+            )?;
+            fs::write(root.join("src/lib.rs"), "pub fn value() -> u32 { 42 }\n")?;
+        }
+        assert!(compiler_runtime_sources_equivalent(
+            &first,
+            &fs::canonicalize(&second)?
+        )?);
+        fs::write(first.join("src/lib.rs"), "pub fn value() -> u32 { 43 }\n")?;
+        assert!(!compiler_runtime_sources_equivalent(
+            &first,
+            &fs::canonicalize(&second)?
+        )?);
+        assert!(!compiler_runtime_sources_equivalent(
+            &workspace.path().join("missing"),
+            &second
+        )?);
+        let entries = workspace.path().join("entries");
+        let role = "artifacts/providers/runtime/crates/incan_derive";
+        let selected = entries.join(format!("sha256-{}", "a".repeat(64))).join(role);
+        fs::create_dir_all(&selected)?;
+        let pruned = entries.join(format!("sha256-{}", "b".repeat(64))).join(role);
+        assert!(!compiler_runtime_sources_equivalent(&pruned, &selected)?);
+        Ok(())
+    }
 
     use crate::build::caller_owned::caller_owned_library_rust_dependencies;
     use crate::build::plan_authority::{

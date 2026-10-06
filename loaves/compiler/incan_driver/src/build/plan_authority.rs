@@ -41,18 +41,22 @@ fn compiler_suite_owned_roots() -> Vec<PathBuf> {
     if env::var_os("INCAN_INTERNAL_OVEN_LOAF_EXECUTION").is_none_or(|value| value != "1") {
         return Vec::new();
     }
-    [
+    let mut names = vec![
         "INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT",
         "INCAN_INTERNAL_OVEN_RUNTIME_ROOT",
         "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-    ]
-    .into_iter()
-    .filter_map(env::var_os)
-    .filter(|value| !value.is_empty())
-    .map(PathBuf::from)
-    .filter(|path| path.is_dir())
-    .filter_map(|path| fs::canonicalize(path).ok())
-    .collect()
+    ];
+    if env::var_os(oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUST_UNIT_CAPABILITY_ENV).is_some() {
+        names.push("INCAN_SOURCE_ROOT");
+    }
+    names
+        .into_iter()
+        .filter_map(env::var_os)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .collect()
 }
 
 /// Return compiler-owned path roots that may pair with an exact selected plan extern.
@@ -136,9 +140,33 @@ pub fn compiler_owned_roots_with_provider_plan(
 pub fn compiler_selected_path_authority(
     artifact_plan: &OvenRustcArtifactPlan,
     provider_plan: Option<&ProviderPlan>,
-) -> Option<OvenSelectedPathRustcAuthority> {
+) -> CliResult<Option<OvenSelectedPathRustcAuthority>> {
     let owned_roots = compiler_owned_roots_with_provider_plan(artifact_plan, provider_plan);
-    (!owned_roots.is_empty()).then(|| OvenSelectedPathRustcAuthority::new(&owned_roots, artifact_plan))
+    if owned_roots.is_empty() {
+        return Ok(None);
+    }
+    let mut authority = OvenSelectedPathRustcAuthority::new(&owned_roots, artifact_plan);
+    if let Some(capability) = oven_model::compiler_suite_env::OvenCompilerSuiteRustUnitCapability::from_environment()
+        .map_err(CliError::failure)?
+    {
+        let dependencies = capability
+            .libraries
+            .iter()
+            .map(|library| DependencySpec {
+                crate_name: library.crate_name.clone(),
+                version: None,
+                features: library.requested_features.clone(),
+                default_features: library.default_features,
+                source: DependencySource::Path {
+                    path: library.package_root.clone(),
+                },
+                optional: false,
+                package: None,
+            })
+            .collect::<Vec<_>>();
+        authority = authority.with_declared_dependencies(&dependencies);
+    }
+    Ok(Some(authority))
 }
 
 /// Identify a generated compiler-runtime path only when the selected plan owns the same crate name.

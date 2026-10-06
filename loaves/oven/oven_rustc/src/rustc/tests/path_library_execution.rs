@@ -1,6 +1,124 @@
 //! Path-library materialization and invocation regression tests.
 
 use super::*;
+use crate::rustc::validate_selected_workspace_instances;
+
+/// Reachable workspace instances exclude sibling roots, and a missing transitive unit refuses by name.
+#[test]
+fn workspace_cohort_bounds_the_reachable_dependency_graph() -> Result<(), Box<dyn std::error::Error>> {
+    let mut graph = BTreeMap::from([
+        ("driver".to_string(), vec!["frontend".to_string()]),
+        ("frontend".to_string(), vec!["lang".to_string()]),
+        ("lang".to_string(), Vec::new()),
+        ("sibling".to_string(), Vec::new()),
+    ]);
+    let roots = BTreeSet::from(["driver".to_string()]);
+    let selected = crate::rustc::selected_workspace_dependency_closure(&graph, &roots)?;
+    assert_eq!(
+        selected,
+        BTreeSet::from(["driver".to_string(), "frontend".to_string(), "lang".to_string()])
+    );
+    graph.remove("lang");
+    let error = match crate::rustc::selected_workspace_dependency_closure(&graph, &roots) {
+        Err(error) => error.to_string(),
+        Ok(_) => return Err("missing transitive workspace unit was accepted".into()),
+    };
+    assert!(error.contains("lang"));
+    Ok(())
+}
+
+/// A metadata-only conflicting workspace instance is refused before an invocation can select either copy.
+#[test]
+fn workspace_cohort_refuses_transitive_duplicate_and_accepts_identical_copy() -> Result<(), Box<dyn std::error::Error>>
+{
+    let workspace = tempfile::tempdir()?;
+    let suite = workspace.path().join("suite");
+    let sealed = workspace.path().join("sealed");
+    fs::create_dir_all(&suite)?;
+    fs::create_dir_all(&sealed)?;
+    let expected = suite.join("libincan_lang-suite.rlib");
+    let other = sealed.join("libincan_lang-sealed.rlib");
+    fs::write(&expected, "suite instance")?;
+    fs::write(&other, "sealed instance")?;
+    let library = OvenCallerOwnedRustcLibrary {
+        crate_name: "incan_lang".to_string(),
+        output: expected,
+        digest: digest_bytes(b"suite instance"),
+        expose_extern: false,
+    };
+    let plan = OvenRustcArtifactPlan {
+        source_path_projection: None,
+        dependency_search_paths: vec![sealed, suite],
+        native_search_paths: Vec::new(),
+        externs: Vec::new(),
+        compile_environment: BTreeMap::new(),
+        caller_owned_library_digests: BTreeMap::new(),
+    };
+    let error = match validate_selected_workspace_instances(&plan, std::slice::from_ref(&library)) {
+        Err(error) => error.to_string(),
+        Ok(()) => return Err("a conflicting metadata-only instance was accepted".into()),
+    };
+    assert!(error.contains("incan_lang"));
+    assert!(error.contains(&digest_bytes(b"suite instance")));
+    assert!(error.contains(&digest_bytes(b"sealed instance")));
+    fs::write(other, "suite instance")?;
+    validate_selected_workspace_instances(&plan, &[library])?;
+    Ok(())
+}
+
+/// Selected compiler units accept only their exact declared feature request and source root.
+#[test]
+fn selected_workspace_authority_requires_exact_dependency_selector() -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = tempfile::tempdir()?;
+    let package = workspace.path().join("compiler");
+    fs::create_dir(&package)?;
+    let output = workspace.path().join("libcompiler.rlib");
+    let plan = OvenRustcArtifactPlan {
+        source_path_projection: None,
+        dependency_search_paths: vec![workspace.path().to_path_buf()],
+        native_search_paths: Vec::new(),
+        externs: vec![("compiler".to_string(), output.clone())],
+        compile_environment: BTreeMap::new(),
+        caller_owned_library_digests: BTreeMap::new(),
+    };
+    let dependency = DependencySpec {
+        crate_name: "compiler".to_string(),
+        version: None,
+        features: vec!["cli".to_string(), "inspection".to_string()],
+        default_features: false,
+        source: DependencySource::Path { path: package },
+        optional: false,
+        package: None,
+    };
+    let authority = OvenSelectedPathRustcAuthority::new(&[fs::canonicalize(workspace.path())?], &plan)
+        .with_declared_dependencies(std::slice::from_ref(&dependency));
+    assert_eq!(authority.resolve(&dependency), Some(output.clone()));
+    let mut reordered = dependency.clone();
+    reordered.features.reverse();
+    reordered.features.push("cli".to_string());
+    assert_eq!(authority.resolve(&reordered), Some(output));
+    let mut changed = dependency.clone();
+    changed.features.push("test_support".to_string());
+    assert!(authority.resolve(&changed).is_none());
+    changed = dependency.clone();
+    changed.features.clear();
+    assert!(authority.resolve(&changed).is_none());
+    changed = dependency.clone();
+    changed.default_features = true;
+    assert!(authority.resolve(&changed).is_none());
+    changed = dependency.clone();
+    changed.source = DependencySource::Path {
+        path: workspace.path().join("lookalike"),
+    };
+    fs::create_dir(workspace.path().join("lookalike"))?;
+    assert!(authority.resolve(&changed).is_none());
+    assert!(
+        OvenSelectedPathRustcAuthority::new(&[fs::canonicalize(workspace.path())?], &plan)
+            .resolve(&dependency)
+            .is_none()
+    );
+    Ok(())
+}
 
 #[test]
 fn materializes_recursive_path_rust_libraries_without_cargo() -> Result<(), Box<dyn std::error::Error>> {

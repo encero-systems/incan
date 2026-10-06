@@ -145,8 +145,11 @@ pub use path_libraries::materialize_declared_rust_libraries;
 pub use path_libraries::{
     OvenSelectedPathRustcAuthority, incan_owned_cargo, materialize_declared_rust_libraries_with_selected_path_authority,
 };
-pub use plan_building::attach_caller_owned_rustc_libraries;
 use plan_building::*;
+pub use plan_building::{
+    attach_caller_owned_rustc_libraries, selected_workspace_dependency_closure, validate_selected_registry_instances,
+    validate_selected_workspace_instances,
+};
 pub use receipt_selection::{
     bake_stored_direct_rustc_library, bake_stored_direct_rustc_library_with_libraries, bake_stored_direct_rustc_run,
     bake_stored_direct_rustc_run_with_libraries, bake_stored_direct_rustc_test,

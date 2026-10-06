@@ -2734,6 +2734,10 @@ fn run_file_tests_batch_oven(
     let mut provider_closure_runtime_registry_authority = None;
     let selected_path_authority =
         incan_driver::build::plan_authority::compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
+    let selected_path_authority = match selected_path_authority {
+        Ok(authority) => authority,
+        Err(error) => return failure(error.message),
+    };
 
     if incan_driver::build::caller_owned::has_caller_owned_project_libraries(&provider_plan)
         && !plan_selection.uses_packaged_provider_closure()
