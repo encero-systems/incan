@@ -252,16 +252,18 @@ fn selected_roots<'a>(
             .into());
         }
         let requirement = semver::VersionReq::parse(&root.req)?;
-        let candidates: Vec<_> = lock
-            .units
-            .iter()
-            .filter(|unit| {
-                unit.loaf == root.loaf
-                    && unit.domain == "target"
-                    && semver::Version::parse(&unit.version).is_ok_and(|version| requirement.matches(&version))
-                    && root.features.iter().all(|feature| unit.features.contains(feature))
-            })
-            .collect();
+        let compatible = |unit: &&SdkLockedUnit, domain: &str| {
+            unit.loaf == root.loaf
+                && unit.domain == domain
+                && semver::Version::parse(&unit.version).is_ok_and(|version| requirement.matches(&version))
+                && root.features.iter().all(|feature| unit.features.contains(feature))
+        };
+        // A root is normally a target unit; a procedural-macro root resolves only in the host domain, so it is
+        // looked up there when the lock has no target binding for it.
+        let mut candidates: Vec<_> = lock.units.iter().filter(|unit| compatible(unit, "target")).collect();
+        if candidates.is_empty() {
+            candidates = lock.units.iter().filter(|unit| compatible(unit, "host")).collect();
+        }
         let [binding] = candidates.as_slice() else {
             return Err(format!("root {}: expected one compatible locked binding", root.name).into());
         };
