@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 type Error = Box<dyn std::error::Error>;
-const INDEX_COMMIT: &str = "452504b51712b6a3ac12a2e1b79ba69fff55e6b6";
+const INDEX_COMMIT: &str = "178df58e4d8bf6109ef271e0d2fb2cc1d7abbf95";
 
 struct CompileContext<'a> {
     rustc: &'a Path,
@@ -87,6 +87,14 @@ struct PreparedUnit {
     root: PathBuf,
     build_script: bool,
     fact: Option<oven_model::manifest::RustFactRecord>,
+    /// The selected fact's generated files, read and digest-checked from the version's index record directory.
+    fact_out: Vec<FactOutFile>,
+}
+
+/// One generated file a build fact declares, with the bytes its index record directory holds.
+struct FactOutFile {
+    name: String,
+    bytes: Vec<u8>,
 }
 
 /// Compile all independent units of the locked SDK seed, retaining named refusal evidence.
@@ -237,12 +245,17 @@ fn prepare_units(
             let root = scratch.join(ordinal.to_string());
             archive.materialize(&root)?;
             let fact = index_fact(index, &binding, target, toolchain)?;
+            let fact_out = match &fact {
+                Some(fact) => fact_out_files(index, &binding, fact)?,
+                None => Vec::new(),
+            };
             Ok(PreparedUnit {
                 binding,
                 manifest,
                 root,
                 build_script: archive.has_build_script(),
                 fact,
+                fact_out,
             })
         })
         .collect()
@@ -476,6 +489,34 @@ fn compile_unit(
     Ok((owner.artifact_root.join(relative), result.reused, owner))
 }
 
+/// Read a fact's generated files from the version's record directory at the pinned index commit.
+///
+/// RFC 119 `out` paths are owner-relative to the record that declares the fact (`<loaf>/<version>/`), not to the
+/// source archive, so the bytes come from the index and are checked against the declared digest before use.
+fn fact_out_files(
+    index: &Path,
+    binding: &SdkLockedUnit,
+    fact: &oven_model::manifest::RustFactRecord,
+) -> Result<Vec<FactOutFile>, Error> {
+    let mut files = Vec::new();
+    for member in &fact.out {
+        for path in [&member.name, &member.path] {
+            if Path::new(path)
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err("invalid generated fact path".into());
+            }
+        }
+        let bytes = index_file(index, &format!("{}/{}/{}", binding.loaf, binding.version, member.path))?;
+        if digest_bytes(&bytes) != member.digest {
+            return Err("generated fact digest mismatch".into());
+        }
+        files.push(FactOutFile { name: member.name.clone(), bytes });
+    }
+    Ok(files)
+}
+
 /// Read one file from the pinned index commit without consulting its mutable worktree.
 fn index_file(index: &Path, relative: &str) -> Result<Vec<u8>, Error> {
     let output = std::process::Command::new("git")
@@ -552,25 +593,13 @@ fn apply_fact(unit: &PreparedUnit, plan: &mut OvenRustcArtifactPlan) -> Result<(
         );
     }
     let out = unit.root.join(".oven-out");
-    if !fact.out.is_empty() {
+    if !unit.fact_out.is_empty() {
         std::fs::create_dir(&out)?;
     }
-    for member in &fact.out {
-        for path in [&member.name, &member.path] {
-            if Path::new(path)
-                .components()
-                .any(|component| !matches!(component, std::path::Component::Normal(_)))
-            {
-                return Err("invalid generated fact path".into());
-            }
-        }
-        let bytes = std::fs::read(unit.root.join(&member.path))?;
-        if digest_bytes(&bytes) != member.digest {
-            return Err("generated fact digest mismatch".into());
-        }
-        let destination = out.join(&member.name);
+    for file in &unit.fact_out {
+        let destination = out.join(&file.name);
         std::fs::create_dir_all(destination.parent().ok_or("generated fact has no parent")?)?;
-        std::fs::write(destination, bytes)?;
+        std::fs::write(destination, &file.bytes)?;
     }
     if !fact.out.is_empty() {
         plan.compile_environment
@@ -754,6 +783,7 @@ mod tests {
             root: PathBuf::new(),
             build_script: false,
             fact: None,
+            fact_out: Vec::new(),
         })
     }
 
