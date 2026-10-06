@@ -1682,7 +1682,7 @@ mod link_execution {
                     }
                     verified_file(&input.path, &input.digest, "input")?
                 }
-                RustFactArtifactKind::Tree => verified_tree(input)?,
+                RustFactArtifactKind::Tree => verified_tree(input, declared)?,
             };
             if inputs.insert(input.name.to_string(), path).is_some() {
                 return Err(PublisherExecutionError::Invalid(format!(
@@ -1694,8 +1694,14 @@ mod link_execution {
         Ok(inputs)
     }
 
-    /// Verify one complete tree input without following symlinks or accepting undeclared members.
-    fn verified_tree(input: &PublisherExecutionInput<'_>) -> Result<PathBuf, PublisherExecutionError> {
+    /// Verify a tree catalog, permitting overlapping files only when another input declares their exact digest.
+    ///
+    /// Shared package layouts preserve relative includes. Each catalog retains its own digest; extra files must
+    /// belong to the record's declared union, and symlinks and special files remain forbidden.
+    fn verified_tree(
+        input: &PublisherExecutionInput<'_>,
+        declared: &[PublisherExecutionInput<'_>],
+    ) -> Result<PathBuf, PublisherExecutionError> {
         let metadata = fs::symlink_metadata(&input.path).map_err(|source| PublisherExecutionError::Io {
             path: input.path.clone(),
             source,
@@ -1713,6 +1719,18 @@ mod link_execution {
         let mut members = Vec::new();
         collect_input_tree_members(&canonical, &canonical, &mut members)?;
         members.sort_by(|left, right| left.path.cmp(&right.path));
+        members.retain(|member| {
+            input.members.iter().any(|expected| expected.path == member.path)
+                || !declared.iter().any(|other| match other.kind {
+                    RustFactArtifactKind::File => {
+                        other.path == input.path.join(&member.path) && other.digest == member.digest
+                    }
+                    RustFactArtifactKind::Tree => other.members.iter().any(|expected| {
+                        other.path.join(&expected.path) == input.path.join(&member.path)
+                            && expected.digest == member.digest
+                    }),
+                })
+        });
         if members != input.members {
             return Err(PublisherExecutionError::Invalid(format!(
                 "tree input `{}` does not match its complete member catalog",
@@ -2233,6 +2251,43 @@ mod link_execution {
     // These fixtures execute a publisher, which only a host with the confinement primitive can do.
     #[cfg(all(test, target_os = "macos"))]
     mod tests {
+        #[test]
+        /// Overlapping declared catalogs retain their digests and reject undeclared or changed members.
+        fn shared_link_input_catalogs_remain_verified() -> Result<(), Box<dyn std::error::Error>> {
+            let root = tempfile::tempdir()?;
+            std::fs::write(root.path().join("header.h"), b"header")?;
+            std::fs::write(root.path().join("unit.c"), b"unit")?;
+            let members = vec![oven_model::manifest::RustFactArtifactMember {
+                path: "header.h".to_string(),
+                digest: crate::digest_bytes(b"header"),
+            }];
+            let tree = super::PublisherExecutionInput {
+                name: "headers",
+                path: root.path().to_path_buf(),
+                kind: oven_model::manifest::RustFactArtifactKind::Tree,
+                digest: crate::digest_bytes(&serde_json::to_vec(&(
+                    "incan.oven.publisher-artifact-tree/1",
+                    &members,
+                ))?),
+                members,
+            };
+            let file = super::PublisherExecutionInput {
+                name: "unit",
+                path: root.path().join("unit.c"),
+                kind: oven_model::manifest::RustFactArtifactKind::File,
+                digest: crate::digest_bytes(b"unit"),
+                members: Vec::new(),
+            };
+            let inputs = [tree, file];
+            super::verified_inputs(&inputs)?;
+            assert!(super::verified_inputs(&inputs[..1]).is_err());
+            std::fs::write(root.path().join("extra.h"), b"extra")?;
+            assert!(super::verified_inputs(&inputs).is_err());
+            std::fs::remove_file(root.path().join("extra.h"))?;
+            std::fs::write(root.path().join("unit.c"), b"changed")?;
+            assert!(super::verified_inputs(&inputs).is_err());
+            Ok(())
+        }
         use std::collections::BTreeMap;
         use std::error::Error;
         use std::fs;

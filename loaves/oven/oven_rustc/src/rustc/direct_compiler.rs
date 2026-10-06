@@ -221,9 +221,8 @@ pub fn publisher_archive_format(target: &str) -> &'static str {
 
 /// Copy exactly one declared source catalog into private execution inputs, excluding archive inventory outside it.
 ///
-/// Files share their owner-relative layout so implicit relative includes resolve. Each tree has its own complete
-/// catalog root so overlapping catalogs do not grant additional members to one another. The executor verifies the
-/// resulting file and tree digests before admitting reads.
+/// Files and tree members share their package-relative layout so quote-includes resolve across catalogs. Only
+/// declared members are copied; execution verifies each catalog digest and refuses files outside their union.
 fn materialize_link_source(
     root: &Path,
     staging: &Path,
@@ -232,12 +231,12 @@ fn materialize_link_source(
     let original = source_owner_path(root, source)?;
     match source.kind {
         oven_model::manifest::RustFactArtifactKind::File => {
-            let destination = owner_relative_path(&staging.join("files"), &source.path, "publisher source")?;
+            let destination = source_owner_path(staging, source)?;
             copy_link_source_file(root, &original, &destination)?;
             Ok(destination)
         }
         oven_model::manifest::RustFactArtifactKind::Tree => {
-            let destination = owner_relative_path(&staging.join("trees"), &source.name, "publisher source tree")?;
+            let destination = source_owner_path(staging, source)?;
             fs::create_dir_all(&destination).map_err(|error| OvenRustcError::Io {
                 path: destination.to_path_buf(),
                 source: error,
@@ -1301,7 +1300,7 @@ mod publisher_link_tests {
     }
 
     #[test]
-    /// Materialized implicit reads preserve relative includes and trees contain only their declared member catalog.
+    /// Declared files and tree members share package-relative paths; undeclared archive files are excluded.
     fn publisher_link_reads_materialize_declared_sources_only() -> Result<(), Box<dyn Error>> {
         let root = tempdir()?;
         let link = fixture_link(root.path())?;
@@ -1343,8 +1342,35 @@ mod publisher_link_tests {
         };
         let materialized = super::materialize_link_source(&sources, &staging, &tree)?;
         assert_eq!(fs::read(materialized.join("header.h"))?, b"header");
-        assert_eq!(fs::read_dir(&materialized)?.count(), 1);
-        assert!(!materialized.join("fixture.c").exists());
+        assert_eq!(fs::read_dir(&materialized)?.count(), 2);
+        assert_eq!(materialized.join("fixture.c"), source);
+        assert!(!materialized.join("undeclared.txt").exists());
+        fs::create_dir_all(sources.join("code"))?;
+        fs::create_dir_all(sources.join("sibling"))?;
+        let code = b"#include \"../sibling/header.h\"\n";
+        fs::write(sources.join("code/unit.c"), code)?;
+        fs::write(sources.join("sibling/header.h"), b"header")?;
+        let unit = RustFactArtifact {
+            name: "unit".to_string(),
+            kind: RustFactArtifactKind::File,
+            path: "code/unit.c".to_string(),
+            digest: digest_bytes(code),
+            members: Vec::new(),
+        };
+        let sibling = RustFactArtifact {
+            path: "sibling".to_string(),
+            ..tree
+        };
+        let unit_path = super::materialize_link_source(&sources, &staging, &unit)?;
+        let sibling_path = super::materialize_link_source(&sources, &staging, &sibling)?;
+        let quoted = unit_path
+            .parent()
+            .ok_or("unit has no parent")?
+            .join("../sibling/header.h");
+        assert_eq!(
+            fs::canonicalize(quoted)?,
+            fs::canonicalize(sibling_path.join("header.h"))?
+        );
         Ok(())
     }
 
