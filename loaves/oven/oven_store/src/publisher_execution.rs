@@ -1481,7 +1481,8 @@ mod link_execution {
             })?;
         let object_paths = declared_objects(&output_root, &request.objects)?;
         validate_object_arguments(&request.objects, &inputs, &object_paths)?;
-        let (environment, logical_environment) = materialize_environment(&request.environment, &inputs)?;
+        let (mut environment, logical_environment) = materialize_environment(&request.environment, &inputs)?;
+        environment.insert("SOURCE_DATE_EPOCH".to_string(), "0".into());
         let mut logical_arguments = BTreeMap::new();
         for object in &request.objects {
             let object_path = object_paths.get(object.name).ok_or_else(|| {
@@ -1489,7 +1490,9 @@ mod link_execution {
             })?;
             let outputs = BTreeMap::from([(object.name.to_string(), object_path.clone())]);
             let input_paths = object_input_paths(object, &request.environment, &inputs);
-            let (arguments, logical_argv) = materialize_arguments(&object.arguments, &inputs, &outputs, &owner_root)?;
+            let (mut arguments, logical_argv) =
+                materialize_arguments(&object.arguments, &inputs, &outputs, &owner_root)?;
+            append_native_prefix_maps(&mut arguments, &inputs, &owner_root, &output_root);
             super::run_hermetic_process(
                 &executable,
                 &owner_closure,
@@ -1986,6 +1989,26 @@ mod link_execution {
         Ok(())
     }
 
+    /// Normalize paths for C-family object compilation without rewriting the fact's recorded argument projection.
+    ///
+    /// The explicit `-c` action identifies a compiler invocation; generic publisher tools keep their own argv.
+    fn append_native_prefix_maps(
+        arguments: &mut Vec<std::ffi::OsString>,
+        inputs: &BTreeMap<String, PathBuf>,
+        owner_root: &Path,
+        output_root: &Path,
+    ) {
+        if !arguments.iter().any(|argument| argument == "-c") {
+            return;
+        }
+        for (path, logical) in [(owner_root, "/oven/native/tool"), (output_root, "/oven/native/work")] {
+            arguments.push(format!("-ffile-prefix-map={}={logical}", path.display()).into());
+        }
+        for (name, path) in inputs {
+            arguments.push(format!("-ffile-prefix-map={}=/oven/native/input/{name}", path.display()).into());
+        }
+    }
+
     /// Materialize portable arguments while retaining their exact logical projection.
     fn materialize_arguments(
         arguments: &[PublisherExecutionArgument<'_>],
@@ -2251,6 +2274,31 @@ mod link_execution {
     // These fixtures execute a publisher, which only a host with the confinement primitive can do.
     #[cfg(all(test, target_os = "macos"))]
     mod tests {
+        #[test]
+        /// Injected compiler maps affect only physical execution; generic tools retain their original arguments.
+        fn native_maps_preserve_generic_tool_arguments() {
+            let inputs = BTreeMap::from([("source".to_string(), std::path::PathBuf::from("/tmp/source.c"))]);
+            let mut tool = vec![std::ffi::OsString::from("/tmp/source.c")];
+            super::append_native_prefix_maps(
+                &mut tool,
+                &inputs,
+                std::path::Path::new("/tmp/tool"),
+                std::path::Path::new("/tmp/work"),
+            );
+            assert_eq!(tool.len(), 1);
+            tool.push("-c".into());
+            super::append_native_prefix_maps(
+                &mut tool,
+                &inputs,
+                std::path::Path::new("/tmp/tool"),
+                std::path::Path::new("/tmp/work"),
+            );
+            assert!(
+                tool.iter()
+                    .any(|argument| argument == "-ffile-prefix-map=/tmp/source.c=/oven/native/input/source")
+            );
+        }
+
         #[test]
         /// Overlapping declared catalogs retain their digests and reject undeclared or changed members.
         fn shared_link_input_catalogs_remain_verified() -> Result<(), Box<dyn std::error::Error>> {

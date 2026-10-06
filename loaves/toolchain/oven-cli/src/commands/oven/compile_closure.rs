@@ -66,12 +66,27 @@ struct Refused {
     reason: String,
 }
 
+/// One compiled unit of the closure with its binding, so a registry can publish every unit, not only the roots.
+#[derive(Serialize)]
+struct CompiledUnitRecord {
+    loaf: String,
+    version: String,
+    domain: String,
+    features: Vec<String>,
+    profile: String,
+    /// Receipt identity, the same value `externs` reports as `unit`.
+    unit: String,
+    /// Content-addressed Oven store entry holding the compiled output.
+    entry: String,
+}
+
 /// The registry-facing closure result, retaining the original resolution document.
 #[derive(Serialize)]
 struct ResultDocument {
     schema: &'static str,
     lock: serde_json::Value,
     externs: BTreeMap<String, Extern>,
+    units: Vec<CompiledUnitRecord>,
     refused: Vec<Refused>,
 }
 
@@ -192,10 +207,24 @@ fn result_document(
             reason,
         });
     }
+    let units = closure
+        .units()
+        .iter()
+        .map(|unit| CompiledUnitRecord {
+            loaf: unit.binding().loaf.clone(),
+            version: unit.binding().version.clone(),
+            domain: unit.binding().domain.clone(),
+            features: unit.binding().features.clone(),
+            profile: profile.to_string(),
+            unit: unit.compiled_identity().to_string(),
+            entry: unit.entry_identity().to_string(),
+        })
+        .collect();
     ResultDocument {
         schema: "incan.oven.closure/1",
         lock: lock_value,
         externs,
+        units,
         refused,
     }
 }
