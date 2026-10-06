@@ -804,6 +804,29 @@ pub(crate) fn compiler_suite_uses_indexed_foundations(schema_version: u32) -> bo
     matches!(schema_version, 10..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION)
 }
 
+/// Return the kept explicit-bake workspace for one stored SDK inventory, removing every other generation beside it.
+///
+/// A workspace is only valid for the standard-library family it was baked against, so earlier generations can never
+/// be reused once the SDK changes; each holds a full compiler build and bake graph, so they are removed rather than
+/// left to accumulate. One suite runs per checkout at a time, which is what makes the siblings safe to remove.
+pub(crate) fn select_explicit_bake_workspace(root: &Path, sdk_inventory_digest: &str) -> CliResult<PathBuf> {
+    let current = root.join(sdk_inventory_digest.replace(':', "-"));
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path != current && path.is_dir() {
+                fs::remove_dir_all(&path).map_err(|error| {
+                    CliError::failure(format!(
+                        "cannot remove stale explicit-bake workspace {}: {error}",
+                        path.display()
+                    ))
+                })?;
+            }
+        }
+    }
+    Ok(current)
+}
+
 /// Apply the package-qualified process capabilities owned by the compiler-suite registry.
 pub(crate) fn apply_compiler_suite_target_capabilities(
     target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
@@ -875,6 +898,27 @@ pub(crate) fn apply_compiler_suite_target_capabilities(
 /// Remove direct generated-Rust closure details while retaining the suite marker used by Cargo-free fixture paths.
 pub(crate) fn compiler_suite_remove_generated_rust_closure(environment: &mut BTreeMap<String, String>) {
     environment.retain(|key, _| !key.starts_with("INCAN_OVEN_COMPILER_SUITE_") || key == OVEN_COMPILER_SUITE_RUSTC_ENV);
+}
+
+#[cfg(test)]
+mod explicit_bake_workspace_tests {
+    use super::select_explicit_bake_workspace;
+    use std::fs;
+
+    /// Selecting the workspace for one SDK removes the workspaces of earlier SDKs and keeps the current one's state.
+    #[test]
+    fn selecting_a_workspace_removes_earlier_sdk_generations() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("sha256-old/home"))?;
+        fs::create_dir_all(root.path().join("loaves__unkeyed"))?;
+        fs::create_dir_all(root.path().join("sha256-new/home"))?;
+        let selected = select_explicit_bake_workspace(root.path(), "sha256:new")?;
+        assert_eq!(selected, root.path().join("sha256-new"));
+        assert!(selected.join("home").is_dir());
+        assert!(!root.path().join("sha256-old").exists());
+        assert!(!root.path().join("loaves__unkeyed").exists());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
