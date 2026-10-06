@@ -4,7 +4,8 @@ from rust::std::env import args
 from rust::std::process import exit
 from std.fs import Path
 from loaf_index import read_index, LoafVersion
-from loaf_facts import closure_violations
+from loaf_facts import closure_violations, applicable_optional_aliases, FactDependency
+from loaf_pin import pinned_revision
 from loaf_resolve import resolve, resolution_json, LoafDemand
 from rust_graph import NodeDemand
 from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, CfgSnapshot, TargetConfiguration
@@ -13,6 +14,10 @@ from rust_activation import ActivationContext, ActivationPurpose, DependencyDoma
 def audit(directory: str, names_file: str, cfg_file: str) -> Result[None, str]:
     """Audit every supplied index name and print every fact-closure violation."""
     source = Path(names_file).read_text("utf-8", "strict").map_err((e) => e.message())?
+    revision = Path(f"{directory}/revision").read_text("utf-8", "strict").map_err((e) => e.message())?
+    if revision.strip() != pinned_revision():
+        return Err("index revision does not match resolver pin")
+    cfg = read_cfg(cfg_file)?
     mut all_records: list[LoafVersion] = []
     mut versions = 0
     mut facts = 0
@@ -25,10 +30,24 @@ def audit(directory: str, names_file: str, cfg_file: str) -> Result[None, str]:
             all_records.append(record)
             versions += 1
             facts += len(record.facts)
-            for violation in closure_violations(record.loaf, record.version, record.catalog.features, record.facts):
+            dependencies = [FactDependency(
+                alias=declaration.alias,
+                optional=declaration.optional == Some(true),
+                target=declaration.target_condition,
+            ) for declaration in record.catalog.dependencies]
+            aliases = applicable_optional_aliases(dependencies, "aarch64-apple-darwin", cfg.flags, cfg.values)?
+            for violation in closure_violations(
+                record.loaf,
+                record.version,
+                record.catalog.features,
+                record.facts,
+                aliases,
+            ):
                 println(violation)
                 violations += 1
     println(f"versions={versions}; facts={facts}; violations={violations}")
+    if violations != 0:
+        return Err("recorded feature closure violations")
     smoke(all_records, cfg_file)?
     return Ok(None)
 

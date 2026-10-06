@@ -1,6 +1,6 @@
 """Select pinned Loaf versions alongside the shared host/target activation policy."""
 
-from rust::semver import Version
+from semver_req import parse_version, compare_version_order
 from std.json import JsonValue
 from std import toml
 from loaf_index import LoafVersion, LoafRustKind
@@ -93,13 +93,13 @@ pub def select_version(
                 matches = false
         if not matches:
             continue
-        candidate = Version.parse(record.version).map_err((e) => refusal(loaf, requirements, str(e)))?
+        candidate = parse_version(record.version).map_err((e) => refusal(loaf, requirements, str(e)))?
         match chosen:
             None =>
                 chosen = Some(record)
             Some(previous) =>
-                earlier = Version.parse(previous.version).map_err((e) => refusal(loaf, requirements, str(e)))?
-                if candidate > earlier:
+                earlier = parse_version(previous.version).map_err((e) => refusal(loaf, requirements, str(e)))?
+                if compare_version_order(candidate, earlier) > 0:
                     chosen = Some(record)
     if let Some(record) = chosen:
         return Ok(record)

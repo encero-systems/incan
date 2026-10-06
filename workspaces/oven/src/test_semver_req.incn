@@ -1,0 +1,142 @@
+"""Version grammar, precedence and requirement matching against explicit boundary cases."""
+
+from semver_req import (
+    parse_version,
+    parse_requirement,
+    compare_versions,
+    compare_version_order,
+    requirement_matches,
+    Version,
+)
+
+
+def version(source: str) -> Result[Version, str]:
+    """Propagate malformed fixture errors to the test harness."""
+    return parse_version(source)
+
+
+def matches(requirement: str, selected: str) -> Result[bool, str]:
+    """Exercise both public parsing boundaries."""
+    wanted = parse_requirement(requirement)?
+    return Ok(requirement_matches(wanted, version(selected)?))
+
+
+pub def test_precedence() -> Result[None, str]:
+    """The SemVer specification's complete pre-release ordering ignores build metadata."""
+    ordered = ["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0", "1.0.1", "1.1.0", "2.0.0"]
+    for index in range(len(ordered) - 1):
+        assert compare_versions(version(ordered[index])?, version(ordered[index + 1])?) == -1
+        assert compare_versions(version(ordered[index + 1])?, version(ordered[index])?) == 1
+    assert compare_versions(version("1.2.3+001")?, version("1.2.3+other")?) == 0
+    assert compare_versions(version("18446744073709551615.0.0")?, version("9.0.0")?) == 1
+    assert compare_versions(version("1.0.0-9999999999999999999999")?, version("1.0.0-10000000000000000000000")?) == -1
+    return Ok(None)
+
+
+pub def test_comparators_and_partials() -> Result[None, str]:
+    """Each operator includes its lower boundary and excludes the appropriate breaking boundary."""
+    for requirement in ["1.2.3", "^1.2.3", "^1.2", "^1", "1"]:
+        assert matches(requirement, "1.2.3")?
+        assert matches(requirement, "1.9.0")?
+        assert not matches(requirement, "2.0.0")?
+    for requirement in ["~1.2.3", "~1.2"]:
+        assert matches(requirement, "1.2.9")?
+        assert not matches(requirement, "1.3.0")?
+    assert matches("~1", "1.9.0")?
+    assert matches("=1.2.3", "1.2.3+build")?
+    assert not matches("=1.2.3", "1.2.4")?
+    assert matches("=1.2", "1.2.99")?
+    assert matches("=1", "1.99.99")?
+    assert matches(">1.2.3", "1.2.4")?
+    assert not matches(">1.2.3", "1.2.3")?
+    assert not matches(">1.2", "1.2.99")?
+    assert matches(">1.2", "1.3.0")?
+    assert matches(">=1.2.3", "1.2.3")?
+    assert matches("<1.2.3", "1.2.2")?
+    assert not matches("<1.2.3", "1.2.3")?
+    assert matches("<=1.2.3", "1.2.3")?
+    assert matches("<=1.2", "1.2.99")?
+    assert not matches("<1.2", "1.2.0")?
+    assert matches(" >= 1.2 , < 2 ", "1.9.0")?
+    assert not matches(">=1.2, <2", "2.0.0")?
+    assert matches("=1.2.3+ignored", "1.2.3+different")?
+    return Ok(None)
+
+
+pub def test_zero_major_and_wildcards() -> Result[None, str]:
+    """Zero-major caret ranges stop at the first authored nonzero component."""
+    assert matches("^0.2.3", "0.2.9")?
+    assert not matches("^0.2.3", "0.3.0")?
+    assert matches("^0.0.3", "0.0.3")?
+    assert not matches("^0.0.3", "0.0.4")?
+    assert matches("^0.0", "0.0.9")?
+    assert matches("^0", "0.9.9")?
+    for requirement in ["*", "x", "X"]:
+        assert matches(requirement, "123.4.5")?
+    for requirement in ["1.*", "1.x", "1.X", "1.*.*"]:
+        assert matches(requirement, "1.9.8")?
+        assert not matches(requirement, "2.0.0")?
+    for requirement in ["1.2.*", "1.2.x", "=1.2.*"]:
+        assert matches(requirement, "1.2.9")?
+        assert not matches(requirement, "1.3.0")?
+    assert matches("^18446744073709551615", "18446744073709551615.9.9")?
+    return Ok(None)
+
+
+pub def test_prerelease_eligibility() -> Result[None, str]:
+    """One same-core explicit pre-release comparator admits a pre-release only if every bound holds."""
+    for requirement in ["*", "1.*", "^1", ">=1.0.0", "<2"]:
+        assert not matches(requirement, "1.2.3-alpha")?
+    assert matches(">=1.2.3-alpha, <2", "1.2.3-beta")?
+    assert not matches(">=1.2.3-alpha, <2", "1.2.4-beta")?
+    assert not matches(">=1.2.3-beta", "1.2.3-alpha")?
+    assert matches("^1.2.3-alpha", "1.2.3")?
+    assert matches("=1.2.3-alpha", "1.2.3-alpha+build")?
+    assert not matches("=1.2.3-alpha", "1.2.3")?
+    return Ok(None)
+
+
+pub def test_refusals() -> Result[None, str]:
+    """Malformed core, suffix, wildcard and conjunction forms fail at the public boundary."""
+    for source in ["", "1", "1.2", "v1.2.3", " 1.2.3", "1.2.3 ", "01.2.3", "1.02.3", "1.2.03", "1.2.3.4", "1.2.3-", "1.2.3+", "1.2.3-alpha..1", "1.2.3-01", "1.2.3+a+b", "1.2.3-☃", "18446744073709551616.0.0"]:
+        match parse_version(source):
+            Err(_) => pass
+            Ok(_) =>
+                assert false
+    for source in ["", ",", "1,", "1 || 2", "1 - 2", "v1", "1.*.2", "*.1", "1.2.*.4", "^*", "=x", "1.2-alpha", "1.2+build", "1.2.3-01", "==1", "1 2"]:
+        match parse_requirement(source):
+            Err(_) => pass
+            Ok(_) =>
+                assert false
+    return Ok(None)
+
+
+pub def test_partial_prerelease_conjunctions_and_parser_limits() -> Result[None, str]:
+    """Partial equality and tilde still exclude pre-releases even when another comparator admits their core."""
+    for requirement in ["=1, >=1.2.3-alpha", "1.*, >=1.2.3-alpha", ">=1, >=1.2.3-alpha", "<=1, >=1.2.3-alpha", "~1, >=1.2.3-alpha", "~1.2, >=1.2.3-alpha"]:
+        assert not matches(requirement, "1.2.3-beta")?
+    for requirement in ["^1, >=1.2.3-alpha", "^1.2, >=1.2.3-alpha"]:
+        assert matches(requirement, "1.2.3-beta")?
+    for source in ["*, >=1", ">=1, x", "*.*", "\t1", "1\n", ">=\t1"]:
+        match parse_requirement(source):
+            Err(_) => pass
+            Ok(_) =>
+                assert false
+    mut requirement = "1"
+    for index in range(31):
+        requirement += ", 1"
+    assert matches(requirement, "1.2.3")?
+    match parse_requirement(requirement + ", 1"):
+        Err(_) => pass
+        Ok(_) =>
+            assert false
+    return Ok(None)
+
+
+pub def test_resolver_build_tie_order() -> Result[None, str]:
+    """Resolver ties preserve the replaced crate's total order independently of SemVer precedence."""
+    ordered = ["1.0.0", "1.0.0+0", "1.0.0+00", "1.0.0+1", "1.0.0+01", "1.0.0+001", "1.0.0+2", "1.0.0+10", "1.0.0+a", "1.0.0+a.1", "1.0.0+b"]
+    for index in range(len(ordered) - 1):
+        assert compare_versions(version(ordered[index])?, version(ordered[index + 1])?) == 0
+        assert compare_version_order(version(ordered[index])?, version(ordered[index + 1])?) == -1
+    return Ok(None)

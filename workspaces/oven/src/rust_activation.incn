@@ -6,9 +6,8 @@ versions, select native candidates or execute build providers. Every output slot
 selected-child binding or its retained inactive reason before the semantic input producer can finish.
 """
 
-from rust::cfg_expr import Expression, Predicate, TargetPredicate
-from rust::cfg_expr::targets import Endian
-from rust::semver import Version, VersionReq
+from cfg_predicate import parse_selector, evaluate_cfg, Selector
+from semver_req import parse_version, parse_requirement, requirement_matches
 from std.collections import Deque, OrderedSet
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource
 from manifest_errors import IntakeError, IntakeErrorKind
@@ -134,42 +133,6 @@ def unique(values: list[str]) -> list[str]:
     return sorted(items)
 
 
-def cfg_value(snapshot: CfgSnapshot, key: str, value: str) -> bool:
-    """Query an explicit complete cfg snapshot; this does not synthesize target facts."""
-    return key in snapshot.values and value in snapshot.values[key]
-
-
-def target_predicate(predicate: &TargetPredicate, snapshot: CfgSnapshot) -> bool:
-    """Compare cfg-expr's parsed target vocabulary with supplied compiler facts."""
-    match predicate:
-        TargetPredicate.Abi(value) => return cfg_value(snapshot, "target_abi", str(value.as_str()))
-        TargetPredicate.Arch(value) => return cfg_value(snapshot, "target_arch", str(value.as_str()))
-        TargetPredicate.Endian(value) =>
-            match value:
-                Endian.big => return cfg_value(snapshot, "target_endian", "big")
-                Endian.little => return cfg_value(snapshot, "target_endian", "little")
-        TargetPredicate.Env(value) => return cfg_value(snapshot, "target_env", str(value.as_str()))
-        TargetPredicate.Family(value) => return cfg_value(snapshot, "target_family", str(value.as_str()))
-        TargetPredicate.HasAtomic(value) => return cfg_value(snapshot, "target_has_atomic", str(value))
-        TargetPredicate.Os(value) => return cfg_value(snapshot, "target_os", str(value.as_str()))
-        TargetPredicate.Panic(value) => return cfg_value(snapshot, "panic", str(value.as_str()))
-        TargetPredicate.PointerWidth(value) => return cfg_value(snapshot, "target_pointer_width", str(value))
-        TargetPredicate.Vendor(value) => return cfg_value(snapshot, "target_vendor", str(value.as_str()))
-
-
-def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:
-    """Refuse package-feature/test/proc-macro cfg as dependency-selection policy, including dead branches."""
-    match predicate:
-        Predicate.Target(value) => return Some(target_predicate(value, snapshot))
-        Predicate.TargetFeature(value) => return Some(cfg_value(snapshot, "target_feature", str(value)))
-        Predicate.Flag(value) => return Some(str(value) in snapshot.flags)
-        Predicate.KeyValue(key=key, val=value) => return Some(cfg_value(snapshot, str(key), str(value)))
-        Predicate.Feature(_) => return None
-        Predicate.Test => return None
-        Predicate.DebugAssertions => return None
-        Predicate.ProcMacro => return None
-
-
 pub def target_matches(
     condition: str,
     target: TargetConfiguration,
@@ -177,31 +140,16 @@ pub def target_matches(
     field: list[str],
 ) -> Result[bool, IntakeError]:
     """Evaluate the original cfg expression or exact triple without querying an ambient toolchain."""
-    if not condition.startswith("cfg("):
-        if condition != condition.strip() or "(" in condition or ")" in condition or " " in condition or "\t" in condition:
-            return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed target selector"))
-        return Ok(condition == target.triple)
-    expression = Expression
-        .parse(condition)
-        .map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, str(error)))?
-    match target.cfg:
-        None => return Err(refusal(manifest, field, IntakeErrorKind.Missing, "original target cfg snapshot"))
-        Some(snapshot) =>
-            for predicate in expression.predicates():
-                if cfg_predicate(predicate, snapshot) == None:
-                    return Err(
-                        refusal(
-                            manifest,
-                            field,
-                            IntakeErrorKind.Unsupported,
-                            "cfg predicate is not dependency target policy",
-                        ),
+    selector = parse_selector(condition).map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error))?
+    match selector:
+        Selector.Triple(triple) => return Ok(triple == target.triple)
+        Selector.Cfg(tokens) =>
+            match target.cfg:
+                None => return Err(refusal(manifest, field, IntakeErrorKind.Missing, "original target cfg snapshot"))
+                Some(snapshot) =>
+                    return evaluate_cfg(tokens, snapshot.flags, snapshot.values).map_err(
+                        (error) => refusal(manifest, field, IntakeErrorKind.Invalid, error),
                     )
-            result: Option[bool] = expression.eval((predicate) => cfg_predicate(predicate, snapshot))
-            match result:
-                Some(value) => return Ok(value)
-                None =>
-                    return Err(refusal(manifest, field, IntakeErrorKind.Missing, "complete target predicate evidence"))
 
 
 def dependency_target(context: ActivationContext) -> TargetConfiguration:
@@ -233,11 +181,9 @@ def slot_restrictions(
                 )
             _ => pass
         if let Some(requirement) = declaration.version_requirement:
-            VersionReq
-                .parse(requirement)
-                .map_err(
-                    (error) => refusal(manifest, declaration.field + ["version"], IntakeErrorKind.Invalid, str(error)),
-                )?
+            parse_requirement(requirement).map_err(
+                (error) => refusal(manifest, declaration.field + ["version"], IntakeErrorKind.Invalid, str(error)),
+            )?
         if declaration.role == RustDependencyRole.Build:
             restrictions.append(Some(InactiveReason.InertBuildScript))
             continue
@@ -441,18 +387,19 @@ pub def activate_unit(
 
 
 pub def version_matches(requirement: str, selected_version: str, manifest: str) -> Result[bool, IntakeError]:
-    """Check a supplied selected version with the existing semver crate; this performs no source selection."""
-    wanted = VersionReq
-        .parse(requirement)
-        .map_err((error) => refusal(manifest, ["version"], IntakeErrorKind.Invalid, str(error)))?
-    selected = Version
-        .parse(selected_version)
-        .map_err((error) => refusal(manifest, ["selected-version"], IntakeErrorKind.Invalid, str(error)))?
-    return Ok(wanted.matches(selected))
+    """Check a supplied selected version with Incan SemVer policy; this performs no source selection."""
+    wanted = parse_requirement(requirement).map_err(
+        (error) => refusal(manifest, ["version"], IntakeErrorKind.Invalid, str(error)),
+    )?
+    selected = parse_version(selected_version).map_err(
+        (error) => refusal(manifest, ["selected-version"], IntakeErrorKind.Invalid, str(error)),
+    )?
+    return Ok(requirement_matches(wanted, selected))
 
 
 pub def validate_feature_declarations(catalog: RustDependencyCatalog, manifest: str) -> Result[None, IntakeError]:
-    """Validate all feature members independently of target selection and authored feature demand.
+    """
+    Validate all feature members independently of target selection and authored feature demand.
 
     Registry readers use the same grammar as activation so an inactive feature cannot conceal an unsupported token.
     """

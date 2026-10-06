@@ -1,0 +1,6 @@
+"""Immutable registry revision selected for the resolver's conformance corpus."""
+
+
+pub def pinned_revision() -> str:
+    """Return the incan.pub index-next revision; fixture indexes remain caller-owned test inputs."""
+    return "4a3297b98b469ca8a11d5b69783cc3cf7049d414"

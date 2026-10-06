@@ -1,14 +1,48 @@
-"""Check adoption's recorded feature-name closure independently of version selection."""
+"""Check recorded feature-name closure with the same target-aware strong-forwarding rule as resolution."""
+
+from cfg_predicate import parse_selector, evaluate_cfg, Selector
 
 
-pub def feature_name_closure(features: Dict[str, list[str]], recorded: list[str]) -> list[str]:
-    """
-    Expand only local feature-name members, preserving the binding's explicit default intent.
+pub model FactDependency:
+    """Only optionality, alias and target condition can affect a binding's local feature-name closure."""
 
-    Dependency tokens cannot add local cfg features. In particular defaults are never inferred merely because a
-    version declares a default feature; they enter this walk only when the recorded set contains them.
-    """
-    mut closure = recorded
+    pub alias: str
+    pub optional: bool
+    pub target: Option[str]
+
+
+pub def applicable_optional_aliases(
+    dependencies: list[FactDependency],
+    triple: str,
+    flags: list[str],
+    values: Dict[str, list[str]],
+) -> Result[list[str], str]:
+    """Select optional aliases from caller-supplied facts; inactive declarations contribute no alias."""
+    mut aliases: list[str] = []
+    for dependency in dependencies:
+        mut applies = true
+        if let Some(condition) = dependency.target:
+            selector = parse_selector(condition)?
+            match selector:
+                Selector.Triple(target) =>
+                    applies = target == triple
+                Selector.Cfg(tokens) =>
+                    applies = evaluate_cfg(tokens, flags, values)?
+        if applies and dependency.optional and dependency.alias not in aliases:
+            aliases.append(dependency.alias)
+    return Ok(sorted(aliases))
+
+
+pub def feature_name_closure(
+    features: Dict[str, list[str]],
+    recorded: list[str],
+    optional_aliases: list[str] = [],
+) -> list[str]:
+    """Expand local names and eligible non-weak x/f members; dep:x, weak members and defaults add no names."""
+    mut closure: list[str] = []
+    for name in recorded:
+        if name not in closure:
+            closure.append(name)
     mut cursor = 0
     while cursor < len(closure):
         feature = closure[cursor]
@@ -16,8 +50,12 @@ pub def feature_name_closure(features: Dict[str, list[str]], recorded: list[str]
         if feature not in features:
             continue
         for member in features[feature]:
-            if member in features and member not in closure:
-                closure.append(member)
+            mut local = member
+            parts = member.split("/")
+            if len(parts) == 2 and parts[0] in optional_aliases:
+                local = parts[0]
+            if local in features and local not in closure:
+                closure.append(local)
     return sorted(closure)
 
 
@@ -26,11 +64,12 @@ pub def closure_violations(
     version: str,
     features: Dict[str, list[str]],
     facts: list[list[str]],
+    optional_aliases: list[str] = [],
 ) -> list[str]:
     """Return every mismatched binding verbatim without coalescing duplicate fact entries."""
     mut violations: list[str] = []
     for recorded in facts:
-        closure = feature_name_closure(features, recorded)
+        closure = feature_name_closure(features, recorded, optional_aliases)
         if sorted(recorded) != closure:
             violations.append(f"{loaf} {version}: recorded={recorded}; closure={closure}")
     return violations
