@@ -1,0 +1,78 @@
+"""
+Resolve a root request file against an incan.pub index pin and print the resolution.
+
+This is the driver that produces a lock: it reads every named Loaf's index lines from the pin, decodes the root
+requests in the index line's `deps[]` spelling, and prints one `incan.oven.loaf-resolution/1` document. It reads
+no upstream metadata and runs no build.
+"""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from std.json import parse
+from loaf_index import read_index, read_root_requests, LoafVersion
+from loaf_pin import pinned_revision
+from loaf_pin_check import read_cfg
+from loaf_resolve import resolve_requests, resolution_json
+from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, TargetConfiguration
+
+
+# The triple both the selected target and the build host must name; the roots file states it explicitly.
+const SUPPORTED_TRIPLE: str = "aarch64-apple-darwin"
+
+
+def load_records(directory: str, names_file: str) -> Result[list[LoafVersion], str]:
+    """Read every named Loaf's versions from a pin directory whose revision is the resolver's pin."""
+    revision = Path(f"{directory}/revision").read_text("utf-8", "strict").map_err((e) => e.message())?
+    if revision.strip() != pinned_revision():
+        return Err("index revision does not match resolver pin")
+    names = Path(names_file).read_text("utf-8", "strict").map_err((e) => e.message())?
+    mut records: list[LoafVersion] = []
+    for loaf in names.split("\n"):
+        if loaf == "":
+            continue
+        for record in read_index(directory, loaf).map_err((e) => e.message())?:
+            records.append(record)
+    return Ok(records)
+
+
+def lock(directory: str, names_file: str, cfg_file: str, roots_file: str) -> Result[None, str]:
+    """Resolve the roots for the supported triple as both target and host, and print the resolution."""
+    records = load_records(directory, names_file)?
+    source = Path(roots_file).read_text("utf-8", "strict").map_err((e) => e.message())?
+    # The roots document wraps the request array as `deps`, the same spelling an index line uses.
+    document = parse(source).map_err((e) => e.message())?
+    mut roots_array = ""
+    match document.get("deps"):
+        Some(deps) => roots_array = deps.to_json().map_err((e) => e.message())?
+        None => return Err("roots document has no deps array")
+    requests = read_root_requests(roots_array, "roots").map_err((e) => e.message())?
+    cfg = read_cfg(cfg_file)?
+    triple = TargetConfiguration(triple=SUPPORTED_TRIPLE, cfg=Some(cfg))
+    context = ActivationContext(
+        host=triple,
+        target=triple,
+        purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
+        requested_features=[],
+        default_features=false,
+        build_unit_present=false,
+    )
+    units = resolve_requests(records, requests, {}, context).map_err((e) => e.message())?
+    println(resolution_json(units).to_json().map_err((e) => e.message())?)
+    return Ok(None)
+
+
+pub def main() -> None:
+    """Accept a pin directory, a Loaf name inventory, a retained rustc cfg file and a root request file."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) != 5:
+        println("usage: loaf_lock PIN_DIRECTORY NAMES_FILE CFG_FILE ROOTS_FILE")
+        exit(2)
+    match lock(arguments[1], arguments[2], arguments[3], arguments[4]):
+        Ok(_) => return
+        Err(error) =>
+            println(error)
+            exit(1)

@@ -67,7 +67,7 @@ pub def main() -> None:
             exit(1)
 
 
-def read_cfg(path: str) -> Result[CfgSnapshot, str]:
+pub def read_cfg(path: str) -> Result[CfgSnapshot, str]:
     """Read retained rustc cfg output; no ambient toolchain query occurs inside the resolver."""
     source = Path(path).read_text("utf-8", "strict").map_err((e) => e.message())?
     mut flags: list[str] = []
