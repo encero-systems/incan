@@ -123,6 +123,7 @@ impl<'a> NativeSources<'a> {
             index += classified.consumed;
         }
         self.objects.push(RustFactLinkObject {
+            reads: Vec::new(),
             name: object_name,
             language: super::source_language(source)?,
             arguments,
