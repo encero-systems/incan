@@ -467,6 +467,7 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
     }
     let staging = root.with_extension(format!("staging-{}", std::process::id()));
     copy_listed_std_files(&sysroot, &manifest, &staging)?;
+    copy_compiler_runtime(&sysroot, &staging)?;
     fs::write(staging.join(".complete"), b"").map_err(|source| OvenRustcError::Io {
         path: staging.clone(),
         source,
@@ -480,6 +481,77 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
         }
         Err(source) => Err(OvenRustcError::Io { path: root, source }),
     }
+}
+
+/// The compiler executable inside a normalized sysroot built by [`normalized_std_sysroot`].
+///
+/// Rustc finds its own sysroot from where its driver library really lives, and from that sysroot it decides whether
+/// the optional `rust-src` component is installed; with it, std's source files enter a crate's metadata differently
+/// and the crate hash changes. Running the copy inside the normalized sysroot, which never holds `rust-src`, makes
+/// that decision the same on every host.
+pub fn normalized_rustc(std_sysroot: &Path) -> PathBuf {
+    std_sysroot
+        .join("bin")
+        .join(if cfg!(windows) { "rustc.exe" } else { "rustc" })
+}
+
+/// Place the compiler executable and its runtime libraries in a staging sysroot.
+///
+/// The executable and the driver library are copied, because the driver's real location is what rustc reports as
+/// its sysroot; every other top-level runtime library (LLVM, sanitizer runtimes) is linked to the installed file.
+fn copy_compiler_runtime(sysroot: &Path, staging: &Path) -> Result<(), OvenRustcError> {
+    let executable = if cfg!(windows) { "rustc.exe" } else { "rustc" };
+    let bin = staging.join("bin");
+    fs::create_dir_all(&bin).map_err(|source| OvenRustcError::Io {
+        path: bin.clone(),
+        source,
+    })?;
+    let installed = sysroot.join("bin").join(executable);
+    fs::copy(&installed, bin.join(executable)).map_err(|source| OvenRustcError::Io {
+        path: installed,
+        source,
+    })?;
+    let library = sysroot.join("lib");
+    let entries = fs::read_dir(&library).map_err(|source| OvenRustcError::Io {
+        path: library.clone(),
+        source,
+    })?;
+    let staged_library = staging.join("lib");
+    fs::create_dir_all(&staged_library).map_err(|source| OvenRustcError::Io {
+        path: staged_library.clone(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| OvenRustcError::Io {
+            path: library.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let destination = staged_library.join(entry.file_name());
+        let is_driver = entry.file_name().to_string_lossy().starts_with("librustc_driver");
+        let placed = if is_driver {
+            fs::copy(&path, &destination).map(|_| ())
+        } else {
+            link_runtime_library(&path, &destination)
+        };
+        placed.map_err(|source| OvenRustcError::Io { path, source })?;
+    }
+    Ok(())
+}
+
+/// Link one installed runtime library into a staging sysroot without copying its bytes.
+#[cfg(unix)]
+fn link_runtime_library(installed: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(installed, destination)
+}
+
+/// Copy one installed runtime library where symbolic links are not available.
+#[cfg(not(unix))]
+fn link_runtime_library(installed: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::copy(installed, destination).map(|_| ())
 }
 
 /// Copy each `file:` entry of a `rust-std` manifest from the sysroot into a staging sysroot at the same relative path.

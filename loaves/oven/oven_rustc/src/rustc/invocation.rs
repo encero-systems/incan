@@ -711,7 +711,17 @@ fn compile_direct_rustc_output(
         selected_artifacts.materialize(artifact_root, &receipt.intent)?
     };
 
-    let mut command = Command::new(rustc);
+    // Ordinary units run the compiler from a normalized sysroot that holds only the std component; dynamic test
+    // harnesses embed the sysroot in their runtime search path, so they keep the installed one.
+    let std_sysroot = if prefer_dynamic {
+        None
+    } else {
+        Some(super::toolchain::normalized_std_sysroot(rustc, &receipt.intent.target)?)
+    };
+    let mut command = match &std_sysroot {
+        Some(std_sysroot) => Command::new(super::toolchain::normalized_rustc(std_sysroot)),
+        None => Command::new(rustc),
+    };
     if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
         // Adopted units compile under a fixed environment so no ambient variable reaches their bytes. Rustc still
         // invokes the system linker (`cc`) for proc-macro and other linked outputs; a fixed system search path finds
@@ -760,11 +770,9 @@ fn compile_direct_rustc_output(
     apply_oven_profile(&mut command, &receipt.intent.profile);
     clear_inherited_cargo_environment(&mut command);
     apply_sdk_compilation_policy(&mut command, receipt)?;
-    apply_portable_source_paths(&mut command, receipt, artifact_root, rustc)?;
-    if !prefer_dynamic {
-        // Dynamic test harnesses embed the sysroot in their runtime search path, so they keep the installed one.
-        let std_sysroot = super::toolchain::normalized_std_sysroot(rustc, &receipt.intent.target)?;
-        command.arg("--sysroot").arg(&std_sysroot);
+    apply_portable_source_paths(&mut command, receipt, artifact_root, rustc, std_sysroot.is_some())?;
+    if let Some(std_sysroot) = &std_sysroot {
+        command.arg("--sysroot").arg(std_sysroot);
         command.arg(format!("--remap-path-prefix={}=/oven/sysroot", std_sysroot.display()));
     }
     for (name, value) in &plan.compile_environment {
@@ -924,6 +932,7 @@ fn apply_portable_source_paths(
     receipt: &OvenReceipt,
     source_root: &Path,
     rustc: &Path,
+    normalized_sysroot: bool,
 ) -> Result<(), OvenRustcError> {
     let logical = format!("/oven/{}", receipt.build_unit_identity.replace(':', "-"));
     let cwd = std::env::current_dir().map_err(|source| OvenRustcError::Io {
@@ -933,6 +942,12 @@ fn apply_portable_source_paths(
     command.arg(format!("--remap-path-prefix={}=/oven/work", cwd.display()));
     // rustc chooses the last matching prefix; retain the more specific source mapping last.
     command.arg(format!("--remap-path-prefix={}={logical}", source_root.display()));
+    if normalized_sysroot {
+        // The normalized sysroot never holds `rust-src`, so there is no installed source path to map, and naming the
+        // installed one here would put a host path into the compiler's arguments.
+        command.env("SOURCE_DATE_EPOCH", "0");
+        return Ok(());
+    }
     let sysroot = super::toolchain::rustc_sysroot(rustc)?;
     if let Some(commit) = super::toolchain::rustc_commit_hash(rustc) {
         command.arg(format!(
