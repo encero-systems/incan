@@ -976,6 +976,11 @@ impl SdkCompiledUnit {
     pub fn compiled_identity(&self) -> &str {
         &self.owner.manifest.receipt_identity
     }
+
+    /// Content-addressed Oven store entry holding this unit's compiled output, the coordinate an asset archive packs.
+    pub fn entry_identity(&self) -> &str {
+        &self.owner.manifest.identity
+    }
     /// Borrow the immutable selected binding.
     pub fn binding(&self) -> &SdkLockedUnit {
         &self.binding
