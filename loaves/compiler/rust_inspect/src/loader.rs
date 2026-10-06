@@ -22,6 +22,8 @@ use sha2::{Digest, Sha256};
 
 use super::error::RustMetadataError;
 
+mod loaf_manifest;
+
 /// A loaded Cargo workspace suitable for `hir` queries.
 ///
 /// The `Vfs` handle is retained so file-backed state remains consistent with the database for the lifetime of this
@@ -75,30 +77,14 @@ const SYSROOT_LIBRARY_CRATES: &[(&str, &[&str], &[&str])] = &[
     ("proc_macro", &["proc_macro"], &["std", "core"]),
 ];
 
-/// The edition a library crate is compiled under when its `Cargo.toml` does not say.
-///
-/// The toolchain the installer provisions ships its library crates at this edition; a `RUSTC` override to an older
-/// toolchain declares its own in each crate manifest, which `sysroot_project_graph` reads first.
+/// Edition of the source libraries in the supported, pinned compiler sysroot.
 const SYSROOT_LIBRARY_DEFAULT_EDITION: &str = "2024";
-
-/// Read the `edition = "..."` a sysroot library crate's `Cargo.toml` declares, if the manifest is present and says.
-///
-/// The `rust-src` component ships each crate's manifest beside its sources, so this is a one-line scan rather than
-/// a TOML parse: the field is a plain string at the top level of every library crate manifest.
-fn sysroot_crate_edition(crate_root: &Path) -> Option<String> {
-    let manifest = fs::read_to_string(crate_root.join("Cargo.toml")).ok()?;
-    manifest.lines().find_map(|line| {
-        let (key, value) = line.split_once('=')?;
-        (key.trim() == "edition").then(|| value.trim().trim_matches('"').to_string())
-    })
-}
 
 /// Describe the sysroot's library crates as a `rust-project.json` graph rooted at `sysroot_src`.
 ///
 /// Only crates whose `src/lib.rs` exists in this toolchain are listed, and a dependency on an absent crate is
-/// dropped, so a toolchain that ships fewer library crates still yields a graph rust-analyzer accepts. Each
-/// crate's edition comes from its own manifest when the `rust-src` component carries one, and from
-/// [`SYSROOT_LIBRARY_DEFAULT_EDITION`] otherwise.
+/// dropped, so a toolchain that ships fewer library crates still yields a graph rust-analyzer accepts. Editions
+/// follow the pinned sysroot policy; inspection does not read Cargo metadata from the sysroot.
 fn sysroot_project_graph(sysroot_src: &Path) -> serde_json::Value {
     let present = SYSROOT_LIBRARY_CRATES
         .iter()
@@ -117,8 +103,7 @@ fn sysroot_project_graph(sysroot_src: &Path) -> serde_json::Value {
                 .iter()
                 .filter_map(|dep| index_of(dep).map(|index| serde_json::json!({ "crate": index, "name": dep })))
                 .collect::<Vec<_>>();
-            let edition = sysroot_crate_edition(&sysroot_src.join(relative))
-                .unwrap_or_else(|| SYSROOT_LIBRARY_DEFAULT_EDITION.to_string());
+            let edition = SYSROOT_LIBRARY_DEFAULT_EDITION;
             serde_json::json!({
                 "display_name": name,
                 "root_module": format!("{relative}/src/lib.rs"),
@@ -198,6 +183,8 @@ pub const OVEN_DIRECT_INSPECTION_MARKER: &str = ".incan_oven_direct_rust_project
 pub const OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER: &str = ".incan_oven_cargo_rust_inspection";
 /// Compiler-authored source authority consumed by the direct Oven inspection loader.
 pub const OVEN_DIRECT_INSPECTION_AUTHORITY_FILE: &str = ".incan_oven_rust_sources.json";
+/// Frozen adopted-unit graph published beside the source authority by the SDK closure compiler.
+pub const OVEN_DIRECT_LOAF_PROJECT_FILE: &str = ".incan_oven_loaf_project.json";
 /// Sealed build-script output directories (one absolute `OUT_DIR` per line) a direct-inspection workspace may read.
 ///
 /// Normal Oven commands never run Cargo, so generated Rust such as prost's `include!`d modules is reachable only
@@ -688,7 +675,9 @@ impl RustWorkspace {
                         .get("path")
                         .and_then(toml::Value::as_str)
                         .map(|path| manifest_dir.join(path))
-                        .filter(|candidate| candidate.join("Cargo.toml").is_file());
+                        .filter(|candidate| {
+                            candidate.join("loaf.toml").is_file() || candidate.join("Cargo.toml").is_file()
+                        });
                     let version = declaration.as_str().map(str::to_string).or_else(|| {
                         declaration
                             .get("version")
@@ -881,10 +870,10 @@ impl RustWorkspace {
                     });
                 }
                 let root = source.source_root.canonicalize()?;
-                if !root.join("Cargo.toml").is_file() {
+                if !root.join("loaf.toml").is_file() && !root.join("Cargo.toml").is_file() {
                     return Err(RustMetadataError::LoadWorkspace {
                         path: root,
-                        message: "sealed Oven registry source has no Cargo.toml".to_string(),
+                        message: "sealed Oven registry source has no source manifest".to_string(),
                     });
                 }
                 if authority.source_validation == OvenInspectionSourceValidation::FullTreeDigest {
@@ -904,6 +893,7 @@ impl RustWorkspace {
                     source.version.clone(),
                     source.registry.clone(),
                     source.checksum.clone(),
+                    source.source_root.clone(),
                 );
                 if identities.insert(key.clone(), root).is_some() {
                     return Err(RustMetadataError::LoadWorkspace {
@@ -1021,13 +1011,24 @@ impl RustWorkspace {
             selected_features: &[String],
             allow_unlocked_registry_dependencies: bool,
         ) -> Result<OvenProjectCrate, RustMetadataError> {
-            let manifest_path = manifest_dir.join("Cargo.toml");
-            let manifest = toml::from_str::<toml::Value>(&fs::read_to_string(&manifest_path)?).map_err(|error| {
-                RustMetadataError::LoadWorkspace {
-                    path: manifest_path.clone(),
-                    message: format!("failed to parse compiler-authored manifest for direct Oven inspection: {error}"),
-                }
-            })?;
+            let loaf_path = manifest_dir.join("loaf.toml");
+            let manifest_path = if loaf_path.is_file() {
+                loaf_path
+            } else {
+                manifest_dir.join("Cargo.toml")
+            };
+            let manifest = if manifest_path.file_name().is_some_and(|name| name == "loaf.toml") {
+                loaf_manifest::read_loaf_manifest(manifest_dir)?
+            } else {
+                toml::from_str::<toml::Value>(&fs::read_to_string(&manifest_path)?).map_err(|error| {
+                    RustMetadataError::LoadWorkspace {
+                        path: manifest_path.clone(),
+                        message: format!(
+                            "failed to parse compiler-authored manifest for direct Oven inspection: {error}"
+                        ),
+                    }
+                })?
+            };
             let package = manifest.get("package").and_then(toml::Value::as_table).ok_or_else(|| {
                 RustMetadataError::LoadWorkspace {
                     path: manifest_path.clone(),
@@ -1248,8 +1249,31 @@ impl RustWorkspace {
             }
         }
 
-        let lock = load_lock(manifest_dir)?;
         let authority = load_source_authority(manifest_dir)?;
+        let frozen_project = manifest_dir.join(OVEN_DIRECT_LOAF_PROJECT_FILE);
+        if frozen_project.is_file() {
+            let mut graph: serde_json::Value =
+                serde_json::from_slice(&fs::read(&frozen_project)?).map_err(|error| {
+                    RustMetadataError::LoadWorkspace {
+                        path: frozen_project.clone(),
+                        message: format!("invalid sealed Loaf inspection graph: {error}"),
+                    }
+                })?;
+            loaf_manifest::validate_frozen_graph(&graph, &authority.sources, &frozen_project)?;
+            if let Some(sysroot) = active_sysroot() {
+                let source = sysroot.join("lib/rustlib/src/rust/library");
+                graph["sysroot"] = serde_json::json!(sysroot);
+                if source.is_dir() {
+                    graph["sysroot_src"] = serde_json::json!(source);
+                    graph["sysroot_project"] = sysroot_project_graph(&source);
+                }
+            }
+            return serde_json::to_vec(&graph).map_err(|error| RustMetadataError::LoadWorkspace {
+                path: frozen_project,
+                message: format!("cannot encode sealed Loaf inspection graph: {error}"),
+            });
+        }
+        let lock = load_lock(manifest_dir)?;
         let mut graph = OvenProjectGraphBuilder {
             crates: Vec::new(),
             indices: HashMap::new(),
@@ -1485,8 +1509,7 @@ mod tests {
     use tempfile::tempdir;
 
     /// The sysroot graph lists only the library crates this toolchain ships, drops edges to absent ones, indexes
-    /// each dependency by its position in the filtered list, and reads a crate's edition from its own manifest
-    /// (#1530).
+    /// each dependency by its position in the filtered list, and uses the pinned edition without Cargo metadata.
     #[test]
     fn sysroot_project_graph_describes_only_the_crates_the_toolchain_ships() -> Result<(), Box<dyn std::error::Error>> {
         let sysroot = tempdir()?;
@@ -1534,7 +1557,10 @@ mod tests {
             ],
             "edges to absent crates are dropped and the rest index the filtered list"
         );
-        assert_eq!(crates[0]["edition"], "2021", "a crate manifest's edition wins");
+        assert_eq!(
+            crates[0]["edition"], "2024",
+            "Cargo metadata cannot change the pinned edition"
+        );
         assert_eq!(
             crates[1]["edition"], "2024",
             "a crate without a manifest gets the shipped default"

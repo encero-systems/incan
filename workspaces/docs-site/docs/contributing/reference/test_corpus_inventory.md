@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3284 | 221 | 431 |
 | re-point | 1481 | 91 | 1052 |
 | retire | 1505 | 153 | 0 |
-| unaffected | 1681 | 164 | 5 |
+| unaffected | 1683 | 165 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7951** | **629** | **1488** |
+| **Total** | **7953** | **630** | **1488** |
 
 - Retire-class tests: 1505, of which twinned 1022, dies 294, open 189 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2562,7 +2562,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/oven/oven_rustc` (337 tests in 30 files: keep 4, unaffected 333)
+### `loaves/oven/oven_rustc` (338 tests in 30 files: keep 4, unaffected 334)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2594,7 +2594,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/rustc/tests/registry_and_toolchain.rs` | 25 | 1222 | 1222 | unaffected | - | - | - | #1561 | run 1 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/tests/source_roles.rs` | 11 | 1201 | 1201 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/toolchain.rs` | 5 | 659 | 73 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/sdk_closure.rs` | 4 | 1107 | 117 | unaffected | - | - | - | #1698 | - | Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior. |
+| `loaves/oven/oven_rustc/src/sdk_closure.rs` | 5 | 1208 | 140 | unaffected | - | - | - | #1698 | - | Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior. |
 | `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 1 | 200 | 24 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
 
 ### `loaves/toolchain/incan-cli` (1741 tests in 107 files: keep 119, re-point 1462, retire 34, unaffected 126)
@@ -3052,7 +3052,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1038 tests in 91 files)"
+??? note "Unaffected crates (1039 tests in 92 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3077,7 +3077,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/compiler/incan_provider/src/vocab_extraction.rs` | 14 | 1713 | 296 | unaffected | - | - | - | #1561 | run 3 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/tests/stdlib_effect_digest.rs` | 10 | 313 | 313 | unaffected | - | - | - | #1561 | - | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
 
-    #### `loaves/compiler/rust_inspect` (103 tests in 7 files: unaffected 103)
+    #### `loaves/compiler/rust_inspect` (104 tests in 8 files: unaffected 104)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3085,7 +3085,8 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/compiler/rust_inspect/src/digest/tests.rs` | 17 | 634 | 634 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/rust_inspect/src/extractor.rs` | 20 | 3243 | 1279 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/rust_inspect/src/lib.rs` | 2 | 206 | 149 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/rust_inspect/src/loader.rs` | 15 | 2105 | 630 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+    | `loaves/compiler/rust_inspect/src/loader.rs` | 15 | 2131 | 632 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+    | `loaves/compiler/rust_inspect/src/loader/loaf_manifest.rs` | 1 | 244 | 66 | unaffected | - | - | - | #1698 | - | Loaf source and frozen graph inspection without Cargo metadata; validates source containment, alias edges and selected facts. |
     | `loaves/compiler/rust_inspect/src/mir_digest.rs` | 5 | 455 | 235 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/rust_inspect/src/receiver_contract.rs` | 3 | 101 | 43 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 

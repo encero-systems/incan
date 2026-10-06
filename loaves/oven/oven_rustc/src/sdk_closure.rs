@@ -193,6 +193,7 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
     let mut report = SdkClosureReport::default();
     let mut pending: BTreeSet<usize> = (0..units.len()).collect();
     let mut artifacts = BTreeMap::new();
+    let mut inspection_indices = BTreeMap::new();
     let mut closures: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     while !pending.is_empty() {
         let mut progressed = false;
@@ -243,10 +244,22 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
                 .collect();
             match compile_unit(unit, context, externs, searches) {
                 Ok((path, reused, owner)) => {
+                    let dependencies = edges
+                        .iter()
+                        .map(|(name, dependency)| {
+                            inspection_indices
+                                .get(dependency)
+                                .map(|index| serde_json::json!({"crate": index, "name": name}))
+                                .ok_or("compiled dependency has no inspection index")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let inspection = inspection_unit(unit, &owner.artifact_root.join("source"), dependencies)?;
+                    inspection_indices.insert(index, selected_units.len());
                     selected_units.push(SdkCompiledUnit {
                         binding: unit.binding.clone(),
                         output: path.clone(),
                         owner,
+                        inspection,
                     });
                     artifacts.insert(index, path);
                     closures.insert(index, closure);
@@ -269,6 +282,62 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
         report,
         units: selected_units,
     })
+}
+
+/// Freeze source inspection against the same selected facet, facts and active dependency indices as compilation.
+fn inspection_unit(
+    unit: &PreparedUnit,
+    source: &Path,
+    dependencies: Vec<serde_json::Value>,
+) -> Result<serde_json::Value, Error> {
+    let facet = unit.manifest.get("rust").ok_or("compiled unit has no Rust facet")?;
+    let root = facet
+        .get("source")
+        .and_then(|source| source.get("root"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or("src/lib.rs");
+    let version = semver::Version::parse(&unit.binding.version)?;
+    let mut environment = BTreeMap::from([
+        (
+            "CARGO_PKG_NAME".to_string(),
+            unit.binding.loaf.trim_start_matches("crates-io/").to_string(),
+        ),
+        ("CARGO_PKG_VERSION".to_string(), unit.binding.version.clone()),
+        ("CARGO_PKG_VERSION_MAJOR".to_string(), version.major.to_string()),
+        ("CARGO_PKG_VERSION_MINOR".to_string(), version.minor.to_string()),
+        ("CARGO_PKG_VERSION_PATCH".to_string(), version.patch.to_string()),
+    ]);
+    let mut cfg = unit
+        .binding
+        .features
+        .iter()
+        .map(|feature| format!("feature=\"{feature}\""))
+        .collect::<Vec<_>>();
+    if let Some(fact) = &unit.fact {
+        cfg.extend(fact.cfg.iter().cloned());
+        let out = source.join(".oven-out");
+        if !fact.out.is_empty() {
+            environment.insert("OUT_DIR".to_string(), out.to_string_lossy().into_owned());
+        }
+        for entry in &fact.environment {
+            let value = match (&entry.literal, &entry.out) {
+                (Some(value), None) => value.clone(),
+                (None, Some(relative)) => out.join(relative).to_string_lossy().into_owned(),
+                _ => return Err("compiled fact has invalid environment".into()),
+            };
+            environment.insert(entry.name.clone(), value);
+        }
+    }
+    cfg.sort();
+    cfg.dedup();
+    Ok(serde_json::json!({
+        "display_name": facet.get("name").and_then(toml::Value::as_str).ok_or("compiled unit has no Rust name")?,
+        "root_module": source.join(root),
+        "edition": facet.get("edition").and_then(toml::Value::as_str).ok_or("compiled unit has no Rust edition")?,
+        "deps": dependencies, "cfg": cfg, "env": environment,
+        "is_workspace_member": false,
+        "is_proc_macro": facet.get("type").and_then(toml::Value::as_str) == Some("proc-macro"),
+    }))
 }
 
 /// Verify archives before parsing their adopted manifests and create fresh source-only roots.
@@ -898,6 +967,8 @@ pub struct SdkCompiledUnit {
     /// Store-owned library or procedural-macro output path.
     output: PathBuf,
     owner: OvenStoreExecutionPayload,
+    /// Frozen direct-inspection record using the same active edges, features and facts as compilation.
+    inspection: serde_json::Value,
 }
 
 impl SdkCompiledUnit {
@@ -920,6 +991,13 @@ impl SdkCompiledUnit {
 }
 
 impl SdkCompiledClosure {
+    /// Project the successfully compiled subgraph while retaining its source leases in this closure.
+    ///
+    /// The graph includes the exact resolved host/target edges. Refused units are absent, and callers must retain and
+    /// report the refusal list before publishing a component whose declared roots include those units.
+    pub fn inspection_project(&self) -> serde_json::Value {
+        serde_json::json!({ "crates": self.units.iter().map(|unit| &unit.inspection).collect::<Vec<_>>() })
+    }
     /// Borrow the compiler measurement without weakening publication readiness.
     pub fn report(&self) -> &SdkClosureReport {
         &self.report
@@ -1102,5 +1180,28 @@ mod tests {
             units: Vec::new(),
         };
         assert!(closure.require_complete().is_err());
+    }
+
+    /// Inspection retains the selected Rust source, alias indices and feature set without rereading declarations.
+    #[test]
+    fn inspection_uses_selected_source_and_edges() -> Result<(), Error> {
+        let unit = unit(
+            "crates-io/example",
+            "host",
+            "[rust]\nname='example_macro'\ntype='proc-macro'\nedition='2021'\n[rust.source]\nroot='src/macro.rs'\n",
+            &["selected"],
+        )?;
+        let graph = inspection_unit(
+            &unit,
+            Path::new("/sealed/source"),
+            vec![serde_json::json!({"crate": 3, "name": "renamed"})],
+        )?;
+        assert_eq!(graph["root_module"], "/sealed/source/src/macro.rs");
+        assert_eq!(graph["is_proc_macro"], true);
+        assert_eq!(graph["deps"][0]["crate"], 3);
+        assert_eq!(graph["deps"][0]["name"], "renamed");
+        assert_eq!(graph["cfg"][0], "feature=\"selected\"");
+        assert_eq!(graph["env"]["CARGO_PKG_VERSION"], "1.0.0");
+        Ok(())
     }
 }

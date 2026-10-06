@@ -46,9 +46,9 @@ pub use inspector::{Fidelity, InspectError, InspectResult, Inspector, InspectorC
 #[cfg(feature = "inspector")]
 pub use loader::{
     GeneratedOutDirRecord, OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER, OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
-    OVEN_DIRECT_INSPECTION_MARKER, OvenInspectionRegistrySource, RustWorkspace, SealedGeneratedOutDir,
-    oven_inspection_registry_source_roots, read_generated_out_dirs_map, write_generated_out_dirs_map,
-    write_oven_generated_out_dirs, write_oven_inspection_source_authority,
+    OVEN_DIRECT_INSPECTION_MARKER, OVEN_DIRECT_LOAF_PROJECT_FILE, OvenInspectionRegistrySource, RustWorkspace,
+    SealedGeneratedOutDir, oven_inspection_registry_source_roots, read_generated_out_dirs_map,
+    write_generated_out_dirs_map, write_oven_generated_out_dirs, write_oven_inspection_source_authority,
     write_sealed_oven_inspection_source_authority,
 };
 #[cfg(feature = "inspector")]
