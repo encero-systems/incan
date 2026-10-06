@@ -88,8 +88,8 @@ pub struct OvenPublisherLinkProduct {
 /// Execute one link fact only at the explicit publisher boundary.
 ///
 /// The executable receives exactly the declared arguments and an empty environment plus the declared entries. The
-/// deterministic archive name is an output contract, not an injected argument: a declaration that needs an output
-/// argument spells that relative name as a literal. This preserves argv equality between selection and execution.
+/// object output uses its typed output reference; the archive is written by Oven after compilation. Implicit `reads`
+/// materialize declared sources without adding compiler arguments. This preserves logical argv equality.
 pub fn bake_publisher_link(
     request: &OvenPublisherLinkBakeRequest<'_>,
 ) -> Result<OvenPublisherLinkProduct, OvenRustcError> {
@@ -115,11 +115,18 @@ pub fn bake_publisher_link(
         &request.link.executable.path,
         "publisher link executable",
     )?;
+    let source_staging = tempfile::Builder::new()
+        .prefix("publisher-link-inputs-")
+        .tempdir()
+        .map_err(|source| OvenRustcError::Io {
+            path: std::env::temp_dir(),
+            source,
+        })?;
     let mut inputs = Vec::with_capacity(request.link.sources.len());
     for source in &request.link.sources {
         inputs.push(PublisherExecutionInput {
             name: &source.name,
-            path: source_owner_path(request.source_owner_root, source)?,
+            path: materialize_link_source(request.source_owner_root, source_staging.path(), source)?,
             digest: source.digest.clone(),
             kind: source.kind,
             members: source.members.clone(),
@@ -142,6 +149,7 @@ pub fn bake_publisher_link(
                 .collect();
             Ok(PublisherExecutionObject {
                 name: &object.name,
+                reads: object.reads.iter().map(String::as_str).collect(),
                 arguments,
             })
         })
@@ -209,6 +217,78 @@ pub fn publisher_archive_format(target: &str) -> &'static str {
     } else {
         "gnu"
     }
+}
+
+/// Copy exactly one declared source catalog into private execution inputs, excluding archive inventory outside it.
+///
+/// Files share their owner-relative layout so implicit relative includes resolve. Each tree has its own complete
+/// catalog root so overlapping catalogs do not grant additional members to one another. The executor verifies the
+/// resulting file and tree digests before admitting reads.
+fn materialize_link_source(
+    root: &Path,
+    staging: &Path,
+    source: &oven_model::manifest::RustFactArtifact,
+) -> Result<PathBuf, OvenRustcError> {
+    let original = source_owner_path(root, source)?;
+    match source.kind {
+        oven_model::manifest::RustFactArtifactKind::File => {
+            let destination = owner_relative_path(&staging.join("files"), &source.path, "publisher source")?;
+            copy_link_source_file(root, &original, &destination)?;
+            Ok(destination)
+        }
+        oven_model::manifest::RustFactArtifactKind::Tree => {
+            let destination = owner_relative_path(&staging.join("trees"), &source.name, "publisher source tree")?;
+            fs::create_dir_all(&destination).map_err(|error| OvenRustcError::Io {
+                path: destination.to_path_buf(),
+                source: error,
+            })?;
+            for member in &source.members {
+                let input = owner_relative_path(&original, &member.path, "publisher source member")?;
+                let output = owner_relative_path(&destination, &member.path, "publisher source member")?;
+                copy_link_source_file(root, &input, &output)?;
+            }
+            Ok(destination)
+        }
+    }
+}
+
+/// Copy a declared regular file while refusing symlinks and paths outside its selected source owner.
+fn copy_link_source_file(root: &Path, source: &Path, destination: &Path) -> Result<(), OvenRustcError> {
+    let canonical_root = fs::canonicalize(root).map_err(|error| OvenRustcError::Io {
+        path: root.to_path_buf(),
+        source: error,
+    })?;
+    let canonical_source = fs::canonicalize(source).map_err(|error| OvenRustcError::Io {
+        path: source.to_path_buf(),
+        source: error,
+    })?;
+    if !canonical_source.starts_with(&canonical_root)
+        || !fs::symlink_metadata(source)
+            .map_err(|error| OvenRustcError::Io {
+                path: source.to_path_buf(),
+                source: error,
+            })?
+            .file_type()
+            .is_file()
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher source member",
+            message: format!("{} must be a regular file within the source owner", source.display()),
+        });
+    }
+    let parent = destination.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "publisher source member",
+        message: "materialized file has no parent".to_string(),
+    })?;
+    fs::create_dir_all(parent).map_err(|error| OvenRustcError::Io {
+        path: parent.to_path_buf(),
+        source: error,
+    })?;
+    fs::copy(source, destination).map_err(|error| OvenRustcError::Io {
+        path: source.to_path_buf(),
+        source: error,
+    })?;
+    Ok(())
 }
 
 /// Resolve a declared link source, allowing `.` only for a complete tree rooted at the source owner.
@@ -1193,6 +1273,7 @@ mod publisher_link_tests {
                 digest: digest_bytes(&fs::read(compiler)?),
             },
             objects: vec![RustFactLinkObject {
+                reads: Vec::new(),
                 name: "fixture.o".to_string(),
                 language: RustFactLinkLanguage::C,
                 arguments: vec![
@@ -1220,12 +1301,98 @@ mod publisher_link_tests {
     }
 
     #[test]
+    /// Materialized implicit reads preserve relative includes and trees contain only their declared member catalog.
+    fn publisher_link_reads_materialize_declared_sources_only() -> Result<(), Box<dyn Error>> {
+        let root = tempdir()?;
+        let link = fixture_link(root.path())?;
+        let sources = root.path().join("source");
+        fs::write(sources.join("native/header.h"), b"header")?;
+        fs::write(sources.join("native/undeclared.txt"), b"excluded")?;
+        let staging = root.path().join("staged");
+        let source = super::materialize_link_source(&sources, &staging, &link.sources[0])?;
+        let header = RustFactArtifact {
+            name: "header".to_string(),
+            kind: RustFactArtifactKind::File,
+            path: "native/header.h".to_string(),
+            digest: digest_bytes(b"header"),
+            members: Vec::new(),
+        };
+        let read = super::materialize_link_source(&sources, &staging, &header)?;
+        assert_eq!(source.parent().ok_or("source has no parent")?.join("header.h"), read);
+        assert_eq!(fs::read(&read)?, b"header");
+        assert!(
+            !source
+                .parent()
+                .ok_or("source has no parent")?
+                .join("undeclared.txt")
+                .exists()
+        );
+        let members = vec![RustFactArtifactMember {
+            path: "header.h".to_string(),
+            digest: digest_bytes(b"header"),
+        }];
+        let tree = RustFactArtifact {
+            name: "includes".to_string(),
+            kind: RustFactArtifactKind::Tree,
+            path: "native".to_string(),
+            digest: digest_bytes(&serde_json::to_vec(&(
+                "incan.oven.publisher-artifact-tree/1",
+                &members,
+            ))?),
+            members,
+        };
+        let materialized = super::materialize_link_source(&sources, &staging, &tree)?;
+        assert_eq!(fs::read(materialized.join("header.h"))?, b"header");
+        assert_eq!(fs::read_dir(&materialized)?.count(), 1);
+        assert!(!materialized.join("fixture.c").exists());
+        Ok(())
+    }
+
+    #[test]
     /// Publisher execution creates the deterministic archive and preserves selected logical argv.
     fn selected_unit_link_argv_equals_publisher_receipt() -> Result<(), Box<dyn Error>> {
         let root = tempdir()?;
-        let link = fixture_link(root.path())?;
+        let mut link = fixture_link(root.path())?;
+        fs::write(root.path().join("source/native/header.h"), b"header-source")?;
+        link.sources.push(RustFactArtifact {
+            name: "header".to_string(),
+            kind: RustFactArtifactKind::File,
+            path: "native/header.h".to_string(),
+            digest: digest_bytes(b"header-source"),
+            members: Vec::new(),
+        });
+        link.objects[0].reads = vec!["header".to_string()];
+        let compiler = root.path().join("tool/bin/fake-cc");
+        fs::write(
+            &compiler,
+            "#!/bin/sh\nset -eu\nIFS= read -r content < \"$1\" || true\nIFS= read -r header < \"${1%/*}/header.h\" || true\nprintf '%s%s' \"$content\" \"$header\" > \"$2\"\n",
+        )?;
+        link.executable.digest = digest_bytes(&fs::read(&compiler)?);
+        link.executable.owner =
+            oven_store::publisher_owner::publisher_owner_identity(&root.path().join("tool"), ["bin/fake-cc"])?;
+        link.objects[0].reads = vec!["undeclared".to_string()];
+        let refused_output = root.path().join("refused");
+        let error = bake_publisher_link(&OvenPublisherLinkBakeRequest {
+            link: &link,
+            selected_target: "aarch64-apple-darwin",
+            archive_format: "darwin",
+            toolchain: "rustc fixture",
+            consuming_unit_identity: &digest_bytes(b"consumer"),
+            executable_owner_root: &root.path().join("tool"),
+            source_owner_root: &root.path().join("source"),
+            output_root: &refused_output,
+            limits: BoundedProcessLimits {
+                stdout_bytes: 1024,
+                stderr_bytes: 1024,
+                timeout: Some(Duration::from_secs(2)),
+            },
+        })
+        .err()
+        .ok_or("undeclared read was accepted")?;
+        assert!(error.to_string().contains("undeclared input `undeclared`"), "{error}");
+        link.objects[0].reads = vec!["header".to_string()];
         let output = root.path().join("product");
-        let product = match bake_publisher_link(&OvenPublisherLinkBakeRequest {
+        let product = bake_publisher_link(&OvenPublisherLinkBakeRequest {
             link: &link,
             selected_target: "aarch64-apple-darwin",
             archive_format: "darwin",
@@ -1239,13 +1406,14 @@ mod publisher_link_tests {
                 stderr_bytes: 1024,
                 timeout: Some(Duration::from_secs(2)),
             },
-        }) {
-            Ok(product) => product,
-            Err(error) if error.to_string().contains("sandbox_apply: Operation not permitted") => return Ok(()),
-            Err(error) => return Err(error.into()),
-        };
+        })?;
 
         assert_eq!(product.archive_relative_path, "libfixture.a");
+        assert_eq!(product.receipt.objects[0].reads, ["header"]);
+        assert_eq!(
+            product.receipt.objects[0].digest,
+            digest_bytes(b"native-sourceheader-source")
+        );
         let selected_argv = link.objects[0]
             .arguments
             .iter()
@@ -1341,6 +1509,7 @@ mod publisher_link_tests {
         link.sources.sort_by(|left, right| left.name.cmp(&right.name));
         link.objects = vec![
             RustFactLinkObject {
+                reads: Vec::new(),
                 name: "another.o".to_string(),
                 language: RustFactLinkLanguage::C,
                 arguments: vec![
@@ -1519,6 +1688,7 @@ mod publisher_link_tests {
             architecture => return Err(format!("unsupported macOS test architecture `{architecture}`").into()),
         };
         let object = |name: &str, input: &str| RustFactLinkObject {
+            reads: Vec::new(),
             name: name.to_string(),
             language: RustFactLinkLanguage::C,
             arguments: vec![

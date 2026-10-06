@@ -1224,6 +1224,8 @@ mod link_execution {
     /// One explicit object compilation and its literal output contract.
     #[derive(Debug, Clone)]
     pub struct PublisherExecutionObject<'a> {
+        /// Sorted unique declared inputs read without an argument reference.
+        pub reads: Vec<&'a str>,
         /// Portable relative object-file name.
         pub name: &'a str,
         /// Ordered compiler arguments for this object only.
@@ -1284,6 +1286,9 @@ mod link_execution {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub struct PublisherExecutionObjectReceipt {
+        /// Logical input names read without appearing in the compiler arguments.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub reads: Vec<String>,
         /// Portable object and archive-member name.
         pub name: String,
         /// Relocation-independent ordered compiler argument projection.
@@ -1477,13 +1482,13 @@ mod link_execution {
         let object_paths = declared_objects(&output_root, &request.objects)?;
         validate_object_arguments(&request.objects, &inputs, &object_paths)?;
         let (environment, logical_environment) = materialize_environment(&request.environment, &inputs)?;
-        let input_paths = inputs.values().cloned().collect::<Vec<_>>();
         let mut logical_arguments = BTreeMap::new();
         for object in &request.objects {
             let object_path = object_paths.get(object.name).ok_or_else(|| {
                 PublisherExecutionError::Invalid(format!("object `{}` lost its declared output path", object.name))
             })?;
             let outputs = BTreeMap::from([(object.name.to_string(), object_path.clone())]);
+            let input_paths = object_input_paths(object, &request.environment, &inputs);
             let (arguments, logical_argv) = materialize_arguments(&object.arguments, &inputs, &outputs, &owner_root)?;
             super::run_hermetic_process(
                 &executable,
@@ -1818,6 +1823,32 @@ mod link_execution {
         Ok(outputs)
     }
 
+    /// Resolve only this object's argument inputs, implicit reads, and shared environment inputs for confinement.
+    ///
+    /// Validation precedes this projection, so each logical name has a verified physical path. Reads never add argv.
+    fn object_input_paths(
+        object: &PublisherExecutionObject<'_>,
+        environment: &BTreeMap<&str, PublisherExecutionEnvironmentValue<'_>>,
+        inputs: &BTreeMap<String, PathBuf>,
+    ) -> Vec<PathBuf> {
+        object
+            .arguments
+            .iter()
+            .filter_map(|argument| match argument {
+                PublisherExecutionArgument::Input(input) => Some(*input),
+                _ => None,
+            })
+            .chain(object.reads.iter().copied())
+            .chain(environment.values().filter_map(|value| match value {
+                PublisherExecutionEnvironmentValue::Input(input) => Some(*input),
+                PublisherExecutionEnvironmentValue::Literal(_) => None,
+            }))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|name| inputs.get(name).cloned())
+            .collect()
+    }
+
     /// Validate the closed per-object input/output reference contract before any compiler invocation runs.
     fn validate_object_arguments(
         objects: &[PublisherExecutionObject<'_>],
@@ -1834,6 +1865,20 @@ mod link_execution {
             }
             let mut object_inputs = BTreeSet::new();
             let mut object_outputs = Vec::new();
+            if object.reads.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err(PublisherExecutionError::Invalid(
+                    "object reads must be sorted and unique".to_string(),
+                ));
+            }
+            for input in &object.reads {
+                if !inputs.contains_key(*input) {
+                    return Err(PublisherExecutionError::Invalid(format!(
+                        "object reads references undeclared input `{input}`"
+                    )));
+                }
+                object_inputs.insert(*input);
+                referenced_inputs.insert(*input);
+            }
             for argument in &object.arguments {
                 match argument {
                     PublisherExecutionArgument::Literal(literal) if *literal == object.name => {
@@ -2045,6 +2090,7 @@ mod link_execution {
                 })?;
                 Ok(PublisherExecutionObjectReceipt {
                     name: object.name.to_string(),
+                    reads: object.reads.iter().map(|read| (*read).to_string()).collect(),
                     logical_argv: logical_arguments.get(object.name).cloned().ok_or_else(|| {
                         PublisherExecutionError::Invalid(format!(
                             "object `{}` has no compiler invocation evidence",
@@ -2255,6 +2301,7 @@ mod link_execution {
                 ],
                 executable_digest,
                 objects: vec![PublisherExecutionObject {
+                    reads: Vec::new(),
                     name: "fixture.o",
                     arguments: vec![
                         PublisherExecutionArgument::Input("source"),

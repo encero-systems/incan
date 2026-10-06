@@ -703,6 +703,9 @@ pub enum RustFactLinkLanguage {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactLinkObject {
+    /// Sorted unique logical source names read by this compilation without appearing in its arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<String>,
     /// Portable relative object-file name and archive member name.
     pub name: String,
     /// Source language accepted by the declared compiler for this invocation.
@@ -2249,6 +2252,13 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
         &link.sources,
         &object_outputs,
     )?;
+    validate_link_source_references(link)?;
+    validate_rust_fact_name(&link.library.name, "library link name")?;
+    Ok(())
+}
+
+/// Require every object to reference a source and every declared source to participate in the object closure.
+fn validate_link_source_references(link: &RustFactLink) -> Result<(), String> {
     let input_names = link
         .sources
         .iter()
@@ -2258,6 +2268,11 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
     for object in &link.objects {
         let mut object_inputs = HashSet::new();
         let mut object_outputs = Vec::new();
+        validate_link_reads(&object.reads, &input_names)?;
+        for input in &object.reads {
+            object_inputs.insert(input.as_str());
+            referenced_inputs.insert(input.as_str());
+        }
         for argument in &object.arguments {
             match argument {
                 RustFactArgument::Literal { literal } if literal.contains('\0') => {
@@ -2311,7 +2326,19 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
             source.name
         ));
     }
-    validate_rust_fact_name(&link.library.name, "library link name")?;
+    Ok(())
+}
+
+/// Validate the sorted implicit source reads of one native object against its declared source catalog.
+fn validate_link_reads(reads: &[String], sources: &HashSet<&str>) -> Result<(), String> {
+    if reads.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err("object reads must be sorted and unique".to_string());
+    }
+    for read in reads {
+        if !sources.contains(read.as_str()) {
+            return Err(format!("object reads references undeclared source `{read}`"));
+        }
+    }
     Ok(())
 }
 
@@ -5289,6 +5316,44 @@ library = {{ name = "sys_helper", kind = "{{kind}}" }}
     }
 
     #[test]
+    /// Implicit header reads complete the source closure without changing compiler arguments.
+    fn rust_fact_link_reads_complete_source_closure() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let content = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "debug"
+features = []
+cfg = []
+[[rust.facts.link]]
+name = "helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "bin/clang", digest = "{digest}" }}
+sources = [{{ name = "header", kind = "file", path = "c/helper.h", digest = "{digest}" }}, {{ name = "source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+objects = [{{ name = "helper.o", language = "c", reads = ["header"], arguments = [{{ input = "source" }}, {{ output = "helper.o" }}] }}]
+library = {{ name = "helper", kind = "static" }}
+"#
+        );
+        let manifest = ProjectManifest::from_str(&content, Path::new("loaf.toml"))?;
+        assert_eq!(manifest.rust_facts[0].link[0].objects[0].reads, ["header"]);
+        for (reads, expected) in [
+            ("unknown", "undeclared source `unknown`"),
+            ("header\", \"header", "reads must be sorted and unique"),
+            ("source\", \"header", "reads must be sorted and unique"),
+        ] {
+            let invalid = content.replace("reads = [\"header\"]", &format!("reads = [\"{reads}\"]"));
+            let error = ProjectManifest::from_str(&invalid, Path::new("loaf.toml"))
+                .err()
+                .ok_or("invalid implicit reads were accepted")?;
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    /// Invalid output references and detached source declarations refuse admission.
     fn rust_fact_link_refuses_invalid_object_argument_closure() -> TestResult {
         let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let base = format!(

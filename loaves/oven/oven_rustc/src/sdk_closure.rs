@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 type Error = Box<dyn std::error::Error>;
-const INDEX_COMMIT: &str = "178df58e4d8bf6109ef271e0d2fb2cc1d7abbf95";
+const INDEX_COMMIT: &str = "4778d4285d98850e8767da183d33df9e2531ac2d";
 
 mod native;
 
