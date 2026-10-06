@@ -46,6 +46,7 @@ pub from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 # ---- The checked Body IR, read through Rust interop ----
+from strings import text_helper
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
     ArgumentBinding as RustArgumentBinding,
@@ -498,7 +499,7 @@ def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &Rus
             builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
         RustStatementKind.Expr(value=value) =>
             # An expression statement only needs its operand to be valid; its value is discarded.
-            _ = scalar_operand(value, span)?
+            return lower_discarded_operand(builder, value, span)
         RustStatementKind.Call(destination=_destination, callee=_callee, args=_args, may_panic=_may_panic) =>
             return lower_call(module, builder, statement, span)
         RustStatementKind.Await(destination=_destination, awaited=_awaited) => return Err("unsupported Body IR Await")
@@ -520,7 +521,12 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
     mut result = literal(Constant.Unit, span)
     match value:
         Some(operand) =>
-            result = scalar_operand(operand, span)?
+            if builder.locals[0].ty == PlanType.String:
+                text = display_operand(builder, operand, span)?
+                forget_owned(builder, text.local)
+                result = read_place(text, true, span)
+            else:
+                result = scalar_operand(operand, span)?
         None => pass
     builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
     drop_all_owned(builder, span)
@@ -737,7 +743,7 @@ def lower_local_call(
         Some(call_id) =>
             if call_id != body.direct_call_id:
                 return Err("Body IR call identity disagrees with target body")
-    operands = ordered_arguments(target.binding, arguments, len(body.params), span)?
+    operands = ordered_arguments(builder, target.binding, arguments, body, span)?
     mut output = plan_place(0, span)
     # A call whose result is unused still needs somewhere to put it.
     match destination:
@@ -745,7 +751,16 @@ def lower_local_call(
             output = scalar_place(place, span)?
         None =>
             output = temporary(builder, scalar_type(body.return_type)?, span)
-    terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
+    if scalar_type(body.return_type)? == PlanType.String:
+        result = temporary(builder, PlanType.String, span)
+        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, result, span)
+        builder.owned.append(result.local)
+        drop_owned(builder, output.local, span)
+        forget_owned(builder, result.local)
+        builder.emit(plan_assign(output, RvalueKind.Use(read_place(result, true, span)), span))
+        builder.owned.append(output.local)
+    else:
+        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
     return Ok(None)
 
 
@@ -790,7 +805,7 @@ def lower_delegated_call(
     for parameter in delegation.parameters:
         parameters.append(scalar_type(parameter)?)
     result = scalar_type(delegation.return_type)?
-    operands = ordered_arguments(target.binding, arguments, len(parameters), span)?
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -804,9 +819,27 @@ def lower_delegated_call(
 
 
 def ordered_arguments(
+    mut builder: Builder,
     binding: &RustArgumentBinding,
     elements: &list[RustArgumentElement],
-    count: int,
+    body: &RustBody,
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Use the body's parameter types when materializing arguments in source order."""
+    mut types: list[PlanType] = []
+    for parameter in body.params:
+        ty = scalar_type(parameter.ty)?
+        if ty == PlanType.String and parameter.mutable:
+            return Err("unsupported Body IR mutable String argument")
+        types.append(ty)
+    return ordered_slot_operands(builder, binding, elements, types, span)
+
+
+def ordered_slot_operands(
+    mut builder: Builder,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    types: list[PlanType],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """
@@ -815,6 +848,7 @@ def ordered_arguments(
     Body IR has already evaluated the arguments in written order; the binding says which slot each one fills.
     Defaults, missing slots, named or spread elements are refused.
     """
+    count = len(types)
     match binding:
         RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
             if len(defaults) != 0 or len(bindings) != len(elements) or len(bindings) != count:
@@ -831,7 +865,11 @@ def ordered_arguments(
                 occupied.append(slot)
                 match elements[index].as_one():
                     Some(value) =>
-                        operands[slot] = scalar_operand(value, span)?
+                        if types[slot] == PlanType.String:
+                            text = display_operand(builder, value, span)?
+                            operands[slot] = read_place(text, true, span)
+                        else:
+                            operands[slot] = scalar_operand(value, span)?
                     None => return Err("unsupported Body IR named or spread ArgumentElement")
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
@@ -877,7 +915,10 @@ def lower_runtime_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Lower the runtime helpers the slice supports; today, the frontend's builtin-range validation."""
+    """Dispatch retained runtime helper identities."""
+    match text_helper(helper):
+        Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
+        None => pass
     match helper:
         RustHelper.RangeValidate =>
             if len(arguments) != 3:
@@ -901,6 +942,7 @@ def lower_builtin(
     match builtin:
         RustBuiltin.Print => return lower_print(builder, arguments, span)
         RustBuiltin.Float => return lower_float_builtin(builder, arguments, destination, span)
+        RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
 
 
@@ -1114,20 +1156,134 @@ def lower_string_assignment(
     value: &RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Assign a string: an f-string, or a string value moved into the local; other string operations are refused."""
-    # Replacing a live string would need the old one dropped first; that is not part of this slice.
-    if destination.local in builder.owned:
-        return Err("unsupported Body IR reassignment of live formatted String")
+    """Evaluate a replacement before dropping its old value, preserving retained text ownership."""
     match value:
-        RustRvalue.Format(parts) => return lower_format(builder, destination, parts, span)
+        RustRvalue.Format(parts) =>
+            text = temporary(builder, PlanType.String, span)
+            lower_format(builder, text, parts, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, destination.local, span)
+            builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(destination.local)
+            return Ok(None)
         RustRvalue.Use(operand) =>
             text = display_operand(builder, operand, span)?
-            # Ownership moves from the display temporary to the destination local.
             forget_owned(builder, text.local)
+            drop_owned(builder, destination.local, span)
             builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
             builder.owned.append(destination.local)
             return Ok(None)
         _ => return Err("unsupported Body IR string Rvalue outside formatting")
+
+
+def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
+    """Evaluate discarded text through retained ownership facts and drop its materialized owner."""
+    mut is_text = false
+    match value:
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Str(_text) =>
+                    is_text = true
+                _ => pass
+        RustOperand.Place(read) =>
+            place = scalar_place(read.place, span)?
+            is_text = builder.locals[place.local].ty == PlanType.String
+    if is_text:
+        text = display_operand(builder, value, span)?
+        drop_owned(builder, text.local, span)
+    else:
+        _ = scalar_operand(value, span)?
+    return Ok(None)
+
+
+def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow an owned string for a helper without transferring its owner."""
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(read.place, span)?
+            if builder.locals[place.local].ty != PlanType.String:
+                return Err("unsupported Body IR non-string text operand")
+            match read.fact:
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
+                _ => pass
+            reference = temporary(builder, PlanType.StringRef, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+            return Ok(read_place(reference, false, span))
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Str(text) =>
+                    owner = owned_literal(builder, str(text), span)
+                    reference = temporary(builder, PlanType.StringRef, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                    return Ok(read_place(reference, false, span))
+                _ => return Err("unsupported Body IR non-string text constant")
+
+
+def lower_text_helper(
+    mut builder: Builder,
+    name: str,
+    result: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind the retained string-helper identity to shared operands and its monomorphic runtime entry."""
+    if len(arguments) != 2:
+        return Err("invalid Body IR string helper arity")
+    mut operands: list[Operand] = []
+    for argument in arguments:
+        match argument.as_one():
+            Some(value) => operands.append(borrow_text_operand(builder, value, span)?)
+            None => return Err("unsupported Body IR spread string helper argument")
+    text = temporary(builder, result, span)
+    external_call(
+        builder,
+        f"incan_native_runtime::{name}",
+        [PlanType.StringRef, PlanType.StringRef],
+        result,
+        operands,
+        text,
+        span,
+    )
+    match destination:
+        Some(place) =>
+            output = scalar_place(place, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, output.local, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, result == PlanType.String, span)), span))
+            if result == PlanType.String:
+                builder.owned.append(output.local)
+        None => drop_owned(builder, text.local, span)
+    return Ok(None)
+
+
+def lower_str_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Materialize str() using the same scalar display conversions as legacy formatting."""
+    mut text = plan_place(0, span)
+    if len(arguments) == 0:
+        text = owned_literal(builder, "", span)
+    elif len(arguments) == 1:
+        match arguments[0].as_one():
+            Some(value) =>
+                text = display_operand(builder, value, span)?
+            None => return Err("unsupported Body IR spread str argument")
+    else:
+        return Err("unsupported Body IR str arity")
+    match destination:
+        Some(place) =>
+            output = scalar_place(place, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, output.local, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(output.local)
+        None => drop_owned(builder, text.local, span)
+    return Ok(None)
 # =====================================================================================================================
 # Module and function entry points
 # =====================================================================================================================
@@ -1179,8 +1335,6 @@ def lower_function(
         None => pass
     span = location(body.span, source, file)
     return_type = scalar_type(body.return_type)?
-    if return_type == PlanType.String:
-        return Err("unsupported Body IR String return type outside formatting")
     mut builder = Builder(
         locals=frame_locals(body, return_type, span, source, file)?,
         blocks=[],
@@ -1195,12 +1349,16 @@ def lower_function(
     )
     parameters = frame_parameters(body, source, file)?
     _ = builder.new_block(span)
+    for index in range(len(parameters)):
+        if parameters[index].ty == PlanType.String:
+            builder.owned.append(index + 1)
     lower_block(module, builder, body.block)?
     # A body that falls off its end returns unit; any other return type must have returned explicitly.
     if not builder.closed[builder.current]:
         if return_type != PlanType.Unit:
             return Err("Body IR non-unit body has no retained Return")
         builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span))
+        drop_all_owned(builder, span)
         builder.finish(TerminatorKind.Return, span)
     function = Function(
         name=body.name,
@@ -1230,12 +1388,12 @@ def frame_locals(
 
 
 def frame_parameters(body: &RustBody, source: str, file: str) -> Result[list[Parameter], str]:
-    """The frame's parameters, in declaration order; string and defaulted parameters are refused."""
+    """The frame's parameters, in declaration order; mutable string and defaulted parameters are refused."""
     mut parameters: list[Parameter] = []
     for parameter in body.params:
         ty = scalar_type(parameter.ty)?
-        if ty == PlanType.String:
-            return Err("unsupported Body IR String parameter outside formatting")
+        if ty == PlanType.String and parameter.mutable:
+            return Err("unsupported Body IR mutable String parameter")
         # Parameters are the first locals, so the n-th parameter must be local n.
         if int(parameter.local.index()) != len(parameters):
             return Err("Body IR parameter order disagrees with scalar frame")
