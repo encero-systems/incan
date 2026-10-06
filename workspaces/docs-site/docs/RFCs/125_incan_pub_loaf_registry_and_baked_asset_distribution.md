@@ -174,7 +174,7 @@ The registry must publish a sparse index: one file per package at `index/<scope>
 | `cksum` | the source Loaf digest, `sha256:` prefixed |
 | `facets` | the facet kinds the Loaf declares, such as `incan`, `rust` |
 | `rust` | for a Loaf with a Rust facet, its `[rust]` table (`name`, `type`, `edition`), so the resolver can tell a host edge from index lines alone |
-| `deps` | the version's Loaf dependencies as the manifest declares them, each `{name, loaf, req, features, default-features, optional, target}`: `name` is the extern key, `req` the RFC 119 version requirement, and `target` absent when unconditional |
+| `deps` | the version's Loaf dependencies as the manifest declares them, each `{name, loaf, req, features, default-features, optional, target}`: `name` is the extern key, `req` the RFC 119 version requirement, and `target` absent when unconditional; a key declared once per target appears once per declaration |
 | `features` | the version's feature table in the RFC 119 grammar, so the whole graph resolves from index lines before any record or archive is fetched |
 | `adopted` | for an adopted Loaf, `{registry, package, version, checksum}` with a `sha256:` prefixed checksum of the upstream archive; absent for a published Loaf |
 | `requires` | toolchain requirements, at least the compiler and Oven ranges |
