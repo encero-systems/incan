@@ -64,7 +64,7 @@ The two focused test commands exercise the Rust graph policy and its strict exch
 
 ## Resolver index pin and policy boundaries
 
-`loaf_pin.pinned_revision()` selects incan.pub revision `4a3297b98b469ca8a11d5b69783cc3cf7049d414` from `index-next`. The pin audit drivers require a caller-owned immutable extraction whose `revision` file names that revision; the marker is a selection check, not an integrity attestation. `read_index` continues to accept explicit fixture directories for tests. Neither driver changes the registry checkout or reads upstream package metadata.
+`loaf_pin.pinned_revision()` selects incan.pub revision `452504b51712b6a3ac12a2e1b79ba69fff55e6b6` from `index`. The pin audit drivers require a caller-owned immutable extraction whose `revision` file names that revision; the marker is a selection check, not an integrity attestation. `read_index` continues to accept explicit fixture directories for tests. Neither driver changes the registry checkout or reads upstream package metadata.
 
 The pure feature audit takes the retained cfg output and its target triple explicitly. It refuses recorded facts for another target rather than guessing their cfg values. A non-weak `x/f` adds local feature `x` only when that feature exists and an optional declaration of `x` applies to the supplied target. `dep:x` and `x?/f` do not add `x`; defaults enter the audit only through recorded membership. The resolver applies the same target eligibility independently in host and target domains.
 
