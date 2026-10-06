@@ -183,6 +183,7 @@ pub fn resolve_executable_requirements(
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
         let module = modules.entry(owner.clone()).or_insert_with(|| BodyIrModule {
             module_id: CompilerNodeId::module(owner),
+            stdlib_delegations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
