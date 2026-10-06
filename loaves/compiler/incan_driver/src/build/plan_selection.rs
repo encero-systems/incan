@@ -510,14 +510,18 @@ pub fn packaged_provider_selection_links_required_stdlib(
         .filter_map(|provider| provider.artifact.as_ref())
         .map(|artifact| artifact.dependency_key.replace('-', "_"))
         .collect::<BTreeSet<_>>();
-    required.extend(
-        provider_plan
-            .source_std_namespace_roots()
-            .iter()
-            .filter_map(|root| incan_lang::lang::stdlib::find_namespace(root))
-            .flat_map(incan_provider::inventory::stdlib_namespace_cargo_dependencies)
-            .map(|dependency| dependency.crate_name.replace('-', "_")),
-    );
+    for root in provider_plan.source_std_namespace_roots() {
+        let Some(namespace) = incan_lang::lang::stdlib::find_namespace(&root) else {
+            continue;
+        };
+        let dependencies = incan_provider::inventory::stdlib_namespace_cargo_dependencies(namespace)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        required.extend(
+            dependencies
+                .into_iter()
+                .map(|dependency| dependency.crate_name.replace('-', "_")),
+        );
+    }
     if required.is_empty() {
         return Ok(Some(selection));
     }

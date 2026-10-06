@@ -16,5 +16,5 @@ root = "rust"
 profile = "minimal"
 
 [dependencies]
-incan_lang = { path = "../../kernel/incan_lang" }
-incan_std_core = { path = "../core/rust", version = "0.6.0-dev.6" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_std_core = { loaf = "incan_std_core", path = "../core/rust", version = "0.6.0-dev.6" }

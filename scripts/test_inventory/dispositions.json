@@ -8956,6 +8956,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_model/src/target_condition.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven manifest grammar; canonical target admission independent of compiler emission.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_model/src/toolchain_layout.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",

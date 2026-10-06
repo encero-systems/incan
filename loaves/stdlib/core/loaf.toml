@@ -13,5 +13,5 @@ edition = "2024"
 root = "rust"
 
 [dependencies]
-incan_lang = { path = "../../kernel/incan_lang" }
-incan_derive = { path = "../derive/incan_derive", version = "0.6.0-dev.6" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_derive = { loaf = "incan_derive", path = "../derive/incan_derive", version = "0.6.0-dev.6" }
