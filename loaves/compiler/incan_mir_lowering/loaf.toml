@@ -6,6 +6,7 @@ version = "0.6.0-dev.7"
 incan_mir_plan = { loaf = "incan_mir_plan", path = "../incan_mir_plan" }
 
 [rust-dependencies]
+incan_lang = { path = "../../kernel/incan_lang" }
 incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
 
 [build]

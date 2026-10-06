@@ -209,3 +209,300 @@ pub(super) fn check_plain_model(
     );
     Ok(())
 }
+
+/// Lists preserve legacy indexing, mutation, shared parameters, owned returns, and loop output.
+pub(super) fn check_lists(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("lists");
+    fs::create_dir_all(&project)?;
+    let source = project.join("lists.incn");
+    fs::write(
+        &source,
+        r#"
+def bump(mut values: list[int]) -> None:
+    values.append(8)
+    values[-1] = 9
+
+def count(values: list[int]) -> int:
+    return len(values)
+
+def copy_values(values: list[int]) -> list[int]:
+    return values
+
+def main() -> None:
+    mut numbers = [1, 2, 3]
+    mut words = ["one", "two"]
+    numbers.append(4)
+    words.append("three")
+    numbers[-1] = 7
+    println(numbers[-1])
+    println(words[-1])
+    println(2 in numbers)
+    println("three" in words)
+    bump(numbers)
+    println(count(numbers))
+    copied = copy_values(numbers)
+    println(copied[-1])
+    for value in numbers:
+        println(value)
+    for word in words:
+        println(word)
+    mut fractions = [1.5, 2.5]
+    fractions.append(-1.0)
+    for fraction in fractions:
+        println(fraction)
+    mut flags = [true, false]
+    flags.append(true)
+    println(flags[-1])
+    mut nested = [[1, 2], [3]]
+    nested[0][-1] = 8
+    println(nested[0][1])
+    nested.append([4])
+    for row in nested:
+        println(len(row))
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "native lists compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy lists compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/lists")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy lists execution");
+    success(&actual, "native lists execution");
+    assert_eq!(actual.stdout, expected.stdout, "list output must be byte-identical");
+    assert_eq!(
+        actual.stdout,
+        b"7\nthree\ntrue\ntrue\n5\n9\n1\n2\n3\n7\n9\none\ntwo\nthree\n1.5\n2.5\n-1.0\ntrue\n8\n2\n1\n1\n"
+    );
+    Ok(())
+}
+
+/// Prove class receiver borrowing, field writes, canonical method dispatch, and class passing against legacy.
+pub(super) fn check_source_class(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let closure = runtime_closure(runtime, "release")?;
+    let project = root.join("source-class");
+    fs::create_dir_all(&project)?;
+    let source = project.join("source_class.incn");
+    fs::write(
+        &source,
+        r#"class Counter:
+  value: int
+  label: str
+
+  def get(self) -> int:
+    return self.value
+
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+  def twice(mut self) -> None:
+    self.bump(amount=self.get())
+
+  def rename(mut self, label: str) -> None:
+    self.label = label
+
+  def text(self) -> str:
+    return self.label
+
+class Other:
+  value: int
+
+  def get(self) -> int:
+    return self.value + 1
+
+def inspect(counter: Counter) -> int:
+  return counter.get()
+
+def main() -> None:
+  mut counter = Counter(label="counter", value=3)
+  counter.bump(amount=4)
+  println(counter.get())
+  counter.twice()
+  println(inspect(counter))
+  other = Other(value=8)
+  println(other.get())
+  counter.rename("renamed")
+  println(counter.text())
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "source class native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "source class legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/source_class")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source class legacy execution");
+    success(&actual, "source class native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "source class output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"7\n14\n9\nrenamed\n");
+
+    Ok(())
+}
+
+/// Prove numeric conversions against the legacy native route.
+pub(super) fn check_numerics(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let closure = runtime_closure(runtime, "release")?;
+    let project = root.join("numerics");
+    fs::create_dir_all(&project)?;
+    let source = project.join("numerics.incn");
+    fs::write(
+        &source,
+        "def main() -> None:\n  println(int())\n  println(float())\n  println(int(true))\n  println(int(false))\n  println(int(12.75))\n  println(int(-12.75))\n  println(float(7))\n  println(int(\"1_024\"))\n  println(float(\"1.25\"))\n  small: u8 = 250\n  delta: u8 = 4\n  println(small + delta)\n  wide: i128 = 170141183460469231731687303715884105727\n  println(wide)\n  rounded: f32 = 1.23456789\n  println(rounded)\n  println(int(small))\n  println(float(small))\n  println(int(float(\"inf\")))\n  println(int(float(\"-inf\")))\n  println(int(float(\"NaN\")))\n",
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "numerics native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "numerics legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/numerics")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "numerics legacy execution");
+    success(&actual, "numerics native execution");
+    assert_eq!(actual.stdout, expected.stdout, "numerics output must be byte-identical");
+    assert_eq!(actual.stdout, b"0\n0.0\n1\n0\n12\n-12\n7.0\n1024\n1.25\n254\n170141183460469231731687303715884105727\n1.2345679\n250\n250.0\n9223372036854775807\n-9223372036854775808\n0\n");
+
+    check_numeric_wrapping(driver, &project, sysroot, &closure)?;
+    for (name, source, message) in [
+        (
+            "nonfinite",
+            "def grow(value: f32) -> f32:\n  return value * value\n\ndef main() -> None:\n  value: f32 = 3.0e38\n  println(grow(value))\n",
+            "non-finite",
+        ),
+        (
+            "invalid_parse",
+            "def main() -> None:\n  println(int(\"1__2\"))\n",
+            "ValueError",
+        ),
+    ] {
+        check_numeric_failure(driver, &project, sysroot, &closure, name, source, message)?;
+    }
+    Ok(())
+}
+
+/// Compare sized integer overflow in the legacy release profile, which uses wrapping arithmetic.
+fn check_numeric_wrapping(
+    driver: &Path,
+    project: &Path,
+    sysroot: &Path,
+    closure: &NativeClosure,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = project.join("wrapping.incn");
+    fs::write(
+        &source,
+        "def grow(value: u8) -> u8:\n  return value + 10\n\ndef main() -> None:\n  value: u8 = 250\n  println(grow(value))\n",
+    )?;
+    let native = project.join("wrapping-native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, closure)?,
+        "wrapping native compilation",
+    );
+    let legacy = project.join("wrapping-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "wrapping legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/wrapping")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "wrapping legacy execution");
+    success(&actual, "wrapping native execution");
+    assert_eq!(actual.stdout, expected.stdout, "wrapping output must be byte-identical");
+    assert_eq!(actual.stdout, b"4\n");
+    Ok(())
+}
+
+/// Compare runtime rejection after both routes compile, without comparing panic location paths.
+fn check_numeric_failure(
+    driver: &Path,
+    project: &Path,
+    sysroot: &Path,
+    closure: &NativeClosure,
+    name: &str,
+    source: &str,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = project.join(format!("{name}.incn"));
+    fs::write(&path, source)?;
+    let native = project.join(format!("{name}-native"));
+    success(
+        &compile_source(driver, &path, &native, sysroot, closure)?,
+        "numeric failure native compilation",
+    );
+    let legacy = project.join(format!("{name}-legacy"));
+    success(
+        &support::repo_command()
+            .current_dir(project)
+            .arg("build")
+            .arg(&path)
+            .arg(&legacy)
+            .output()?,
+        "numeric failure legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release").join(name)).output()?;
+    let actual = Command::new(native).output()?;
+    assert!(!expected.status.success(), "legacy {name} unexpectedly succeeded");
+    assert!(!actual.status.success(), "native {name} unexpectedly succeeded");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "numeric failure output must be byte-identical"
+    );
+    for output in [&expected, &actual] {
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(message), "{name}: {error}");
+    }
+    Ok(())
+}

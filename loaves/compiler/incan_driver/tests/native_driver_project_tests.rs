@@ -165,8 +165,16 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     let frontend = repo.join("loaves/compiler/incan_frontend");
     let core = core.to_str().ok_or("semantics-core path is not UTF-8")?;
     let frontend = frontend.to_str().ok_or("frontend path is not UTF-8")?;
+    // The stored suite's semantics-core snapshot uses its sealed runtime crates. A direct numeric identity import
+    // must select that same incan_lang package, rather than a second checkout copy with the same name and version.
+    let lang = match std::env::var_os("INCAN_INTERNAL_OVEN_RUNTIME_ROOT") {
+        Some(runtime) => PathBuf::from(runtime).join("crates/incan_lang"),
+        None => repo.join("loaves/kernel/incan_lang"),
+    };
+    let lang = lang.to_str().ok_or("language-kernel path is not UTF-8")?;
     let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
         .replace("../incan_mir_plan", "../library")
+        .replace("../../kernel/incan_lang", lang)
         .replace("../../kernel/incan_semantics_core", core);
     fs::write(lowering.join("loaf.toml"), manifest)?;
     copy_tree(
@@ -527,6 +535,42 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
     corpus::check_plain_model(
         &fixture.driver_binary("release"),
         &fixture.scratch("plain-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove list indexing, mutation, shared parameters, owned returns and iteration against legacy.
+#[test]
+fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_lists(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("lists")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove class construction, shared and mutable receivers, and passing classes against legacy.
+#[test]
+fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_source_class(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("source-class")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove canonical scalar casts and default values byte-identical to legacy.
+#[test]
+fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_numerics(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("numerics")?,
         &fixture.sysroot,
         &fixture.formatting,
     )
