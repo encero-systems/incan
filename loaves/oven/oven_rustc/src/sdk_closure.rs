@@ -974,7 +974,44 @@ pub struct SdkCompiledUnit {
     inspection: serde_json::Value,
 }
 
+/// Portable coordinates of one receipt-bound native SDK output inside its retained store entry.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SdkNativeArtifact {
+    /// Complete selected package, domain, feature, and archive binding.
+    pub binding: SdkLockedUnit,
+    /// Immutable Oven entry that owns both source and native output.
+    pub store_identity: String,
+    /// Receipt authorizing the native compilation.
+    pub receipt_identity: String,
+    /// Native library path relative to the entry's artifact root.
+    pub relative_path: String,
+    /// Digest of the native bytes recorded by the immutable entry manifest.
+    pub digest: String,
+}
+
 impl SdkCompiledUnit {
+    /// Export the native output's admitted coordinates without rereading its source or native bytes.
+    pub fn native_artifact(&self) -> Result<SdkNativeArtifact, Error> {
+        let relative = self
+            .output
+            .strip_prefix(&self.owner.artifact_root)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let file = self
+            .owner
+            .admitted_materialized_files()
+            .iter()
+            .find(|file| file.relative_path == relative)
+            .ok_or("native SDK output is absent from its admitted artifact manifest")?;
+        Ok(SdkNativeArtifact {
+            binding: self.binding.clone(),
+            store_identity: self.owner.manifest.identity.clone(),
+            receipt_identity: self.compiled_identity().to_string(),
+            relative_path: relative,
+            digest: file.digest.clone(),
+        })
+    }
     /// Receipt identity binding source, dependencies, facts, compiler and profile.
     pub fn compiled_identity(&self) -> &str {
         &self.owner.manifest.receipt_identity

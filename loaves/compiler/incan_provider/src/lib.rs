@@ -14,6 +14,7 @@ pub mod inventory;
 pub mod lock_semantics;
 pub mod requirements;
 pub mod sdk_build;
+pub mod sdk_native;
 pub mod sdk_store;
 #[cfg(any(test, feature = "test_support"))]
 pub mod test_support;

@@ -99,6 +99,7 @@ pub fn prepare_rust_inspect_workspace(
     };
     let mut source_loaf = None;
     let mut project_source_authorities = None;
+    let mut sdk_native = Vec::new();
     if direct_oven_inspection {
         if std::env::var_os(oven_rustc::loaf::OVEN_LOAF_ENV).is_some_and(|value| value == "1") {
             let source = std::env::var_os(OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV)
@@ -125,6 +126,7 @@ pub fn prepare_rust_inspect_workspace(
             )?;
             source_loaf = prepared._source_loaf;
             project_source_authorities = prepared._project_source_authorities;
+            sdk_native = prepared._sdk_native;
         }
         mark_oven_direct_rust_inspection(&rust_inspect_manifest_dir)?;
     }
@@ -138,6 +140,7 @@ pub fn prepare_rust_inspect_workspace(
         manifest_dir: rust_inspect_manifest_dir,
         _source_loaf: source_loaf,
         _project_source_authorities: project_source_authorities,
+        _sdk_native: sdk_native,
     }))
 }
 
@@ -153,6 +156,17 @@ fn prepare_oven_inspection_authority(
     prepared_project_source_authorities: Option<Arc<crate::lock::PreparedOvenProjectRegistrySourceAuthorities>>,
     explicit_oven_bake: bool,
 ) -> CliResult<PreparedRustInspectWorkspace> {
+    if let Some(sdk_native) = crate::sdk_closure::install_published_sdk_inspection_authority(
+        manifest_dir,
+        authority_request.registry_dependencies,
+    )? {
+        return Ok(PreparedRustInspectWorkspace {
+            manifest_dir: manifest_dir.to_path_buf(),
+            _source_loaf: None,
+            _project_source_authorities: None,
+            _sdk_native: sdk_native,
+        });
+    }
     let mut source_loaf = None;
     let mut project_source_authorities = None;
     let mut receipt_request = OvenGeneratedProjectRequest::new(
@@ -231,6 +245,7 @@ fn prepare_oven_inspection_authority(
         manifest_dir: manifest_dir.to_path_buf(),
         _source_loaf: source_loaf,
         _project_source_authorities: project_source_authorities,
+        _sdk_native: Vec::new(),
     })
 }
 

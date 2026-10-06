@@ -90,7 +90,7 @@ pub fn discover_or_reuse_published_sdk_inventory() -> ProviderResult<Option<Arc<
 
 /// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
 pub fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
-    if let Some(inventory) = discover_active_sdk_inventory()? {
+    if let Some(inventory) = discover_or_reuse_published_sdk_inventory()? {
         return Ok(Some(inventory));
     }
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {

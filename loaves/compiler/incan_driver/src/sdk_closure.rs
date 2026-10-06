@@ -10,11 +10,112 @@ use rust_inspect::{
 
 use crate::error::CliError;
 
+/// Install the source-current SDK's frozen native graph when it covers every requested registry dependency.
+///
+/// This read-only consumer boundary accepts only a published SDK inventory and its complete native receipt catalog.
+/// Non-SDK paths and missing or incompatible bindings stay with the project's own authority; no Cargo reader or
+/// dependency resolver is used to extend the SDK graph.
+pub fn install_published_sdk_inspection_authority(
+    destination: &Path,
+    dependencies: &[oven_model::manifest::DependencySpec],
+) -> Result<Option<Vec<oven_store::store::OvenStoreExecutionPayload>>, CliError> {
+    let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()
+        .map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    install_sdk_inspection_authority_from(&inventory.root, destination, dependencies)
+}
+
+/// Validate requested bindings before copying one immutable SDK generation's paired graph and source authority.
+fn install_sdk_inspection_authority_from(
+    root: &Path,
+    destination: &Path,
+    dependencies: &[oven_model::manifest::DependencySpec],
+) -> Result<Option<Vec<oven_store::store::OvenStoreExecutionPayload>>, CliError> {
+    use oven_model::manifest::DependencySource;
+    let receipts = root.join(".sealed-native-receipts.json");
+    if !receipts.is_file() {
+        return Ok(None);
+    }
+    let receipts: BTreeMap<String, String> =
+        serde_json::from_slice(&std::fs::read(receipts).map_err(|error| CliError::failure(error.to_string()))?)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+    if receipts.is_empty()
+        || receipts.values().any(|receipt| {
+            !receipt.starts_with("sha256:")
+                || receipt.len() != 71
+                || !receipt[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(CliError::failure(
+            "SDK inspection selection has an invalid native receipt catalog",
+        ));
+    }
+    let bindings = receipts
+        .keys()
+        .map(|key| serde_json::from_str::<oven_rustc::sdk_closure::SdkLockedUnit>(key))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    for dependency in dependencies {
+        let name = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
+        let requirement = dependency
+            .version
+            .as_deref()
+            .map(semver::VersionReq::parse)
+            .transpose()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if !matches!(dependency.source, DependencySource::Registry)
+            || dependency.crate_name.replace('-', "_") != name.replace('-', "_")
+            || !bindings.iter().any(|binding| {
+                binding.loaf == format!("crates-io/{name}")
+                    && binding.domain == "target"
+                    && dependency
+                        .features
+                        .iter()
+                        .all(|feature| binding.features.contains(feature))
+                    && semver::Version::parse(&binding.version).is_ok_and(|version| {
+                        requirement
+                            .as_ref()
+                            .is_none_or(|requirement| requirement.matches(&version))
+                    })
+            })
+        {
+            return Ok(None);
+        }
+    }
+    let selected = incan_provider::sdk_native::retain_sdk_native_artifacts(root)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let mut retained_roots = selected
+        .iter()
+        .map(|owner| owner.artifact_root.join("source").canonicalize())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    retained_roots.sort();
+    retained_roots.dedup();
+    let declared_roots = rust_inspect::oven_inspection_registry_source_roots(root)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if retained_roots != declared_roots {
+        return Err(CliError::failure(
+            "SDK inspection source authority does not match its retained native units",
+        ));
+    }
+    for file in [
+        rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
+        OVEN_DIRECT_LOAF_PROJECT_FILE,
+    ] {
+        std::fs::copy(root.join(file), destination.join(file)).map_err(|error| {
+            CliError::failure(format!("failed to install sealed SDK inspection authority: {error}"))
+        })?;
+    }
+    Ok(Some(selected))
+}
+
 /// Publish the successfully compiled SDK subgraph and preserve named unavailable units alongside it.
 ///
 /// The caller retains the closure while linking SDK components and inspecting their Rust facets. This authority
-/// covers only the compiled units, and does not establish that every SDK component can be published. Component
-/// publication must omit unavailable roots and preserve their named import diagnostics.
+/// covers only the compiled units, and does not establish that every SDK component can be published. Automatic
+/// provider publication requires a complete closure and uses the provider's native publication transaction instead.
 pub fn seal_sdk_closure_inspection_sources(
     closure: &SdkCompiledClosure,
     authority_root: &Path,
@@ -90,6 +191,31 @@ mod tests {
         std::fs::write(authority.join("Cargo.lock"), "invalid TOML")?;
         let workspace = RustWorkspace::load_with_options(&authority, &|_| {}, false)?;
         assert!(workspace.crate_by_name("local").is_some());
+        incan_provider::sdk_native::write_sdk_native_authority(&closure, &authority)?;
+        incan_provider::sdk_native::write_sdk_native_artifact_catalog(&closure, &output.join("store"), &authority)?;
+        let consumer = root.path().join("consumer");
+        std::fs::create_dir(&consumer)?;
+        let consumer_native = super::install_sdk_inspection_authority_from(&authority, &consumer, &[])?
+            .ok_or("native SDK selection must cover this source-only consumer")?;
+        assert_eq!(consumer_native.len(), 1);
+        std::fs::write(consumer.join(OVEN_DIRECT_INSPECTION_MARKER), "1\n")?;
+        std::fs::write(consumer.join(OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")?;
+        std::fs::write(consumer.join("Cargo.toml"), "invalid TOML")?;
+        assert!(
+            RustWorkspace::load_with_options(&consumer, &|_| {}, false)?
+                .crate_by_name("local")
+                .is_some()
+        );
+        let missing = oven_model::manifest::DependencySpec {
+            crate_name: "absent".to_string(),
+            version: Some("1".to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: oven_model::manifest::DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        assert!(super::install_sdk_inspection_authority_from(&authority, &consumer, &[missing])?.is_none());
         let cache = rust_inspect::RustMetadataCache::new();
         let metadata = cache.get_or_extract(&authority, "local::value", &|_| {})?;
         assert_eq!(metadata.canonical_path, "local::value");

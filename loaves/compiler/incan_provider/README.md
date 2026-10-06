@@ -6,7 +6,7 @@ Provider and SDK contracts (manifest types, component catalog, inventory) and th
 
 ## Current sources
 
-- `loaves/compiler/incan_provider/src/` — the loaders: `inventory`, `requirements`, `sdk_store`, `sdk_build`, `vocab_extraction`, `effect_digest`, `lock_semantics`
+- `loaves/compiler/incan_provider/src/` — the loaders: `inventory`, `requirements`, `sdk_store`, `sdk_build`, `sdk_native`, `vocab_extraction`, `effect_digest`, `lock_semantics`
 - `loaves/compiler/incan_provider/src/compiled_sdk.rs`
 - `loaves/compiler/incan_provider/src/dependency_resolver.rs` — `requirements` reads it, so it sits here rather than in the driver
 
@@ -20,8 +20,12 @@ Provider and SDK contracts (manifest types, component catalog, inventory) and th
 
 ## SDK publication identity
 
-Development checkouts are recognized by the workspace and compiler-ring layout, including the emitter crate and the associated stdlib root. Their provider-store identity combines compiler effects, publication configuration, compiler/codegen version, distribution profile and the resolved workspace lock. Installed layouts use source and executable bytes instead.
+Source SDK publication uses the SDK seed, source and executable bytes, compiler/codegen version, distribution profile, and the exact retained native receipts. The local language and vocabulary companions participate even though their source roots sit outside the stdlib directory. Cargo manifests, Cargo locks, build scripts, and generated target directories are excluded from this identity.
 
-The effect inputs include the stdlib's Rust vocab companion and its vocab contract dependency because they contribute published metadata and executable desugarers. Publication configuration includes stdlib TOML files, standalone Cargo locks and the Cargo manifests owning the Rust effect roots. These configuration inputs are conservatively byte-exact: even a formatting-only manifest edit can miss the cache. Generated target directories are excluded. Ordinary source comments retain the effect digest's semantic treatment.
+`SdkNativeInputs` selects admitted archive bytes with `INCAN_SDK_NATIVE_BLOBS`, the pinned index repository with `INCAN_SDK_NATIVE_INDEX`, and the active managed rustc. Its native store is retained independently of provider staging. Preparation compiles the adopted seed, local companions, and component Rust facets through the shared direct-rustc executor. Independent local facets continue after adopted-unit failures; publication requires every selected unit to succeed. Native failures and local facet failures are retained in `closure-report.json`.
 
-The v5 store key partitions earlier entries once. Existing entries remain immutable; a changed catalog publishes under a new identity, and an unchanged catalog reuses its existing inventory. This key is separate from the compiler-suite foundation key and does not replace artifact integrity checks.
+`prepare_sdk_provider_inventory_with_native_publisher` stages frozen source authority, the exact inspection graph, native receipt and output catalogs, and component inventory together. The supplied in-process compiler callback owns checked component metadata and executable surfaces. Its payload must exclude Cargo metadata, build scripts, links, and special files; checked name and version must match the component declaration. Source changes during publication refuse the new generation. Completed generations are immutable, and only a complete generation replaces the discovery hint. Cache acquisition repairs an interrupted hint write. A callback failure leaves earlier generations and their discovery hint intact.
+
+Native output coordinates bind store entry, receipt, package selection, relative library path, and output digest. Consumers reacquire the exact entries and validate their native bytes and sources. Rust inspection retains those leases through its workspace lifetime. Automatic discovery can reuse a source-current publication without archive or index discovery.
+
+The automatic preparation entry point currently prepares the native closure and then refuses publication because the driver's checked component callback is not connected. It cannot invoke the former per-component subprocess publisher. Automatic SDK preparation, native bake/test selection, and vocabulary companion publication are therefore not complete. The inspector can consume a published generation's frozen graph when that graph covers the requested registry dependencies; project dependencies outside the seed still require their own authority.

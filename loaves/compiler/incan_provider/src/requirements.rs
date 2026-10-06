@@ -92,11 +92,11 @@ pub enum LibraryDependencyPreparation {
     OvenDirectRustc,
 }
 
-/// Decide whether session construction is inside the explicitly named legacy-Cargo provider publisher.
+/// Decide whether session construction may prepare a missing native SDK inventory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SdkInventorySource {
-    /// Existing compatibility behavior for commands that still explicitly own legacy artifact preparation.
-    PrepareLegacyCargoIfAbsent,
+    /// Prepare the sealed native SDK publication when no current inventory exists.
+    PrepareNativeIfAbsent,
     /// Oven consumer mode: read an installed/prepared inventory only and never create Cargo state on a cache miss.
     DiscoverOnly,
 }

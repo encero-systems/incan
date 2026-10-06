@@ -274,6 +274,8 @@ pub struct PreparedRustInspectWorkspace {
     manifest_dir: PathBuf,
     _source_loaf: Option<OvenToolchainLoaf>,
     _project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
+    /// Native SDK leases protect the frozen graph's immutable source roots throughout inspection.
+    _sdk_native: Vec<oven_store::store::OvenStoreExecutionPayload>,
 }
 
 /// Command-local source authority shared by every parallel native-test unit.

@@ -1,9 +1,8 @@
 //! Identity and lifecycle of the SDK provider store: what makes one compiled-SDK tree distinct from another, the
 //! locks that serialize its preparation, and the digests that key it.
 //!
-//! Checkout identities combine compiler effects with publication configuration; installed layouts instead use
-//! executable and source bytes. Both retain the resolved lock and publication profile so incompatible providers cannot
-//! share a store entry.
+//! Native SDK publication identities combine compiler and source bytes, the SDK seed, native receipts, and the
+//! publication profile. Legacy identity helpers remain for callers outside the automatic native publication path.
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
@@ -282,13 +281,26 @@ pub fn sdk_provider_sealed_store_identity(
         ));
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-sealed-provider-store-v1\0");
+    hasher.update(b"incan-sdk-sealed-provider-store-v2\0");
     hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
     hasher.update(incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
     hasher.update(distribution_profile.as_bytes());
     hasher.update([0]);
     hasher.update(sdk_provider_compiler_digest(executable)?);
     hash_sealed_sdk_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    // Discovery must invalidate a stale receipt hint when an external local companion changes, before preparation
+    // has had an opportunity to produce that companion's replacement native receipt.
+    if let Some(source_root) = stdlib_root.parent().and_then(Path::parent) {
+        for relative in ["loaves/kernel/incan_lang", "loaves/kernel/incan_vocab"] {
+            hasher.update(relative.as_bytes());
+            let root = source_root.join(relative);
+            if root.is_dir() {
+                hash_sealed_sdk_source_tree(&root, &root, &mut hasher)?;
+            } else {
+                hasher.update(b"absent\0");
+            }
+        }
+    }
     for (binding, receipt) in native_receipts {
         if binding.is_empty()
             || !receipt.starts_with("sha256:")
@@ -563,9 +575,8 @@ fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> 
 
 /// Return the compiler-owned SDK provider identity for one source checkout.
 ///
-/// This is intentionally exposed only to repository automation after it has built the matching CLI. The cache key
-/// must follow the same source closure as provider publication; hashing development executable bytes would make
-/// identical source checkouts miss after unrelated test builds.
+/// Repository automation uses the same native receipt catalog and sealed identity as source publication. A missing
+/// catalog is a preparation requirement; this command never derives an identity from Cargo configuration.
 pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
     let stdlib_root = fs::canonicalize(compiler_root.join("loaves/stdlib")).map_err(|error| {
         ProviderError::failure(format!(
@@ -576,17 +587,29 @@ pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> Pr
     let executable = env::current_exe()
         .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let executable = sdk_provider_builder_executable(None, executable)?;
-    let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
     let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
         .ok()
         .filter(|profile| !profile.is_empty())
         .unwrap_or_else(|| "full".to_string());
-    sdk_provider_store_identity(
-        &stdlib_root,
-        &executable,
-        workspace_lock.as_deref(),
-        &distribution_profile,
-    )
+    let store = env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            default_sdk_provider_store(
+                &stdlib_root,
+                env::var_os("INCAN_HOME"),
+                env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")),
+            )
+        });
+    let path = store.join(".sealed-native-receipts.json");
+    let receipts = fs::read(&path).map_err(|error| {
+        ProviderError::failure(format!(
+            "native SDK receipt catalog {} is unavailable; prepare the SDK first: {error}",
+            path.display(),
+        ))
+    })?;
+    let receipts = serde_json::from_slice(&receipts).map_err(|error| ProviderError::failure(error.to_string()))?;
+    sdk_provider_sealed_store_identity(&stdlib_root, &executable, &distribution_profile, &receipts)
 }
 
 /// Resolve the source checkout that owns a discovered SDK tree, if this is a development layout.
@@ -753,8 +776,8 @@ mod tests {
     #[test]
     fn sealed_sdk_identity_uses_sources_and_native_receipts() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let stdlib = root.path().join("stdlib");
-        fs::create_dir(&stdlib)?;
+        let stdlib = root.path().join("loaves/stdlib");
+        fs::create_dir_all(&stdlib)?;
         fs::write(stdlib.join("sdk-lock.json"), "sealed seed")?;
         fs::write(stdlib.join("module.incn"), "pub def value() -> int:\n  return 1\n")?;
         let executable = root.path().join("incan");
@@ -780,6 +803,20 @@ mod tests {
         assert!(
             sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &std::collections::BTreeMap::new())
                 .is_err()
+        );
+        let kernel = stdlib
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("fixture has no toolchain root")?
+            .join("loaves/kernel/incan_lang");
+        fs::create_dir_all(kernel.join("src"))?;
+        fs::write(kernel.join("src/lib.rs"), "pub fn value() -> u8 { 1 }")?;
+        let companion_before = sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?;
+        fs::write(kernel.join("src/lib.rs"), "pub fn value() -> u8 { 2 }")?;
+        assert_ne!(
+            companion_before,
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?,
+            "a stale discovery receipt hint cannot hide changed local kernel sources"
         );
         Ok(())
     }
