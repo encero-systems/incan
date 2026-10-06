@@ -24,6 +24,37 @@ use oven_model::manifest::{DependencySource, GitReference, LOAF_MANIFEST_FILENAM
 use oven_model::oven_interop::locked_oven_interop_targets;
 use oven_store::{digest_bytes, digest_project_source_tree};
 
+/// Hash Incan token content without source positions, preserving literals and indentation.
+///
+/// Comments do not affect generated code or the Rust query surface. Other authority files remain byte-exact,
+/// and sources requiring contextual vocabulary retain byte-exact authority rather than losing raw fragment content.
+fn digest_project_authority_file(path: &Path, bytes: &[u8]) -> CliResult<String> {
+    if path.extension().is_none_or(|extension| extension != "incn") {
+        return Ok(digest_bytes(bytes));
+    }
+    let source = std::str::from_utf8(bytes)
+        .map_err(|error| CliError::failure(format!("invalid Incan source {}: {error}", path.display())))?;
+    let Ok(tokens) = incan_frontend::lexer::lex(source) else {
+        return Ok(digest_bytes(bytes));
+    };
+    if incan_frontend::parser::parse(&tokens).is_err() {
+        return Ok(digest_bytes(bytes));
+    }
+    let mut content = String::from("incan-token-authority-v1\n");
+    for token in tokens {
+        let mut kind = token.kind;
+        if let incan_frontend::lexer::TokenKind::FString(parts) = &mut kind {
+            for part in parts {
+                if let incan_frontend::lexer::FStringPart::Expr { offset, .. } = part {
+                    *offset = 0;
+                }
+            }
+        }
+        content.push_str(&format!("{kind:?}\n"));
+    }
+    Ok(digest_bytes(content.as_bytes()))
+}
+
 impl ProjectSourceAuthorityDigester {
     /// Digest the exact build-input graph for one project without observing generated or unrelated files.
     pub fn digest(&mut self, project_root: &Path) -> CliResult<String> {
@@ -398,12 +429,13 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 path.display()
             )));
         }
-        let digest = digest_bytes(&fs::read(path).map_err(|error| {
+        let bytes = fs::read(path).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot hash project build authority at {}: {error}",
                 path.display()
             ))
-        })?);
+        })?;
+        let digest = digest_project_authority_file(path, &bytes)?;
         if records.insert(record_key.clone(), digest).is_some() {
             return Err(CliError::failure(format!(
                 "Oven Alpha project build authority contains duplicate path `{record_key}`"
@@ -745,6 +777,39 @@ mod tests {
     };
     use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
+
+    /// Comment edits preserve authority while literals and executable tokens remain inputs.
+    #[test]
+    fn incan_authority_ignores_comments_but_preserves_executable_content() -> Result<(), Box<dyn std::error::Error>> {
+        let path = Path::new("src/main.incn");
+        let source = b"def main() -> None:\n    print(\"# literal\")\n";
+        let initial = digest_project_authority_file(path, source)?;
+        assert_eq!(
+            initial,
+            digest_project_authority_file(
+                path,
+                b"# header\ndef main() -> None:\n    print(\"# literal\") # inline\n# trailing\n"
+            )?
+        );
+        assert_ne!(
+            initial,
+            digest_project_authority_file(path, b"def main() -> None:\n    print(\"changed\")\n")?
+        );
+        assert_ne!(
+            initial,
+            digest_project_authority_file(path, b"def main() -> None:\n    pass\nprint(\"# literal\")\n")?
+        );
+        let incomplete = b"def main() -> None:\n    print(\"";
+        assert_eq!(
+            digest_project_authority_file(path, incomplete)?,
+            digest_bytes(incomplete)
+        );
+        assert_ne!(
+            digest_project_authority_file(Path::new("input.txt"), b"one")?,
+            digest_project_authority_file(Path::new("input.txt"), b"two")?
+        );
+        Ok(())
+    }
 
     #[test]
     fn caller_owned_provider_authority_prefers_the_explicit_library_receipt() -> Result<(), Box<dyn std::error::Error>>
