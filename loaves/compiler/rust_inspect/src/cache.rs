@@ -3343,6 +3343,12 @@ fn dependency_source_metadata_from_reexport_target(
         );
     }
 
+    if external_crates.contains(target_crate) {
+        // The target names an external crate whose source root is not available here. Reading the path as local
+        // instead would misresolve it, and for a glob re-export of that crate (`pub use dep::*`) it re-enters this
+        // source with an ever longer `dep::dep::...` path, which the visited set cannot catch.
+        return None;
+    }
     let root_source_path = dependency_root_source_path(source_root).unwrap_or_else(|| source_path.to_path_buf());
     dependency_source_metadata_from_source(
         &root_source_path,
