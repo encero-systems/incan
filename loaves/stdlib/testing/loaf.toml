@@ -4,8 +4,17 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
+[rust]
+name = "incan_std_testing"
+type = "lib"
+edition = "2024"
+
 [rust.source]
 root = "rust"
 
 [sdk]
 profile = "minimal"
+
+[dependencies]
+incan_lang = { path = "../../kernel/incan_lang" }
+incan_std_core = { path = "../core/rust", version = "0.6.0-dev.6" }
