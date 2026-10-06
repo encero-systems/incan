@@ -10,7 +10,7 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct a scalar AST type without generating or parsing Rust source.
+/// Construct an admitted scalar or model AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
@@ -20,6 +20,7 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 PlanType::Int => "i64",
                 PlanType::Float => "f64",
                 PlanType::String => "String",
+                PlanType::Model(_, name) => name.as_str(),
                 _ => "bool",
             };
             ast::TyKind::Path(None, ast::Path::from_ident(ident(name, span)))
@@ -33,7 +34,7 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     })
 }
 
-/// A diverging placeholder satisfies every scalar signature; `mir_built` replaces its body.
+/// A diverging placeholder satisfies every admitted signature; `mir_built` replaces its body.
 fn placeholder(span: Span) -> Box<ast::Block> {
     let empty = Box::new(ast::Block {
         stmts: ThinVec::new(),
@@ -121,4 +122,197 @@ fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
 /// Load each admitted external crate so canonical path resolution sees its module tree.
 pub fn external_crate(name: &str, span: Span) -> Box<ast::Item> {
     item(ast::ItemKind::ExternCrate(None, ident(name, span)), span)
+}
+
+/// Inject the exact checked field layout, preserving source visibility and declaration order.
+pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item> {
+    let fields = model
+        .fields
+        .iter()
+        .zip(&model.field_public)
+        .map(|(field, public)| ast::FieldDef {
+            attrs: ThinVec::new(),
+            id: ast::DUMMY_NODE_ID,
+            span,
+            vis: visibility(*public, span),
+            mut_restriction: ast::MutRestriction {
+                kind: ast::RestrictionKind::Unrestricted,
+                span,
+                tokens: None,
+            },
+            safety: ast::Safety::Default,
+            ident: Some(ident(&field.name, span)),
+            ty: ty(&field.ty, span),
+            default: None,
+            is_placeholder: false,
+        })
+        .collect();
+    let mut declaration = item(
+        ast::ItemKind::Struct(
+            ident(&model.name, span),
+            ast::Generics::default(),
+            ast::VariantData::Struct {
+                fields,
+                recovered: ast::Recovered::No,
+            },
+        ),
+        span,
+    );
+    declaration.vis = visibility(model.public, span);
+    declaration.tokens = Some(model_tokens(model, span));
+    declaration
+}
+
+/// Retain the injected declaration's tokens for procedural derives, without parsing or generating source text.
+fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
+    use ast::token::{Delimiter, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
+    let mut fields = Vec::new();
+    for (field, public) in model.fields.iter().zip(&model.field_public) {
+        if *public {
+            fields.push(keyword_token("pub", span));
+        }
+        fields.push(name_token(&field.name, span));
+        fields.push(AttrTokenTree::Token(
+            ast::token::Token::new(TokenKind::Colon, span),
+            Spacing::Alone,
+        ));
+        fields.extend(type_tokens(&ty(&field.ty, span)));
+        fields.push(AttrTokenTree::Token(
+            ast::token::Token::new(TokenKind::Comma, span),
+            Spacing::Alone,
+        ));
+    }
+    let mut tokens = Vec::new();
+    if model.public {
+        tokens.push(keyword_token("pub", span));
+    }
+    tokens.push(keyword_token("struct", span));
+    tokens.push(name_token(&model.name, span));
+    tokens.push(AttrTokenTree::Delimited(
+        DelimSpan::from_single(span),
+        DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+        Delimiter::Brace,
+        AttrTokenStream::new(fields),
+    ));
+    LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
+}
+
+/// Turn an admitted AST identifier into a token with the same source span and hygiene.
+fn name_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
+    ast::tokenstream::AttrTokenTree::Token(
+        ast::token::Token::from_ast_ident(ident(name, span)),
+        ast::tokenstream::Spacing::Alone,
+    )
+}
+
+/// Emit declaration keywords as keywords rather than the raw identifiers inferred for reserved AST names.
+fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
+    ast::tokenstream::AttrTokenTree::Token(
+        ast::token::Token::new(
+            ast::token::TokenKind::Ident(Symbol::intern(name), ast::token::IdentIsRaw::No),
+            span,
+        ),
+        ast::tokenstream::Spacing::Alone,
+    )
+}
+
+/// Mirror the path and tuple types produced by `ty` into tokens consumed by procedural derives.
+fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
+    use ast::token::{Delimiter, Token, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
+    match &ty.kind {
+        ast::TyKind::Path(None, path) => path
+            .segments
+            .iter()
+            .map(|segment| name_token(segment.ident.name.as_str(), ty.span))
+            .collect(),
+        ast::TyKind::Tup(elements) => {
+            let mut tokens = Vec::new();
+            for element in elements {
+                tokens.extend(type_tokens(element));
+                tokens.push(AttrTokenTree::Token(
+                    Token::new(TokenKind::Comma, ty.span),
+                    Spacing::Alone,
+                ));
+            }
+            vec![AttrTokenTree::Delimited(
+                DelimSpan::from_single(ty.span),
+                DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+                Delimiter::Parenthesis,
+                AttrTokenStream::new(tokens),
+            )]
+        }
+        _ => unreachable!("the admitted AST type builder emits only paths and tuples"),
+    }
+}
+
+/// Convert checked visibility without widening private fields.
+fn visibility(public: bool, span: Span) -> ast::Visibility {
+    ast::Visibility {
+        kind: if public {
+            ast::VisibilityKind::Public
+        } else {
+            ast::VisibilityKind::Inherited
+        },
+        span,
+        tokens: None,
+    }
+}
+
+/// Build derive path tokens directly from the admitted registry names, including compiler-owned proc macros.
+pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span: Span) -> ast::Attribute {
+    use ast::token::{Delimiter, Token, TokenKind};
+    use ast::tokenstream::{
+        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing, TokenStream,
+    };
+    let mut tokens = Vec::new();
+    if matches!(name, "FieldInfo" | "IncanClass") {
+        tokens.push(AttrTokenTree::Token(
+            Token::from_ast_ident(ident("incan_derive", span)),
+            Spacing::Alone,
+        ));
+        tokens.push(AttrTokenTree::Token(
+            Token::new(TokenKind::PathSep, span),
+            Spacing::Alone,
+        ));
+    }
+    tokens.push(AttrTokenTree::Token(
+        Token::from_ast_ident(ident(name, span)),
+        Spacing::Alone,
+    ));
+    let arguments = AttrTokenStream::new(tokens);
+    let attribute_tokens = LazyAttrTokenStream::new_direct(AttrTokenStream::new(vec![
+        AttrTokenTree::Token(Token::new(TokenKind::Pound, span), Spacing::JointHidden),
+        AttrTokenTree::Delimited(
+            DelimSpan::from_single(span),
+            DelimSpacing::new(Spacing::JointHidden, Spacing::Alone),
+            Delimiter::Bracket,
+            AttrTokenStream::new(vec![
+                name_token("derive", span),
+                AttrTokenTree::Delimited(
+                    DelimSpan::from_single(span),
+                    DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+                    Delimiter::Parenthesis,
+                    arguments.clone(),
+                ),
+            ]),
+        ),
+    ]));
+    ast::attr::mk_attr_from_item(
+        generator,
+        ast::AttrItem {
+            unsafety: ast::Safety::Default,
+            path: ast::Path::from_ident(ident("derive", span)),
+            args: ast::AttrItemKind::Unparsed(ast::AttrArgs::Delimited(ast::DelimArgs {
+                dspan: DelimSpan::from_single(span),
+                delim: Delimiter::Parenthesis,
+                tokens: TokenStream::new(arguments.to_token_trees()),
+            })),
+            tokens: None,
+        },
+        Some(attribute_tokens),
+        ast::AttrStyle::Outer,
+        span,
+    )
 }
