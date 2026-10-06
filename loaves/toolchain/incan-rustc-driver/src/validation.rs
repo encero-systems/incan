@@ -30,6 +30,12 @@ enum Scalar {
     List(Leaf, i64),
     ListRef(Leaf, i64),
     ListMutRef(Leaf, i64),
+    Set(Leaf),
+    SetRef(Leaf),
+    SetMutRef(Leaf),
+    Dict(Leaf, Leaf),
+    DictRef(Leaf, Leaf),
+    DictMutRef(Leaf, Leaf),
 }
 
 /// The comparison vocabulary's copy of the plan's list leaf, which carries no Rust `Copy` or `Ord` derive.
@@ -61,6 +67,12 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::List(leaf, depth) => Scalar::List(Leaf::of(leaf), *depth),
         PlanType::ListRef(leaf, depth) => Scalar::ListRef(Leaf::of(leaf), *depth),
         PlanType::ListMutRef(leaf, depth) => Scalar::ListMutRef(Leaf::of(leaf), *depth),
+        PlanType::Set(leaf) => Scalar::Set(Leaf::of(leaf)),
+        PlanType::SetRef(leaf) => Scalar::SetRef(Leaf::of(leaf)),
+        PlanType::SetMutRef(leaf) => Scalar::SetMutRef(Leaf::of(leaf)),
+        PlanType::Dict(key, value) => Scalar::Dict(Leaf::of(key), Leaf::of(value)),
+        PlanType::DictRef(key, value) => Scalar::DictRef(Leaf::of(key), Leaf::of(value)),
+        PlanType::DictMutRef(key, value) => Scalar::DictMutRef(Leaf::of(key), Leaf::of(value)),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
         PlanType::Bool => Scalar::Bool,
@@ -260,7 +272,9 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         }
         Projection::Deref => match ty {
             Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Ok(Scalar::List(leaf, depth)),
-            _ => Err(invalid(function, "dereference requires a list reference")),
+            Scalar::SetRef(leaf) | Scalar::SetMutRef(leaf) => Ok(Scalar::Set(leaf)),
+            Scalar::DictRef(key, value) | Scalar::DictMutRef(key, value) => Ok(Scalar::Dict(key, value)),
+            _ => Err(invalid(function, "dereference requires a collection reference")),
         },
         Projection::Value if ty == Scalar::CheckedInt => Ok(Scalar::Int),
         Projection::Overflow if ty == Scalar::CheckedInt => Ok(Scalar::Bool),
@@ -306,6 +320,10 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                     | Scalar::Model(_)
                     | Scalar::List(_, _)
                     | Scalar::ListMutRef(_, _)
+                    | Scalar::Set(_)
+                    | Scalar::SetMutRef(_)
+                    | Scalar::Dict(_, _)
+                    | Scalar::DictMutRef(_, _)
             ) {
                 return Err(invalid(function, "owned formatting values cannot be copied"));
             }
@@ -374,6 +392,8 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         RvalueKind::Borrow(value) => match place(plan, function, value)? {
             Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
             Scalar::List(leaf, depth) => Ok(Scalar::ListRef(leaf, depth)),
+            Scalar::Set(leaf) => Ok(Scalar::SetRef(leaf)),
+            Scalar::Dict(key, value) => Ok(Scalar::DictRef(key, value)),
             Scalar::String => Ok(Scalar::StringRef),
             Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
             Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
@@ -381,7 +401,9 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         },
         RvalueKind::MutBorrow(value) => match place(plan, function, value)? {
             Scalar::List(leaf, depth) => Ok(Scalar::ListMutRef(leaf, depth)),
-            _ => Err(invalid(function, "mutable borrow requires an owned list")),
+            Scalar::Set(leaf) => Ok(Scalar::SetMutRef(leaf)),
+            Scalar::Dict(key, value) => Ok(Scalar::DictMutRef(key, value)),
+            _ => Err(invalid(function, "mutable borrow requires an owned collection")),
         },
         RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
             Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
@@ -406,6 +428,12 @@ fn source_signature_type(ty: Scalar) -> bool {
             | Scalar::Model(_)
             | Scalar::List(_, _)
             | Scalar::ListRef(_, _)
+            | Scalar::Set(_)
+            | Scalar::SetRef(_)
+            | Scalar::SetMutRef(_)
+            | Scalar::Dict(_, _)
+            | Scalar::DictRef(_, _)
+            | Scalar::DictMutRef(_, _)
             | Scalar::ListMutRef(_, _)
     )
 }
@@ -422,6 +450,12 @@ fn external_signature_type(ty: Scalar) -> bool {
 /// Refuse an invalid dimension before constructing native array constants, including unused locals.
 fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
+        Scalar::Set(Leaf::Float)
+        | Scalar::SetRef(Leaf::Float)
+        | Scalar::SetMutRef(Leaf::Float)
+        | Scalar::Dict(Leaf::Float, _)
+        | Scalar::DictRef(Leaf::Float, _)
+        | Scalar::DictMutRef(Leaf::Float, _) => Err(invalid(function, "floating-point hashed keys lack Eq and Hash")),
         Scalar::StringArray(count)
         | Scalar::StrArray(count)
         | Scalar::StringArrayRef(count)
@@ -508,7 +542,7 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
             }
             Ok((vec![Scalar::ModelRef(*index)], Scalar::Model(*index)))
         }
-        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => {
+        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) | CalleeKind::InstantiatedPair(path, _, _) => {
             let external = plan
                 .externals
                 .iter()
@@ -518,6 +552,11 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
                             CalleeKind::Instantiated(_, ty) => {
                                 external.type_arguments.len() == 1 && scalar(&external.type_arguments[0]) == scalar(ty)
                             }
+                            CalleeKind::InstantiatedPair(_, key, value) => external
+                                .type_arguments
+                                .iter()
+                                .map(scalar)
+                                .eq([scalar(key), scalar(value)]),
                             _ => external.type_arguments.is_empty(),
                         }
                 })

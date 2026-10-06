@@ -1021,12 +1021,12 @@ fn a_self_typed_parameter_in_a_types_own_method_reads_as_that_type() -> Result<(
     Ok(())
 }
 
-/// Canonical list mutation records an exclusive receiver fact while read-only members remain shared.
+/// Canonical collection mutation records exclusive receiver facts while read-only members remain shared.
 #[test]
-fn list_mutating_methods_retain_mutable_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
+fn collection_mutating_methods_retain_mutable_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "def update(mut values: list[int]) -> None:\n  values.append(3)\n  values.swap(0, 0)\n  count = values.count(3)\n",
-        &["m", "list_receivers"],
+        "def update(mut values: list[int], mut unique: Set[int], mut mapping: Dict[str, int]) -> None:\n  values.append(3)\n  values.swap(0, 0)\n  count = values.count(3)\n  unique.add(3)\n  present = unique.contains(3)\n  mapping.insert(\"key\", 3)\n  keys = mapping.keys()\n  found = mapping.contains_key(\"key\")\n",
+        &["m", "collection_receivers"],
     )?;
     let body = body_named(&module, "update")?;
     let mut facts = Vec::new();
@@ -1040,9 +1040,9 @@ fn list_mutating_methods_retain_mutable_receiver_facts() -> Result<(), Box<dyn s
             let receiver = args
                 .first()
                 .and_then(bir::ArgumentElement::as_one)
-                .ok_or("list method lacks a receiver")?;
+                .ok_or("collection method lacks a receiver")?;
             let bir::Operand::Place(read) = receiver else {
-                return Err("list receiver must be a place".into());
+                return Err("collection receiver must be a place".into());
             };
             facts.push((target.name.as_str(), read.fact));
         }
@@ -1052,22 +1052,34 @@ fn list_mutating_methods_retain_mutable_receiver_facts() -> Result<(), Box<dyn s
         vec![
             ("append", bir::OwnershipFact::MutBorrow),
             ("swap", bir::OwnershipFact::MutBorrow),
-            ("count", bir::OwnershipFact::Borrow)
+            ("count", bir::OwnershipFact::Borrow),
+            ("add", bir::OwnershipFact::MutBorrow),
+            ("contains", bir::OwnershipFact::Borrow),
+            ("insert", bir::OwnershipFact::MutBorrow),
+            ("keys", bir::OwnershipFact::Borrow),
+            ("contains_key", bir::OwnershipFact::Borrow)
         ]
     );
     Ok(())
 }
 
-/// Returning a shared or mutable list parameter clones caller storage rather than moving or dropping it.
+/// Returning shared or mutable collection parameters clones caller storage rather than moving or dropping it.
 #[test]
-fn list_parameter_last_reads_clone_without_dropping_caller_storage() -> Result<(), Box<dyn std::error::Error>> {
+fn collection_parameter_last_reads_clone_without_dropping_caller_storage() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "def shared(values: list[int]) -> list[int]:\n  return values\n\ndef mutable(mut values: list[int]) -> list[int]:\n  return values\n",
-        &["m", "list_parameter_reads"],
+        "def shared(values: list[int]) -> list[int]:\n  return values\n\ndef mutable(mut values: list[int]) -> list[int]:\n  return values\n\ndef shared_set(values: Set[int]) -> Set[int]:\n  return values\n\ndef mutable_set(mut values: Set[int]) -> Set[int]:\n  return values\n\ndef shared_dict(values: Dict[str, int]) -> Dict[str, int]:\n  return values\n\ndef mutable_dict(mut values: Dict[str, int]) -> Dict[str, int]:\n  return values\n",
+        &["m", "collection_parameter_reads"],
     )?;
-    for name in ["shared", "mutable"] {
+    for name in [
+        "shared",
+        "mutable",
+        "shared_set",
+        "mutable_set",
+        "shared_dict",
+        "mutable_dict",
+    ] {
         let body = body_named(&module, name)?;
-        let local = body.params.first().ok_or("missing list parameter")?.local;
+        let local = body.params.first().ok_or("missing collection parameter")?.local;
         let mut returns = 0;
         for statement in &body.block.stmts {
             match &statement.kind {

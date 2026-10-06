@@ -1,5 +1,7 @@
 """Plain-model layout admission from canonical frontend records."""
 
+from frame import frame_place_type
+from collections import primitive_leaf
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
@@ -28,6 +30,10 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 Primitive.Str => return Ok(PlanType.String)
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
         RustType.Generic(base=base, args=arguments) =>
+            if base == "Set" and len(arguments) == 1:
+                return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
+            if base == "Dict" and len(arguments) == 2:
+                return Ok(PlanType.Dict(primitive_leaf(arguments[0], true)?, primitive_leaf(arguments[1], false)?))
             if base != "List" or len(arguments) != 1:
                 return Err(f"unsupported Body IR type {ty}")
             element = model_type(declarations, arguments[0])?
@@ -67,16 +73,7 @@ pub def model_place(
 
 pub def place_type(locals: list[Local], value: Place) -> PlanType:
     """Read a projected destination's actual type rather than its owner's type."""
-    match value.projection:
-        Projection.Field(_slot, ty) => return ty
-        Projection.Value => return PlanType.Int
-        Projection.Overflow => return PlanType.Bool
-        Projection.Deref =>
-            match locals[value.local].ty:
-                PlanType.ListRef(leaf, depth) => return PlanType.List(leaf, depth)
-                PlanType.ListMutRef(leaf, depth) => return PlanType.List(leaf, depth)
-                _ => return locals[value.local].ty
-        Projection.Whole => return locals[value.local].ty
+    return frame_place_type(locals, value)
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
