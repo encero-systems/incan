@@ -87,6 +87,12 @@ pub struct BodyIrModule {
     /// zero-argument `.value()` surface. Package aliases retain these canonical contexts. Ordinary enums, payload
     /// variants, behavior-bearing enums, and generic enums remain absent and must refuse.
     pub value_enum_declarations: Vec<ValueEnumDeclaration>,
+    /// Canonical source-local trait owners; method identity validation uses their physical declaration spans.
+    #[serde(default)]
+    pub trait_declarations: Vec<CanonicalSymbolId>,
+    /// Checked concrete trait slots and the implementation body selected for each adopter.
+    #[serde(default)]
+    pub trait_implementations: Vec<TraitImplementation>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
 }
@@ -201,10 +207,21 @@ impl BodyIrModule {
     }
 }
 
+/// One non-generic concrete adopter's implementation of a source-local trait method.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitImplementation {
+    /// Concrete nominal owner, matched against the retained layout registry.
+    pub owner: CanonicalSymbolId,
+    /// Trait slot identity minted by the checker.
+    pub method: CanonicalSymbolId,
+    /// Implementing method identity, or the trait slot itself for an inherited default.
+    pub implementation: CanonicalSymbolId,
+}
+
 /// The exact local declaration and canonical field layout for one direct-executable plain model or class.
 ///
-/// The record belongs to its declaring module and excludes enums, generic nominals, inheritance, traits, and
-/// behavior-bearing models. Class methods remain separate canonical bodies with receiver origins. A consumer may load
+/// The record belongs to its declaring module and excludes enums, generic nominals, and inheritance. Nominal methods
+/// and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
@@ -4379,6 +4396,8 @@ mod tests {
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
+            trait_declarations: Vec::new(),
+            trait_implementations: Vec::new(),
             bodies: vec![sample_body()],
         };
         let snapshot = module.render_snapshot();

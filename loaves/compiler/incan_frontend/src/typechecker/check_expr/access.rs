@@ -6528,6 +6528,14 @@ impl TypeChecker {
                 && let Some(trait_name) = self.current_trait_name.clone()
                 && let Some(method_info) = self.trait_method_info_resolved(&trait_name, method, span)
             {
+                // A default's open receiver selects the trait slot, not a concrete implementation. Retain that
+                // checked declaration so downstream routes can dispatch after specializing the receiver.
+                if let Some(identity) = &method_info.identity {
+                    self.type_info
+                        .traits
+                        .self_method_identities
+                        .insert((span.start, span.end), identity.clone());
+                }
                 return self.check_generic_method_call(
                     method,
                     method_info,

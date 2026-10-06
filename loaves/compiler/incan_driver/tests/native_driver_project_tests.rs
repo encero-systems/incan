@@ -543,3 +543,15 @@ fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
         &fixture.formatting,
     )
 }
+
+/// Prove concrete class and model trait methods and a static trait default against legacy.
+#[test]
+fn source_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_source_trait(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("source-trait")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
