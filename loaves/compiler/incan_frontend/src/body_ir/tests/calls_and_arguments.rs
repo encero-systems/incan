@@ -746,6 +746,7 @@ fn a_named_argument_with_no_matching_parameter_is_refused_by_name() -> Result<()
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_leading_spread_splices_before_its_fixed_elements() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int]) -> None:\n  out = [*xs, 1]\n  return\n";
@@ -762,12 +763,13 @@ fn a_leading_spread_splices_before_its_fixed_elements() -> Result<(), Box<dyn st
         "a list spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("list[*move(_0, last_use), const(1)]"),
+        snapshot.contains("list[*clone(_0), const(1)]"),
         "the spread must keep its written position and carry its own ownership fact: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_trailing_spread_splices_after_its_fixed_elements() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int]) -> None:\n  out = [1, *xs]\n  return\n";
@@ -779,7 +781,7 @@ fn a_trailing_spread_splices_after_its_fixed_elements() -> Result<(), Box<dyn st
         "a trailing spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("list[const(1), *move(_0, last_use)]"),
+        snapshot.contains("list[const(1), *clone(_0)]"),
         "a spread written last must stay last: {snapshot}"
     );
     Ok(())
@@ -823,6 +825,7 @@ fn a_statically_shaped_spread_binds_as_an_ordinary_fixed_arity_call() -> Result<
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_spread_with_no_proven_shape_stays_on_the_runtime_arity_path() -> Result<(), Box<dyn std::error::Error>> {
     // The contrast case for the test above: a list *variable* has no statically visible arity, so it must keep
@@ -832,7 +835,7 @@ fn a_spread_with_no_proven_shape_stays_on_the_runtime_arity_path() -> Result<(),
     let rendered = body_named(&module, "m")?.render_snapshot();
 
     assert!(
-        rendered.contains("call fn:log unbound(*move(_0, last_use))"),
+        rendered.contains("call fn:log unbound(*clone(_0))"),
         "an unproven spread must stay a spread element on the unresolved-arity path: {rendered}"
     );
     Ok(())
@@ -856,6 +859,7 @@ fn a_standalone_keyword_spread_call_lowers() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn fixed_elements_keep_their_positions_on_both_sides_of_a_spread() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int]) -> None:\n  out = [1, *xs, 2]\n  return\n";
@@ -863,12 +867,13 @@ fn fixed_elements_keep_their_positions_on_both_sides_of_a_spread() -> Result<(),
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("list[const(1), *move(_0, last_use), const(2)]"),
+        snapshot.contains("list[const(1), *clone(_0), const(2)]"),
         "surrounding fixed elements must keep their positions relative to the spread: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn multiple_spreads_each_keep_their_own_element() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int], ys: list[int]) -> None:\n  out = [*xs, *ys]\n  return\n";
@@ -883,7 +888,7 @@ fn multiple_spreads_each_keep_their_own_element() -> Result<(), Box<dyn std::err
     // only observes that the aggregate *begins* with one. Assert the whole rendering so a dropped, reordered,
     // or differently-owned second spread all fail.
     assert!(
-        snapshot.contains("list[*move(_0, last_use), *move(_1, last_use)]"),
+        snapshot.contains("list[*clone(_0), *clone(_1)]"),
         "both spreads must survive, in written order, each with its own ownership fact: {snapshot}"
     );
     Ok(())
@@ -921,6 +926,7 @@ fn a_dict_spread_after_a_literal_key_keeps_that_order() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def log(*items: int) -> None:\n  return\n\ndef m(xs: list[int]) -> None:\n  log(*xs)\n  return\n";
@@ -934,12 +940,13 @@ fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(),
     // A spread makes the arity a runtime fact, so the call must record no declared-slot binding rather than
     // asserting an identity slot map nobody checked.
     assert!(
-        snapshot.contains("call fn:log unbound(*move(_0, last_use))"),
+        snapshot.contains("call fn:log unbound(*clone(_0))"),
         "a spread call must be unbound and carry the spliced source's ownership fact: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::error::Error>> {
     // The issue's combined form. A named argument here has no declared slot to bind to, because the spread
@@ -953,12 +960,13 @@ fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::e
         "the combined call form must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(const(1), *move(_0, last_use), b=const(2), **move(_1, last_use))"),
+        snapshot.contains("call fn:log unbound(const(1), *clone(_0), b=const(2), **move(_1, last_use))"),
         "positional, spread, named, and keyword-spread arguments must each keep their written form and order: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_method_call_spread_lowers_after_the_borrowed_receiver() -> Result<(), Box<dyn std::error::Error>> {
     let source = "class C:\n  def take(self, *items: int) -> None:\n    return\n\ndef m(c: C, xs: list[int]) -> None:\n  c.take(*xs)\n  return\n";
@@ -970,7 +978,7 @@ fn a_method_call_spread_lowers_after_the_borrowed_receiver() -> Result<(), Box<d
         "a method call spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call method:take unbound(borrow(_0), *move(_1, last_use))"),
+        snapshot.contains("call method:take unbound(borrow(_0), *clone(_1))"),
         "the receiver stays args[0] and is never spliced: {snapshot}"
     );
     Ok(())
@@ -1255,5 +1263,28 @@ fn calling_a_call_dunder_adopter_is_a_call_of_its_dunder() -> Result<(), Box<dyn
         rendered.contains("method:__call__"),
         "the call must dispatch to `__call__`: {rendered}"
     );
+    Ok(())
+}
+
+/// Class layouts and constructors retain canonical class and field identities, including receiver origins.
+#[test]
+fn source_local_class_retains_checked_layout_and_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Counter:\n  value: int\n\n  def get(self) -> int:\n    return self.value\n\n  def bump(mut self) -> None:\n    self.value += 1\n\ndef main() -> None:\n  mut counter = Counter(value=3)\n  counter.bump()\n";
+    let module = build(source, &["m", "class_layout"])?;
+    let declaration = module.nominal_declarations.first().ok_or("missing class declaration")?;
+    assert_eq!(declaration.canonical.kind, SemanticSourceTargetKind::Class);
+    assert_eq!(declaration.fields, ["value"]);
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    for (name, mutable) in [("get", false), ("bump", true)] {
+        let body = body_named(&module, name)?;
+        assert_eq!(body.locals[0].origin, bir::LocalOrigin::Receiver { mutable });
+        assert!(module.body_has_canonical_direct_call_id(body));
+        let mut tampered_body = body.clone();
+        tampered_body.locals[0].ty = IncanType::Named("ForeignOwner".to_string());
+        assert!(!module.body_has_canonical_direct_call_id(&tampered_body));
+    }
+    let mut tampered = declaration.clone();
+    tampered.canonical.kind = SemanticSourceTargetKind::Trait;
+    assert!(!module.is_well_formed_nominal_declaration(&tampered));
     Ok(())
 }

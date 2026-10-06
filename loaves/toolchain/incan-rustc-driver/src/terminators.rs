@@ -95,6 +95,9 @@ fn call_operand<'tcx>(
     if let crate::plan::CalleeKind::CloneModel(_, name) = &callee.kind {
         arguments.push(crate::types::model_type(tcx, name)?.into());
     }
+    if let crate::plan::CalleeKind::Instantiated(_, ty) = &callee.kind {
+        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, std::slice::from_ref(ty))?.iter());
+    }
     Ok(mir::Operand::function_handle(
         tcx,
         callees::resolve(tcx, callee)?,

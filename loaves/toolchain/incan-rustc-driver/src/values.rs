@@ -1,7 +1,9 @@
 //! Scalar places, constants, and expressions in the pinned rustc MIR vocabulary.
 
 use crate::error::PlanError;
-use crate::plan::{BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, UnaryOp};
+use crate::plan::{
+    BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, UnaryOp,
+};
 use crate::spans::Sources;
 use crate::types::native_type;
 use rustc_abi::FieldIdx;
@@ -18,15 +20,23 @@ pub fn index(value: i64) -> Result<usize, PlanError> {
     })
 }
 
-/// Map a local or checked-pair projection to rustc's place representation.
+/// Map a prevalidated local, checked component, or nominal receiver projection to rustc's place representation.
 pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>, PlanError> {
     let local = mir::Local::from_usize(index(value.local)?);
     let place = mir::Place::from(local);
     Ok(match &value.projection {
         Projection::Whole => place,
-        Projection::Field(slot, ty) => {
-            tcx.mk_place_field(place, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
-        }
+        Projection::Field(slot, ty) => tcx.mk_place_field(
+            place,
+            FieldIdx::from_usize(index(*slot)?),
+            native_type(tcx, ty)?,
+        ),
+        Projection::Deref(_) => tcx.mk_place_deref(place),
+        Projection::DerefField(slot, ty) => tcx.mk_place_field(
+            tcx.mk_place_deref(place),
+            FieldIdx::from_usize(index(*slot)?),
+            native_type(tcx, ty)?,
+        ),
         Projection::Value => tcx.mk_place_field(place, FieldIdx::from_u32(0), tcx.types.i64),
         Projection::Overflow => tcx.mk_place_field(place, FieldIdx::from_u32(1), tcx.types.bool),
     })
@@ -47,20 +57,32 @@ pub fn operand<'tcx>(
 }
 
 /// Encode fixed-width scalar constants without changing their bit representation.
-fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir::Operand<'tcx>, PlanError> {
+fn constant<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    value: &Constant,
+    span: Span,
+) -> Result<mir::Operand<'tcx>, PlanError> {
     Ok(match value {
-        Constant::Int(value) => mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span),
-        Constant::Float(value) => {
-            mir::Operand::const_from_scalar(tcx, tcx.types.f64, Scalar::from_u64(value.to_bits()), span)
+        Constant::Int(value) => {
+            mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span)
         }
-        Constant::Bool(value) => mir::Operand::const_from_scalar(tcx, tcx.types.bool, Scalar::from_bool(*value), span),
+        Constant::Float(value) => mir::Operand::const_from_scalar(
+            tcx,
+            tcx.types.f64,
+            Scalar::from_u64(value.to_bits()),
+            span,
+        ),
+        Constant::Bool(value) => {
+            mir::Operand::const_from_scalar(tcx, tcx.types.bool, Scalar::from_bool(*value), span)
+        }
         Constant::Unit => mir::Operand::Constant(Box::new(mir::ConstOperand {
             span,
             user_ty: None,
             const_: mir::Const::Val(mir::ConstValue::ZeroSized, tcx.types.unit),
         })),
         Constant::Text(text) => {
-            let alloc_id = tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
+            let alloc_id =
+                tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
             let meta = u64::try_from(text.len()).map_err(|_| PlanError::Invalid {
                 function: "text".into(),
                 reason: "string literal length exceeds the native representation".into(),
@@ -104,10 +126,14 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
-        RvalueKind::Use(value) => mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes),
-        RvalueKind::IntToFloat(value) => {
-            mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
+        RvalueKind::Use(value) => {
+            mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes)
         }
+        RvalueKind::IntToFloat(value) => mir::Rvalue::Cast(
+            mir::CastKind::IntToFloat,
+            operand(tcx, sources, value)?,
+            tcx.types.f64,
+        ),
         RvalueKind::Unary(op, value) => mir::Rvalue::UnaryOp(
             match op {
                 UnaryOp::Not => mir::UnOp::Not,
@@ -162,9 +188,18 @@ pub fn rvalue<'tcx>(
                 IndexVec::from_raw(operands),
             )
         }
-        RvalueKind::Borrow(value) => {
-            mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?)
-        }
+        RvalueKind::MutBorrow(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Mut {
+                kind: mir::MutBorrowKind::Default,
+            },
+            place(tcx, value)?,
+        ),
+        RvalueKind::Borrow(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Shared,
+            place(tcx, value)?,
+        ),
         RvalueKind::UnsizeSlice(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerCoercion(
                 rustc_middle::ty::adjustment::PointerCoercion::Unsize,

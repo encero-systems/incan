@@ -1,4 +1,4 @@
-"""Plain-model layout admission from canonical frontend records."""
+"""Scalar, collection, and nominal layout admission from canonical frontend records."""
 
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
 from rust::incan_semantics_core::body_ir import (
@@ -8,11 +8,11 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
 )
-from pub::incan_mir_plan import PlanType, Local, Place, Projection, SourceSpan
+from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Resolve source-local nominal types only against their retained declaration registry."""
+    """Translate checked scalar and collection types, resolving source-local nominals only against retained declarations."""
     match ty:
         RustType.Named(name) =>
             for index in range(len(declarations)):
@@ -27,6 +27,17 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 Primitive.Unit => return Ok(PlanType.Unit)
                 Primitive.Str => return Ok(PlanType.String)
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "List" or len(arguments) != 1:
+                return Err(f"unsupported Body IR type {ty}")
+            element = model_type(declarations, arguments[0])?
+            match element:
+                PlanType.Int => return Ok(PlanType.List(ListLeaf.Int, 1))
+                PlanType.Float => return Ok(PlanType.List(ListLeaf.Float, 1))
+                PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
+                PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
+                PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
+                _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {ty}")
 
 
@@ -40,6 +51,15 @@ pub def model_place(
     match value.local_id():
         Some(local) =>
             index = int(local.index()) + 1
+            match receiver_owner(locals[index].ty):
+                Some(owner) =>
+                    owner_index, name = owner
+                    if len(value.projection) == 0:
+                        return Ok(
+                            Place(local=index, projection=Projection.Deref(PlanType.Model(owner_index, name)), span=span),
+                        )
+                    return receiver_field(declarations, index, owner_index, value, span)
+                None => pass
             if len(value.projection) == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
             if len(value.projection) != 1:
@@ -58,6 +78,8 @@ pub def place_type(locals: list[Local], value: Place) -> PlanType:
     """Read a projected destination's actual type rather than its owner's type."""
     match value.projection:
         Projection.Field(_slot, ty) => return ty
+        Projection.DerefField(_slot, ty) => return ty
+        Projection.Deref(ty) => return ty
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool
         Projection.Whole => return locals[value.local].ty
@@ -119,3 +141,27 @@ def validate_constructor_binding(binding: &ArgumentBinding, count: int) -> Resul
                 slots.append(slot)
             return Ok(None)
         _ => return Err("unsupported Body IR unresolved model constructor")
+
+
+def receiver_field(
+    declarations: list[NominalDeclaration],
+    index: int,
+    owner: int,
+    value: &RustPlace,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Project one canonical field through a borrowed receiver, refusing nested projections."""
+    if len(value.projection) != 1:
+        return Err("unsupported Body IR nested receiver projection")
+    declaration = declarations[owner]
+    slot = field_slot(value.projection[0], declaration)?
+    ty = model_type(declarations, declaration.field_types[slot])?
+    return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+
+
+def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:
+    """Identify the nominal owner behind either checked receiver-reference shape."""
+    match ty:
+        PlanType.ModelRef(owner, name) => return Some((owner, name))
+        PlanType.ModelMutRef(owner, name) => return Some((owner, name))
+        _ => return None

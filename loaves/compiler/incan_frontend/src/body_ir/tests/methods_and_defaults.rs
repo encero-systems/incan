@@ -1020,3 +1020,70 @@ fn a_self_typed_parameter_in_a_types_own_method_reads_as_that_type() -> Result<(
     assert_eq!(other.ty, IncanType::Named("P".to_string()), "{rendered}");
     Ok(())
 }
+
+/// Canonical list mutation records an exclusive receiver fact while read-only members remain shared.
+#[test]
+fn list_mutating_methods_retain_mutable_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def update(mut values: list[int]) -> None:\n  values.append(3)\n  values.swap(0, 0)\n  count = values.count(3)\n",
+        &["m", "list_receivers"],
+    )?;
+    let body = body_named(&module, "update")?;
+    let mut facts = Vec::new();
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Method(target),
+            args,
+            ..
+        } = &statement.kind
+        {
+            let receiver = args
+                .first()
+                .and_then(bir::ArgumentElement::as_one)
+                .ok_or("list method lacks a receiver")?;
+            let bir::Operand::Place(read) = receiver else {
+                return Err("list receiver must be a place".into());
+            };
+            facts.push((target.name.as_str(), read.fact));
+        }
+    }
+    assert_eq!(
+        facts,
+        vec![
+            ("append", bir::OwnershipFact::MutBorrow),
+            ("swap", bir::OwnershipFact::MutBorrow),
+            ("count", bir::OwnershipFact::Borrow)
+        ]
+    );
+    Ok(())
+}
+
+/// Returning a shared or mutable list parameter clones caller storage rather than moving or dropping it.
+#[test]
+fn list_parameter_last_reads_clone_without_dropping_caller_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def shared(values: list[int]) -> list[int]:\n  return values\n\ndef mutable(mut values: list[int]) -> list[int]:\n  return values\n",
+        &["m", "list_parameter_reads"],
+    )?;
+    for name in ["shared", "mutable"] {
+        let body = body_named(&module, name)?;
+        let local = body.params.first().ok_or("missing list parameter")?.local;
+        let mut returns = 0;
+        for statement in &body.block.stmts {
+            match &statement.kind {
+                bir::StatementKind::Return {
+                    value: Some(bir::Operand::Place(read)),
+                } => {
+                    assert_eq!(read.place.local_id(), Some(local));
+                    assert_eq!(read.fact, bir::OwnershipFact::Clone);
+                    assert!(!read.last_use);
+                    returns += 1;
+                }
+                bir::StatementKind::Drop { local: dropped } => assert_ne!(*dropped, local),
+                _ => {}
+            }
+        }
+        assert_eq!(returns, 1);
+    }
+    Ok(())
+}
