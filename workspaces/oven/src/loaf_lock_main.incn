@@ -9,6 +9,7 @@ no upstream metadata and runs no build.
 from rust::std::env import args
 from rust::std::process import exit
 from std.fs import Path
+from std.json import parse
 from loaf_index import read_index, read_root_requests, LoafVersion
 from loaf_pin import pinned_revision
 from loaf_pin_check import read_cfg
@@ -17,7 +18,7 @@ from rust_activation import ActivationContext, ActivationPurpose, DependencyDoma
 
 
 # The triple both the selected target and the build host must name; the roots file states it explicitly.
-SUPPORTED_TRIPLE = "aarch64-apple-darwin"
+const SUPPORTED_TRIPLE: str = "aarch64-apple-darwin"
 
 
 def load_records(directory: str, names_file: str) -> Result[list[LoafVersion], str]:
@@ -39,7 +40,13 @@ def lock(directory: str, names_file: str, cfg_file: str, roots_file: str) -> Res
     """Resolve the roots for the supported triple as both target and host, and print the resolution."""
     records = load_records(directory, names_file)?
     source = Path(roots_file).read_text("utf-8", "strict").map_err((e) => e.message())?
-    requests = read_root_requests(source, "roots").map_err((e) => e.message())?
+    # The roots document wraps the request array as `deps`, the same spelling an index line uses.
+    document = parse(source).map_err((e) => e.message())?
+    mut roots_array = ""
+    match document.get("deps"):
+        Some(deps) => roots_array = deps.to_json().map_err((e) => e.message())?
+        None => return Err("roots document has no deps array")
+    requests = read_root_requests(roots_array, "roots").map_err((e) => e.message())?
     cfg = read_cfg(cfg_file)?
     triple = TargetConfiguration(triple=SUPPORTED_TRIPLE, cfg=Some(cfg))
     context = ActivationContext(
