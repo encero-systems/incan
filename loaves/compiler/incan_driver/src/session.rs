@@ -32,8 +32,8 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use incan_provider::inventory::{
-    discover_or_reuse_published_sdk_inventory, prepare_or_discover_sdk_inventory, provider_used_module_paths,
-    resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
+    discover_or_reuse_published_sdk_inventory, provider_used_module_paths, resolve_sdk_component_selection,
+    sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
     DependencyManifestMode, SdkInventorySource, parser_only_library_manifest_index,
@@ -313,6 +313,26 @@ impl CompilationSession {
         )
     }
 
+    /// Construct a publisher session from the partial inventory and explicit reserved namespace grants.
+    ///
+    /// The caller retains native receipts and frozen inspection authority. Discovery never prepares another SDK
+    /// generation or relies on a process-global bootstrap marker while checking this component.
+    pub fn discover_for_native_sdk_component(
+        entry_path: &Path,
+        inventory: &SdkInventory,
+        namespace_roots: &BTreeSet<String>,
+        native_facets: &BTreeSet<String>,
+    ) -> CliResult<Self> {
+        Self::discover_with_inputs(
+            entry_path,
+            DependencyManifestMode::ParserOnly,
+            SdkInventorySource::DiscoverOnly,
+            &FeatureSelection::default(),
+            None,
+            Some((inventory, namespace_roots, native_facets)),
+        )
+    }
+
     /// Discover project context with either full dependency artifacts or parser-only dependency metadata.
     fn discover_with_dependency_mode_and_sdk_source(
         entry_path: &Path,
@@ -321,18 +341,63 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
+        Self::discover_with_inputs(
+            entry_path,
+            dependency_mode,
+            sdk_source,
+            feature_selection,
+            sdk_profile_override,
+            None,
+        )
+    }
+
+    /// Resolve ordinary session inputs or consume the publisher's explicit component context.
+    fn discover_with_inputs(
+        entry_path: &Path,
+        dependency_mode: DependencyManifestMode,
+        sdk_source: SdkInventorySource,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+        native_sdk: Option<(&SdkInventory, &BTreeSet<String>, &BTreeSet<String>)>,
+    ) -> CliResult<Self> {
         let inferred_project_root = resolve_project_root(entry_path);
         let manifest = discover_effective_project_manifest(&inferred_project_root)?;
+        let manifest = match (manifest, native_sdk) {
+            (Some(manifest), Some((_, _, facets))) => Some(
+                manifest.with_effective_dependencies(
+                    manifest
+                        .library_dependencies()
+                        .iter()
+                        .filter(|(name, _)| !facets.contains(name.as_str()))
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                    manifest
+                        .rust_dependencies()
+                        .iter()
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                    manifest
+                        .rust_dev_dependencies()
+                        .iter()
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                ),
+            ),
+            (manifest, _) => manifest,
+        };
         let project_root = manifest
             .as_ref()
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
-        let sdk_inventory = match sdk_source {
-            SdkInventorySource::PrepareNativeIfAbsent => prepare_or_discover_sdk_inventory()?,
-            // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
-            // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
-            SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
+        let sdk_inventory = if let Some((inventory, _, _)) = native_sdk {
+            Some(Arc::new(inventory.clone()))
+        } else {
+            match sdk_source {
+                SdkInventorySource::PrepareNativeIfAbsent => {
+                    crate::build::native_sdk::prepare_or_discover_sdk_inventory()?
+                }
+                // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
+                // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
+                SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
+            }
         };
         let package_feature_plan = manifest
             .as_ref()
@@ -414,7 +479,10 @@ impl CompilationSession {
         )?;
         let library_imported_vocab = library_manifest_index.library_imported_vocab();
         let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
-        let bootstrap_sdk_namespace_roots = sdk_provider_bootstrap_namespace_roots(&project_root)?;
+        let bootstrap_sdk_namespace_roots = match native_sdk {
+            Some((_, roots, _)) => roots.clone(),
+            None => sdk_provider_bootstrap_namespace_roots(&project_root)?,
+        };
         let provider_plan = Arc::new(
             ProviderPlan::from_resolved_inputs(
                 library_manifest_index.clone(),

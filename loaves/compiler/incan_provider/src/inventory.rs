@@ -14,7 +14,6 @@ use incan_lang::lang::stdlib;
 
 use crate::error::{ProviderError, ProviderResult};
 use crate::requirements::{ProjectRequirements, merge_requirement_dependency, merge_sdk_path_dependency};
-use crate::sdk_build::prepare_sdk_provider_inventory;
 use crate::{
     BackendImplementationRequirement, ProviderPlan, ResolvedSdkComponents, SDK_INVENTORY_FILE, SDK_PROVIDER_BUILD_ENV,
     SDK_SOURCE_CATALOG_FILE, SdkArtifactProjection, SdkComponentSelection, SdkDependencyRebinding, SdkInventory,
@@ -77,7 +76,7 @@ pub fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory
 /// Discover an installed SDK inventory, or reuse the one a source checkout already published, without ever building.
 ///
 /// This is the resolution every command that must not launch the provider builder uses (the Oven `run`, `build`,
-/// `oven bake`, test collection and formatting). It finds what [`prepare_or_discover_sdk_inventory`] would return
+/// `oven bake`, test collection and formatting). It finds what the driver-owned native publisher would return
 /// whenever that needs no build: an installed or explicitly named inventory first, then the source checkout's
 /// receipt-sealed source publication. A checkout with only a compatibility publication still yields `None`;
 /// consumers cannot replace sealed native authority with that publisher's Cargo-based identity.
@@ -86,23 +85,6 @@ pub fn discover_or_reuse_published_sdk_inventory() -> ProviderResult<Option<Arc<
         return Ok(Some(inventory));
     }
     crate::sdk_build::find_published_sdk_provider_inventory()
-}
-
-/// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
-pub fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
-    if let Some(inventory) = discover_or_reuse_published_sdk_inventory()? {
-        return Ok(Some(inventory));
-    }
-    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
-        return Ok(None);
-    }
-    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_root()
-        .is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file());
-    if has_source_catalog {
-        prepare_sdk_provider_inventory().map(Some)
-    } else {
-        Ok(None)
-    }
 }
 
 /// Reject explicit component-aware selection when the active toolchain exposes only the legacy monolithic SDK.

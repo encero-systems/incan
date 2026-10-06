@@ -422,6 +422,13 @@ fn provider_implementation_facets(
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
         return Ok(Vec::new());
     }
+    native_sdk_implementation_facets(namespace_claims)
+}
+
+/// Project namespace facet dependencies for an explicitly granted native SDK publisher.
+pub(crate) fn native_sdk_implementation_facets(
+    namespace_claims: &[ProviderModuleClaim],
+) -> CliResult<Vec<ProviderImplementationFacet>> {
     let roots = namespace_claims
         .iter()
         .filter_map(|claim| claim.module_path.first().cloned())

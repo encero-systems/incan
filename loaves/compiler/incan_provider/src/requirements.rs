@@ -539,6 +539,15 @@ pub fn collect_project_requirements(
 /// or features.
 pub fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
     let mut dependencies = requirements.sdk_path_dependencies.clone();
+    // Native provider receipts already bind the complete SDK support closure. Its source Cargo packages cannot
+    // become another semantic authority or be read to establish the same support identity a second time.
+    if dependencies.iter().any(|dependency| {
+        matches!(&dependency.source,
+        DependencySource::Path { path } if path.join("native-provider.json").is_file())
+    }) {
+        dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+        return dependencies;
+    }
     let toolchain_crates = incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
         .into_iter()
         .chain(requirements.stdlib_facets.iter().map(String::as_str));

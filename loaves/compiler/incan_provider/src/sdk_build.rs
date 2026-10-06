@@ -34,31 +34,6 @@ use oven_model::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
 #[cfg(test)]
 const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
 
-/// Prepare native SDK units and reuse a complete automatic provider publication when one exists.
-///
-/// A missing publication requires the in-process checked component publisher. Until that publisher is connected,
-/// preparation reports an error after native compilation instead of invoking the compatibility publisher.
-pub fn prepare_sdk_provider_inventory() -> ProviderResult<Arc<SdkInventory>> {
-    prepare_sdk_provider_inventory_in_store(None, None)
-}
-
-/// Build SDK providers into a publisher-owned store rather than the normal SDK cache.
-///
-/// The automatic route prepares the native seed and refuses publication until an in-process checked component
-/// publisher is supplied. It cannot fall back to the former subprocess or Cargo-lock publisher.
-pub fn prepare_sdk_provider_inventory_in_store(
-    publisher_store_root: Option<&Path>,
-    source_root_override: Option<&Path>,
-) -> ProviderResult<Arc<SdkInventory>> {
-    let publication = SdkProviderPublication::resolve(publisher_store_root, source_root_override)?;
-    let inputs = crate::sdk_native::SdkNativeInputs::discover(&publication.store_root)?;
-    prepare_native_sdk_provider_inventory(publication, &inputs, |_, _, _, _| {
-        Err(ProviderError::failure(
-            "SDK native closure is prepared, but the in-process checked component publisher is not installed; refusing the legacy Cargo publisher",
-        ))
-    })
-}
-
 /// Prepare native units and atomically publish checked component metadata supplied by the compiler driver.
 ///
 /// The callback runs in dependency order with the retained native closure, a complete inspection authority, and the
@@ -160,11 +135,26 @@ fn build_sdk_components_into_staging(
     crate::sdk_native::write_sdk_native_authority(closure, staging)?;
     crate::sdk_native::write_sdk_native_artifact_catalog(closure, native_store, staging)?;
     let mut inventory = source_catalog_inventory(catalog, staging);
+    let mut unavailable = std::collections::BTreeMap::new();
     for component in catalog.publication_order() {
         let output = staging.join("components").join(&component.id);
-        publish(&component.project_root, &output, &inventory, closure)?;
+        if let Err(error) = publish(&component.project_root, &output, &inventory, closure) {
+            if component.mandatory {
+                return Err(error);
+            }
+            unavailable.insert(component.id.clone(), error.to_string());
+            if output.exists() {
+                fs::remove_dir_all(&output).map_err(|error| ProviderError::failure(error.to_string()))?;
+            }
+            continue;
+        }
         record_native_component_provider(&mut inventory, component, &output)?;
     }
+    fs::write(
+        staging.join("unavailable-components.json"),
+        serde_json::to_vec_pretty(&unavailable).map_err(|error| ProviderError::failure(error.to_string()))?,
+    )
+    .map_err(|error| ProviderError::failure(error.to_string()))?;
     restrict_staged_sdk_profile(catalog, profile, staging, &mut inventory)?;
     inventory
         .write_to_path(&staging.join(SDK_INVENTORY_FILE))

@@ -33,7 +33,6 @@ fn install_sdk_inspection_authority_from(
     destination: &Path,
     dependencies: &[oven_model::manifest::DependencySpec],
 ) -> Result<Option<Vec<oven_store::store::OvenStoreExecutionPayload>>, CliError> {
-    use oven_model::manifest::DependencySource;
     let receipts = root.join(".sealed-native-receipts.json");
     if !receipts.is_file() {
         return Ok(None);
@@ -52,40 +51,15 @@ fn install_sdk_inspection_authority_from(
             "SDK inspection selection has an invalid native receipt catalog",
         ));
     }
-    let bindings = receipts
-        .keys()
-        .map(|key| serde_json::from_str::<oven_rustc::sdk_closure::SdkLockedUnit>(key))
-        .collect::<Result<Vec<_>, _>>()
+    let inventory = incan_provider::SdkInventory::read_from_path(&root.join(incan_provider::SDK_INVENTORY_FILE))
         .map_err(|error| CliError::failure(error.to_string()))?;
+    let selection = incan_provider::sdk_native::select_sdk_native_artifacts(root)?;
     for dependency in dependencies {
-        let name = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
-        let requirement = dependency
-            .version
-            .as_deref()
-            .map(semver::VersionReq::parse)
-            .transpose()
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        if !matches!(dependency.source, DependencySource::Registry)
-            || dependency.crate_name.replace('-', "_") != name.replace('-', "_")
-            || !bindings.iter().any(|binding| {
-                binding.loaf == format!("crates-io/{name}")
-                    && binding.domain == "target"
-                    && dependency
-                        .features
-                        .iter()
-                        .all(|feature| binding.features.contains(feature))
-                    && semver::Version::parse(&binding.version).is_ok_and(|version| {
-                        requirement
-                            .as_ref()
-                            .is_none_or(|requirement| requirement.matches(&version))
-                    })
-            })
-        {
+        if !incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)? {
             return Ok(None);
         }
     }
-    let selected = incan_provider::sdk_native::retain_sdk_native_artifacts(root)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+    let selected = selection.owners;
     let mut retained_roots = selected
         .iter()
         .map(|owner| owner.artifact_root.join("source").canonicalize())

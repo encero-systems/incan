@@ -296,6 +296,16 @@ pub struct PreparedOvenProjectRegistrySourceAuthorities {
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectWorkspace {
+    /// Borrow a transaction-owned frozen graph; its enclosing publisher retains all native leases.
+    pub(crate) fn from_retained_sdk_graph(manifest_dir: PathBuf) -> Self {
+        Self {
+            manifest_dir,
+            _source_loaf: None,
+            _project_source_authorities: None,
+            _sdk_native: Vec::new(),
+        }
+    }
+
     /// Return the compiler-authored manifest directory while this workspace retains its source Loaf.
     pub fn manifest_dir(&self) -> &Path {
         &self.manifest_dir

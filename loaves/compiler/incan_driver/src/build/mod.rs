@@ -14,6 +14,7 @@ pub mod library_exports;
 pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
+pub mod native_sdk;
 pub mod output_materialization;
 pub mod output_paths;
 pub mod output_selection;

@@ -31,9 +31,6 @@ pub fn write_sdk_native_artifact_catalog(
     store: &Path,
     root: &Path,
 ) -> ProviderResult<()> {
-    closure
-        .require_complete()
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
     let units = closure
         .units()
         .iter()
@@ -57,6 +54,19 @@ pub fn write_sdk_native_artifact_catalog(
 /// Selection uses immutable store coordinates recorded during publication. It never discovers an ambient source
 /// cache, resolves requirements, or trusts a native path independently of its admitted output digest.
 pub fn retain_sdk_native_artifacts(root: &Path) -> ProviderResult<Vec<OvenStoreExecutionPayload>> {
+    select_sdk_native_artifacts(root).map(|selection| selection.owners)
+}
+
+/// Native coordinates and their verified owners selected together from one SDK publication.
+pub struct SdkNativeSelection {
+    /// Exact output descriptors in the same order as their retained execution owners.
+    pub units: Vec<oven_rustc::sdk_closure::SdkNativeArtifact>,
+    /// Leases and verified source/output payloads that authorize the coordinates above.
+    pub owners: Vec<OvenStoreExecutionPayload>,
+}
+
+/// Select native descriptors with their admitted owners instead of allowing consumers to trust output paths alone.
+pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelection> {
     let catalog: SdkNativeArtifactCatalog = serde_json::from_slice(
         &std::fs::read(root.join(".sealed-native-units.json"))
             .map_err(|error| ProviderError::failure(error.to_string()))?,
@@ -120,7 +130,10 @@ pub fn retain_sdk_native_artifacts(root: &Path) -> ProviderResult<Vec<OvenStoreE
             .verify_admitted_payload()
             .map_err(|error| ProviderError::failure(error.to_string()))?;
     }
-    Ok(selected)
+    Ok(SdkNativeSelection {
+        units: catalog.units,
+        owners: selected,
+    })
 }
 
 /// Explicit immutable archive and index inputs for automatic source SDK preparation.
@@ -156,8 +169,9 @@ impl SdkNativeInputs {
 
 /// Compile the sealed closure, its local companions, and every component declaring a Rust facet.
 ///
-/// A failed or refused unit prevents provider publication. Successful independent units remain receipt-bound and
-/// reusable, including when native compilation is refused by a sandbox. No partial component inventory is emitted.
+/// Successful independent units remain receipt-bound and reusable when native compilation fails. The checked
+/// publisher admits only components whose own facets and dependency providers are available; named failures remain
+/// in the closure report and cannot authorize missing outputs.
 pub fn prepare_sdk_native_closure(
     stdlib: &Path,
     catalog: &SdkSourceCatalog,
@@ -225,15 +239,6 @@ pub fn prepare_sdk_native_closure(
         serde_json::to_vec_pretty(&report).map_err(|error| ProviderError::failure(error.to_string()))?,
     )
     .map_err(|error| ProviderError::failure(error.to_string()))?;
-    let unavailable = closure.require_complete().err().map(|error| error.to_string());
-    if unavailable.is_some() || !local_failures.is_empty() {
-        return Err(ProviderError::failure(format!(
-            "{}\n{}\n{}",
-            unavailable.unwrap_or_else(|| "SDK local facet compilation failed".to_string()),
-            closure.report().failed.join("\n"),
-            local_failures.join("\n"),
-        )));
-    }
     Ok(closure)
 }
 
@@ -254,9 +259,6 @@ pub fn sdk_native_receipts(closure: &SdkCompiledClosure) -> ProviderResult<BTree
 /// The caller retains the closure's leases until its complete publication transaction is durable. This helper does
 /// not authorize a partial provider inventory or an unavailable native unit.
 pub fn write_sdk_native_authority(closure: &SdkCompiledClosure, root: &Path) -> ProviderResult<PathBuf> {
-    closure
-        .require_complete()
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
     let mut sources = BTreeMap::new();
     for unit in closure.units() {
         let source_root = unit.source_root();
@@ -319,4 +321,116 @@ mod tests {
         }
         Ok(())
     }
+}
+
+/// Check a consumer requirement against one admitted SDK selection without resolving another dependency graph.
+///
+/// Registry requirements bind package, version, domain, and features. Path requirements must name either an exact
+/// published SDK provider root or a compiler-owned facet source root from the current SDK catalog; arbitrary paths
+/// with matching package names cannot borrow the SDK's native authority.
+pub fn sdk_native_dependency_is_covered(
+    inventory: &crate::SdkInventory,
+    selection: &SdkNativeSelection,
+    dependency: &oven_model::manifest::DependencySpec,
+) -> ProviderResult<bool> {
+    use oven_model::manifest::DependencySource;
+    let package = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
+    let requirement = dependency
+        .version
+        .as_deref()
+        .map(semver::VersionReq::parse)
+        .transpose()
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    let accepts_version = |version: &str| {
+        semver::Version::parse(version).is_ok_and(|version| {
+            requirement
+                .as_ref()
+                .is_none_or(|requirement| requirement.matches(&version))
+        })
+    };
+    if let DependencySource::Path { path } = &dependency.source {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        for provider in inventory
+            .components
+            .values()
+            .filter(|component| component.available)
+            .flat_map(|component| &component.providers)
+        {
+            if let Some(root) = provider.crate_root.as_ref()
+                && canonical == root.canonicalize().unwrap_or_else(|_| root.clone())
+                && package == provider.name
+                && accepts_version(&provider.version)
+            {
+                return Ok(true);
+            }
+        }
+        if !sdk_native_facet_path_matches(package, &canonical)? {
+            return Ok(false);
+        }
+    } else if !matches!(dependency.source, DependencySource::Registry) {
+        return Ok(false);
+    }
+    let candidates = selection
+        .units
+        .iter()
+        .filter(|unit| {
+            let name = Path::new(&unit.relative_path)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("lib"));
+            let package_matches = match dependency.source {
+                DependencySource::Registry => unit.binding.loaf == format!("crates-io/{package}"),
+                DependencySource::Path { .. } => {
+                    name == Some(package.replace('-', "_").as_str()) && !unit.binding.loaf.starts_with("crates-io/")
+                }
+                DependencySource::Git { .. } => false,
+            };
+            package_matches
+                && accepts_version(&unit.binding.version)
+                && (unit.binding.domain == "target"
+                    || Path::new(&unit.relative_path)
+                        .extension()
+                        .is_some_and(|extension| extension == "dylib"))
+                && dependency
+                    .features
+                    .iter()
+                    .all(|feature| unit.binding.features.contains(feature))
+        })
+        .count();
+    Ok(candidates == 1)
+}
+
+/// Match only the compiler's named native companions and component facets against their owning source catalog.
+fn sdk_native_facet_path_matches(crate_name: &str, path: &Path) -> ProviderResult<bool> {
+    let Some(stdlib) = oven_model::toolchain_layout::find_stdlib_root() else {
+        return Ok(false);
+    };
+    let Some(source) = stdlib.parent().and_then(Path::parent) else {
+        return Ok(false);
+    };
+    let mut roots = match crate_name {
+        "incan_lang" | "incan_vocab" => vec![source.join("loaves/kernel").join(crate_name)],
+        "incan_derive" | "incan_web_macros" => vec![stdlib.join("derive").join(crate_name)],
+        _ => Vec::new(),
+    };
+    let catalog = SdkSourceCatalog::read_from_path(&stdlib.join(crate::SDK_SOURCE_CATALOG_FILE))
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    for component in catalog.components.values() {
+        let text = std::fs::read_to_string(component.project_root.join("loaf.toml"))
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        let declaration: toml::Value =
+            toml::from_str(&text).map_err(|error| ProviderError::failure(error.to_string()))?;
+        if declaration
+            .get("rust")
+            .and_then(|rust| rust.get("name"))
+            .and_then(toml::Value::as_str)
+            == Some(crate_name)
+        {
+            roots.push(component.project_root.clone());
+            roots.push(component.project_root.join("rust"));
+        }
+    }
+    Ok(roots
+        .into_iter()
+        .any(|root| root.canonicalize().unwrap_or(root) == path))
 }
