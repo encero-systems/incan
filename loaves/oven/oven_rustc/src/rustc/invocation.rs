@@ -879,6 +879,25 @@ fn apply_sdk_compilation_policy(command: &mut Command, receipt: &OvenReceipt) ->
         // warning into a dependency failure. Separate locked versions/domains also need distinct Rust metadata.
         command.args(["--cap-lints", "allow", "-C"]);
         command.arg(format!("metadata={}", receipt.build_unit_identity));
+        if let Some(encoded) = receipt.sources.build_unit_inputs.get("sdk-native-libraries") {
+            let names: Vec<String> = serde_json::from_str(encoded).map_err(|error| OvenRustcError::InvalidInput {
+                field: "SDK native libraries",
+                message: error.to_string(),
+            })?;
+            for name in names {
+                if name.is_empty()
+                    || !name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+                {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "SDK native libraries",
+                        message: "invalid static library name".to_string(),
+                    });
+                }
+                command.arg("-l").arg(format!("static={name}"));
+            }
+        }
         if let Some(encoded) = receipt.sources.build_unit_inputs.get("sdk-build-fact") {
             let fact: oven_model::manifest::RustFactRecord =
                 serde_json::from_str(encoded).map_err(|error| OvenRustcError::InvalidInput {

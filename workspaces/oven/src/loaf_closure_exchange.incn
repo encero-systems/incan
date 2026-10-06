@@ -1,0 +1,85 @@
+"""Resolve an explicit pinned index snapshot through the baked engine's schema dispatch."""
+
+from std.json import JsonValue, parse
+from std.fs import Path
+from plan_json import exact_object, text_field
+from loaf_index import LoafVersion, read_index, read_root_requests
+from loaf_pin_check import read_cfg
+from loaf_resolve import resolve_requests, resolution_json
+from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, TargetConfiguration
+
+const SCHEMA: str = "incan.oven.loaf-closure-request/1"
+
+
+def resolve_document(document: JsonValue) -> Result[JsonValue, str]:
+    """Read only the host-staged commit snapshot; share index decoding, cfg activation and resolution policy."""
+    exact_object(document, ["schema", "pin", "index_commit", "names", "cfg", "roots", "target", "host"], []).map_err(
+        (e) => e.message(),
+    )?
+    if text_field(document, "schema", []).map_err((e) => e.message())? != SCHEMA:
+        return Err("unsupported closure request schema")
+    directory = text_field(document, "pin", []).map_err((e) => e.message())?
+    commit = text_field(document, "index_commit", []).map_err((e) => e.message())?
+    names_file = text_field(document, "names", []).map_err((e) => e.message())?
+    cfg_file = text_field(document, "cfg", []).map_err((e) => e.message())?
+    target = text_field(document, "target", []).map_err((e) => e.message())?
+    host = text_field(document, "host", []).map_err((e) => e.message())?
+    mut roots_source = ""
+    match document.get("roots"):
+        Some(roots) =>
+            roots_source = roots.to_json().map_err((e) => e.message())?
+        None => return Err("closure request has no roots array")
+    return resolve_snapshot(directory, names_file, cfg_file, roots_source, commit, target, host)
+
+
+pub def resolve_snapshot(
+    directory: str,
+    names_file: str,
+    cfg_file: str,
+    roots_source: str,
+    commit: str,
+    target: str,
+    host: str,
+) -> Result[JsonValue, str]:
+    """Share the standalone lock driver's resolution with the engine request, binding staged reads to one commit."""
+    revision = Path(f"{directory}/revision").read_text("utf-8", "strict").map_err((e) => e.message())?
+    if revision.strip() != commit:
+        return Err("staged index revision differs from the requested commit")
+    if target != "aarch64-apple-darwin" or host != target:
+        return Err("closure resolution currently requires aarch64-apple-darwin for host and target")
+    requests = read_root_requests(roots_source, "roots").map_err((e) => e.message())?
+    names = Path(names_file).read_text("utf-8", "strict").map_err((e) => e.message())?
+    mut records: list[LoafVersion] = []
+    for loaf in names.split("\n"):
+        if loaf != "":
+            for record in read_index(directory, loaf).map_err((e) => e.message())?:
+                records.append(record)
+    configuration = TargetConfiguration(triple=target, cfg=Some(read_cfg(cfg_file)?))
+    context = ActivationContext(
+        host=configuration,
+        target=configuration,
+        purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
+        requested_features=[],
+        default_features=false,
+        build_unit_present=false,
+    )
+    units = resolve_requests(records, requests, {}, context).map_err((e) => e.message())?
+    return Ok(resolution_json(units))
+
+
+pub def evaluate(source: str) -> JsonValue:
+    """Return the resolution or a named refusal without falling through to a different schema decoder."""
+    match parse(source):
+        Err(error) => return refusal(error.message())
+        Ok(document) =>
+            match resolve_document(document):
+                Ok(resolution) => return resolution
+                Err(reason) => return refusal(reason)
+
+
+def refusal(reason: str) -> JsonValue:
+    """Retain the refusal reason under this request schema instead of claiming a resolution."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("refused"), "reason": JsonValue.string(reason)},
+    )

@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 type Error = Box<dyn std::error::Error>;
 const INDEX_COMMIT: &str = "178df58e4d8bf6109ef271e0d2fb2cc1d7abbf95";
 
+mod native;
+
 struct CompileContext<'a> {
     rustc: &'a Path,
     target: &'a str,
@@ -27,6 +29,27 @@ struct CompileContext<'a> {
     output: &'a Path,
     store: &'a OvenStore,
     compiler_digest: String,
+    profile: &'a str,
+}
+
+/// Explicit authority and physical inputs for compiling an adopted closure without Cargo.
+pub struct ClosureCompileRequest<'a> {
+    /// Resolution document produced by the Incan resolver.
+    pub lock: &'a Path,
+    /// Digest-addressed admitted archive directory.
+    pub blobs: &'a Path,
+    /// Private store and staging directory.
+    pub output: &'a Path,
+    /// Selected compiler executable.
+    pub rustc: &'a Path,
+    /// Index repository; its worktree is never consulted.
+    pub index: &'a Path,
+    /// Exact index commit used for every file read.
+    pub index_commit: &'a str,
+    /// Selected target triple.
+    pub target: &'a str,
+    /// Debug or release compilation policy.
+    pub profile: &'a str,
 }
 
 /// Exact stage-zero package binding authorized by the SDK seed.
@@ -73,7 +96,7 @@ pub struct SdkClosureReport {
     pub compiled: Vec<String>,
     /// Units reused through the executor's content-checked output receipts.
     pub reused: Vec<String>,
-    /// Build-script bindings without admitted debug facts.
+    /// Build-script bindings without facts for the selected profile.
     pub refused: Vec<String>,
     /// Units that could not compile, with their diagnostic.
     pub failed: Vec<String>,
@@ -101,7 +124,8 @@ struct FactOutFile {
 ///
 /// Build-script units require exact debug facts from the pinned index. Missing facts are refused rather than
 /// approximated, and independent branches continue. Matching cfg, generated-file and environment facts are applied;
-/// link/tool facts require retained publisher assets and are refused at execution when those assets are absent.
+/// native-link records use the admitted archive and a digest-matched supplied executable owner. Tool records require
+/// retained publisher assets and are refused when those assets are absent.
 pub fn prepare_sdk_seed(
     lock: &Path,
     blobs: &Path,
@@ -109,28 +133,62 @@ pub fn prepare_sdk_seed(
     rustc: &Path,
     index: &Path,
 ) -> Result<SdkCompiledClosure, Error> {
+    let target = rustc_host_target(rustc)?;
+    prepare_closure(&ClosureCompileRequest {
+        lock,
+        blobs,
+        output,
+        rustc,
+        index,
+        index_commit: INDEX_COMMIT,
+        target: &target,
+        profile: "debug",
+    })
+}
+
+/// Compile a resolved closure using one pinned index and profile through the SDK executor.
+pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompiledClosure, Error> {
+    if !matches!(request.profile, "debug" | "release") {
+        return Err("closure profile must be debug or release".into());
+    }
+    validate_index_commit(request.index_commit)?;
+    let ClosureCompileRequest {
+        lock,
+        output,
+        rustc,
+        target,
+        profile,
+        ..
+    } = *request;
     let started = std::time::Instant::now();
     let seed: Seed = serde_json::from_slice(&std::fs::read(lock)?)?;
     if seed.schema != "incan.oven.loaf-resolution/1" {
         return Err("unsupported SDK seed schema".into());
     }
     std::fs::create_dir_all(output)?;
-    let target = rustc_host_target(rustc)?;
     let toolchain = rustc_identity(rustc)?;
     let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
-    let units = prepare_units(seed.units, blobs, scratch.path(), index, &target, &toolchain)?;
+    let units = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
     let store = OvenStore::new(
         output.join("store"),
         OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
     );
     let context = CompileContext {
         rustc,
-        target: &target,
+        target,
         toolchain: &toolchain,
         output,
         store: &store,
         compiler_digest: compiler_closure_digest(rustc)?,
+        profile,
     };
+    let mut closure = compile_units(&units, &context)?;
+    closure.report.seconds = started.elapsed().as_secs_f64();
+    Ok(closure)
+}
+
+/// Compile independent branches in dependency order, retaining every unavailable binding in the report.
+fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result<SdkCompiledClosure, Error> {
     let mut selected_units = Vec::new();
     let mut report = SdkClosureReport::default();
     let mut pending: BTreeSet<usize> = (0..units.len()).collect();
@@ -141,12 +199,12 @@ pub fn prepare_sdk_seed(
         for index in pending.clone() {
             let unit = &units[index];
             if unit.build_script && unit.fact.is_none() {
-                report.refused.push(binding_label(&unit.binding));
+                report.refused.push(binding_label(&unit.binding, context.profile));
                 pending.remove(&index);
                 progressed = true;
                 continue;
             }
-            let edges = active_edges(unit, &units)?;
+            let edges = active_edges(unit, units)?;
             if edges.iter().any(|(_, dependency)| pending.contains(dependency)) {
                 continue;
             }
@@ -155,7 +213,7 @@ pub fn prepare_sdk_seed(
             if edges.iter().any(|(_, dependency)| !artifacts.contains_key(dependency)) {
                 report.failed.push(format!(
                     "{}: dependency was refused or failed",
-                    binding_label(&unit.binding)
+                    binding_label(&unit.binding, context.profile)
                 ));
                 continue;
             }
@@ -183,7 +241,7 @@ pub fn prepare_sdk_seed(
                         .map(Path::to_path_buf)
                 })
                 .collect();
-            match compile_unit(unit, &context, externs, searches) {
+            match compile_unit(unit, context, externs, searches) {
                 Ok((path, reused, owner)) => {
                     selected_units.push(SdkCompiledUnit {
                         binding: unit.binding.clone(),
@@ -193,19 +251,20 @@ pub fn prepare_sdk_seed(
                     artifacts.insert(index, path);
                     closures.insert(index, closure);
                     if reused {
-                        report.reused.push(binding_label(&unit.binding));
+                        report.reused.push(binding_label(&unit.binding, context.profile));
                     } else {
-                        report.compiled.push(binding_label(&unit.binding));
+                        report.compiled.push(binding_label(&unit.binding, context.profile));
                     }
                 }
-                Err(error) => report.failed.push(format!("{}: {error}", binding_label(&unit.binding))),
+                Err(error) => report
+                    .failed
+                    .push(format!("{}: {error}", binding_label(&unit.binding, context.profile))),
             }
         }
         if !progressed {
             return Err("cycle in locked SDK closure".into());
         }
     }
-    report.seconds = started.elapsed().as_secs_f64();
     Ok(SdkCompiledClosure {
         report,
         units: selected_units,
@@ -215,12 +274,18 @@ pub fn prepare_sdk_seed(
 /// Verify archives before parsing their adopted manifests and create fresh source-only roots.
 fn prepare_units(
     bindings: Vec<SdkLockedUnit>,
-    blobs: &Path,
     scratch: &Path,
-    index: &Path,
-    target: &str,
+    request: &ClosureCompileRequest<'_>,
     toolchain: &str,
 ) -> Result<Vec<PreparedUnit>, Error> {
+    let ClosureCompileRequest {
+        blobs,
+        index,
+        index_commit,
+        target,
+        profile,
+        ..
+    } = *request;
     bindings
         .into_iter()
         .enumerate()
@@ -244,9 +309,9 @@ fn prepare_units(
             }
             let root = scratch.join(ordinal.to_string());
             archive.materialize(&root)?;
-            let fact = index_fact(index, &binding, target, toolchain)?;
+            let fact = index_fact(index, index_commit, &binding, target, toolchain, profile)?;
             let fact_out = match &fact {
-                Some(fact) => fact_out_files(index, &binding, fact)?,
+                Some(fact) => fact_out_files(index, index_commit, &binding, fact)?,
                 None => Vec::new(),
             };
             Ok(PreparedUnit {
@@ -262,9 +327,9 @@ fn prepare_units(
 }
 
 /// Render every exact binding dimension required for a missing-fact refusal.
-fn binding_label(unit: &SdkLockedUnit) -> String {
+fn binding_label(unit: &SdkLockedUnit, profile: &str) -> String {
     format!(
-        "({}, {}, debug, {:?}, {})",
+        "({}, {}, {profile}, {:?}, {})",
         unit.loaf, unit.version, unit.features, unit.domain
     )
 }
@@ -378,8 +443,6 @@ fn compile_unit(
     searches: Vec<PathBuf>,
 ) -> Result<(PathBuf, bool, OvenStoreExecutionPayload), Error> {
     let rustc = context.rustc;
-    let target = context.target;
-    let toolchain = context.toolchain;
     let output = context.output;
     let store = context.store;
     let facet = unit.manifest.get("rust").ok_or("missing Rust facet")?;
@@ -403,26 +466,24 @@ fn compile_unit(
         return Err("invalid Rust source root".into());
     }
     let source = unit.root.join(relative);
-    let mut receipt = receipt_generated_project(
-        &OvenGeneratedProjectRequest::new(
-            &unit.root,
-            &unit.binding.loaf,
-            &unit.binding.version,
-            target,
-            toolchain,
-            "debug",
-            unit.binding.features.clone(),
-        )
-        .with_generated_source("sdk-root", &source)
-        .with_build_unit_input("sdk-source-archive", &unit.binding.archive_digest)
-        .with_build_unit_input("domain", &unit.binding.domain)
-        .with_build_unit_input("sdk-compile-policy", "source-sealed-v1")
-        .with_build_unit_input("compiler-binary", &context.compiler_digest),
-    )?;
-    if let Some(fact) = &unit.fact {
-        receipt = oven_store::receipt_with_build_unit_input(&receipt, "sdk-build-fact", serde_json::to_string(fact)?)?;
+    let mut receipt = unit_receipt(unit, context, &source)?;
+    let (mut plan, artifacts) = unit_plan(unit, &receipt.intent, externs, searches)?;
+    let native = native::prepare(unit, context, &receipt)?;
+    for product in &native {
+        plan.native_search_paths.push(product.owner.artifact_root.clone());
+        receipt = oven_store::receipt_with_build_unit_input(
+            &receipt,
+            format!("sdk-native:{}", product.name),
+            &product.owner.manifest.receipt_identity,
+        )?;
     }
-    let (plan, artifacts) = unit_plan(unit, &receipt.intent, externs, searches)?;
+    if !native.is_empty() {
+        receipt = oven_store::receipt_with_build_unit_input(
+            &receipt,
+            "sdk-native-libraries",
+            serde_json::to_string(&native.iter().map(|product| &product.name).collect::<Vec<_>>())?,
+        )?;
+    }
     for (name, digest) in &plan.caller_owned_library_digests {
         receipt = oven_store::receipt_with_build_unit_input(&receipt, format!("extern:{name}"), digest)?;
     }
@@ -469,10 +530,51 @@ fn compile_unit(
     } else {
         bake_trusted_direct_rustc_library(&request)?
     };
+    let owner = publish_unit(unit, store, receipt, domain, result.output, &relative)?;
+    Ok((owner.artifact_root.join(relative), result.reused, owner))
+}
+
+/// Bind a unit's archive and exact fact record to the selected compilation policy.
+fn unit_receipt(
+    unit: &PreparedUnit,
+    context: &CompileContext<'_>,
+    source: &Path,
+) -> Result<oven_store::OvenReceipt, Error> {
+    let mut receipt = receipt_generated_project(
+        &OvenGeneratedProjectRequest::new(
+            &unit.root,
+            &unit.binding.loaf,
+            &unit.binding.version,
+            context.target,
+            context.toolchain,
+            context.profile,
+            unit.binding.features.clone(),
+        )
+        .with_generated_source("sdk-root", source)
+        .with_build_unit_input("sdk-source-archive", &unit.binding.archive_digest)
+        .with_build_unit_input("domain", &unit.binding.domain)
+        .with_build_unit_input("sdk-compile-policy", "source-sealed-v1")
+        .with_build_unit_input("compiler-binary", &context.compiler_digest),
+    )?;
+    if let Some(fact) = &unit.fact {
+        receipt = oven_store::receipt_with_build_unit_input(&receipt, "sdk-build-fact", serde_json::to_string(fact)?)?;
+    }
+    Ok(receipt)
+}
+
+/// Publish the admitted source root and finished library atomically, then retain its execution lease.
+fn publish_unit(
+    unit: &PreparedUnit,
+    store: &OvenStore,
+    receipt: oven_store::OvenReceipt,
+    domain: String,
+    output: PathBuf,
+    relative: &str,
+) -> Result<OvenStoreExecutionPayload, Error> {
     let mut files = source_materializations(&unit.root, &unit.root)?;
     files.push(OvenArtifactMaterializedFile {
-        source_path: result.output,
-        relative_path: relative.clone(),
+        source_path: output,
+        relative_path: relative.to_string(),
     });
     let entry = store.publish(&OvenArtifactPublishRequest {
         receipt,
@@ -486,7 +588,7 @@ fn compile_unit(
         .select_payloads_for_execution(&[entry.identity])?
         .pop()
         .ok_or("published SDK unit was not selected")?;
-    Ok((owner.artifact_root.join(relative), result.reused, owner))
+    Ok(owner)
 }
 
 /// Read a fact's generated files from the version's record directory at the pinned index commit.
@@ -495,6 +597,7 @@ fn compile_unit(
 /// source archive, so the bytes come from the index and are checked against the declared digest before use.
 fn fact_out_files(
     index: &Path,
+    index_commit: &str,
     binding: &SdkLockedUnit,
     fact: &oven_model::manifest::RustFactRecord,
 ) -> Result<Vec<FactOutFile>, Error> {
@@ -508,21 +611,46 @@ fn fact_out_files(
                 return Err("invalid generated fact path".into());
             }
         }
-        let bytes = index_file(index, &format!("{}/{}/{}", binding.loaf, binding.version, member.path))?;
+        let bytes = index_file(
+            index,
+            index_commit,
+            &format!("{}/{}/{}", binding.loaf, binding.version, member.path),
+        )?;
         if digest_bytes(&bytes) != member.digest {
             return Err("generated fact digest mismatch".into());
         }
-        files.push(FactOutFile { name: member.name.clone(), bytes });
+        files.push(FactOutFile {
+            name: member.name.clone(),
+            bytes,
+        });
     }
     Ok(files)
 }
 
 /// Read one file from the pinned index commit without consulting its mutable worktree.
-fn index_file(index: &Path, relative: &str) -> Result<Vec<u8>, Error> {
+fn index_file(index: &Path, index_commit: &str, relative: &str) -> Result<Vec<u8>, Error> {
+    validate_index_commit(index_commit)?;
+    if Path::new(relative).components().any(|component| {
+        !matches!(component, std::path::Component::Normal(_))
+            || matches!(
+                component.as_os_str().to_str(),
+                Some("Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock")
+            )
+    }) {
+        return Err("index read must name an owner-relative non-Cargo file".into());
+    }
+    let kind = std::process::Command::new("git")
+        .arg("-C")
+        .arg(index)
+        .args(["cat-file", "-t", index_commit])
+        .output()?;
+    if !kind.status.success() || kind.stdout != b"commit\n" {
+        return Err("index pin must identify an existing Git commit object".into());
+    }
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(index)
-        .args(["show", &format!("{INDEX_COMMIT}:{relative}")])
+        .args(["show", &format!("{index_commit}:{relative}")])
         .output()?;
     if !output.status.success() {
         return Err(format!("pinned index file unavailable: {relative}").into());
@@ -530,34 +658,29 @@ fn index_file(index: &Path, relative: &str) -> Result<Vec<u8>, Error> {
     Ok(output.stdout)
 }
 
+/// Refuse mutable revisions and abbreviated commits before consulting any index file.
+fn validate_index_commit(index_commit: &str) -> Result<(), Error> {
+    if index_commit.len() != 40 || !index_commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("index commit must be a full hexadecimal commit identity".into());
+    }
+    Ok(())
+}
+
 /// Select a fact only after verifying the pinned index archive association and all four binding dimensions.
 fn index_fact(
     index: &Path,
+    index_commit: &str,
     binding: &SdkLockedUnit,
     target: &str,
     toolchain: &str,
+    profile: &str,
 ) -> Result<Option<oven_model::manifest::RustFactRecord>, Error> {
-    let bytes = index_file(index, &format!("index/{}", binding.loaf))?;
-    let lines = std::str::from_utf8(&bytes)?;
-    let mut entries = Vec::new();
-    for line in lines.lines() {
-        let value: serde_json::Value = serde_json::from_str(line)?;
-        if value.get("vers").and_then(serde_json::Value::as_str) == Some(&binding.version) {
-            entries.push(value);
-        }
-    }
-    if entries.len() != 1 {
-        return Err("pinned index version is absent or ambiguous".into());
-    }
-    let entry = &entries[0];
-    if entry.get("cksum").and_then(serde_json::Value::as_str) != Some(&binding.archive_digest) {
-        return Err("pinned index disagrees with locked archive digest".into());
-    }
+    let entry = index_entry(index, index_commit, binding)?;
     let relative = entry
         .get("manifest")
         .and_then(serde_json::Value::as_str)
         .ok_or("pinned index manifest is absent")?;
-    let manifest: toml::Value = toml::from_str(std::str::from_utf8(&index_file(index, relative)?)?)?;
+    let manifest: toml::Value = toml::from_str(std::str::from_utf8(&index_file(index, index_commit, relative)?)?)?;
     let mut selected = Vec::new();
     if let Some(facts) = manifest
         .get("rust")
@@ -570,7 +693,7 @@ fn index_fact(
             features.sort();
             let mut enabled = binding.features.clone();
             enabled.sort();
-            if fact.toolchain == toolchain && fact.target == target && fact.profile == "debug" && features == enabled {
+            if fact.toolchain == toolchain && fact.target == target && fact.profile == profile && features == enabled {
                 selected.push(fact);
             }
         }
@@ -581,15 +704,67 @@ fn index_fact(
     Ok(selected.pop())
 }
 
+/// Read exactly one index version and verify its association with the admitted archive.
+fn index_entry(index: &Path, index_commit: &str, binding: &SdkLockedUnit) -> Result<serde_json::Value, Error> {
+    let bytes = index_file(index, index_commit, &format!("index/{}", binding.loaf))?;
+    let lines = std::str::from_utf8(&bytes)?;
+    let mut entries = Vec::new();
+    for line in lines.lines() {
+        let value: serde_json::Value = serde_json::from_str(line)?;
+        if value.get("vers").and_then(serde_json::Value::as_str) == Some(&binding.version) {
+            entries.push(value);
+        }
+    }
+    if entries.len() != 1 {
+        return Err("pinned index version is absent or ambiguous".into());
+    }
+    let entry = entries.pop().ok_or("pinned index version is absent")?;
+    if entry.get("cksum").and_then(serde_json::Value::as_str) != Some(&binding.archive_digest) {
+        return Err("pinned index disagrees with locked archive digest".into());
+    }
+    Ok(entry)
+}
+
+/// Check that a supplied resolution honors the requested root's local and default feature demands at the same pin.
+pub fn validate_locked_root_features(
+    index: &Path,
+    index_commit: &str,
+    binding: &SdkLockedUnit,
+    requested: &[String],
+    default_features: bool,
+) -> Result<(), Error> {
+    validate_index_commit(index_commit)?;
+    let entry = index_entry(index, index_commit, binding)?;
+    let features = entry
+        .get("features")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("index feature table is absent")?;
+    for feature in requested {
+        if !features.contains_key(feature) || !binding.features.contains(feature) {
+            return Err(format!(
+                "{}: requested root feature {feature} absent from index or lock",
+                binding.loaf
+            )
+            .into());
+        }
+    }
+    if default_features
+        && features.contains_key("default")
+        && !binding.features.iter().any(|feature| feature == "default")
+    {
+        return Err(format!("{}: requested root default features absent from lock", binding.loaf).into());
+    }
+    Ok(())
+}
+
 /// Apply selected compile environment facts without executing a build script or importing an ambient output root.
 fn apply_fact(unit: &PreparedUnit, plan: &mut OvenRustcArtifactPlan) -> Result<(), Error> {
     let Some(fact) = &unit.fact else {
         return Ok(());
     };
-    if !fact.link.is_empty() || !fact.tool.is_empty() {
+    if !fact.tool.is_empty() {
         return Err(
-            "exact fact requires retained publisher link/tool assets; none were supplied to the SDK seed compiler"
-                .into(),
+            "exact fact requires retained publisher tool assets; none were supplied to the closure compiler".into(),
         );
     }
     let out = unit.root.join(".oven-out");
@@ -726,6 +901,10 @@ pub struct SdkCompiledUnit {
 }
 
 impl SdkCompiledUnit {
+    /// Receipt identity binding source, dependencies, facts, compiler and profile.
+    pub fn compiled_identity(&self) -> &str {
+        &self.owner.manifest.receipt_identity
+    }
     /// Borrow the immutable selected binding.
     pub fn binding(&self) -> &SdkLockedUnit {
         &self.binding
@@ -764,9 +943,98 @@ impl SdkCompiledClosure {
     }
 }
 
+/// Hash pinned compiler libraries, retaining internal symlink aliases and excluding source trees and manifests.
+fn compiler_closure_digest(rustc: &Path) -> Result<String, Error> {
+    let rustc = std::fs::canonicalize(rustc)?;
+    let root = rustc.parent().and_then(Path::parent).ok_or("compiler has no sysroot")?;
+    let mut records = BTreeMap::from([("bin/rustc".to_string(), digest_bytes(&std::fs::read(&rustc)?))]);
+    compiler_library_records(root, &root.join("lib"), &mut BTreeSet::new(), &mut records)?;
+    Ok(digest_bytes(&serde_json::to_vec(&records)?))
+}
+
+/// Collect compiler library bytes while rejecting external symlinks, cycles and special files.
+fn compiler_library_records(
+    root: &Path,
+    current: &Path,
+    active: &mut BTreeSet<PathBuf>,
+    records: &mut BTreeMap<String, String>,
+) -> Result<(), Error> {
+    let resolved = std::fs::canonicalize(current)?;
+    if !resolved.starts_with(root) {
+        return Err("compiler library alias escapes the selected sysroot".into());
+    }
+    let metadata = std::fs::metadata(&resolved)?;
+    if metadata.is_dir() {
+        if !active.insert(resolved.clone()) {
+            return Err("cycle in compiler library aliases".into());
+        }
+        for entry in std::fs::read_dir(&resolved)? {
+            let name = entry?.file_name();
+            if matches!(name.to_str(), Some("src" | "Cargo.toml" | "Cargo.lock")) {
+                continue;
+            }
+            compiler_library_records(root, &current.join(name), active, records)?;
+        }
+        active.remove(&resolved);
+    } else if metadata.is_file() {
+        records.insert(
+            current.strip_prefix(root)?.to_string_lossy().into_owned(),
+            digest_bytes(&std::fs::read(resolved)?),
+        );
+    } else {
+        return Err("compiler closure contains a special file".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run a local fixture Git command without changing the user's index repository or identity configuration.
+    fn fixture_git(root: &Path, arguments: &[&str]) -> Result<Vec<u8>, Error> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(arguments)
+            .output()?;
+        if !output.status.success() {
+            return Err(format!("fixture git failed: {}", String::from_utf8_lossy(&output.stderr)).into());
+        }
+        Ok(output.stdout)
+    }
+
+    /// Committed index bytes must win over mutable worktree bytes; tree objects and Cargo paths are not pins.
+    #[test]
+    fn index_reads_are_commit_bound_and_exclude_cargo() -> Result<(), Error> {
+        let root = tempfile::tempdir()?;
+        fixture_git(root.path(), &["init", "--quiet"])?;
+        std::fs::write(root.path().join("record.txt"), b"committed")?;
+        fixture_git(root.path(), &["add", "record.txt"])?;
+        fixture_git(
+            root.path(),
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "chore - 1698 pinned index fixture",
+            ],
+        )?;
+        let revision = fixture_git(root.path(), &["rev-parse", "HEAD"])?;
+        let commit = std::str::from_utf8(&revision)?.trim();
+        std::fs::write(root.path().join("record.txt"), b"worktree")?;
+        assert_eq!(index_file(root.path(), commit, "record.txt")?, b"committed");
+        assert_eq!(std::fs::read(root.path().join("record.txt"))?, b"worktree");
+        let tree = fixture_git(root.path(), &["rev-parse", "HEAD^{tree}"])?;
+        assert!(index_file(root.path(), std::str::from_utf8(&tree)?.trim(), "record.txt").is_err());
+        assert!(index_file(root.path(), commit, "Cargo.toml").is_err());
+        assert!(index_file(root.path(), "HEAD", "record.txt").is_err());
+        Ok(())
+    }
 
     /// Parse a script-free seed unit for graph-selection regression tests.
     fn unit(loaf: &str, domain: &str, manifest: &str, features: &[&str]) -> Result<PreparedUnit, Error> {
@@ -835,52 +1103,4 @@ mod tests {
         };
         assert!(closure.require_complete().is_err());
     }
-}
-
-/// Hash the SDK's pinned compiler libraries, preserving internal symlink aliases as logical content records.
-///
-/// Installed Apple toolchains include a `libLLVM.dylib` alias. Its target must remain inside the selected sysroot;
-/// hashing its resolved bytes under the alias coordinate covers what the loader reads without accepting an ambient
-/// library. Rust package manifests and source trees are not compiler inputs and are not traversed here.
-fn compiler_closure_digest(rustc: &Path) -> Result<String, Error> {
-    let rustc = std::fs::canonicalize(rustc)?;
-    let root = rustc.parent().and_then(Path::parent).ok_or("compiler has no sysroot")?;
-    let mut records = BTreeMap::from([("bin/rustc".to_string(), digest_bytes(&std::fs::read(&rustc)?))]);
-    compiler_library_records(root, &root.join("lib"), &mut BTreeSet::new(), &mut records)?;
-    Ok(digest_bytes(&serde_json::to_vec(&records)?))
-}
-
-/// Collect compiler library bytes while rejecting external symlinks, cycles and special files.
-fn compiler_library_records(
-    root: &Path,
-    current: &Path,
-    active: &mut BTreeSet<PathBuf>,
-    records: &mut BTreeMap<String, String>,
-) -> Result<(), Error> {
-    let resolved = std::fs::canonicalize(current)?;
-    if !resolved.starts_with(root) {
-        return Err("compiler library alias escapes the selected sysroot".into());
-    }
-    let metadata = std::fs::metadata(&resolved)?;
-    if metadata.is_dir() {
-        if !active.insert(resolved.clone()) {
-            return Err("cycle in compiler library aliases".into());
-        }
-        for entry in std::fs::read_dir(&resolved)? {
-            let name = entry?.file_name();
-            if matches!(name.to_str(), Some("src" | "Cargo.toml" | "Cargo.lock")) {
-                continue;
-            }
-            compiler_library_records(root, &current.join(name), active, records)?;
-        }
-        active.remove(&resolved);
-    } else if metadata.is_file() {
-        records.insert(
-            current.strip_prefix(root)?.to_string_lossy().into_owned(),
-            digest_bytes(&std::fs::read(resolved)?),
-        );
-    } else {
-        return Err("compiler closure contains a special file".into());
-    }
-    Ok(())
 }

@@ -9196,6 +9196,22 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/sdk_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/native.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native link fact source-catalog and executable-owner refusal boundaries.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_store/src/closure_proof.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9240,6 +9256,14 @@
       "disposition": "unaffected",
       "notes": "Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_store/src/source_archive.rs": {
+      "disposition": "unaffected",
+      "notes": "Digest-first adopted archive admission and source-only materialization; inert Cargo metadata is omitted.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -11249,6 +11273,14 @@
       "disposition": "unaffected",
       "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/compile_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native closure root feature demands and normalized extern alias collision tests.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""

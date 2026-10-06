@@ -13,11 +13,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
 | keep | 3284 | 221 | 431 |
-| re-point | 1481 | 91 | 1047 |
+| re-point | 1481 | 91 | 1052 |
 | retire | 1505 | 153 | 0 |
-| unaffected | 1663 | 159 | 5 |
+| unaffected | 1673 | 163 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7933** | **624** | **1483** |
+| **Total** | **7943** | **628** | **1488** |
 
 - Retire-class tests: 1505, of which twinned 1022, dies 294, open 189 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -120,7 +120,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/toolchain/incan-cli/tests/fixtures` | `**/*.incn` | 8 | re-point | #1561 | CLI integration fixtures (layering, package boundary facade, pub union consumer, vocab guardrails). |
 | `workspaces/benchmarks` | `**/*.incn` | 9 | re-point | #1561 | benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not. |
 | `workspaces/docs-site/docs/_snippets/language/examples` | `verified_*.incn` | 8 | re-point | #1561 | verified documentation examples checked by scripts/check_docs_examples.sh. |
-| `workspaces/oven/src` | `test_*.incn` | 11 | re-point | #1561 | Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`. |
+| `workspaces/oven/src` | `test_*.incn` | 16 | re-point | #1561 | Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`. |
 | `workspaces/oven/tests/fixtures` | `**/*.incn` | 4 | re-point | #1561 | fixtures of the Oven release-policy project's tests. |
 
 ## Test files by crate
@@ -2562,7 +2562,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/oven/oven_rustc` (332 tests in 28 files: keep 4, unaffected 328)
+### `loaves/oven/oven_rustc` (337 tests in 30 files: keep 4, unaffected 333)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2594,6 +2594,8 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/rustc/tests/registry_and_toolchain.rs` | 25 | 1222 | 1222 | unaffected | - | - | - | #1561 | run 1 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/tests/source_roles.rs` | 11 | 1201 | 1201 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/toolchain.rs` | 5 | 659 | 73 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+| `loaves/oven/oven_rustc/src/sdk_closure.rs` | 4 | 1107 | 117 | unaffected | - | - | - | #1698 | - | Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior. |
+| `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 1 | 200 | 24 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
 
 ### `loaves/toolchain/incan-cli` (1741 tests in 107 files: keep 119, re-point 1462, retire 34, unaffected 126)
 
@@ -3050,7 +3052,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1025 tests in 88 files)"
+??? note "Unaffected crates (1030 tests in 90 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3137,16 +3139,17 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_model/src/toolchain_layout.rs` | 15 | 875 | 353 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_model/src/workspace.rs` | 19 | 2065 | 604 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
-    #### `loaves/oven/oven_store` (108 tests in 9 files: unaffected 108)
+    #### `loaves/oven/oven_store` (111 tests in 10 files: unaffected 111)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/oven/oven_store/src/closure_proof.rs` | 1 | 107 | 27 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_store/src/lib.rs` | 14 | 2310 | 572 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/lib.rs` | 14 | 2311 | 572 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/process.rs` | 10 | 769 | 769 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/progress.rs` | 6 | 343 | 99 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/publisher_execution.rs` | 6 | 2441 | 2441 | unaffected | - | - | required | #1561 | - | Oven ring; shared bounded publisher execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level. |
     | `loaves/oven/oven_store/src/publisher_owner.rs` | 2 | 276 | 39 | unaffected | - | - | - | #1561 | - | Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/source_archive.rs` | 3 | 206 | 68 | unaffected | - | - | - | #1698 | - | Digest-first adopted archive admission and source-only materialization; inert Cargo metadata is omitted. |
     | `loaves/oven/oven_store/src/store.rs` | 55 | 6391 | 2080 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/store_mirror.rs` | 9 | 635 | 373 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/tests/publisher_tool.rs` | 5 | 374 | 374 | unaffected | - | - | - | #1561 | - | Oven publisher-tool hermetic execution and generated-product receipts; no generated Incan Rust dependency. |
@@ -3215,12 +3218,13 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/toolchain/incan-ci-tools/src/manifest_inventory.rs` | 5 | 1429 | 116 | unaffected | - | - | - | #1965 | - | Cargo manifest retirement inventory and reproducibility checks; no compiler semantics. |
     | `loaves/toolchain/incan-ci-tools/src/tool_outputs.rs` | 13 | 1636 | 314 | unaffected | - | - | - | #1965 | - | CI bootstrap input evidence and output transport; no compiler semantics. |
 
-    #### `loaves/toolchain/oven-cli` (126 tests in 12 files: unaffected 126)
+    #### `loaves/toolchain/oven-cli` (128 tests in 13 files: unaffected 128)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 59 | 6892 | 3355 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 59 | 6893 | 3355 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/case_partition.rs` | 6 | 379 | 171 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven/compile_closure.rs` | 2 | 290 | 35 | unaffected | - | - | - | #1698 | - | Oven-native closure root feature demands and normalized extern alias collision tests. |
     | `loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs` | 9 | 1131 | 332 | unaffected | - | - | - | #1561 | - | Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/gate.rs` | 5 | 779 | 289 | unaffected | - | - | - | #1561 | - | Oven release gate; validates data-driven checkout pins and semantic registry evidence, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/harvest.rs` | 4 | 457 | 79 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |

@@ -25,6 +25,7 @@ std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driv
 std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
+semver = "1.0.27"
 incan_lang = { workspace = true }
 incan_driver = { workspace = true, features = ["cli"] }
 incan_frontend = { workspace = true }

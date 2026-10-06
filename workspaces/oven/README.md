@@ -23,6 +23,7 @@ The host and this project exchange JSON documents. The schemas this source curre
 | `incan.oven.native-compilation/2` | `native_compilation.incn` | one direct-`rustc` invocation to validate |
 | `incan.oven.rust-policy-exchange/5` | `rust_policy_exchange.incn` | validate one authenticated selected-Rust-graph projection, including authority-bound root intent and toolchain-bound sysroot externs, typed environment, generated-member and linked-library closure evidence; return exhaustive activations, derived default-feature demands, source inventories and inert-script warnings |
 | `incan.oven.loaf-resolution/1` | `loaf_resolve.incn` | source-selection projection: `units` in deterministic Loaf/domain order; each unit contains `loaf`, `version`, `archive_digest`, `domain` (`host` or `target`), sorted `features`, and `target_predicates` (declaration index, target expression, and boolean match). This projection is not a trust admission. |
+| `incan.oven.loaf-closure-request/1` | `loaf_closure_exchange.incn` | source dispatch for a pinned snapshot: `pin`, `index_commit`, `names`, `cfg`, index-spelled `roots`, `target` and `host`; returns the shared standalone lock driver's resolution or a refusal with `status` and `reason`. Host staging must extract committed index bytes rather than copy the worktree. The CLI currently requires `--lock` because the engine cannot bake without sealed Rust inspection authority. |
 
 Every wire field is required; an unknown or absent field is a refusal, not a default. A refusal carries a stable `kind` and `fields` path, and may add a `detail` naming the rule that refused; the detail is prose for the operator holding a retained exchange, never something a host branches on.
 
@@ -37,6 +38,7 @@ src/test_*.incn         one test module per source module
 src/acceptance.incn     runs the ten local-intake contracts as one baked program
 src/loaf_index.incn     strict pinned Loaf index and root-dependency JSON intake
 src/loaf_resolve.incn   semver selection with shared activation and per-domain feature demand
+src/loaf_closure_exchange.incn shared standalone/engine resolution over an explicitly pinned snapshot
 src/loaf_facts.incn     recorded feature-table closure audit independent of Rust inspection
 src/loaf_facts_main.incn pure Incan pin audit driver: PIN_DIRECTORY NAMES_FILE CFG_TRIPLE CFG_FILE
 src/loaf_pin_check.incn pin audit and real-root smoke driver: PIN_DIRECTORY NAMES_FILE CFG_FILE
