@@ -751,6 +751,7 @@ fn compile_direct_rustc_output(
         .arg(output);
     apply_oven_profile(&mut command, &receipt.intent.profile);
     clear_inherited_cargo_environment(&mut command);
+    apply_sdk_compilation_policy(&mut command, receipt)?;
     for (name, value) in &plan.compile_environment {
         let value = resolve_compile_environment_value(name, value, source)?;
         command.env(name, value);
@@ -869,4 +870,35 @@ pub(super) fn write_caller_output_record(
         source,
     })?;
     fs::rename(&temporary, &path).map_err(|source| OvenRustcError::Io { path, source })
+}
+
+/// Apply receipt-bound SDK adoption policy and exact build-fact cfg values to the normal direct executor.
+fn apply_sdk_compilation_policy(command: &mut Command, receipt: &OvenReceipt) -> Result<(), OvenRustcError> {
+    if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
+        // Adopted sources retain upstream warning policy, but a newer pinned compiler must not turn a newly added
+        // warning into a dependency failure. Separate locked versions/domains also need distinct Rust metadata.
+        command.args(["--cap-lints", "allow", "-C"]);
+        command.arg(format!("metadata={}", receipt.build_unit_identity));
+        if let Some(encoded) = receipt.sources.build_unit_inputs.get("sdk-build-fact") {
+            let fact: oven_model::manifest::RustFactRecord =
+                serde_json::from_str(encoded).map_err(|error| OvenRustcError::InvalidInput {
+                    field: "SDK build fact",
+                    message: error.to_string(),
+                })?;
+            if fact.toolchain != receipt.intent.toolchain
+                || fact.target != receipt.intent.target
+                || fact.profile != receipt.intent.profile
+                || fact.features != receipt.intent.features
+            {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "SDK build fact",
+                    message: "does not match the complete compilation binding".to_string(),
+                });
+            }
+            for cfg in fact.cfg {
+                command.arg("--cfg").arg(cfg);
+            }
+        }
+    }
+    Ok(())
 }
