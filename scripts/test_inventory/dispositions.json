@@ -8316,6 +8316,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/rust_inspect/src/loader/loaf_manifest.rs": {
+      "disposition": "unaffected",
+      "notes": "Loaf source and frozen graph inspection without Cargo metadata; validates source containment, alias edges and selected facts.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/rust_inspect/src/mir_digest.rs": {
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
