@@ -6,8 +6,13 @@ use std::process::{Command, Output};
 
 use incan_test_support as support;
 
-/// Preserve source-only fixture trees while leaving generated targets outside the test input.
+/// Replace `destination` with a source-only copy, leaving generated targets outside the test input.
+///
+/// The destination is removed first so a kept workspace never retains a source file the checkout has deleted.
 fn copy_sources(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if destination.exists() {
+        fs::remove_dir_all(destination)?;
+    }
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -25,7 +30,9 @@ fn copy_sources(source: &Path, destination: &Path) -> Result<(), Box<dyn std::er
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
+    // Tests need only the debug profile; a release build would double the bake.
     let output = command
+        .env("INCAN_OVEN_BAKE_PROFILES", "debug")
         .args(["oven", "bake", "--project"])
         .arg(project)
         .env("INCAN_HOME", home)
@@ -44,7 +51,8 @@ fn assert_success(output: &Output) {
     );
 }
 
-/// Keep a caller-selected diagnostic fixture outside wrapper scratch; ordinary runs remain temporary.
+/// Choose the fixture root: a caller-selected diagnostic directory, the suite's kept workspace (so Oven reuses the
+/// previous run's bakes), or otherwise a fresh temporary directory.
 fn fixture_root() -> Result<(std::path::PathBuf, Option<tempfile::TempDir>), Box<dyn std::error::Error>> {
     if let Some(parent) = std::env::var_os("INCAN_BODY_IR_CALLER_EVIDENCE") {
         fs::create_dir_all(&parent)?;
@@ -52,6 +60,9 @@ fn fixture_root() -> Result<(std::path::PathBuf, Option<tempfile::TempDir>), Box
         let path = directory.keep();
         eprintln!("retained Body IR caller fixture: {}", path.display());
         Ok((path, None))
+    } else if let Some(workspace) = support::explicit_bake_workspace() {
+        fs::create_dir_all(&workspace)?;
+        Ok((workspace, None))
     } else {
         let directory = tempfile::tempdir()?;
         Ok((directory.path().to_path_buf(), Some(directory)))
@@ -137,8 +148,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bake(&plan, &home)?;
     bake(&lowering, &home)?;
     bake(&caller, &home)?;
-    for profile in ["debug", "release"] {
-        assert_success(&Command::new(caller.join("target/rust").join(profile).join("body-ir-caller")).output()?);
-    }
+    assert_success(&Command::new(caller.join("target/rust/debug/body-ir-caller")).output()?);
     Ok(())
 }

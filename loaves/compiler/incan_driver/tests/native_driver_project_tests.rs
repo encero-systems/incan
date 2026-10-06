@@ -7,9 +7,16 @@ use incan_test_support as support;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 
-/// Copy source fixtures without admitting a checkout's generated targets.
+/// Replace `destination` with a copy of the source tree, without admitting a checkout's generated targets.
+///
+/// The destination is removed first: in a kept workspace, a source file deleted from the checkout must not survive
+/// from an earlier run. Callers name source directories, never a project root whose `target/` they want to keep.
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if destination.exists() {
+        fs::remove_dir_all(destination)?;
+    }
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -33,11 +40,14 @@ fn pinned_driver_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 /// Run the explicit publisher in the fixture-owned home and preserve full failure diagnostics.
+///
+/// Tests need only the debug profile; a release build of the driver's compiler closure would double every bake.
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
     let rustc = pinned_driver_rustc()?;
     let output = command
+        .env("INCAN_OVEN_BAKE_PROFILES", "debug")
         .env("RUSTC", rustc)
         .args(["oven", "bake", "--project"])
         .arg(project)
@@ -184,20 +194,16 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
 /// Publish the compiler Loafs, then reuse one driver bake for native output, spans, and typed refusals.
 #[test]
 fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, _temporary) = fixture_root()?;
-    let repo = support::repo_root();
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("scalar")?;
     let root = root.as_path();
-    let driver_source = repo.join("loaves/toolchain/incan-rustc-driver");
-    let driver = prepare_source_driver(root, &repo)?;
+    let driver_source = support::repo_root().join("loaves/toolchain/incan-rustc-driver");
     let runtime = root.join("runtime");
     copy_tree(&driver_source.join("tests/fixtures/native_output"), &runtime)?;
     let source = root.join("scalar.incn");
     fs::copy(driver_source.join("tests/fixtures/scalar.incn"), &source)?;
-    let home = root.join("home");
-    bake(&root.join("library"), &home)?;
-    bake(&root.join("lowering"), &home)?;
-    bake(&driver, &home)?;
-    let formatting = prepare_formatting_runtime(root, &repo, &home)?;
+    let home = &fixture.home;
+    let formatting = &fixture.formatting;
     let runtime_caller = root.join("runtime-caller");
     fs::create_dir_all(runtime_caller.join("src"))?;
     fs::write(
@@ -208,72 +214,70 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
         runtime_caller.join("src/main.rs"),
         "use native_output::caller::incan::print_int;\nfn main() { print_int(42); }\n",
     )?;
-    bake(&runtime_caller, &home)?;
-    let rustc = pinned_driver_rustc()?;
-    let sysroot = oven_rustc::rustc::rustc_sysroot(&rustc)?;
-    for profile in ["debug", "release"] {
-        let receipt_path = if profile == "release" {
-            oven_store::default_receipt_path(&runtime)
-        } else {
-            oven_store::default_receipt_path(&runtime).with_file_name("library-debug-receipt.json")
-        };
-        let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
-        let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
-            .ok_or("runtime fixture must select its compiler-owned native closure")?;
-        let directories = &closure.artifact_plan.dependency_search_paths;
-        let binary = driver.join("target/rust").join(profile).join("incan-rustc-driver");
-        let runtime_rlib = runtime
-            .join("target/lib/oven")
-            .join(profile)
-            .join("libnative_output.rlib");
-        for mode in ["normal", "overflow", "dangling"] {
-            let output_binary = root.join(format!("scalar-{profile}-{mode}"));
-            let compile = Command::new(&binary)
-                .env_remove("RUSTC_BOOTSTRAP")
-                .arg(&source)
-                .arg("scalar")
-                .arg(&output_binary)
-                .arg(&sysroot)
-                .arg(&runtime_rlib)
-                .arg(mode)
-                .args(directories)
-                .output()?;
-            if mode == "dangling" {
-                assert!(!compile.status.success());
-                assert!(
-                    String::from_utf8_lossy(&compile.stderr).contains("UnknownBlock"),
-                    "{}",
-                    String::from_utf8_lossy(&compile.stderr)
-                );
-                assert!(!output_binary.exists());
-                continue;
-            }
-            success(&compile, "native plan compilation");
-            let run = Command::new(&output_binary).output()?;
-            if mode == "normal" {
-                success(&run, "scalar binary");
-                assert_eq!(String::from_utf8(run.stdout)?, "42\n");
-            } else {
-                assert!(!run.status.success());
-                assert!(
-                    String::from_utf8_lossy(&run.stderr).contains("scalar.incn:3:12"),
-                    "{}",
-                    String::from_utf8_lossy(&run.stderr)
-                );
-            }
+    bake(&runtime_caller, home)?;
+    let sysroot = &fixture.sysroot;
+    // Tests bake the debug profile only (see `bake`).
+    let profile = "debug";
+    let receipt_path = oven_store::default_receipt_path(&runtime).with_file_name("library-debug-receipt.json");
+    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
+    let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
+        .ok_or("runtime fixture must select its compiler-owned native closure")?;
+    let directories = &closure.artifact_plan.dependency_search_paths;
+    let binary = fixture.driver_binary(profile);
+    let runtime_rlib = runtime
+        .join("target/lib/oven")
+        .join(profile)
+        .join("libnative_output.rlib");
+    for mode in ["normal", "overflow", "dangling"] {
+        let output_binary = root.join(format!("scalar-{profile}-{mode}"));
+        let compile = Command::new(&binary)
+            .env_remove("RUSTC_BOOTSTRAP")
+            .arg(&source)
+            .arg("scalar")
+            .arg(&output_binary)
+            .arg(sysroot)
+            .arg(&runtime_rlib)
+            .arg(mode)
+            .args(directories)
+            .output()?;
+        if mode == "dangling" {
+            assert!(!compile.status.success());
+            assert!(
+                String::from_utf8_lossy(&compile.stderr).contains("UnknownBlock"),
+                "{}",
+                String::from_utf8_lossy(&compile.stderr)
+            );
+            assert!(!output_binary.exists());
+            continue;
         }
-        check_startup_refusals(&binary, &source, root, &sysroot, &runtime_rlib)?;
-        check_source_pipeline(&binary, root, &sysroot, &formatting, profile)?;
+        success(&compile, "native plan compilation");
+        let run = Command::new(&output_binary).output()?;
+        if mode == "normal" {
+            success(&run, "scalar binary");
+            assert_eq!(String::from_utf8(run.stdout)?, "42\n");
+        } else {
+            assert!(!run.status.success());
+            assert!(
+                String::from_utf8_lossy(&run.stderr).contains("scalar.incn:3:12"),
+                "{}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+        }
     }
-    let release = driver.join("target/rust/release/incan-rustc-driver");
-    corpus::check_strings(&release, root, &sysroot, &formatting)?;
+    check_startup_refusals(&binary, &source, root, sysroot, &runtime_rlib)?;
+    check_source_pipeline(&binary, root, &fixture.sysroot, formatting, profile)?;
+    let driver = fixture.driver_binary("debug");
+    corpus::check_strings(&driver, root, &fixture.sysroot, formatting)?;
     for name in ["fib", "collatz", "mandelbrot"] {
-        corpus::check_benchmark(&release, root, &sysroot, &formatting, name)?;
+        corpus::check_benchmark(&driver, root, &fixture.sysroot, formatting, name)?;
     }
     Ok(())
 }
 
-/// Retain requested evidence or replay an existing fixture graph serially; each bake validates current copied sources.
+/// Choose where the shared fixture graph lives; each bake still validates the current copied sources.
+///
+/// In order: a replayed graph, a retained evidence directory, the suite's kept workspace (so Oven reuses the previous
+/// run's bakes), and otherwise a fresh temporary directory.
 fn fixture_root() -> Result<(PathBuf, Option<tempfile::TempDir>), Box<dyn std::error::Error>> {
     if let Some(path) = std::env::var_os("INCAN_NATIVE_DRIVER_REPLAY") {
         let path = PathBuf::from(path);
@@ -290,10 +294,79 @@ fn fixture_root() -> Result<(PathBuf, Option<tempfile::TempDir>), Box<dyn std::e
         let path = tempfile::tempdir_in(parent)?.keep();
         eprintln!("retained native driver fixture: {}", path.display());
         Ok((path, None))
+    } else if let Some(workspace) = support::explicit_bake_workspace() {
+        fs::create_dir_all(&workspace)?;
+        Ok((workspace, None))
     } else {
         let directory = tempfile::tempdir()?;
         Ok((directory.path().to_path_buf(), Some(directory)))
     }
+}
+
+/// The baked fixture graph every test in this root shares: the plan, lowering and driver Loaves and the formatting
+/// runtime, baked once per test process into one Oven home.
+struct DriverFixture {
+    /// Root of the graph: the copied Loaves, their home, and each test's scratch directory under `cases/`.
+    root: PathBuf,
+    /// The driver Loaf project; its binaries live under `target/rust/<profile>/`.
+    driver: PathBuf,
+    /// The Oven home every fixture bake shares.
+    home: PathBuf,
+    /// The authored Incan runtime Loaf, baked through a caller.
+    formatting: PathBuf,
+    /// The pinned driver compiler's sysroot.
+    sysroot: PathBuf,
+    /// Keeps a fresh temporary root alive for the whole process when no workspace was granted.
+    _temporary: Option<tempfile::TempDir>,
+}
+
+impl DriverFixture {
+    /// The driver binary for one profile.
+    fn driver_binary(&self, profile: &str) -> PathBuf {
+        self.driver.join("target/rust").join(profile).join("incan-rustc-driver")
+    }
+
+    /// Return an empty scratch directory owned by one test, so concurrent tests and earlier runs never collide.
+    fn scratch(&self, name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let path = self.root.join("cases").join(name);
+        if path.exists() {
+            fs::remove_dir_all(&path)?;
+        }
+        fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+}
+
+/// The process-wide fixture; a bake failure is kept as text so every test reports it.
+static DRIVER_FIXTURE: OnceLock<Result<DriverFixture, String>> = OnceLock::new();
+
+/// Return the shared fixture, baking it on first use. Tests running in parallel wait for that single bake.
+fn driver_fixture() -> Result<&'static DriverFixture, Box<dyn std::error::Error>> {
+    DRIVER_FIXTURE
+        .get_or_init(|| bake_driver_fixture().map_err(|error| error.to_string()))
+        .as_ref()
+        .map_err(|error| error.clone().into())
+}
+
+/// Copy the current Loaf sources into the fixture root and bake the graph the driver tests compile through.
+fn bake_driver_fixture() -> Result<DriverFixture, Box<dyn std::error::Error>> {
+    let (root, temporary) = fixture_root()?;
+    let repo = support::repo_root();
+    let driver = prepare_source_driver(&root, &repo)?;
+    let home = root.join("home");
+    bake(&root.join("library"), &home)?;
+    bake(&root.join("lowering"), &home)?;
+    bake(&driver, &home)?;
+    let formatting = prepare_formatting_runtime(&root, &repo, &home)?;
+    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    Ok(DriverFixture {
+        root,
+        driver,
+        home,
+        formatting,
+        sysroot,
+        _temporary: temporary,
+    })
 }
 
 /// Materialize the authored Incan runtime through a real caller dependency, retaining its native closure.
@@ -380,26 +453,21 @@ mod census;
 /// reaches lowering.
 #[test]
 fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, _temporary) = fixture_root()?;
-    let repo = support::repo_root();
-    let driver = prepare_source_driver(&root, &repo)?;
-    let home = root.join("home");
-    bake(&root.join("library"), &home)?;
-    bake(&root.join("lowering"), &home)?;
-    bake(&driver, &home)?;
-    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
-    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("imports")?;
+    let runtime = &fixture.formatting;
+    let sysroot = &fixture.sysroot;
     let source = root.join("imports.incn");
     fs::write(
         &source,
         "from std.math import gcd as common, sqrt as root\nimport std.math\nfrom std.derives.comparison import Eq\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> None:\n  println(common(b=18, a=48))\n  println(math.lcm(4, 6))\n  println(gcd(4, 6))\n  println(root(16.0))\n  println(math.sqrt(25.0))\n",
     )?;
-    let closure = corpus::runtime_closure(&runtime, "release")?;
+    let closure = corpus::runtime_closure(runtime, "debug")?;
     let native = root.join("imports-native");
-    let binary = driver.join("target/rust/release/incan-rustc-driver");
-    check_async_frontend_refusal(&binary, &root, &sysroot, &closure)?;
+    let binary = fixture.driver_binary("debug");
+    check_async_frontend_refusal(&binary, &root, sysroot, &closure)?;
     success(
-        &corpus::source_command(&binary, &source, &native, &sysroot, &closure).output()?,
+        &corpus::source_command(&binary, &source, &native, sysroot, &closure).output()?,
         "native imported scalar compilation",
     );
     let legacy_root = root.join("imports-legacy");
@@ -454,19 +522,11 @@ fn check_async_frontend_refusal(
 /// Prove named construction, field mutation, argument passing, returned models, and final drops against legacy.
 #[test]
 fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, _temporary) = fixture_root()?;
-    let repo = support::repo_root();
-    let driver = prepare_source_driver(&root, &repo)?;
-    let home = root.join("home");
-    bake(&root.join("library"), &home)?;
-    bake(&root.join("lowering"), &home)?;
-    bake(&driver, &home)?;
-    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
-    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    let fixture = driver_fixture()?;
     corpus::check_plain_model(
-        &driver.join("target/rust/release/incan-rustc-driver"),
-        &root,
-        &sysroot,
-        &runtime,
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("plain-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
     )
 }

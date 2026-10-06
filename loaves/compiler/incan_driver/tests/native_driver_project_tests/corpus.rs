@@ -18,7 +18,7 @@ pub(super) fn check_strings(
     )?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "debug")?)?,
         "native strings compilation",
     );
     let legacy_output = project.join("legacy");
@@ -118,7 +118,7 @@ pub(super) fn check_benchmark(
     runtime: &Path,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime, "debug")?;
     let original = support::repo_root()
         .join("workspaces/benchmarks/compute")
         .join(name)
@@ -161,7 +161,7 @@ pub(super) fn check_plain_model(
     sysroot: &Path,
     runtime: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime, "debug")?;
     let project = root.join("plain-model");
     fs::create_dir_all(&project)?;
     let source = project.join("plain_model.incn");

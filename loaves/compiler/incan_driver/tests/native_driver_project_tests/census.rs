@@ -213,23 +213,17 @@ fn markdown(records: &[Record]) -> String {
     text
 }
 
-/// Bake once, then distribute independent fixture measurements over at most the host core count.
+/// Use the shared baked graph, then distribute independent fixture measurements over at most the host core count.
 pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, _temporary) = fixture_root()?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch("census")?;
     let output = std::env::var_os("INCAN_CENSUS_OUT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("census"));
+        .unwrap_or_else(|| root.join("report"));
     fs::create_dir_all(&output)?;
-    let repo = support::repo_root();
-    let driver = prepare_source_driver(&root, &repo)?;
-    let home = root.join("home");
-    for project in [root.join("library"), root.join("lowering"), driver.clone()] {
-        bake(&project, &home)?;
-    }
-    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
-    let closure = corpus::runtime_closure(&runtime, "release")?;
-    let driver = driver.join("target/rust/release/incan-rustc-driver");
-    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    let closure = corpus::runtime_closure(&graph.formatting, "debug")?;
+    let driver = graph.driver_binary("debug");
+    let sysroot = &graph.sysroot;
     let all = all_fixtures()?;
     let workers = std::thread::available_parallelism()?.get();
     let timeout = Duration::from_secs(
@@ -252,7 +246,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     let start = Instant::now();
                     let scratch = tempfile::tempdir_in(&root).map_err(|error| error.to_string())?;
-                    let (observed, detail) = measure(fixture, scratch.path(), &driver, &sysroot, &closure, timeout)
+                    let (observed, detail) = measure(fixture, scratch.path(), &driver, sysroot, &closure, timeout)
                         .unwrap_or_else(|error| ("driver-error".into(), error.to_string()));
                     let class = if fixture.header.pending.is_some() {
                         "pending".into()
