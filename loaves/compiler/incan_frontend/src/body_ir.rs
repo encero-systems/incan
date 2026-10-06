@@ -315,6 +315,7 @@ fn build_body_ir_module_v0_with_provider_operations(
     apply_top_level_input_contract_refusal(program, &mut bodies);
     bir::BodyIrModule {
         stdlib_delegations: stdlib_delegations::collect(type_info),
+        static_declarations: collect::collect_scalar_statics(program, type_info),
         module_id,
         nominal_declarations,
         fieldless_enum_declarations,
@@ -429,6 +430,20 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         && model.properties.is_empty()
         && model.methods.is_empty()
         && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+}
+
+/// Admit only a concrete tuple wrapper whose construction adds no hooks, constraints, or trait behavior.
+pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
+    !newtype.is_rusttype
+        && newtype.decorators.is_empty()
+        && newtype.type_params.is_empty()
+        && newtype.traits.is_empty()
+        && newtype.rebindings.is_empty()
+        && newtype.method_aliases.is_empty()
+        && newtype.method_partials.is_empty()
+        && newtype.associated_types.is_empty()
+        && newtype.interop_edges.is_empty()
+        && newtype.methods.is_empty()
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.

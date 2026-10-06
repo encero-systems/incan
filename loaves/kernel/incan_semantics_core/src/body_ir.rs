@@ -62,9 +62,13 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
+    /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
+    #[serde(default)]
+    pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
     pub module_id: CompilerNodeId,
-    /// Source-local plain-model declarations whose construction layout is available to a direct runtime.
+    /// Source-local plain-model and plain-newtype declarations whose construction layout is available to a direct
+    /// runtime.
     ///
     /// This is not a general nominal symbol table. It contains only the source-local model declarations lowering
     /// has explicitly retained for direct execution, and each record carries its declaration-span identity and
@@ -89,6 +93,17 @@ pub struct BodyIrModule {
     pub value_enum_declarations: Vec<ValueEnumDeclaration>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
+}
+
+/// Canonical persistent storage with a checker-typed, effect-free initializer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaticDeclaration {
+    /// Exact checker-selected storage identity, independent of aliases at its uses.
+    pub canonical: CanonicalSymbolId,
+    /// Checked scalar carrier type.
+    pub ty: IncanType,
+    /// Literal initialization value; repeated reads must not reinitialize an assigned cell.
+    pub initial: Constant,
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
@@ -216,9 +231,10 @@ pub struct NominalDeclaration {
     pub canonical: CanonicalSymbolId,
     /// Canonical source declaration name, checked again by consumers as a defense against malformed Body IR.
     pub name: String,
-    /// Canonical declared field names in declaration order.
+    /// Canonical declared field names in declaration order; a plain newtype retains its sole tuple slot as `0`.
     pub fields: Vec<String>,
-    /// RFC 120 identities of [`Self::fields`] in the same declaration order.
+    /// RFC 120 identities of [`Self::fields`] in the same declaration order. A newtype's sole generated tuple slot
+    /// retains its owner's identity, because that slot has no independent source declaration.
     ///
     /// The parallel layout is intentional: constructor binding and stored runtime values retain the compact field
     /// names, while a source projection must match its checked identity at the same slot before the name is used to
@@ -4376,6 +4392,7 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),

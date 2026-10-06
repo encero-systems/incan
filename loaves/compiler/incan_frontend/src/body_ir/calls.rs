@@ -153,7 +153,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         call_span: ast::Span,
     ) -> Result<DirectCallDeclaration, String> {
         let declarations = &self.type_info.declarations;
-        let local_declarations = self.local_function_declarations.get(name);
+        // A same-module alias keeps the selected function's identity; use that declaration's retained spans rather
+        // than treating the alias spelling as an imported function with no executable body.
+        let selected = self.type_info.resolved_identity(callee_span);
+        let declaration_name = selected
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            .filter(|identity| {
+                incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(self.module_identity)
+            })
+            .map_or(name, |identity| identity.declaration_name.as_str());
+        let local_declarations = self.local_function_declarations.get(declaration_name);
         let Some(local_declarations) = local_declarations else {
             let canonical = self.type_info.resolved_identity(callee_span).cloned();
             let builtin = self.type_info.resolved_builtin_call(call_span);
@@ -324,10 +333,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok(resolved.iter().map(semantic_type_from_resolved).collect())
     }
 
-    /// Lower a `model`/`class` construction into a [`bir::AggregateKind::Constructor`] aggregate.
+    /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.
     ///
-    /// Source-level construction is named-only, so the argument-to-field binding is the whole representation
-    /// problem. Lowering consumes the typechecker's own recorded decision
+    /// Models/classes bind named fields; a newtype binds its single positional argument to tuple slot zero. Lowering
+    /// consumes the typechecker's own recorded decision
     /// ([`TypeCheckInfo::constructor_field_binding`](crate::typechecker::TypeCheckInfo::constructor_field_binding))
     /// rather than re-resolving field aliases or rediscovering declared field order, both of which live in the
     /// symbol table this stage deliberately cannot reach. Operands are emitted in declared field order while the

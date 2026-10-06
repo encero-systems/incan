@@ -14,7 +14,8 @@ The file reads top to bottom:
 5. calls (same-module functions, runtime helpers, builtins);
 6. plain model construction and field replacement;
 7. formatting and strings;
-8. the module and function entry points.
+8. the module and function entry points;
+9. persistent scalar storage reads and writes.
 """
 
 # ---- The plan, re-exported so the driver reads one surface ----
@@ -51,6 +52,9 @@ from pub::incan_mir_plan import assign as plan_assign, block as plan_block, plac
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
+    StaticDeclaration as RustStaticDeclaration,
+    GlobalPlace as RustGlobalPlace,
+    GlobalWritePolicy as RustGlobalWritePolicy,
     AggregateKind as RustAggregateKind,
     ArgumentBinding as RustArgumentBinding,
     ArgumentElement as RustArgumentElement,
@@ -77,6 +81,7 @@ from rust::incan_semantics_core::body_ir import (
     UnOp,
 )
 # ---- Admission helpers owned by this Loaf ----
+from decls import lower_model_declarations, static_slot, static_accessors
 from models import model_type, model_place, place_type, constructor_index
 from numbers import float_operand
 from strings import text_helper
@@ -95,6 +100,9 @@ pub type BodyStatementKind = rusttype RustStatementKind:
 
 pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
     """Validate every retained declaration and body before consuming its facts."""
+    for declaration in module.static_declarations:
+        if not module.is_well_formed_static_declaration(declaration):
+            return Err("invalid Body IR static declaration")
     for declaration in module.nominal_declarations:
         if not module.is_well_formed_nominal_declaration(declaration):
             return Err("invalid Body IR nominal declaration identity")
@@ -167,6 +175,9 @@ def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) 
 
 def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
     """Turn a place read into a copy or move exactly as Body IR's ownership fact says."""
+    match value.global():
+        Some(global) => return read_static(builder, value, global, fact, span)
+        None => pass
     target = scalar_place(builder, value, span)?
     # Model clones use their derived implementation; string clones and borrows are handled by `display_operand`.
     match fact:
@@ -315,6 +326,7 @@ model Builder:
     owned: list[int]
     closed: list[bool]
     nominals: list[RustNominalDeclaration]
+    statics: list[RustStaticDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -581,7 +593,20 @@ def lower_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first."""
+    match destination.global():
+        Some(global) => return write_static(builder, destination, global, value, span)
+        None => pass
     target = scalar_place(builder, destination, span)?
+    return lower_local_assignment(builder, target, value, span)
+
+
+def lower_local_assignment(
+    mut builder: Builder,
+    target: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Assign into a known frame slot, retaining numeric checks and owner replacement behavior."""
     if place_type(builder.locals, target) == PlanType.String:
         return lower_string_assignment(builder, target, value, span)
     match value:
@@ -987,6 +1012,9 @@ def lower_builtin(
         RustBuiltin.Float => return lower_float_builtin(builder, arguments, destination, span)
         RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+# =====================================================================================================================
+# Plain model construction and field replacement
+# =====================================================================================================================
 
 
 def lower_print(mut builder: Builder, arguments: &list[RustArgumentElement], span: SourceSpan) -> Result[None, str]:
@@ -1032,7 +1060,7 @@ def lower_float_builtin(
                 _ => return Err("unsupported Body IR Float input type")
             return Ok(None)
 # =====================================================================================================================
-# Plain model construction and field replacement
+# Formatting and strings
 # =====================================================================================================================
 
 
@@ -1111,9 +1139,6 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
-# =====================================================================================================================
-# Formatting and strings
-# =====================================================================================================================
 
 
 def lower_format(
@@ -1299,6 +1324,9 @@ def lower_string_assignment(
             builder.owned.append(destination.local)
             return Ok(None)
         _ => return Err("unsupported Body IR string Rvalue outside formatting")
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
 
 
 def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
@@ -1381,9 +1409,6 @@ def lower_text_helper(
                 builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
-# =====================================================================================================================
-# Module and function entry points
-# =====================================================================================================================
 
 
 def lower_str_builtin(
@@ -1435,34 +1460,6 @@ pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Pl
     )
 
 
-def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
-    """Retain checked field layout and derives for admitted plain model declarations."""
-    mut models: list[ModelDeclaration] = []
-    for declaration in module.nominal_declarations:
-        if declaration.has_field_defaults:
-            return Err(f"unsupported Body IR model defaults on {declaration.name}")
-        mut fields: list[Parameter] = []
-        for slot in range(len(declaration.fields)):
-            fields.append(
-                Parameter(
-                    name=str(declaration.fields[slot]),
-                    ty=model_type(module.nominal_declarations, declaration.field_types[slot])?,
-                    span=SourceSpan(file=file, line=1, column=1),
-                ),
-            )
-        models.append(
-            ModelDeclaration(
-                name=str(declaration.name),
-                public=declaration.public,
-                fields=fields,
-                field_public=declaration.field_public,
-                derives=declaration.derives,
-                span=SourceSpan(file=file, line=1, column=1),
-            ),
-        )
-    return Ok(models)
-
-
 def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> None:
     """Add each runtime function the plan does not declare yet; one declaration per path."""
     for external in additions:
@@ -1500,6 +1497,7 @@ def lower_function(
         owned=[],
         closed=[],
         nominals=module.nominal_declarations,
+        statics=module.static_declarations,
     )
     parameters = frame_parameters(module, body, source, file)?
     _ = builder.new_block(span)
@@ -1561,3 +1559,67 @@ def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: 
             _ => return Err("unsupported Body IR defaulted parameter")
         parameters.append(Parameter(name=parameter.name, ty=ty, span=location(parameter.span, source, file)))
     return Ok(parameters)
+# =====================================================================================================================
+# Persistent scalar storage
+# =====================================================================================================================
+
+
+def read_static(
+    mut builder: Builder,
+    value: &RustPlace,
+    global: &RustGlobalPlace,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Read a proven scalar cell through its persistent runtime slot, never a frame-local substitute."""
+    if len(value.projection) != 0:
+        return Err("unsupported Body IR static projection")
+    match fact:
+        OwnershipFact.Copy => pass
+        _ => return Err("unsupported Body IR static ownership")
+    slot = static_slot(builder.statics, global)?
+    ty = model_type(builder.nominals, global.ty)?
+    read_cell, _write_cell = static_accessors(ty)?
+    initial = scalar_constant(builder.statics[slot].initial, span)?
+    target = temporary(builder, ty, span)
+    external_call(
+        builder,
+        read_cell,
+        [PlanType.Int, ty],
+        ty,
+        [literal(Constant.Int(slot), span), initial],
+        target,
+        span,
+    )
+    return Ok(read_place(target, false, span))
+
+
+def write_static(
+    mut builder: Builder,
+    destination: &RustPlace,
+    global: &RustGlobalPlace,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Evaluate and check a scalar write before committing it to a checker-authorized persistent cell."""
+    if len(destination.projection) != 0:
+        return Err("unsupported Body IR static projection")
+    match global.write_policy:
+        RustGlobalWritePolicy.Rebindable => pass
+        _ => return Err("unsupported Body IR static write policy")
+    slot = static_slot(builder.statics, global)?
+    ty = model_type(builder.nominals, global.ty)?
+    _read_cell, write_cell = static_accessors(ty)?
+    target = temporary(builder, ty, span)
+    lower_local_assignment(builder, target, value, span)?
+    output = temporary(builder, PlanType.Unit, span)
+    external_call(
+        builder,
+        write_cell,
+        [PlanType.Int, ty],
+        PlanType.Unit,
+        [literal(Constant.Int(slot), span), read_place(target, false, span)],
+        output,
+        span,
+    )
+    return Ok(None)

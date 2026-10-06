@@ -1889,7 +1889,8 @@ pub struct FunctionBindingInfo {
     pub identity: Option<CanonicalSymbolId>,
 }
 
-/// Typechecker-resolved binding of one `model`/`class` construction's arguments to the declared field layout.
+/// Typechecker-resolved binding of one `model`/`class` construction's arguments to the declared field layout, or a
+/// newtype's single positional argument to tuple slot zero.
 ///
 /// Slots index the type's declared field order. `argument_slots` is in **written source order**, so a consumer sees
 /// both which field each argument fills and the order the argument expressions were written — the two facts that
@@ -2620,7 +2621,8 @@ impl TypeCheckInfo {
         self.calls.constructor_field_bindings.get(&(span.start, span.end))
     }
 
-    /// Record the resolved field binding for one `model`/`class` construction call site (#1158).
+    /// Record the resolved field binding for one nominal construction call site, including a newtype's tuple slot
+    /// (#1158).
     pub fn record_constructor_field_binding(&mut self, span: Span, binding: ConstructorFieldBinding) {
         self.calls
             .constructor_field_bindings

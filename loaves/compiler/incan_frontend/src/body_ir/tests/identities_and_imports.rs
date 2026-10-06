@@ -130,6 +130,7 @@ fn imported_callable_without_call_site_identity_does_not_recover_authority_from_
 }
 
 #[test]
+/// Source locals and mutable globals retain identity while evaluated constants become operands.
 fn canonical_local_and_global_roots_survive_body_ir_lowering() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 const LIMIT: int = 3
@@ -164,8 +165,8 @@ def update(value: int) -> int:
     );
     let snapshot = body.render_snapshot();
     assert!(
-        snapshot.contains("@const:app::LIMIT@"),
-        "missing canonical const root: {snapshot}"
+        snapshot.contains("const(3)"),
+        "missing evaluated source-local constant: {snapshot}"
     );
     assert!(
         snapshot.contains("@static:app::COUNT@"),

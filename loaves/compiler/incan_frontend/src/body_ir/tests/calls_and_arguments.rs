@@ -5,6 +5,83 @@
 
 use super::*;
 
+/// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
+#[test]
+fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "type Id = newtype int\n\ndef main() -> int:\n    value = Id(7)\n    return value.0\n",
+        &["m", "newtype_layout"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained newtype".into());
+    };
+    assert_eq!(declaration.fields, ["0"]);
+    assert_eq!(declaration.field_identities, [declaration.canonical.clone()]);
+    assert_eq!(declaration.derives, ["Debug", "Clone", "Copy"]);
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("constructor(Id)"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let mut malformed = declaration.clone();
+    malformed.fields[0] = "1".to_owned();
+    assert!(!module.is_well_formed_nominal_declaration(&malformed));
+    Ok(())
+}
+
+/// Only effect-free scalar initialization reaches the persistent native storage profile.
+#[test]
+fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "static COUNT: int = 4\n\ndef main() -> int:\n    COUNT += 1\n    return COUNT\n",
+        &["m", "static_layout"],
+    )?;
+    let [declaration] = module.static_declarations.as_slice() else {
+        return Err("expected one retained scalar static".into());
+    };
+    assert_eq!(declaration.initial, bir::Constant::Int(4));
+    assert!(module.is_well_formed_static_declaration(declaration));
+    let mut malformed = declaration.clone();
+    malformed.initial = bir::Constant::Bool(true);
+    assert!(!module.is_well_formed_static_declaration(&malformed));
+    let effectful = build(
+        "def initial() -> int:\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> int:\n    return COUNT\n",
+        &["m", "effectful_static"],
+    )?;
+    assert!(effectful.static_declarations.is_empty());
+    Ok(())
+}
+
+/// Alias spellings must retain the physical target's body identity and parameter order.
+#[test]
+fn local_function_alias_retains_direct_call_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def subtract(left: int, right: int) -> int:\n    return left - right\n\nother = alias subtract\n\ndef main() -> int:\n    return other(right=2, left=9)\n",
+        &["m", "alias_target"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let target = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "subtract")
+        .ok_or("missing alias target body")?;
+    let caller = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing alias caller body")?;
+    let bir::StatementKind::Call {
+        callee: bir::Callee::Function(bir::CallableTarget::Named(call)),
+        ..
+    } = &caller.block.stmts[0].kind
+    else {
+        return Err(format!("expected alias call: {snapshot}").into());
+    };
+    assert_eq!(call.direct_call_id.as_ref(), Some(&target.direct_call_id));
+    assert_eq!(call.canonical, target.canonical);
+    Ok(())
+}
+
 #[test]
 fn a_local_callable_named_ok_shadows_the_intrinsic_result_constructor() -> Result<(), Box<dyn std::error::Error>> {
     let source = "enum Failure:\n  Shadowed\n\ndef main(Ok: (int) -> Result[int, Failure]) -> Result[int, Failure]:\n  return Ok(42)\n";

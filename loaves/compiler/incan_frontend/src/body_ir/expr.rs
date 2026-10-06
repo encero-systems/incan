@@ -16,6 +16,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
     ) -> bir::PlaceElem {
         let ty = self.resolve_ty(base.span);
+        if name == "0"
+            && let IncanType::Named(owner) = &ty
+            && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
+                declaration.name == *owner && declaration.canonical.kind == SemanticSourceTargetKind::Newtype
+            })
+        {
+            return bir::PlaceElem::field(name, Some(declaration.canonical.clone()));
+        }
         if tuple_type_elements(&ty)
             .is_some_and(|elements| name.parse::<usize>().is_ok_and(|index| index < elements.len()))
         {
@@ -62,16 +70,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
-                // Retain the checker's evaluated text for a source-local constant. Identity must prove the
+                // Retain the checker's evaluated scalar or text for a source-local constant. Identity must prove the
                 // module and declaration kind before the name-keyed const-evaluation table is consulted;
                 // imported globals and same-spelled locals keep their existing place representation.
                 if let Some(global) = place.global()
                     && global.identity.kind == SemanticSourceTargetKind::Const
                     && incan_semantics_core::canonical_module_identity(&global.identity).as_deref()
                         == Some(self.module_identity)
-                    && let Some(crate::typechecker::ConstValue::FrozenStr(text)) = self.type_info.const_value(name)
+                    && let Some(value) = self.type_info.const_value(&global.identity.declaration_name)
                 {
-                    return bir::Operand::Constant(bir::Constant::Str(text.clone()));
+                    use crate::typechecker::ConstValue;
+                    let constant = match value {
+                        ConstValue::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Int) => {
+                            bir::Constant::Int(*number)
+                        }
+                        ConstValue::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
+                            // Preserve the evaluated signed decimal value; the admitted float carrier parses it once.
+                            bir::Constant::Float(number.to_string())
+                        }
+                        ConstValue::Float(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
+                            bir::Constant::Float(number.to_string())
+                        }
+                        ConstValue::Bool(flag) => bir::Constant::Bool(*flag),
+                        ConstValue::FrozenStr(text) => bir::Constant::Str(text.clone()),
+                        _ => {
+                            let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
+                            return bir::Operand::place(place, fact, last_use);
+                        }
+                    };
+                    return bir::Operand::Constant(constant);
                 }
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
