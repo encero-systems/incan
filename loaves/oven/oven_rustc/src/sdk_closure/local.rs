@@ -52,7 +52,7 @@ pub fn compile_local_sdk_facet(
         toolchain: &toolchain,
         output,
         store: &store,
-        compiler_digest: compiler_closure_digest(rustc)?,
+        compiler_digest: compiler_closure_digest(rustc, &target)?,
         profile: "debug",
     };
     let (path, reused, owner) = compile_unit(&unit, &context, externs, searches)?;
@@ -283,6 +283,46 @@ fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Re
 mod tests {
     use super::{compile_local_sdk_facet, prepare_local_unit};
     use crate::sdk_closure::{SdkClosureReport, SdkCompiledClosure};
+
+    /// Separate materialization and store roots must produce the same adopted identity and exact rlib bytes.
+    #[test]
+    fn local_unit_is_reproducible_across_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let rustc = crate::rustc::resolve_active_rustc()?;
+        let mut results = Vec::new();
+        for _ in 0..2 {
+            let root = tempfile::tempdir()?;
+            let project = root.path().join("project");
+            std::fs::create_dir_all(project.join("src"))?;
+            std::fs::write(
+                project.join("loaf.toml"),
+                "[project]\nname='portable'\nversion='1.0.0'\n[rust]\nname='portable'\ntype='lib'\nedition='2024'\n",
+            )?;
+            std::fs::write(
+                project.join("src/lib.rs"),
+                "pub fn location() -> &'static str { file!() } pub fn value() -> u8 { 42 }",
+            )?;
+            let mut closure = SdkCompiledClosure {
+                report: SdkClosureReport::default(),
+                units: Vec::new(),
+            };
+            compile_local_sdk_facet(
+                &mut closure,
+                &project,
+                &[],
+                "target",
+                &root.path().join("store"),
+                &rustc,
+            )?;
+            let unit = &closure.units[0];
+            results.push((
+                unit.owner.manifest.build_unit_identity.clone(),
+                std::fs::read(&unit.output)?,
+            ));
+        }
+        assert_eq!(results[0].0, results[1].0);
+        assert_eq!(results[0].1, results[1].1);
+        Ok(())
+    }
 
     /// Real direct compilation reuses a receipt, while changing a nested Rust module invalidates that receipt.
     #[test]

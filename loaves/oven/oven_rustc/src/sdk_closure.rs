@@ -182,7 +182,7 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
         toolchain: &toolchain,
         output,
         store: &store,
-        compiler_digest: compiler_closure_digest(rustc)?,
+        compiler_digest: compiler_closure_digest(rustc, target)?,
         profile,
     };
     let mut closure = compile_units(&units, &context)?;
@@ -625,7 +625,12 @@ fn unit_receipt(
         .with_generated_source("sdk-root", source)
         .with_build_unit_input("sdk-source-archive", &unit.binding.archive_digest)
         .with_build_unit_input("domain", &unit.binding.domain)
-        .with_build_unit_input("sdk-compile-policy", "source-sealed-v1")
+        .with_build_unit_input("sdk-compile-policy", "source-sealed-portable-v2")
+        .with_build_unit_input("compiler-host", crate::rustc::rustc_host_target(context.rustc)?)
+        .with_build_unit_input(
+            "compiler-commit",
+            crate::rustc::rustc_commit_hash(context.rustc).ok_or("compiler has no commit hash")?,
+        )
         .with_build_unit_input("compiler-binary", &context.compiler_digest),
     )?;
     if let Some(fact) = &unit.fact {
@@ -1061,12 +1066,17 @@ impl SdkCompiledClosure {
     }
 }
 
-/// Hash pinned compiler libraries, retaining internal symlink aliases and excluding source trees and manifests.
-fn compiler_closure_digest(rustc: &Path) -> Result<String, Error> {
+/// Hash only the selected target sysroot libraries, excluding optional tools, source and extra installed targets.
+fn compiler_closure_digest(rustc: &Path, target: &str) -> Result<String, Error> {
     let rustc = std::fs::canonicalize(rustc)?;
     let root = rustc.parent().and_then(Path::parent).ok_or("compiler has no sysroot")?;
-    let mut records = BTreeMap::from([("bin/rustc".to_string(), digest_bytes(&std::fs::read(&rustc)?))]);
-    compiler_library_records(root, &root.join("lib"), &mut BTreeSet::new(), &mut records)?;
+    let mut records = BTreeMap::new();
+    compiler_library_records(
+        root,
+        &root.join("lib/rustlib").join(target).join("lib"),
+        &mut BTreeSet::new(),
+        &mut records,
+    )?;
     Ok(digest_bytes(&serde_json::to_vec(&records)?))
 }
 
@@ -1108,6 +1118,26 @@ fn compiler_library_records(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Component catalogs and additional targets cannot change the selected sysroot library identity.
+    #[test]
+    fn compiler_digest_excludes_optional_components() -> Result<(), Error> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("bin"))?;
+        std::fs::create_dir_all(root.path().join("lib/rustlib/selected/lib"))?;
+        let rustc = root.path().join("bin/rustc");
+        std::fs::write(&rustc, b"compiler")?;
+        let library = root.path().join("lib/rustlib/selected/lib/libstd.rlib");
+        std::fs::write(&library, b"selected library")?;
+        let first = compiler_closure_digest(&rustc, "selected")?;
+        std::fs::create_dir_all(root.path().join("lib/rustlib/extra/lib"))?;
+        std::fs::write(root.path().join("lib/rustlib/extra/lib/libstd.rlib"), b"extra target")?;
+        std::fs::write(root.path().join("lib/rustlib/components"), b"rust-src\nclippy\n")?;
+        assert_eq!(first, compiler_closure_digest(&rustc, "selected")?);
+        std::fs::write(&library, b"changed selected library")?;
+        assert_ne!(first, compiler_closure_digest(&rustc, "selected")?);
+        Ok(())
+    }
 
     /// Run a local fixture Git command without changing the user's index repository or identity configuration.
     fn fixture_git(root: &Path, arguments: &[&str]) -> Result<Vec<u8>, Error> {

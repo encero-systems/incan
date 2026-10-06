@@ -712,6 +712,9 @@ fn compile_direct_rustc_output(
     };
 
     let mut command = Command::new(rustc);
+    if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
+        command.env_clear();
+    }
     if test_harness {
         command.arg("--test");
     }
@@ -752,6 +755,7 @@ fn compile_direct_rustc_output(
     apply_oven_profile(&mut command, &receipt.intent.profile);
     clear_inherited_cargo_environment(&mut command);
     apply_sdk_compilation_policy(&mut command, receipt)?;
+    apply_portable_source_paths(&mut command, receipt, artifact_root, rustc)?;
     for (name, value) in &plan.compile_environment {
         let value = resolve_compile_environment_value(name, value, source)?;
         command.env(name, value);
@@ -870,6 +874,32 @@ pub(super) fn write_caller_output_record(
         source,
     })?;
     fs::rename(&temporary, &path).map_err(|source| OvenRustcError::Io { path, source })
+}
+
+/// Remove physical source, working-directory and installed Rust source paths from compiler outputs.
+fn apply_portable_source_paths(
+    command: &mut Command,
+    receipt: &OvenReceipt,
+    source_root: &Path,
+    rustc: &Path,
+) -> Result<(), OvenRustcError> {
+    let logical = format!("/oven/{}", receipt.build_unit_identity.replace(':', "-"));
+    let cwd = std::env::current_dir().map_err(|source| OvenRustcError::Io {
+        path: PathBuf::from("."),
+        source,
+    })?;
+    command.arg(format!("--remap-path-prefix={}=/oven/work", cwd.display()));
+    // rustc chooses the last matching prefix; retain the more specific source mapping last.
+    command.arg(format!("--remap-path-prefix={}={logical}", source_root.display()));
+    let sysroot = super::toolchain::rustc_sysroot(rustc)?;
+    if let Some(commit) = super::toolchain::rustc_commit_hash(rustc) {
+        command.arg(format!(
+            "--remap-path-prefix={}=/rustc/{commit}",
+            sysroot.join("lib/rustlib/src/rust").display(),
+        ));
+    }
+    command.env("SOURCE_DATE_EPOCH", "0");
+    Ok(())
 }
 
 /// Apply receipt-bound SDK adoption policy and exact build-fact cfg values to the normal direct executor.

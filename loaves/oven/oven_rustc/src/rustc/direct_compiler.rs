@@ -797,6 +797,15 @@ impl OvenPreparedDirectRustcLibrary {
                 &compiler.sysroot,
                 Some("incan-toolchain"),
             ));
+            if let Some(commit) = super::toolchain::rustc_commit_hash(&self.rustc) {
+                let logical = format!("/rustc/{commit}");
+                logical_arguments.push(vec!["remap-rust-src".to_string(), logical.clone()]);
+                arguments.push(joined_os_argument(
+                    "--remap-path-prefix=",
+                    &compiler.sysroot.join("lib/rustlib/src/rust"),
+                    Some(&logical),
+                ));
+            }
         }
         for (path, logical) in self
             .plan
