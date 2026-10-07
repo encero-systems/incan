@@ -112,6 +112,7 @@ pub def track_rvalue_moves(mut builder: Builder, value: RvalueKind) -> None:
     """Remove transferred whole owners before building cleanup edges."""
     match value:
         RvalueKind.Use(operand) => forget_moved_arguments(builder, [operand])
+        RvalueKind.Tuple(operands) => forget_moved_arguments(builder, operands)
         RvalueKind.Model(_index, operands) => forget_moved_arguments(builder, operands)
         RvalueKind.Enum(_owner, _variant, operands) => forget_moved_arguments(builder, operands)
         _ => pass
@@ -184,8 +185,8 @@ pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
 pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
     """Read a materialized value's plan type without consulting source syntax or frontend policy."""
     match operand.kind:
-        OperandKind.Copy(place) => return Ok(frame_place_type(builder.locals, place))
-        OperandKind.Move(place) => return Ok(frame_place_type(builder.locals, place))
+        OperandKind.Copy(place) => return Ok(place_type(builder.locals, place))
+        OperandKind.Move(place) => return Ok(place_type(builder.locals, place))
         OperandKind.Literal(constant) =>
             match constant:
                 Constant.Numeric(_text, ty) => return Ok(ty)
@@ -196,7 +197,7 @@ pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
                 Constant.Text(_value) => return Ok(PlanType.StrRef)
 
 
-pub def frame_place_type(locals: list[Local], value: Place) -> PlanType:
+pub def place_type(locals: list[Local], value: Place) -> PlanType:
     """Read retained scalar and owner projections, including supported collection reborrows."""
     match value.projection:
         Projection.VariantField(_variant, _slot, ty) => return ty
@@ -224,3 +225,19 @@ pub def external_call(
     # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
     if result == PlanType.String:
         builder.owned.append(destination.local)
+
+
+pub def literal(constant: Constant, span: SourceSpan) -> Operand:
+    """Wrap a plan constant as an operand."""
+    return Operand(kind=OperandKind.Literal(constant), span=span)
+
+
+pub def text_literal(text: str, span: SourceSpan) -> Operand:
+    """Retain static text without an implicit allocation."""
+    return literal(Constant.Text(text), span)
+
+
+pub def finish_fallthrough(mut builder: Builder, target: int, span: SourceSpan) -> None:
+    """Connect an open block while retaining explicit return and loop exits."""
+    if not builder.closed[builder.current]:
+        builder.finish(TerminatorKind.Goto(target), span)

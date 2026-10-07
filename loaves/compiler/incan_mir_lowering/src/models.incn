@@ -1,6 +1,6 @@
 """Scalar, collection, and nominal layout admission from canonical frontend records."""
 
-from frame import frame_place_type
+pub from frame import place_type
 from collections import primitive_leaf
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
 from rust::incan_semantics_core::body_ir import (
@@ -12,6 +12,8 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
 from numerics import numeric_type
+from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
+from pub::incan_mir_plan import tuple_element_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
@@ -31,13 +33,14 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 Primitive.Unit => return Ok(PlanType.Unit)
                 Primitive.Str => return Ok(PlanType.String)
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
+        RustType.Tuple(elements) => return tuple_type(elements)
         RustType.Generic(base=base, args=arguments) =>
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
             if base == "Dict" and len(arguments) == 2:
                 return Ok(PlanType.Dict(primitive_leaf(arguments[0], true)?, primitive_leaf(arguments[1], false)?))
             if base != "List" or len(arguments) != 1:
-                return Err(f"unsupported Body IR type {ty}")
+                return generic_tuple_type(ty)
             element = model_type(declarations, arguments[0])?
             match element:
                 PlanType.Int => return Ok(PlanType.List(ListLeaf.Int, 1))
@@ -46,7 +49,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
-        _ => return Err(f"unsupported Body IR type {ty}")
+        _ => return Err(f"unsupported Body IR type {type_name(ty)}")
 
 
 pub def model_place(
@@ -78,13 +81,17 @@ pub def model_place(
                     slot = field_slot(value.projection[0], declaration)?
                     ty = model_type(declarations, declaration.field_types[slot])?
                     return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
+                PlanType.Tuple(elements) =>
+                    slot = tuple_slot(value.projection[0], len(elements))?
+                    return Ok(
+                        Place(
+                            local=index,
+                            projection=Projection.Field(slot, tuple_element_type(elements[slot])),
+                            span=span,
+                        ),
+                    )
                 _ => return Err("unsupported Body IR nonmodel place projection")
         None => return Err("unsupported Body IR global place")
-
-
-pub def place_type(locals: list[Local], value: Place) -> PlanType:
-    """Read a projected destination's actual type rather than its owner's type."""
-    return frame_place_type(locals, value)
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:

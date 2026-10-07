@@ -6,6 +6,7 @@ use crate::error::PlanError;
 use crate::plan::{
     BinaryOp, Callee, CalleeKind, Constant, Function, ListLeaf, Operand, OperandKind, Place, Plan, PlanType,
     Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
+    tuple_element_type,
 };
 
 /// Copyable comparison mirror of the Incan-owned sized carrier enum.
@@ -46,7 +47,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 }
 
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
     Int,
     Float,
@@ -70,6 +71,7 @@ enum Scalar {
     Enum(i64),
     EnumRef(i64),
     CheckedInt,
+    Tuple(Vec<Scalar>),
     String,
     StringRef,
     StrRef,
@@ -132,6 +134,12 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Dict(key, value) => Scalar::Dict(Leaf::of(key), Leaf::of(value)),
         PlanType::DictRef(key, value) => Scalar::DictRef(Leaf::of(key), Leaf::of(value)),
         PlanType::DictMutRef(key, value) => Scalar::DictMutRef(Leaf::of(key), Leaf::of(value)),
+        PlanType::Tuple(elements) => Scalar::Tuple(
+            elements
+                .iter()
+                .map(|element| scalar(&tuple_element_type(element.clone())))
+                .collect(),
+        ),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
         PlanType::I8 => Scalar::I8,
@@ -292,7 +300,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
                 StatementKind::Assign(destination, value) => {
                     span(&value.span)?;
                     let expected = place(plan, function, destination)?;
-                    let result = rvalue(plan, function, &value.kind, expected)?;
+                    let result = rvalue(plan, function, &value.kind, expected.clone())?;
                     require(function, expected, result, "assignment")?;
                 }
                 StatementKind::StorageLive(index) | StatementKind::StorageDead(index) => {
@@ -360,10 +368,23 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                     ));
                 }
             };
-            require(function, scalar(field_type), pointee, "dereferenced owner")?;
+            require(function, scalar(field_type), &pointee, "dereferenced owner")?;
             Ok(pointee)
         }
         Projection::Field(slot, field_type) | Projection::DerefField(slot, field_type) => {
+            if let Scalar::Tuple(elements) = &ty {
+                let field = usize::try_from(*slot)
+                    .ok()
+                    .and_then(|slot| elements.get(slot))
+                    .ok_or_else(|| invalid(function, "unknown tuple field"))?;
+                require(
+                    function,
+                    scalar(field_type),
+                    field.clone(),
+                    "projected tuple field type",
+                )?;
+                return Ok(field.clone());
+            }
             let owner = match (&value.projection, ty) {
                 (Projection::Field(..), Scalar::Model(owner)) => owner,
                 (Projection::DerefField(..), Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner)) => owner,
@@ -380,7 +401,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
             Ok(scalar(field_type))
         }
         Projection::NumericValue(kind)
-            if sized_numeric(scalar(kind)).is_some_and(|kind| ty == Scalar::CheckedNumeric(kind)) =>
+            if sized_numeric(&scalar(kind)).is_some_and(|kind| ty == Scalar::CheckedNumeric(kind)) =>
         {
             Ok(scalar(kind))
         }
@@ -426,18 +447,20 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
             {
                 return Err(invalid(function, "non-Copy enum cannot be copied"));
             }
-            if matches!(
-                ty,
-                Scalar::String
-                    | Scalar::StringArray(_)
-                    | Scalar::Model(_)
-                    | Scalar::List(_, _)
-                    | Scalar::ListMutRef(_, _)
-                    | Scalar::Set(_)
-                    | Scalar::SetMutRef(_)
-                    | Scalar::Dict(_, _)
-                    | Scalar::DictMutRef(_, _)
-            ) {
+            if owns_values(&ty)
+                || matches!(
+                    ty,
+                    Scalar::String
+                        | Scalar::StringArray(_)
+                        | Scalar::Model(_)
+                        | Scalar::List(_, _)
+                        | Scalar::ListMutRef(_, _)
+                        | Scalar::Set(_)
+                        | Scalar::SetMutRef(_)
+                        | Scalar::Dict(_, _)
+                        | Scalar::DictMutRef(_, _)
+                )
+            {
                 return Err(invalid(function, "owned formatting values cannot be copied"));
             }
             Ok(ty)
@@ -454,9 +477,24 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
     }
 }
 
+/// Reject implicit copies of any recursively owned value, including tuple string fields.
+fn owns_values(ty: &Scalar) -> bool {
+    match ty {
+        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) => true,
+        Scalar::Tuple(elements) => elements.iter().any(owns_values),
+        _ => false,
+    }
+}
+
 /// Keep type mismatches explicit rather than allowing rustc MIR validation to ICE.
-fn require(function: &Function, actual: Scalar, expected: Scalar, context: &str) -> Result<(), PlanError> {
-    if actual != expected {
+fn require(
+    function: &Function,
+    actual: Scalar,
+    expected: impl std::borrow::Borrow<Scalar>,
+    context: &str,
+) -> Result<(), PlanError> {
+    let expected = expected.borrow();
+    if &actual != expected {
         return Err(invalid(
             function,
             format!("{context}: expected {expected:?}, found {actual:?}"),
@@ -465,16 +503,21 @@ fn require(function: &Function, actual: Scalar, expected: Scalar, context: &str)
     Ok(())
 }
 
-/// Type scalar rvalues, including the checked integer pair rustc produces for arithmetic.
+/// Validate scalar and aggregate rvalues against their exact destination layout.
 fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
         RvalueKind::Use(value) => operand(plan, function, value),
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
             let target = scalar(target);
-            require(function, operand(plan, function, value)?, source, "numeric cast source")?;
-            let numeric = |ty| sized_numeric(ty).is_some() || matches!(ty, Scalar::Int | Scalar::Float);
-            if !numeric(source) || !numeric(target) {
+            require(
+                function,
+                operand(plan, function, value)?,
+                source.clone(),
+                "numeric cast source",
+            )?;
+            let numeric = |ty: &Scalar| sized_numeric(ty).is_some() || matches!(ty, Scalar::Int | Scalar::Float);
+            if !numeric(&source) || !numeric(&target) {
                 return Err(invalid(function, "numeric cast requires numeric carriers"));
             }
             Ok(target)
@@ -495,7 +538,12 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::Int)
         }
         RvalueKind::Enum(owner, variant, elements) => {
-            require(function, expected, Scalar::Enum(*owner), "enum aggregate destination")?;
+            require(
+                function,
+                expected.clone(),
+                Scalar::Enum(*owner),
+                "enum aggregate destination",
+            )?;
             let declaration =
                 enum_declaration(plan, *owner).ok_or_else(|| invalid(function, "unknown constructed enum"))?;
             let variant = usize::try_from(*variant)
@@ -551,12 +599,34 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         }
         RvalueKind::Binary(op, left, right) => {
             let ty = operand(plan, function, left)?;
-            require(function, operand(plan, function, right)?, ty, "binary operands")?;
+            require(function, operand(plan, function, right)?, ty.clone(), "binary operands")?;
             binary_result(function, op, ty, expected)
         }
         RvalueKind::Array(elements) => validate_array(plan, function, elements, expected),
+        RvalueKind::Tuple(elements) => {
+            let Scalar::Tuple(fields) = &expected else {
+                return Err(invalid(function, "tuple aggregate requires a tuple destination"));
+            };
+            if fields.len() != elements.len() {
+                return Err(invalid(function, "tuple element count differs from destination"));
+            }
+            for (element, field) in elements.iter().zip(fields) {
+                require(
+                    function,
+                    operand(plan, function, element)?,
+                    field.clone(),
+                    "tuple element",
+                )?;
+            }
+            Ok(expected)
+        }
         RvalueKind::Model(index, elements) => {
-            require(function, expected, Scalar::Model(*index), "model aggregate destination")?;
+            require(
+                function,
+                expected.clone(),
+                Scalar::Model(*index),
+                "model aggregate destination",
+            )?;
             let model = model(plan, *index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
             if elements.len() != model.fields.len() {
                 return Err(invalid(function, "model field count differs from declaration"));
@@ -623,9 +693,17 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
     }
 }
 
-/// Source functions expose only scalar or owned text values; formatting arrays and references stay body-internal.
+/// Source signatures expose scalars, owned text, models, and tuples of admitted types; formatting views stay internal.
 fn source_signature_type(ty: Scalar) -> bool {
-    sized_numeric(ty).is_some()
+    if let Scalar::Tuple(elements) = &ty {
+        return elements.iter().all(|element| {
+            matches!(
+                element,
+                Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
+            )
+        });
+    }
+    sized_numeric(&ty).is_some()
         || matches!(
             ty,
             Scalar::Int
@@ -637,19 +715,19 @@ fn source_signature_type(ty: Scalar) -> bool {
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
                 | Scalar::ListRef(_, _)
+                | Scalar::ListMutRef(_, _)
                 | Scalar::Set(_)
                 | Scalar::SetRef(_)
                 | Scalar::SetMutRef(_)
                 | Scalar::Dict(_, _)
                 | Scalar::DictRef(_, _)
                 | Scalar::DictMutRef(_, _)
-                | Scalar::ListMutRef(_, _)
         )
 }
 
 /// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
 fn external_signature_type(ty: Scalar) -> bool {
-    source_signature_type(ty)
+    source_signature_type(ty.clone())
         || matches!(
             ty,
             Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice
@@ -699,7 +777,7 @@ fn validate_array(plan: &Plan, function: &Function, values: &[Operand], expected
         require(
             function,
             operand(plan, function, value)?,
-            element,
+            element.clone(),
             "formatting array element",
         )?;
     }
@@ -709,9 +787,9 @@ fn validate_array(plan: &Plan, function: &Function, values: &[Operand], expected
 /// Sized integer arithmetic retains its carrier for legacy release wrapping; an explicit pair destination requests
 /// checked arithmetic.
 fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scalar) -> Result<Scalar, PlanError> {
-    if let Some(kind) = sized_numeric(ty) {
+    if let Some(kind) = sized_numeric(&ty) {
         return match op {
-            BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply if sized_integer(ty) => {
+            BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply if sized_integer(&ty) => {
                 let checked = Scalar::CheckedNumeric(kind);
                 Ok(if expected == checked { checked } else { ty })
             }
@@ -853,7 +931,7 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
                 "overflow flag",
             )?;
             let left_type = operand(plan, function, left)?;
-            if left_type != Scalar::Int && !sized_integer(left_type) {
+            if left_type != Scalar::Int && !sized_integer(&left_type) {
                 return Err(invalid(function, "overflow assertion requires an integer carrier"));
             }
             require(
@@ -882,8 +960,14 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
     usize::try_from(index).ok().and_then(|index| plan.models.get(index))
 }
 
-/// Ensure every nominal type's diagnostic spelling agrees with its indexed declaration.
+/// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
+    if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(scalar(ty)) {
+        return Err(PlanError::Invalid {
+            function: "tuple".into(),
+            reason: "tuple elements must be admitted scalars or owned text".into(),
+        });
+    }
     if let PlanType::Enum(index, name) | PlanType::EnumRef(index, name) = ty {
         if enum_declaration(plan, *index).is_none_or(|declaration| declaration.name != *name) {
             return Err(PlanError::Invalid {
@@ -919,7 +1003,9 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
         let derives_valid = if tuple {
             declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
-        } else { declaration.derives == ["Debug", "Clone", "FieldInfo", "IncanClass"] };
+        } else {
+            declaration.derives == ["Debug", "Clone", "FieldInfo", "IncanClass"]
+        };
         if !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.fields.len() != declaration.field_public.len()
@@ -933,7 +1019,10 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         let mut fields = BTreeSet::new();
         for field in &declaration.fields {
             span(&field.span)?;
-            if (!tuple && !identifier(&field.name)) || !fields.insert(&field.name) || !source_signature_type(scalar(&field.ty)) {
+            if (!tuple && !identifier(&field.name))
+                || !fields.insert(&field.name)
+                || !source_signature_type(scalar(&field.ty))
+            {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "invalid model field declaration".into(),
@@ -954,7 +1043,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
 }
 
 /// Identify named sized carriers; ordinary scalars have no sized identity.
-fn sized_numeric(ty: Scalar) -> Option<Numeric> {
+fn sized_numeric(ty: &Scalar) -> Option<Numeric> {
     match ty {
         Scalar::I8 => Some(Numeric::I8),
         Scalar::I16 => Some(Numeric::I16),
@@ -974,8 +1063,8 @@ fn sized_numeric(ty: Scalar) -> Option<Numeric> {
 }
 
 /// Sized integer carriers can produce a checked arithmetic pair; floats cannot.
-fn sized_integer(ty: Scalar) -> bool {
-    sized_numeric(ty).is_some() && !matches!(ty, Scalar::F32 | Scalar::F64)
+fn sized_integer(ty: &Scalar) -> bool {
+    sized_numeric(&ty).is_some() && !matches!(ty, Scalar::F32 | Scalar::F64)
 }
 
 /// Resolve a source enum layout by its validated plan index.
