@@ -70,7 +70,16 @@ pub def evaluate_default(
             builder.locals.append(Local(ty=PlanType.Unit, span=span))
             for local in body.locals:
                 builder.locals.append(
-                    Local(ty=native_source_type(builder.nominals, builder.enums, builder.unions, local.ty)?, span=span),
+                    Local(
+                        ty=native_source_type(
+                            builder.nominals,
+                            builder.enums,
+                            builder.unions,
+                            local.ty,
+                            builder.intrinsics,
+                        )?,
+                        span=span,
+                    ),
                 )
             builder.local_offset = offset
             for statement in computation.stmts:

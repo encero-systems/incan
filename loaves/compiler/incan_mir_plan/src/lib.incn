@@ -541,6 +541,9 @@ pub model EnumDeclaration:
     pub variants: list[EnumVariant]
     pub derives: list[str]
     pub span: SourceSpan
+    # Standard carriers use their concrete type arguments from the variant fields.
+    pub carrier: str = ""
+    pub source_type: str = ""
 
 
 @derive(Clone, PartialEq)

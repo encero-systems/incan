@@ -483,6 +483,9 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
 
 /// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
 pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
+    if !value.carrier.is_empty() {
+        return carrier_alias(value, span);
+    }
     let variants = value
         .variants
         .iter()
@@ -534,6 +537,27 @@ pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box
     declaration.vis = visibility(value.public, span);
     declaration.tokens = Some(enum_tokens(value, span));
     declaration
+}
+
+/// Alias a checked concrete standard carrier so enum MIR uses the standard ADT, including its ABI and discriminants.
+fn carrier_alias(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
+    let fields: Vec<_> = value.variants.iter().flat_map(|variant| &variant.fields).collect();
+    let mut path = ast::Path::from_ident(ident("std", span));
+    path.segments.push(ast::PathSegment::from_ident(ident(if value.carrier == "Option" { "option" } else { "result" }, span)));
+    let mut carrier = ast::PathSegment::from_ident(ident(&value.carrier, span));
+    carrier.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: fields.iter().map(|field| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(field, span)))).collect(),
+    })));
+    path.segments.push(carrier);
+    item(ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
+        defaultness: ast::Defaultness::Implicit,
+        ident: ident(&value.name, span),
+        generics: ast::Generics::default(),
+        after_where_clause: ast::WhereClause::default(),
+        bounds: Vec::new(),
+        ty: Some(Box::new(ast::Ty { id: ast::DUMMY_NODE_ID, kind: ast::TyKind::Path(None, path), span, tokens: None })),
+    })), span)
 }
 
 /// Preserve enum tokens for derives from the exact planned layout without parsing generated Rust source.
