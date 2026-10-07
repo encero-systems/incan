@@ -5,7 +5,6 @@ from rust::incan_semantics_core::body_ir import (
     Body,
     LocalOrigin,
     LocalDecl as RustLocal,
-    MethodTarget,
     BodyIrModule,
     Operand as RustOperand,
     OwnershipFact,
@@ -36,26 +35,11 @@ pub def function_name(body: &Body) -> str:
             if identity.kind == SemanticSourceTargetKind.Function:
                 return str(body.name)
         None => pass
-    return f"__incan_body_{body.span.start}"
-
-
-pub def method_index(module: &BodyIrModule, target: &MethodTarget) -> Result[int, str]:
-    """Resolve methods through canonical identities, never through their source spelling."""
-    if len(target.type_args) != 0:
-        return Err("unsupported Body IR generic Method")
-    match target.canonical:
-        None => return Err("unsupported Body IR unproven Method")
-        Some(_identity) => pass
-    for index in range(len(module.bodies)):
-        body = module.bodies[index]
-        if body.canonical != target.canonical:
-            continue
-        if str(body.name) != str(target.name) or len(body.params) == 0:
-            return Err("invalid Body IR method body signature")
+    if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
-            Some(_mutable) => return Ok(index)
-            None => return Err("unsupported Body IR Method without receiver")
-    return Err("unsupported Body IR nonlocal Method")
+            Some(_mutable) => return f"__incan_body_{body.span.start}_{body.locals[0].ty}"
+            None => pass
+    return f"__incan_body_{body.span.start}"
 
 
 pub def method_receiver(
