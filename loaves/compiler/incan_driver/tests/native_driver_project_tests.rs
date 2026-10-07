@@ -2383,3 +2383,56 @@ fn direct_route_tuple_zip_matches_legacy() -> Result<(), Box<dyn std::error::Err
     )?;
     Ok(())
 }
+
+/// Prove stored and immediate builtin enumeration, deferred yields, and tuple-string ownership against legacy.
+#[test]
+fn direct_route_enumerate_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("enumerate")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def words() -> list[str]:
+    """Show that the enumeration source is evaluated once."""
+    println("source")
+    return ["é", "cat"]
+
+def generated() -> Generator[int]:
+    """Enumerate inside a lazy producer."""
+    for index, value in enumerate([5, 6]):
+        yield index + value
+
+def main() -> None:
+    """Observe stored pairs, source preservation, Unicode, empty inputs, and deferred enumeration."""
+    source = words()
+    stored = enumerate(source)
+    alias = stored
+    for index, value in stored:
+        println(index)
+        println(value)
+    for pair in alias:
+        println(pair.0)
+        println(pair.1)
+    println(source[0])
+    for index, value in enumerate("é猫"):
+        println(index)
+        println(value)
+    for index, value in enumerate([1.5, 2.5]):
+        println(index)
+        println(value)
+    for index, value in enumerate([true, false]):
+        println(index)
+        println(value)
+    empty: list[int] = []
+    println(len(enumerate(empty)))
+    collected = generated().collect()
+    println(collected[0])
+    println(collected[1])
+    for number, label in zip([7], ["zip"]):
+        println(number)
+        println(label)
+"#,
+    )?;
+    Ok(())
+}
