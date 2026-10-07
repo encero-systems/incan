@@ -61,6 +61,7 @@ from rust::incan_semantics_core::body_ir import (
     GlobalPlace as RustGlobalPlace,
     GlobalWritePolicy as RustGlobalWritePolicy,
     EnumDeclaration as RustEnumDeclaration,
+    ValueEnumBacking,
     MatchArm as RustMatchArm,
     RaceArm as RustRaceArm,
     Pattern as RustPattern,
@@ -122,6 +123,7 @@ from model_values import (
     compare_models,
 )
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant, pattern_variant
+from value_enums import value_variant, value_method_owner
 from unions import (
     native_source_type,
     collect_unions,
@@ -443,7 +445,9 @@ def scalar_rvalue(
             return lower_union_isinstance(builder, value, ty, target.ty, span)
         RustRvalue.Aggregate(kind, elements) => return checked_aggregate(module, builder, kind, elements, span)
         RustRvalue.Dict(_entries) => return Err("unsupported Body IR Dict")
-        RustRvalue.ValueEnumVariant(_target) => return Err("unsupported Body IR ValueEnumVariant")
+        RustRvalue.ValueEnumVariant(target) =>
+            owner, variant = value_variant(builder.enums, builder.value_enums, target)?
+            return Ok(RvalueKind.Enum(owner, variant, []))
         RustRvalue.FieldlessEnumVariant(target) =>
             owner, variant = unit_variant(builder.enums, target)?
             return Ok(RvalueKind.Enum(owner, variant, []))
@@ -947,6 +951,64 @@ def lower_call(
         _ => return Err("expected Body IR Call")
 
 
+def lower_value_enum_method(
+    mut builder: Builder,
+    owner: int,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Select the retained raw value by native tag, preserving repeated reads and text ownership."""
+    if len(arguments) != 1:
+        return Err("unsupported Body IR value enum getter arguments")
+    declaration = builder.value_enums[owner]
+    source = argument_place(builder, arguments, 0, span)?
+    raw_tag = temporary(builder, PlanType.EnumTag, span)
+    tag = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
+    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
+    mut result_type = PlanType.Int
+    match declaration.backing:
+        ValueEnumBacking.Str =>
+            result_type = PlanType.String
+        ValueEnumBacking.Int => pass
+    output = call_destination(builder, destination, result_type, span)?
+    if place_type(builder.locals, output) != result_type or output.local in builder.owned:
+        return Err("unsupported Body IR value enum getter destination")
+    join = builder.new_block(span)
+    owners = builder.owned
+    for slot in range(len(declaration.variants)):
+        mut next = join
+        if slot + 1 < len(declaration.variants):
+            selected = builder.new_block(span)
+            next = builder.new_block(span)
+            condition = temporary(builder, PlanType.Bool, span)
+            builder.emit(
+                plan_assign(
+                    condition,
+                    RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span)),
+                    span,
+                ),
+            )
+            builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), next, selected), span)
+            builder.current = selected
+        raw_value: RustConstant = declaration.variants[slot].raw_value.clone()
+        operand: RustOperand = RustOperand.Constant(raw_value)
+        raw: RustRvalue = RustRvalue.Use(operand)
+        if result_type == PlanType.String:
+            lower_string_assignment(builder, output, raw, span)?
+        else:
+            operation = scalar_rvalue(builder, raw, span)?
+            builder.emit(plan_assign(output, operation, span))
+        builder.finish(TerminatorKind.Goto(join), span)
+        builder.current = next
+        builder.owned = owners
+    builder.current = join
+    if result_type == PlanType.String:
+        builder.owned.append(output.local)
+    return Ok(None)
+
+
 def lower_method_call(
     module: &BodyIrModule,
     mut builder: Builder,
@@ -969,6 +1031,9 @@ def lower_method_call(
         return Err("invalid Body IR Method missing receiver")
     if is_json_serialize_method(target):
         return lower_model_json_builtin(builder, arguments, destination, span)
+    match value_method_owner(module, target, builder.locals[builder.local_offset:], arguments[0], span)?:
+        Some(owner) => return lower_value_enum_method(builder, owner, arguments, destination, span)
+        None => pass
     index = method_index(module, target, builder.locals[builder.local_offset:], arguments[0], span)?
     body = module.bodies[index]
     receiver_type, borrow = method_receiver(
@@ -1773,6 +1838,9 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
+# =====================================================================================================================
+# Formatting and strings
+# =====================================================================================================================
 
 
 def lower_format(
@@ -2061,6 +2129,9 @@ def lower_str_builtin(
             builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
 
 
 pub def lower_program(
@@ -2120,8 +2191,6 @@ pub def lower_program(
 pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
     """Validate first, then lower every body; any unsupported fact refuses the whole module."""
     _ = validate_module(module)?
-    if len(module.value_enum_declarations) != 0:
-        return Err("unsupported Body IR fieldless enum or value enum declaration")
     specialized = specialize_traits(module)?
     return lower_concrete_module(specialized, source, file)
 
@@ -2256,6 +2325,7 @@ def lower_function(
         enums=module.enum_declarations,
         intrinsics=intrinsics,
         statics=module.static_declarations,
+        value_enums=module.value_enum_declarations,
         local_offset=0,
         generator_handle=-1,
         unions=unions,
