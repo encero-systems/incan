@@ -18,7 +18,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
             .ok_or_else(|| PlanError::UnknownCallee(name.clone())),
         CalleeKind::Instantiated(path, _) | CalleeKind::InstantiatedPair(path, _, _) => external(tcx, path),
         CalleeKind::External(path) => external(tcx, path),
-        CalleeKind::CloneModel(_, _) => {
+        CalleeKind::CloneModel(_, _) | CalleeKind::CloneEnum(_, _) => {
             let trait_id = tcx
                 .lang_items()
                 .clone_trait()

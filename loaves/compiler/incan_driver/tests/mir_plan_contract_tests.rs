@@ -47,6 +47,8 @@ fn scalar_plan_exports_are_public_and_representable() -> Result<(), Box<dyn std:
         "Function",
         "Plan",
         "ModelDeclaration",
+        "EnumDeclaration",
+        "EnumVariant",
         "ExternalFunction",
         "place",
         "integer",

@@ -9,6 +9,9 @@ use rustc_middle::ty::{Ty, TyCtxt};
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::EnumTag => tcx.types.isize,
+        PlanType::Enum(_, name) => enum_type(tcx, name)?,
+        PlanType::EnumRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::Model(_, name) => model_type(tcx, name)?,
         PlanType::ModelMutRef(_, name) => {
             Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?)
@@ -231,4 +234,21 @@ fn primitive_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, 
         ListLeaf::Bool => Ok(tcx.types.bool),
         ListLeaf::Str => string_type(tcx),
     }
+}
+
+/// Resolve an injected source enum by its validated declaration name, never an external nominal spelling.
+pub fn enum_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
+    let definition = tcx
+        .hir_crate_items(())
+        .free_items()
+        .map(|item| item.owner_id.to_def_id())
+        .find(|def| {
+            tcx.def_kind(*def) == rustc_hir::def::DefKind::Enum
+                && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+        })
+        .ok_or_else(|| PlanError::Invalid {
+            function: name.into(),
+            reason: "enum declaration is missing".into(),
+        })?;
+    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }

@@ -1291,3 +1291,45 @@ fn source_local_class_retains_checked_layout_and_receiver_facts() -> Result<(), 
     assert!(!module.is_well_formed_nominal_declaration(&tampered));
     Ok(())
 }
+
+/// Direct enum layouts retain checker payload types, derives and owner/member identity without raw annotation lookup.
+#[test]
+fn native_enum_layout_retains_payloads_and_checked_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "enum Shape:\n  Empty\n  Pair(int, str)\n\ndef main() -> None:\n  value = Shape.Pair(7, \"seven\")\n",
+        &["m", "enum_layout"],
+    )?;
+    let declaration = module.enum_declarations.first().ok_or("missing enum layout")?;
+    assert!(module.is_well_formed_native_enum_declaration(declaration));
+    assert_eq!(declaration.name, "Shape");
+    assert_eq!(declaration.variants[0].name, "Empty");
+    assert!(declaration.variants[0].fields.is_empty());
+    assert_eq!(
+        declaration.variants[1].fields,
+        vec![
+            IncanType::Primitive(IncanPrimitiveType::Int),
+            IncanType::Primitive(IncanPrimitiveType::Str)
+        ]
+    );
+    assert_eq!(declaration.derives, ["Debug", "Clone", "PartialEq"]);
+    let constructor = body_named(&module, "main")?
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("missing enum constructor")?;
+    assert_eq!(constructor.binding, bir::ArgumentBinding::resolved_positional(2));
+    let mut malformed = declaration.clone();
+    malformed.variants[1].canonical = malformed.variants[0].canonical.clone();
+    assert!(!module.is_well_formed_native_enum_declaration(&malformed));
+    malformed = declaration.clone();
+    malformed.variants[1].name = "Foreign".to_owned();
+    assert!(!module.is_well_formed_native_enum_declaration(&malformed));
+    Ok(())
+}
