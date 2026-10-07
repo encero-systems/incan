@@ -8316,6 +8316,14 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_test_support/src/lib.rs": {
+      "disposition": "unaffected",
+      "notes": "Test-harness helpers; the fixture bake configuration keeps the consumer's selected authority and never injects Cargo.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/rust_inspect/src/cache_tests.rs": {
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
@@ -9084,6 +9092,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/compile_environment.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; the validated compile environment envelope accepts Cargo's package metadata values for closure units.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/compiled_unit.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9121,6 +9137,14 @@
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/linking.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; the pinned linker binds the SDK closure, platform inputs and explicit arguments into link identities on macOS and Linux.",
+      "owner": 1698,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },
@@ -9192,7 +9216,7 @@
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -9255,6 +9279,14 @@
     "loaves/oven/oven_rustc/src/sdk_closure.rs": {
       "disposition": "unaffected",
       "notes": "Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/environment.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
