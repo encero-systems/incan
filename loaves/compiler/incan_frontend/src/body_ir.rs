@@ -766,11 +766,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A proven local identity must select a frame local with that same identity. Proven `const`/`static` references
     /// become canonical global places. Any other proven identity that has no Body IR value representation returns
     /// `None`, so the caller emits an explicit unsupported node instead of silently changing meaning through a
-    /// spelling lookup. Only a genuinely unproven reference may use the legacy `External` recovery local.
+    /// spelling lookup. Checked union member reads carry an explicit payload projection while the local retains its
+    /// storage type. Only a genuinely unproven reference may use the legacy `External` recovery local.
     fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
         if let Some(identity) = self.type_info.resolved_identity(span).cloned() {
             if let Some(&id) = self.identity_bindings.get(&identity) {
-                return Some(bir::Place::from_local(id));
+                let mut place = bir::Place::from_local(id);
+                // The local keeps its storage type; a read keeps the checker's narrower member as an explicit
+                // projection.
+                if let Some(local) = self.locals.get(id.index())
+                    && matches!(&local.ty, IncanType::Generic { base, args } if base == "Union" && args.contains(ty))
+                    && local.ty != *ty
+                {
+                    place.projection.push(bir::PlaceElem::UnionMember { ty: ty.clone() });
+                }
+                return Some(place);
             }
             return self.global_place(identity, ty.clone()).map(bir::Place::from_global);
         }

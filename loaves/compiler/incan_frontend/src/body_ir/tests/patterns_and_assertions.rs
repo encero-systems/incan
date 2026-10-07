@@ -890,3 +890,28 @@ fn condition_assertion_message_is_deferred_to_the_failure_block() -> Result<(), 
     );
     Ok(())
 }
+
+/// Union reads and constructor patterns retain the checker-selected member without changing the local's storage type.
+#[test]
+fn union_narrowing_keeps_payload_projection_and_pattern_target() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def narrow(value: int | str) -> str:
+    if isinstance(value, int):
+        return str(value)
+    else:
+        return value
+
+def capture(value: int | str) -> int:
+    match value:
+        int(number) => return number
+        str(_) => return 0
+"#;
+    let module = build(source, &["union_facts"])?;
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains(".union[int]"), "{snapshot}");
+    assert!(snapshot.contains(".union[str]"), "{snapshot}");
+    assert!(snapshot.contains("union int("), "{snapshot}");
+    assert!(snapshot.contains("union str("), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}

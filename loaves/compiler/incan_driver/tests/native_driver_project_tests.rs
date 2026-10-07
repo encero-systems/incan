@@ -694,6 +694,11 @@ fn direct_route_defaults_match_legacy() -> Result<(), Box<dyn std::error::Error>
         "defaults",
         "def compute() -> int:\n    println(100)\n    return 7\n\ndef choose(value: int = compute()) -> int:\n    return value\n\ndef flag(value: bool = true) -> bool:\n    return value\n\ndef fraction(value: float = 2.5) -> float:\n    return value\n\ndef number(value: int = 2 + 3) -> int:\n    return value\n\ndef greeting() -> str:\n    prefix = \"hello\"\n    return prefix + \"!\"\n\ndef text(value: str = greeting()) -> str:\n    return value\n\ndef literal_text(value: str = \"literal\") -> str:\n    return value\n\ndef main() -> None:\n    println(choose(9))\n    println(choose())\n    println(flag())\n    println(fraction())\n    println(number())\n    println(number(9))\n    println(text())\n    println(text(\"supplied\"))\n    println(literal_text())\n",
         None,
+    )?;
+    check_declaration_case(
+        "defaults_with_caller_collections",
+        "class DefaultBox:\n    value: int\n    def get(self) -> int:\n        return self.value\n\ndef compute() -> int:\n    return 7\n\ndef method_number(value: int = DefaultBox(value=5).get()) -> int:\n    return value\n\ndef number(value: int = compute() + 2) -> int:\n    return value\n\ndef main() -> None:\n    first = {1}\n    second = {2}\n    println(number())\n    println(method_number())\n    println(len(first) + len(second))\n",
+        None,
     )
 }
 
@@ -781,5 +786,106 @@ fn check_declaration_case(
     } else {
         success(&actual, "declaration execution");
     }
+    Ok(())
+}
+
+/// Prove union injection at assignment, argument and return boundaries against legacy output.
+#[test]
+fn source_union_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("source-union")?;
+    let source = root.join("source_union.incn");
+    fs::write(
+        &source,
+        r#"def choose(flag: bool) -> int | str:
+    if flag:
+        return 42
+    return "payload"
+
+def classify(value: int | str) -> int:
+    if isinstance(value, int):
+        return 1
+    return 2
+
+def narrowed(value: int | str) -> int:
+    if isinstance(value, int):
+        return value + 1
+    return -1
+
+def captured(value: int | str) -> str:
+    match value:
+        int(_) => return "number"
+        str(text) => return text
+
+def defaulted(value: int | str, step: int = 4) -> int:
+    return classify(value) + step
+
+def main() -> None:
+    value: int | str = 7
+    println(classify(value))
+    println(classify(8))
+    println(classify("text"))
+    println(classify(choose(true)))
+    println(classify(choose(false)))
+    println(narrowed(41))
+    println(narrowed("text"))
+    println(captured(7))
+    println(captured("payload"))
+    println(defaulted(7))
+    println(defaulted("text", 8))
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "source union native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "source union legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/source_union")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source union legacy execution");
+    success(&actual, "source union native execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"1\n1\n2\n1\n2\n42\n-1\nnumber\npayload\n5\n10\n");
+
+    // ---- Unadmitted payload types stay a named refusal ----
+    let refused_source = root.join("unadmitted_union.incn");
+    fs::write(
+        &refused_source,
+        "def accept(value: int | list[int]) -> None:\n    pass\n\ndef main() -> None:\n    accept(7)\n",
+    )?;
+    let refused_binary = root.join("refused-union");
+    let refusal = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &refused_source,
+        &refused_binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refusal.status.success());
+    assert!(
+        String::from_utf8_lossy(&refusal.stderr).contains("List[int]"),
+        "{}",
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+    assert!(!refused_binary.exists());
     Ok(())
 }
