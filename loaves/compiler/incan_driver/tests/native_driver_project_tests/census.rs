@@ -185,6 +185,28 @@ fn all_fixtures() -> Result<Vec<(String, BehaviorFixture)>, Box<dyn std::error::
     Ok(all)
 }
 
+/// Restrict the census to the `area/name` lines of the file `INCAN_CENSUS_ONLY` names, for a quick check of the
+/// fixtures one change targets.
+///
+/// Without the variable every fixture runs. A restricted run reports only its selection, so it never stands in for the
+/// complete census that proves `wrong` stays zero across the corpus.
+fn selected_fixtures() -> Result<Vec<(String, BehaviorFixture)>, Box<dyn std::error::Error>> {
+    let all = all_fixtures()?;
+    let Some(list) = std::env::var_os("INCAN_CENSUS_ONLY").filter(|value| !value.is_empty()) else {
+        return Ok(all);
+    };
+    let wanted: std::collections::BTreeSet<String> = fs::read_to_string(list)?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    Ok(all
+        .into_iter()
+        .filter(|(area, fixture)| wanted.contains(&format!("{area}/{}", fixture.name)))
+        .collect())
+}
+
 /// Render counts, ranked refusals, and every unexpected outcome as reviewable Markdown.
 fn markdown(records: &[Record]) -> String {
     let mut classes = BTreeMap::new();
@@ -268,7 +290,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let closure = corpus::runtime_closure(&graph.formatting, "release")?;
     let driver = graph.driver_binary("release");
     let sysroot = &graph.sysroot;
-    let all = all_fixtures()?;
+    let all = selected_fixtures()?;
     let workers = std::thread::available_parallelism()?.get();
     let timeout = Duration::from_secs(
         std::env::var("INCAN_CENSUS_TIMEOUT_SECONDS")
