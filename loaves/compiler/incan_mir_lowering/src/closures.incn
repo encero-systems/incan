@@ -1,6 +1,11 @@
 """Callable signature admission from checked frontend representation facts."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    IncanCallableParam,
+    IncanCallableParamKind,
+)
 from rust::incan_semantics_core::body_ir import (
     Body as RustBody,
     BodyIrModule as RustModule,
@@ -30,7 +35,11 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
 def callable_component(ty: &RustType) -> Result[PlanType, str]:
     """Admit scalar and recursively callable signature components; name every other retained type."""
     match ty:
-        RustType.Primitive(primitive) => return primitive_type(primitive)
+        RustType.Primitive(primitive) =>
+            match primitive:
+                # Sized carriers stay refused until a closure parity test proves their native arithmetic matches legacy.
+                Primitive.Numeric(_kind) => return Err(f"unsupported Body IR sized numeric callable signature type {ty}")
+                _ => return primitive_type(primitive)
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         _ => return Err(f"unsupported Body IR callable signature type {ty}")
 
