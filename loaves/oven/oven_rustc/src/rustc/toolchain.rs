@@ -462,7 +462,7 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
         source,
     })?;
     let commit = rustc_commit_hash(rustc).unwrap_or_else(|| "unknown".to_string());
-    let key = oven_store::digest_bytes(&[b"pinned-linker-v2\0", commit.as_bytes(), b"\0", &manifest].concat())
+    let key = oven_store::digest_bytes(&[b"pinned-linker-v3\0", commit.as_bytes(), b"\0", &manifest].concat())
         .replace(':', "-");
     let root = env::temp_dir().join("incan-oven-std-sysroot").join(&key);
     if root.join(".complete").is_file() {
@@ -507,15 +507,36 @@ fn copy_pinned_linker(sysroot: &Path, staging: &Path, host: &str) -> Result<(), 
         path: source,
         source: error,
     })?;
-    let llvm_relative = PathBuf::from("lib/rustlib").join(host).join("lib/libLLVM.dylib");
-    let llvm_source = sysroot.join(&llvm_relative);
-    if llvm_source.is_file() {
-        let destination = staging.join(llvm_relative);
-        link_runtime_library(&llvm_source, &destination).map_err(|source| OvenRustcError::Io {
-            path: llvm_source,
-            source,
-        })?;
+    // `rust-lld` loads `@rpath/libLLVM.dylib` through `@loader_path/../lib`, i.e. `lib/rustlib/<host>/lib`. That copy
+    // belongs to the optional `llvm-tools` component; the `rustc` component always ships the identical library at the
+    // sysroot's top-level `lib`. Taking it from `rustc` makes the normalized sysroot the same whether or not a host
+    // installed `llvm-tools`, and an Apple linker that would not load refuses here rather than at the first link.
+    if !cfg!(target_os = "macos") {
+        return Ok(());
     }
+    let llvm_source = sysroot.join("lib/libLLVM.dylib");
+    if !llvm_source.is_file() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "pinned linker",
+            message: format!(
+                "rust-lld needs libLLVM.dylib, but the rustc component has none at {}",
+                llvm_source.display()
+            ),
+        });
+    }
+    let destination = staging.join("lib/rustlib").join(host).join("lib/libLLVM.dylib");
+    let parent = destination.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "pinned linker runtime",
+        message: "has no parent directory".to_string(),
+    })?;
+    fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    link_runtime_library(&llvm_source, &destination).map_err(|source| OvenRustcError::Io {
+        path: llvm_source,
+        source,
+    })?;
     Ok(())
 }
 

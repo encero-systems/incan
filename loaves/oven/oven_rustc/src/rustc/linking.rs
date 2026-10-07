@@ -50,11 +50,10 @@ pub(crate) fn pinned_apple_link(rustc: &Path, target: &str) -> Result<Option<Pin
     })?;
     let mut identities = BTreeMap::new();
     identities.insert("rust-lld", digest_bytes(&linker_bytes));
+    // The normalized sysroot always places LLD's LLVM runtime (from the `rustc` component), so it is always bound.
     let llvm = host_root.join("lib/libLLVM.dylib");
-    if llvm.is_file() {
-        let bytes = fs::read(&llvm).map_err(|source| OvenRustcError::Io { path: llvm, source })?;
-        identities.insert("lld-libLLVM", digest_bytes(&bytes));
-    }
+    let bytes = fs::read(&llvm).map_err(|source| OvenRustcError::Io { path: llvm, source })?;
+    identities.insert("lld-libLLVM", digest_bytes(&bytes));
     for (relative, bytes) in &members {
         identities.insert(relative, digest_bytes(bytes));
     }
