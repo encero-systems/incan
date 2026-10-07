@@ -296,11 +296,13 @@ pub fn execute_runtime_foundation_rebuild(
             OvenSelectedRustFacetDomain::Target => selection.intent.target.as_str(),
         };
         let link = if unit.compiler_crate_type != "rlib" && unit.compiler_crate_type != "lib" {
-            super::linking::pinned_apple_link(closure.rustc(), target)?
+            super::linking::pinned_link(closure.rustc(), target)?
         } else {
             None
         };
-        let compiled_identity = if target.ends_with("-apple-darwin") {
+        let compiled_identity = if target.ends_with("-apple-darwin")
+            || matches!(target, "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu")
+        {
             let children = dependencies
                 .iter()
                 .map(|child| (child.alias.clone(), child.identity.clone()))
@@ -721,7 +723,7 @@ fn rebuild_unit_command(
             OvenSelectedRustFacetDomain::Host => selection.host.as_str(),
             OvenSelectedRustFacetDomain::Target => selection.intent.target.as_str(),
         };
-        if let Some(link) = super::linking::pinned_apple_link(closure.rustc(), target)? {
+        if let Some(link) = super::linking::pinned_link(closure.rustc(), target)? {
             link.apply(&mut command);
         }
     }
@@ -862,9 +864,12 @@ fn append_rebuild_unit_inputs(
         artifact,
         private_out_dir,
     )?;
-    let direct_apple = unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro
-        && super::rustc_host_target(closure.rustc())?.ends_with("-apple-darwin");
-    append_captured_linker_arguments(command, &unit.compiler_arguments, direct_apple);
+    let direct_native = unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro && {
+        let host = super::rustc_host_target(closure.rustc())?;
+        host.ends_with("-apple-darwin")
+            || matches!(host.as_str(), "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu")
+    };
+    append_captured_linker_arguments(command, &unit.compiler_arguments, direct_native);
     append_materialized_sysroot_extern_arguments(command, &source.sysroot_externs);
     append_materialized_link_arguments(command, &source.linked_libraries)?;
     if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
@@ -1018,17 +1023,17 @@ fn append_runtime_search_paths(
     }
 }
 
-/// Append captured linker inputs after remaps, translating driver forwarding syntax for direct Apple LLD.
+/// Append captured linker inputs after remaps, translating driver forwarding syntax for direct native LLD.
 fn append_captured_linker_arguments(
     command: &mut Command,
     arguments: &[OvenSelectedRustFacetCompilerArgument],
-    direct_apple: bool,
+    direct_native: bool,
 ) {
     for argument in arguments {
         if let OvenSelectedRustFacetCompilerArgument::Codegen { name, value } = argument
             && name == "link-arg"
         {
-            if direct_apple && let Some(forwarded) = value.strip_prefix("-Wl,") {
+            if direct_native && let Some(forwarded) = value.strip_prefix("-Wl,") {
                 for flag in forwarded.split(',') {
                     command.arg("-C").arg(format!("link-arg={flag}"));
                 }

@@ -642,7 +642,7 @@ fn unit_receipt(
         .and_then(|facet| facet.get("type"))
         .and_then(toml::Value::as_str)
         == Some("proc-macro")
-        && let Some(link) = crate::rustc::linking::pinned_apple_link(context.rustc, context.target)?
+        && let Some(link) = crate::rustc::linking::pinned_link(context.rustc, context.target)?
     {
         receipt = oven_store::receipt_with_build_unit_input(&receipt, "link-closure", link.identity)?;
     }
