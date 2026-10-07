@@ -54,8 +54,9 @@ pub def truth_list[T](value: &list[T]) -> bool:
 
 
 pub def power_i64(left: int, right: int) -> int:
-    """Use legacy integer exponentiation, which legacy emission lowers with its own exponent conversion."""
-    return left ** right
+    """Use the legacy integer exponent conversion and release overflow behavior."""
+    exponent = u32(right & 4294967295)
+    return left.pow(exponent)
 
 
 pub def power_f64(left: float, right: float) -> float:
