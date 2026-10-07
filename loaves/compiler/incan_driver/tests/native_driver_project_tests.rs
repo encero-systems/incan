@@ -718,6 +718,65 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare model list construction, copied reads, and iteration byte-for-byte with legacy.
+#[test]
+fn direct_route_model_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("model-lists")?;
+    let source = root.join("model_lists.incn");
+    fs::write(
+        &source,
+        r#"
+model Entry:
+    value: int
+    text: str
+
+def main() -> None:
+    """Exercise source-local model leaves and owned text through list copies."""
+    mut entries = [Entry(value=1, text="one"), Entry(value=2, text="two")]
+    entries.append(Entry(value=3, text="three"))
+    copied = entries
+    entry = copied[1]
+    println(entry.value)
+    println(entry.text)
+    println(len(entries))
+    for item in entries:
+        println(item.value)
+        println(item.text)
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("model-lists-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native model lists compilation",
+    );
+    let legacy_root = root.join("model-lists-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy model lists compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/model_lists")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy model lists execution");
+    success(&actual, "native model lists execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"2\ntwo\n3\n1\none\n2\ntwo\n3\nthree\n");
+    Ok(())
+}
+
 /// Prove class construction, shared and mutable receivers, and passing classes against legacy.
 #[test]
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -29,13 +29,14 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Scalar and flat tuple leaves; hashed collections admit only their checked scalar subset."""
+    """Scalar, flat tuple, and retained model leaves; hashed collections admit only their checked scalar subset."""
 
     Int
     Float
     Bool
     Str
     Tuple(list[TupleElement])
+    Model(int, str)
 
 
 @derive(Clone, PartialEq)
@@ -129,13 +130,14 @@ pub enum PlanType:
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
-    """Recover one scalar or flat tuple leaf's exact representation for lowering and adapter consumers."""
+    """Recover one admitted leaf's exact representation for lowering and adapter consumers."""
     match leaf:
         ListLeaf.Int => return PlanType.Int
         ListLeaf.Float => return PlanType.Float
         ListLeaf.Bool => return PlanType.Bool
         ListLeaf.Str => return PlanType.String
         ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
+        ListLeaf.Model(index, name) => return PlanType.Model(index, name)
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:

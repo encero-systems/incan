@@ -2473,7 +2473,7 @@ def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
         argument = list_index_operand(builder, source, slot, span)?
         place = read_list_element(builder, place, argument, span)?
     ty = builder.locals[place.local].ty
-    return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty) or tuple_has_owners(ty), span))
+    return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty), span))
 
 
 def read_list_element(mut builder: Builder, place: Place, argument: Operand, span: SourceSpan) -> Result[Place, str]:
@@ -2903,7 +2903,7 @@ def list_next(
     item_reference = list_borrow(builder, receiver, false, span)?
     target = list_root_place(builder, destination, span)?
     drop_owned(builder, target.local, span)
-    if element == PlanType.String or is_list(element) or tuple_has_owners(element):
+    if element == PlanType.String or is_list(element) or is_nominal_type(element):
         if target.local not in builder.borrowed_items:
             builder.borrowed_items.append(target.local)
     iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], target, span)?
@@ -3497,6 +3497,7 @@ def lower_sequence_builtin(
         return Err("unsupported Body IR nested sequence builtin")
     if builtin == RustBuiltin.Sorted:
         match leaf:
+            ListLeaf.Model(_index, _name) => return Err("unsupported Body IR builtin Sorted model list")
             ListLeaf.Tuple(elements) =>
                 if TupleElement.Float in elements:
                     return Err("unsupported Body IR builtin Sorted tuple containing float")
