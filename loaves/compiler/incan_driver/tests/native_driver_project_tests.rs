@@ -496,6 +496,113 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+/// Compare concrete carrier construction, matching, propagation, defaults, and printing against legacy.
+#[test]
+fn option_result_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("option-result")?;
+    let source = root.join("option_result.incn");
+    fs::write(
+        &source,
+        r#"enum Failure:
+    Bad
+
+def optional_text() -> Option[str]:
+    return Some("text")
+
+def optional_list() -> Option[List[int]]:
+    return Some([2, 3])
+
+def show_result(value: Result[str, str]) -> None:
+    match value:
+        Ok(text) => println(text)
+        Err(error) => println(error)
+
+def unit_result() -> Result[None, str]:
+    return Ok(None)
+
+def failure_result() -> Result[int, Failure]:
+    return Err(Failure.Bad)
+
+def value(good: bool) -> Result[int, str]:
+    if good:
+        return Ok(7)
+    return Err("failure")
+
+def doubled(good: bool) -> Result[int, str]:
+    number = value(good)?
+    return Ok(number * 2)
+
+def selected(option: Option[int]) -> int:
+    match option:
+        Some(number) => return number
+        None => return -1
+
+def main() -> None:
+    show_result(Ok("parameter"))
+    println(selected(Some(5)))
+    println(selected(None))
+    match optional_text():
+        Some(text) => println(text)
+        None => println("missing")
+    match optional_list():
+        Some(values) => println(values[1])
+        None => println(0)
+    match unit_result():
+        Ok(_) => println("unit")
+        Err(error) => println(error)
+    match failure_result():
+        Ok(number) => println(number)
+        Err(_) => println("bad")
+    option: Option[int] = Some(9)
+    missing: Option[int] = None
+    println(option.unwrap_or(0))
+    println(missing.unwrap_or(4))
+    println(option)
+    for_good = doubled(true)
+    for_bad = doubled(false)
+    println(for_good.unwrap_or(0))
+    println(for_bad.unwrap_or(3))
+    match for_bad:
+        Ok(number) => println(number)
+        Err(error) => println(error)
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "Option/Result native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "Option/Result legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/option_result")).output()?;
+    let actual = Command::new(native).output()?;
+    assert_eq!(actual.status.code(), expected.status.code());
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(
+        actual.stdout,
+        b"parameter\n5\n-1\ntext\n3\nunit\nbad\n9\n4\nSome(9)\n14\n3\nfailure\n"
+    );
+    Ok(())
+}
+
 /// Measure every behavior fixture only when explicitly requested.
 #[test]
 #[ignore = "explicit full direct-route census"]
