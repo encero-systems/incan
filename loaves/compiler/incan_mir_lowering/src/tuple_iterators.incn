@@ -1,4 +1,4 @@
-"""Checked flat-tuple zip layouts and lazy polling of owned list snapshots."""
+"""Checked flat-tuple zip polling and indexed builtin enumeration layouts."""
 
 from pub::incan_mir_plan import (
     PlanType,
@@ -153,7 +153,15 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
                 output,
                 span,
             )
-            if left == TupleElement.String or right == TupleElement.String:
-                builder.owned.append(output.local)
             drop_owned(builder, storage.local, span)
             return Ok(None)
+
+
+pub def enumerated_element(ty: PlanType) -> Result[TupleElement, str]:
+    """Require a flat scalar or text item before constructing the builtin's indexed tuple layout."""
+    match ty:
+        PlanType.Int => return Ok(TupleElement.Int)
+        PlanType.Float => return Ok(TupleElement.Float)
+        PlanType.Bool => return Ok(TupleElement.Bool)
+        PlanType.String => return Ok(TupleElement.String)
+        _ => return Err("unsupported Body IR enumerate nested element layout")

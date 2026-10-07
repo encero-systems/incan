@@ -76,6 +76,7 @@ pub enum PlanType:
     Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
+    ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
     """
 
     Int
@@ -126,11 +127,11 @@ pub enum PlanType:
     Dict(ListLeaf, ListLeaf)
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
-    # Lazy runtime generators retain the admitted immediate element representation.
     # Lazy zip over independent owned list snapshots; references retain poll authority.
     ZipIterator(TupleElement, TupleElement)
     ZipIteratorRef(TupleElement, TupleElement)
     ZipIteratorMutRef(TupleElement, TupleElement)
+    # Lazy runtime generators retain the admitted immediate element representation.
     Generator(ListLeaf, int)
     GeneratorMutRef(ListLeaf, int)
     GeneratorYield(ListLeaf, int)
