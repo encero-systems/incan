@@ -27,6 +27,7 @@ pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>,
         Projection::Field(slot, ty) => {
             tcx.mk_place_field(place, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
         }
+        Projection::Deref => place.project_deeper(&[mir::ProjectionElem::Deref], tcx),
         Projection::Value => tcx.mk_place_field(place, FieldIdx::from_u32(0), tcx.types.i64),
         Projection::Overflow => tcx.mk_place_field(place, FieldIdx::from_u32(1), tcx.types.bool),
     })
@@ -162,6 +163,13 @@ pub fn rvalue<'tcx>(
                 IndexVec::from_raw(operands),
             )
         }
+        RvalueKind::MutBorrow(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Mut {
+                kind: mir::MutBorrowKind::Default,
+            },
+            place(tcx, value)?,
+        ),
         RvalueKind::Borrow(value) => {
             mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?)
         }

@@ -8,7 +8,7 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
 )
-from pub::incan_mir_plan import PlanType, Local, Place, Projection, SourceSpan
+from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
@@ -27,6 +27,17 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 Primitive.Unit => return Ok(PlanType.Unit)
                 Primitive.Str => return Ok(PlanType.String)
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "List" or len(arguments) != 1:
+                return Err(f"unsupported Body IR type {ty}")
+            element = model_type(declarations, arguments[0])?
+            match element:
+                PlanType.Int => return Ok(PlanType.List(ListLeaf.Int, 1))
+                PlanType.Float => return Ok(PlanType.List(ListLeaf.Float, 1))
+                PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
+                PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
+                PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
+                _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {ty}")
 
 
@@ -60,6 +71,11 @@ pub def place_type(locals: list[Local], value: Place) -> PlanType:
         Projection.Field(_slot, ty) => return ty
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool
+        Projection.Deref =>
+            match locals[value.local].ty:
+                PlanType.ListRef(leaf, depth) => return PlanType.List(leaf, depth)
+                PlanType.ListMutRef(leaf, depth) => return PlanType.List(leaf, depth)
+                _ => return locals[value.local].ty
         Projection.Whole => return locals[value.local].ty
 
 

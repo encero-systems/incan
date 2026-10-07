@@ -1,15 +1,21 @@
 //! Mapping admitted plan types to the pinned rustc representation.
 
 use crate::error::PlanError;
-use crate::plan::PlanType;
+use crate::plan::{ListLeaf, PlanType};
 use rustc_middle::ty::{Ty, TyCtxt};
 
-/// Translate an admitted scalar or model type. Checked pairs and shared references are body-internal and never appear
-/// in source signatures.
+/// Translate admitted scalar, model, and list types to their canonical native representations.
+///
+/// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
         PlanType::Model(_, name) => model_type(tcx, name)?,
         PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
+        PlanType::List(leaf, depth) => list_type(tcx, leaf, *depth)?,
+        PlanType::ListRef(leaf, depth) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?),
+        PlanType::ListMutRef(leaf, depth) => {
+            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
+        }
         PlanType::Int => tcx.types.i64,
         PlanType::Float => tcx.types.f64,
         PlanType::Bool => tcx.types.bool,
@@ -72,4 +78,43 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
             reason: "model declaration is missing".into(),
         })?;
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.
+fn list_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
+    let mut element = match leaf {
+        ListLeaf::Int => tcx.types.i64,
+        ListLeaf::Float => tcx.types.f64,
+        ListLeaf::Bool => tcx.types.bool,
+        ListLeaf::Str => string_type(tcx)?,
+    };
+    if depth < 1 {
+        return Err(PlanError::Invalid {
+            function: "list".into(),
+            reason: "list depth must be positive".into(),
+        });
+    }
+    let definition = tcx
+        .get_diagnostic_item(rustc_span::sym::Vec)
+        .ok_or_else(|| PlanError::Invalid {
+            function: "list".into(),
+            reason: "native closure has no standard Vec definition".into(),
+        })?;
+    for _ in 0..depth {
+        element = Ty::new_adt(
+            tcx,
+            tcx.adt_def(definition),
+            rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, _| {
+                if parameter.index == 0 {
+                    element.into()
+                } else {
+                    tcx.type_of(parameter.def_id)
+                        .instantiate_identity()
+                        .skip_normalization()
+                        .into()
+                }
+            }),
+        );
+    }
+    Ok(element)
 }

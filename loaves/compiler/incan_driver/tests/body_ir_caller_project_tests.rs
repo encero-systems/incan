@@ -30,9 +30,7 @@ fn copy_sources(source: &Path, destination: &Path) -> Result<(), Box<dyn std::er
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
-    // Tests need only the debug profile; a release build would double the bake.
     let output = command
-        .env("INCAN_OVEN_BAKE_PROFILES", "debug")
         .args(["oven", "bake", "--project"])
         .arg(project)
         .env("INCAN_HOME", home)
@@ -148,6 +146,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bake(&plan, &home)?;
     bake(&lowering, &home)?;
     bake(&caller, &home)?;
-    assert_success(&Command::new(caller.join("target/rust/debug/body-ir-caller")).output()?);
+    for profile in ["debug", "release"] {
+        assert_success(&Command::new(caller.join("target/rust").join(profile).join("body-ir-caller")).output()?);
+    }
     Ok(())
 }
