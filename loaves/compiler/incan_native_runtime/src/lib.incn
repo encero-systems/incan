@@ -1,5 +1,9 @@
 """Language formatting and collection helpers used by the direct native route."""
 
+pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
+pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
+pub from rust::incan_std_core::num import Decimal128
+
 pub from carriers import format_carrier, clone_carrier_payload
 pub from async_ import run_async_entry
 pub from generators import poll_generator

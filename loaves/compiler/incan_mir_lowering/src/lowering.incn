@@ -3448,6 +3448,11 @@ def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: Source
     types = collection_arguments(ty)
     if len(types) != 2:
         return Err("unsupported Body IR set indexing")
+    # Legacy dictionary indexing requires Display for its missing-key diagnostic; tuples and unit lack that bound.
+    match types[0]:
+        PlanType.Tuple(_elements) => return Err("unsupported Body IR tuple dictionary key lookup: legacy Display bound")
+        PlanType.Unit => return Err("unsupported Body IR unit dictionary key lookup: legacy Display bound")
+        _ => pass
     mut key = read_place(receiver, false, span)
     match source.projection[0]:
         PlaceElem.Index(index) =>
