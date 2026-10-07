@@ -11,8 +11,8 @@ The file reads top to bottom:
 2. translating checked values (types, places, operands, operators);
 3. the frame builder and its ownership bookkeeping (owners, drops, cleanup chains);
 4. statements and control flow;
-5. calls (same-module functions, runtime helpers, builtins);
-6. plain model construction and field replacement;
+5. calls (same-module functions and class methods, runtime helpers, builtins);
+6. nominal construction and field replacement;
 7. formatting and strings;
 8. the module and function entry points;
 9. lists (borrowing, owned values, checked methods, indexed mutation, iteration).
@@ -83,6 +83,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 # ---- Admission helpers owned by this Loaf ----
 from rust::incan_semantics_core import SymbolOrigin
+from classes import frame_type, function_name, method_index, method_receiver
 from models import model_type, model_place, place_type, constructor_index
 from numbers import float_operand
 from strings import text_helper
@@ -98,9 +99,9 @@ from lists import (
     is_mutable_list_reference,
 )
 
-
 # =====================================================================================================================
 # Boundary types and validation
+
 # =====================================================================================================================
 
 
@@ -153,9 +154,9 @@ pub def is_continue(statement: &BodyStatementKind) -> bool:
         BodyStatementKind.Continue => return true
         _ => return false
 
-
 # =====================================================================================================================
 # Translating checked values
+
 # =====================================================================================================================
 
 
@@ -321,9 +322,9 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
             return Err("unsupported Body IR Generator")
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
 
-
 # =====================================================================================================================
 # The frame builder and ownership
+
 # =====================================================================================================================
 
 
@@ -525,9 +526,9 @@ def external_call(
     if result == PlanType.String:
         builder.owned.append(destination.local)
 
-
 # =====================================================================================================================
 # Statements and control flow
+
 # =====================================================================================================================
 
 
@@ -760,9 +761,9 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     builder.current = after
     return Ok(None)
 
-
 # =====================================================================================================================
 # Calls
+
 # =====================================================================================================================
 
 
@@ -781,10 +782,46 @@ def lower_call(
                         CallableTarget.Named(target) =>
                             return lower_named_target(module, builder, target, arguments, destination, span)
                         _ => return Err("unsupported Body IR local callable value")
-                RustCallee.Method(target) => return lower_list_method(builder, target, arguments, destination, span)
+                RustCallee.Method(target) =>
+                    return lower_method_call(module, builder, target, arguments, destination, span)
                 RustCallee.Helper(helper) => return lower_runtime_helper(builder, helper, arguments, destination, span)
                 RustCallee.ProviderOperation(_operation) => return Err("unsupported Body IR ProviderOperation")
         _ => return Err("expected Body IR Call")
+
+
+def lower_method_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the proven receiver and call its canonical method body with bound ordinary arguments."""
+    # Builtin list members and source methods both retain identities; their origin selects the admission path.
+    match target.canonical:
+        Some(identity) =>
+            if identity.origin == SymbolOrigin.Builtin:
+                return lower_list_method(builder, target, arguments, destination, span)
+        None => return Err("unsupported Body IR Method without canonical identity")
+    index = method_index(module, target)?
+    body = module.bodies[index]
+    if len(arguments) == 0:
+        return Err("invalid Body IR Method missing receiver")
+    receiver_type, borrow = method_receiver(module, builder.locals, index, arguments[0], span)?
+    reference = temporary(builder, receiver_type, span)
+    builder.emit(plan_assign(reference, borrow, span))
+    mut types: list[PlanType] = []
+    for index in range(1, len(body.params)):
+        parameter = body.params[index]
+        if parameter.mutable:
+            return Err("unsupported Body IR mutable Method argument")
+        types.append(model_type(builder.nominals, parameter.ty)?)
+    ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
+    mut operands = [read_place(reference, true, span)]
+    for operand in ordinary:
+        operands.append(operand)
+    return emit_local_call(builder, body, operands, destination, span)
 
 
 def lower_named_target(
@@ -826,6 +863,17 @@ def lower_local_call(
             if call_id != body.direct_call_id:
                 return Err("Body IR call identity disagrees with target body")
     operands = ordered_arguments(builder, target.binding, arguments, body, span)?
+    return emit_local_call(builder, body, operands, destination, span)
+
+
+def emit_local_call(
+    mut builder: Builder,
+    body: &RustBody,
+    operands: list[Operand],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Emit a previously validated local call, sharing owned-result replacement between functions and methods."""
     mut output = plan_place(0, span)
     # A call whose result is unused still needs somewhere to put it.
     match destination:
@@ -836,14 +884,14 @@ def lower_local_call(
     result_type = model_type(builder.nominals, body.return_type)?
     if result_type == PlanType.String or is_model_type(result_type) or is_owned_list(result_type):
         result = temporary(builder, result_type, span)
-        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, result, span)
+        terminate_call(builder, CalleeKind.Planned(function_name(body)), operands, result, span)
         builder.owned.append(result.local)
         drop_owned(builder, output.local, span)
         forget_owned(builder, result.local)
         builder.emit(plan_assign(output, RvalueKind.Use(read_place(result, true, span)), span))
         builder.owned.append(output.local)
     else:
-        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
+        terminate_call(builder, CalleeKind.Planned(function_name(body)), operands, output, span)
     return Ok(None)
 
 
@@ -926,29 +974,33 @@ def ordered_slot_operands(
     elements: &list[RustArgumentElement],
     types: list[PlanType],
     span: SourceSpan,
+    offset: int = 0,
 ) -> Result[list[Operand], str]:
     """
     Place the written arguments into the callee's declared parameter slots.
 
     Body IR has already evaluated the arguments in written order; the binding says which slot each one fills.
-    Defaults, missing slots, named or spread elements are refused.
+    Defaults, missing slots, named or spread elements are refused. An offset of one skips a method receiver,
+    whose borrow is lowered separately and whose slot is absent from the ordinary argument binding.
     """
+    if offset < 0 or offset > len(elements):
+        return Err("invalid Body IR argument offset")
     count = len(types)
     match binding:
         RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            if len(defaults) != 0 or len(bindings) != len(elements) or len(bindings) != count:
+            if len(defaults) != 0 or len(bindings) != len(elements) - offset or len(bindings) != count:
                 return Err("unsupported Body IR defaulted or incomplete ArgumentBinding")
             # Start every slot as a placeholder, then fill each exactly once.
             mut operands: list[Operand] = []
             for _index in range(count):
                 operands.append(literal(Constant.Unit, span))
             mut occupied: list[int] = []
-            for index in range(len(elements)):
+            for index in range(count):
                 slot = int(bindings[index].slot)
                 if slot < 0 or slot >= count or slot in occupied:
                     return Err("invalid Body IR argument slot map")
                 occupied.append(slot)
-                match elements[index].as_one():
+                match elements[index + offset].as_one():
                     Some(value) =>
                         if is_list(types[slot]):
                             operands[slot] = checked_list_argument(
@@ -1092,9 +1144,9 @@ def lower_float_builtin(
                 _ => return Err("unsupported Body IR Float input type")
             return Ok(None)
 
-
 # =====================================================================================================================
 # Plain model construction and field replacement
+
 # =====================================================================================================================
 
 
@@ -1174,9 +1226,9 @@ def lower_string_field_assignment(
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
 
-
 # =====================================================================================================================
 # Formatting and strings
+
 # =====================================================================================================================
 
 
@@ -1485,9 +1537,9 @@ def lower_str_builtin(
         None => drop_owned(builder, text.local, span)
     return Ok(None)
 
-
 # =====================================================================================================================
 # Module and function entry points
+
 # =====================================================================================================================
 
 
@@ -1502,7 +1554,7 @@ pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Pl
     for body in module.bodies:
         # Planned calls name their callee, so two bodies with one name would be ambiguous.
         for retained in functions:
-            if retained.name == str(body.name):
+            if retained.name == function_name(body):
                 return Err(f"unsupported Body IR overloaded function {body.name}")
         function, runtime = lower_function(module, body, source, file)?
         functions.append(function)
@@ -1594,7 +1646,7 @@ def lower_function(
         drop_all_owned(builder, span)
         builder.finish(TerminatorKind.Return, span)
     function = Function(
-        name=body.name,
+        name=function_name(body),
         parameters=parameters,
         return_type=return_type,
         locals=builder.locals,
@@ -1618,7 +1670,7 @@ def frame_locals(
     for local in body.locals:
         if int(local.id.index()) + 1 != len(locals):
             return Err("Body IR local order disagrees with LocalId")
-        mut ty = model_type(module.nominal_declarations, local.ty)?
+        mut ty = frame_type(module, local)?
         index = int(local.id.index()) + 1
         if index in iterators:
             ty = list_parameter_type(ty, false)
@@ -1633,7 +1685,7 @@ def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: 
     """The frame's parameters, in declaration order; mutable string, mutable model, and defaulted parameters are refused."""
     mut parameters: list[Parameter] = []
     for parameter in body.params:
-        ty = model_type(module.nominal_declarations, parameter.ty)?
+        ty = frame_type(module, body.locals[int(parameter.local.index())])?
         if is_model_type(ty) and parameter.mutable:
             return Err("unsupported Body IR mutable model parameter")
         if ty == PlanType.String and parameter.mutable:
@@ -1644,18 +1696,21 @@ def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: 
         match parameter.default:
             CallableParamDefault.Required => pass
             _ => return Err("unsupported Body IR defaulted parameter")
+        mut name = str(parameter.name)
+        if name == "self":
+            name = "__incan_self"
         parameters.append(
             Parameter(
-                name=parameter.name,
+                name=name,
                 ty=list_parameter_type(ty, parameter.mutable),
                 span=location(parameter.span, source, file),
             ),
         )
     return Ok(parameters)
 
-
 # =====================================================================================================================
 # Lists: borrowing and runtime calls
+
 # =====================================================================================================================
 
 
@@ -1690,9 +1745,9 @@ def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: SourceS
         PlanType.ListRef(_leaf, _depth) =>
             if mutable:
                 return Err("unsupported Body IR mutable access through shared list parameter")
-            source.projection = Projection.Deref
+            source.projection = Projection.Deref(PlanType.List(leaf, depth))
         PlanType.ListMutRef(_leaf, _depth) =>
-            source.projection = Projection.Deref
+            source.projection = Projection.Deref(PlanType.List(leaf, depth))
         _ => pass
     mut reference_type = PlanType.ListRef(leaf, depth)
     mut operation = RvalueKind.Borrow(source)
@@ -1718,9 +1773,9 @@ def checked_list_argument(
             return list_borrow(builder, list_root_place(read.place, span)?, mutable, span)
         _ => return Err("unsupported Body IR constant list argument")
 
-
 # =====================================================================================================================
 # Lists: owned values and indexed reads
+
 # =====================================================================================================================
 
 
@@ -1862,9 +1917,9 @@ def list_assignment(
     builder.owned.append(destination.local)
     return Ok(None)
 
-
 # =====================================================================================================================
 # Lists: checked arguments and methods
+
 # =====================================================================================================================
 
 
@@ -2055,9 +2110,9 @@ def lower_list_helper(
         builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
     return Ok(None)
 
-
 # =====================================================================================================================
 # Lists: indexed mutation
+
 # =====================================================================================================================
 
 
@@ -2124,9 +2179,9 @@ def assignment_value(mut builder: Builder, value: &RustRvalue, span: SourceSpan)
         RustRvalue.Use(operand) => return value_operand(builder, operand, span)
         _ => return Err("unsupported Body IR indexed assignment rvalue")
 
-
 # =====================================================================================================================
 # Lists: iteration
+
 # =====================================================================================================================
 
 

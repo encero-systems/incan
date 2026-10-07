@@ -1,5 +1,5 @@
 """
-Plain data for scalar native bodies, independent of rustc's internal types.
+Plain data for native bodies, independent of rustc's internal types.
 
 Local zero is the return place; parameters occupy the next locals in declaration
 order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
@@ -36,6 +36,7 @@ pub enum PlanType:
     borrows an owned String, while StrRef is a string literal's shared str view.
     List stores its primitive leaf element and a positive nesting
     depth; ListRef and ListMutRef borrow that same Vec representation.
+    ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
     """
 
     Int
@@ -52,6 +53,7 @@ pub enum PlanType:
     StrArrayRef(int)
     Model(int, str)
     ModelRef(int, str)
+    ModelMutRef(int, str)
     StringSlice
     StrSlice
     # A homogeneous list: its primitive leaf element and nesting depth.
@@ -79,18 +81,19 @@ pub model Local:
 
 @derive(Clone, PartialEq)
 pub enum Projection:
-    """Whole local, checked arithmetic component, checked model field, or list-reference dereference."""
+    """Whole local, checked component, nominal field, or typed list/receiver dereference."""
 
     Whole
     Value
     Overflow
     Field(int, PlanType)
-    Deref
+    Deref(PlanType)
+    DerefField(int, PlanType)
 
 
 @derive(Clone, PartialEq)
 pub model Place:
-    """An indexed local with a checked arithmetic, model field, or list-reference projection."""
+    """An indexed local with a checked arithmetic, nominal field, or typed reference projection."""
 
     pub local: int
     pub projection: Projection
@@ -157,10 +160,10 @@ pub enum UnaryOp:
 @derive(Clone, PartialEq)
 pub enum RvalueKind:
     """
-    An explicit scalar or formatting expression assigned to a place.
+    An explicit native expression assigned to a checked place.
 
     Array moves or copies its listed operands into a fixed array. Borrow creates
-    a shared reference to a whole local or checked projection; MutBorrow creates an exclusive list reference. UnsizeSlice converts an array reference
+    a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
     """
 

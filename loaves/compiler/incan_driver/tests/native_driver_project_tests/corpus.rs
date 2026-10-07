@@ -292,3 +292,84 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// Prove class receiver borrowing, field writes, canonical method dispatch, and class passing against legacy.
+pub(super) fn check_source_class(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let closure = runtime_closure(runtime, "release")?;
+    let project = root.join("source-class");
+    fs::create_dir_all(&project)?;
+    let source = project.join("source_class.incn");
+    fs::write(
+        &source,
+        r#"class Counter:
+  value: int
+  label: str
+
+  def get(self) -> int:
+    return self.value
+
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+  def twice(mut self) -> None:
+    self.bump(amount=self.get())
+
+  def rename(mut self, label: str) -> None:
+    self.label = label
+
+  def text(self) -> str:
+    return self.label
+
+class Other:
+  value: int
+
+  def get(self) -> int:
+    return self.value + 1
+
+def inspect(counter: Counter) -> int:
+  return counter.get()
+
+def main() -> None:
+  mut counter = Counter(label="counter", value=3)
+  counter.bump(amount=4)
+  println(counter.get())
+  counter.twice()
+  println(inspect(counter))
+  other = Other(value=8)
+  println(other.get())
+  counter.rename("renamed")
+  println(counter.text())
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "source class native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "source class legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/source_class")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source class legacy execution");
+    success(&actual, "source class native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "source class output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"7\n14\n9\nrenamed\n");
+
+    Ok(())
+}

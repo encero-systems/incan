@@ -543,3 +543,15 @@ fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
         &fixture.formatting,
     )
 }
+
+/// Prove class construction, shared and mutable receivers, and passing classes against legacy.
+#[test]
+fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_source_class(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("source-class")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
