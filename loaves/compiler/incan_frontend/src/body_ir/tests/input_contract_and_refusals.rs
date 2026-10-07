@@ -353,7 +353,7 @@ fn a_body_reports_a_representation_gap_nested_anywhere_in_it() -> Result<(), Box
 #[test]
 fn a_lowered_body_is_well_formed_and_a_tampered_one_is_not() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "def helper() -> int:\n  return 1\n\ndef main() -> int:\n  return helper()\n",
+        "def helper(n: int = 1, other: int = 0) -> int:\n  return n + other\n\nchosen = partial helper(n=-2)\n\ndef main() -> int:\n  return chosen()\n",
         &["m", "identity"],
     )?;
     for body in &module.bodies {
@@ -369,6 +369,20 @@ fn a_lowered_body_is_well_formed_and_a_tampered_one_is_not() -> Result<(), Box<d
     assert!(
         !module.body_has_canonical_direct_call_id(&tampered),
         "a body carrying another declaration's identity must not pass"
+    );
+    let mut partial = body_named(&module, "chosen")?.clone();
+    assert!(
+        partial
+            .params
+            .iter()
+            .enumerate()
+            .all(|(index, parameter)| parameter.local.index() == index),
+        "default temporaries must follow every parameter slot"
+    );
+    partial.direct_call_id = body_named(&module, "helper")?.direct_call_id.clone();
+    assert!(
+        !module.body_has_canonical_direct_call_id(&partial),
+        "a Partial must retain its own declaration identity rather than its target's"
     );
     Ok(())
 }

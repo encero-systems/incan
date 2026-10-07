@@ -184,7 +184,7 @@ fn validate_declarations(
             }
             Declaration::Newtype(_) => "nonplain Newtype",
             Declaration::Alias(_) => continue,
-            Declaration::Partial(_) => "Partial",
+            Declaration::Partial(_) => continue,
             // Type aliases have no runtime declaration; checked Body IR carries their resolved uses.
             Declaration::TypeAlias(_) => continue,
             _ => "top-level declaration",

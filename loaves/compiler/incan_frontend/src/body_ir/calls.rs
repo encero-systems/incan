@@ -175,7 +175,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // than treating the alias spelling as an imported function with no executable body.
         let selected = self.type_info.resolved_identity(callee_span);
         let declaration_name = selected
-            .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            .filter(|identity| {
+                matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+                )
+            })
             .filter(|identity| {
                 incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(self.module_identity)
             })
