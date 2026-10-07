@@ -29,12 +29,13 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Primitive leaves shared by lists, sets, and dictionary keys and values."""
+    """Scalar and flat tuple leaves; hashed collections admit only their checked scalar subset."""
 
     Int
     Float
     Bool
     Str
+    Tuple(list[TupleElement])
 
 
 @derive(Clone, PartialEq)
@@ -63,13 +64,11 @@ pub enum PlanType:
 
     EnumTag is rustc's native discriminant type and stays body-internal; TagToInt explicitly converts it to source int.
 
-    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference. StringRef
-    borrows an owned String, while StrRef is a string literal's shared str view.
-    List stores its primitive leaf element and a positive nesting
-    depth; ListRef and ListMutRef borrow that same Vec representation.
+    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
+    StringRef borrows an owned String, while StrRef is a string literal's shared str view.
+    List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
-    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their
-    reference variants preserve caller-owned storage. Float keys are not admitted.
+    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float keys and tuple leaves are not admitted in hashed collections.
     Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
@@ -112,7 +111,7 @@ pub enum PlanType:
     ModelMutRef(int, str)
     StringSlice
     StrSlice
-    # A homogeneous list: its primitive leaf element and nesting depth.
+    # A homogeneous list: its admitted leaf element and nesting depth.
     List(ListLeaf, int)
     ListRef(ListLeaf, int)
     ListMutRef(ListLeaf, int)
@@ -127,6 +126,16 @@ pub enum PlanType:
     GeneratorMutRef(ListLeaf, int)
     GeneratorYield(ListLeaf, int)
     GeneratorYieldRef(ListLeaf, int)
+
+
+pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
+    """Recover one scalar or flat tuple leaf's exact representation for lowering and adapter consumers."""
+    match leaf:
+        ListLeaf.Int => return PlanType.Int
+        ListLeaf.Float => return PlanType.Float
+        ListLeaf.Bool => return PlanType.Bool
+        ListLeaf.Str => return PlanType.String
+        ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:

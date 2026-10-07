@@ -51,6 +51,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.Float => return Ok(PlanType.List(ListLeaf.Float, 1))
                 PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
                 PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
+                PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {type_name(ty)}")

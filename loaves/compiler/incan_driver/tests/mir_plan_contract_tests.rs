@@ -27,6 +27,8 @@ fn scalar_plan_exports_are_public_and_representable() -> Result<(), Box<dyn std:
         "PlanType",
         "TupleElement",
         "tuple_element_type",
+        "ListLeaf",
+        "list_leaf_type",
         "Parameter",
         "Local",
         "Projection",
