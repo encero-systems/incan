@@ -125,6 +125,10 @@ pub enum PlanType:
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
     # Lazy runtime generators retain the admitted immediate element representation.
+    # Lazy zip over independent owned list snapshots; references retain poll authority.
+    ZipIterator(TupleElement, TupleElement)
+    ZipIteratorRef(TupleElement, TupleElement)
+    ZipIteratorMutRef(TupleElement, TupleElement)
     Generator(ListLeaf, int)
     GeneratorMutRef(ListLeaf, int)
     GeneratorYield(ListLeaf, int)

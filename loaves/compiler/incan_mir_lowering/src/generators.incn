@@ -25,21 +25,37 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from collections import primitive_leaf, leaf_type
+from tuples import type_name, tuple_type, generic_tuple_type
 from frame import Builder, temporary, terminate_call, read_place, drop_owned, value_type
 
 
 pub def generator_type(ty: &RustType) -> Option[Result[PlanType, str]]:
-    """Admit only generators whose immediate elements already have a native primitive representation."""
+    """Admit primitive generators and flat pair iterators through their checked element layouts."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
             if base != "Generator" and base != "Iterator":
                 return None
             if len(arguments) != 1:
-                return Some(Err(f"unsupported Body IR type {ty}"))
+                return Some(Err(f"unsupported Body IR type {type_name(ty)}"))
+            if base == "Iterator":
+                pair = iterator_pair_type(arguments[0])
+                match pair:
+                    Ok(PlanType.Tuple(elements)) =>
+                        if len(elements) == 2:
+                            return Some(Ok(PlanType.ZipIterator(elements[0], elements[1])))
+                    _ => pass
             match primitive_leaf(arguments[0], false):
                 Ok(leaf) => return Some(Ok(PlanType.Generator(leaf, 0)))
-                Err(_error) => return Some(Err(f"unsupported Body IR type {ty}"))
+                Err(_error) => return Some(Err(f"unsupported Body IR type {type_name(ty)}"))
         _ => return None
+
+
+def iterator_pair_type(ty: &RustType) -> Result[PlanType, str]:
+    """Inspect borrowed canonical tuple metadata without changing external enum field ownership."""
+    match ty:
+        RustType.Tuple(elements) => return tuple_type(elements)
+        RustType.Generic(base=_base, args=_args) => return generic_tuple_type(ty)
+        _ => return Err("unsupported Body IR iterator element")
 
 
 pub def generator_shape(ty: PlanType) -> Option[tuple[ListLeaf, int]]:

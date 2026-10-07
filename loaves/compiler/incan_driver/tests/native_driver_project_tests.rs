@@ -1083,6 +1083,36 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare checked integer and float widening at the generator yield boundary with legacy.
+#[test]
+fn direct_route_generator_numeric_yields_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("generator-numeric-yields")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def integers(value: i8) -> Generator[int]:
+    """Yield a narrow integer through the checked int destination."""
+    yield value
+
+def floats(value: f32) -> Generator[float]:
+    """Yield a narrow float through the checked float destination."""
+    yield value
+
+def main() -> None:
+    """Observe both numeric generator yield conversions."""
+    small: i8 = 7
+    single: f32 = 1.5
+    for value in integers(small):
+        println(value)
+    for value in floats(single):
+        println(value)
+"#,
+    )?;
+    Ok(())
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -2258,4 +2288,39 @@ def main() -> None:
 "#,
         None,
     )
+}
+
+/// Prove lazy primitive-list zip snapshots, tuple items, and independent aliases against legacy.
+#[test]
+fn direct_route_tuple_zip_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("tuple-zip")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    """Observe equal, unequal, empty, and independently aliased zip inputs."""
+    left = [1, 2, 3]
+    right = [10, 20]
+    pairs = zip(left, right)
+    alias = pairs
+    again = pairs
+    for a, b in alias:
+        println(a + b)
+    for a, b in pairs:
+        println(a + b)
+    for a, b in again:
+        println(a + b)
+    for a, b in zip([4], [5]):
+        println(a + b)
+    empty: list[int] = []
+    for a, b in zip(empty, right):
+        println(a + b)
+    for a, b in zip([7, 8], ["x"]):
+        println(a)
+        println(b)
+"#,
+    )?;
+    Ok(())
 }

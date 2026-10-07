@@ -94,6 +94,9 @@ enum Scalar {
     Dict(Leaf, Leaf),
     DictRef(Leaf, Leaf),
     DictMutRef(Leaf, Leaf),
+    ZipIterator(Leaf, Leaf),
+    ZipIteratorRef(Leaf, Leaf),
+    ZipIteratorMutRef(Leaf, Leaf),
     Generator(Leaf, i64),
     GeneratorMutRef(Leaf, i64),
     GeneratorYield(Leaf, i64),
@@ -103,6 +106,7 @@ enum Scalar {
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
+    Tuple(Vec<Scalar>),
     Int,
     Float,
     Bool,
@@ -129,10 +133,18 @@ impl Leaf {
     }
 }
 
+/// Mirror a flat tuple component at the iterator boundary.
+fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
+    Leaf::Tuple(vec![scalar(&tuple_element_type(element.clone()))])
+}
+
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::UnitFunction => Scalar::UnitFunction,
+        PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
+        PlanType::ZipIteratorRef(left, right) => Scalar::ZipIteratorRef(tuple_leaf(left), tuple_leaf(right)),
+        PlanType::ZipIteratorMutRef(left, right) => Scalar::ZipIteratorMutRef(tuple_leaf(left), tuple_leaf(right)),
         PlanType::EnumTag => Scalar::EnumTag,
         PlanType::Generator(leaf, depth) => Scalar::Generator(Leaf::of(leaf), *depth),
         PlanType::GeneratorMutRef(leaf, depth) => Scalar::GeneratorMutRef(Leaf::of(leaf), *depth),
@@ -376,6 +388,9 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         Projection::Deref(field_type) => {
             let pointee = match ty {
                 Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Scalar::Model(owner),
+                Scalar::ZipIteratorRef(left, right) | Scalar::ZipIteratorMutRef(left, right) => {
+                    Scalar::ZipIterator(left, right)
+                }
                 Scalar::GeneratorMutRef(leaf, depth) => Scalar::Generator(leaf, depth),
                 Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Scalar::List(leaf, depth),
                 Scalar::SetRef(leaf) | Scalar::SetMutRef(leaf) => Scalar::Set(leaf),
@@ -470,6 +485,8 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                 || matches!(
                     ty,
                     Scalar::String
+                        | Scalar::ZipIterator(_, _)
+                        | Scalar::ZipIteratorMutRef(_, _)
                         | Scalar::Generator(_, _)
                         | Scalar::GeneratorMutRef(_, _)
                         | Scalar::GeneratorYield(_, _)
@@ -695,6 +712,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
     let ty = place(plan, function, value)?;
     if mutable {
         return match ty {
+            Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorMutRef(left, right)),
             Scalar::Generator(leaf, depth) => Ok(Scalar::GeneratorMutRef(leaf, depth)),
             Scalar::Model(index) => {
                 if matches!(local(function, value.local)?, Scalar::ModelRef(_)) {
@@ -727,6 +745,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         };
     }
     match ty {
+        Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorRef(left, right)),
         Scalar::GeneratorYield(leaf, depth) => Ok(Scalar::GeneratorYieldRef(leaf, depth)),
         Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
         Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
@@ -755,6 +774,8 @@ fn source_signature_type(ty: Scalar) -> bool {
             ty,
             Scalar::Int
                 | Scalar::UnitFunction
+                | Scalar::ZipIterator(_, _)
+                | Scalar::ZipIteratorMutRef(_, _)
                 | Scalar::Generator(_, _)
                 | Scalar::GeneratorMutRef(_, _)
                 | Scalar::GeneratorYield(_, _)
@@ -781,7 +802,14 @@ fn external_signature_type(ty: Scalar) -> bool {
     source_signature_type(ty.clone())
         || matches!(
             ty,
-            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_) | Scalar::GeneratorYieldRef(_, _)
+            Scalar::ZipIteratorRef(_, _)
+                | Scalar::StringRef
+                | Scalar::StrRef
+                | Scalar::StringSlice
+                | Scalar::StrSlice
+                | Scalar::EnumRef(_)
+                | Scalar::ModelRef(_)
+                | Scalar::GeneratorYieldRef(_, _)
         )
 }
 
@@ -1242,10 +1270,20 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
         if !declaration.carrier.is_empty() {
             let variants = &declaration.variants;
             let valid = match declaration.carrier.as_str() {
-                "Option" => variants.len() == 2 && variants[0].name == "None" && variants[0].fields.is_empty()
-                    && variants[1].name == "Some" && variants[1].fields.len() == 1,
-                "Result" => variants.len() == 2 && variants[0].name == "Ok" && variants[0].fields.len() == 1
-                    && variants[1].name == "Err" && variants[1].fields.len() == 1,
+                "Option" => {
+                    variants.len() == 2
+                        && variants[0].name == "None"
+                        && variants[0].fields.is_empty()
+                        && variants[1].name == "Some"
+                        && variants[1].fields.len() == 1
+                }
+                "Result" => {
+                    variants.len() == 2
+                        && variants[0].name == "Ok"
+                        && variants[0].fields.len() == 1
+                        && variants[1].name == "Err"
+                        && variants[1].fields.len() == 1
+                }
                 _ => false,
             };
             if !valid || declaration.source_type.is_empty() || !declaration.name.starts_with("__IncanCarrier") {
