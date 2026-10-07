@@ -187,6 +187,7 @@ pub fn resolve_executable_requirements(
             module_id: CompilerNodeId::module(owner),
             stdlib_delegations: Vec::new(),
             enum_declarations: Vec::new(),
+            static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),

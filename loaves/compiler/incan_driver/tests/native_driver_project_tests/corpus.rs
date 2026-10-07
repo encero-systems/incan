@@ -2,6 +2,65 @@
 
 use super::*;
 
+/// Exercise newtype construction and projection, aliases, scalar constants, and static mutation against legacy.
+pub(super) fn check_declarations(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("declarations");
+    fs::create_dir_all(&project)?;
+    let source = project.join("declarations.incn");
+    fs::write(
+        &source,
+        "type Count = int\ntype Ratio = float\nconst BASE: int = 42\nconst SCALE: float = 1.5\nconst WHOLE: float = 2\nconst ENABLED: bool = true\ntype Id = newtype int\ntype Label = newtype str\nstatic COUNT: int = 4\nstatic RATIO: float = 2.5\nstatic FLAG: bool = false\n\ndef doubled(mut value: Count) -> Count:\n    value += value\n    return value\n\nagain = alias doubled\n\ndef increment() -> None:\n    COUNT += 1\n\ndef main() -> None:\n    println(again(BASE))\n    ratio: Ratio = SCALE\n    println(ratio)\n    println(WHOLE)\n    println(ENABLED)\n    id = Id(9)\n    label = Label(\"wrapped\")\n    println(id.0)\n    println(label.0)\n    increment()\n    increment()\n    println(COUNT)\n    RATIO = RATIO + 1.0\n    println(RATIO)\n    FLAG = true\n    println(FLAG)\n",
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "declarations native compilation",
+    );
+    let legacy = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "declarations legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/declarations")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "declarations legacy execution");
+    success(&actual, "declarations native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "declaration output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"84\n1.5\n2.0\ntrue\n9\nwrapped\n6\n3.5\ntrue\n");
+    let unsupported = project.join("effectful_static.incn");
+    fs::write(
+        &unsupported,
+        "def initial() -> int:\n    println(99)\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> None:\n    println(COUNT)\n",
+    )?;
+    let refused = compile_source(
+        driver,
+        &unsupported,
+        &project.join("effectful"),
+        sysroot,
+        &runtime_closure(runtime, "release")?,
+    )?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported source Static initializer or carrier"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
+}
+
 /// Prove constants, shared parameters, owned returns, concatenation, comparison, and display against legacy.
 pub(super) fn check_strings(
     driver: &Path,
