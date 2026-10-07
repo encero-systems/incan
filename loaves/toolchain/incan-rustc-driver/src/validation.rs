@@ -794,7 +794,7 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
                 .iter()
                 .find(|function| &function.name == name)
                 .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
-            if producer.parameters.len() != 1
+            if producer.parameters.is_empty()
                 || scalar(&producer.parameters[0].ty) != Scalar::GeneratorYield(Leaf::of(leaf), *depth)
                 || scalar(&producer.return_type) != Scalar::Unit
             {
@@ -803,7 +803,13 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
                     "generator producer signature differs from yield handle contract",
                 ));
             }
-            Ok((vec![], Scalar::Generator(Leaf::of(leaf), *depth)))
+            Ok((
+                producer.parameters[1..]
+                    .iter()
+                    .map(|parameter| scalar(&parameter.ty))
+                    .collect(),
+                Scalar::Generator(Leaf::of(leaf), *depth),
+            ))
         }
         CalleeKind::YieldGenerator(leaf, depth) => Ok((
             vec![
@@ -885,6 +891,34 @@ fn generator_element(leaf: &ListLeaf, depth: i64) -> Scalar {
     }
 }
 
+/// Captured spawn is a constructor boundary, not an arbitrary closure operation in an ordinary planned body.
+/// Its source-ordered owned parameters supply the entire environment exactly once.
+fn validate_generator_constructor(function: &Function, arguments: &[Operand]) -> Result<(), PlanError> {
+    if function.parameters.len() != arguments.len()
+        || function.locals.len() != arguments.len() + 1
+        || function.blocks.iter().any(|block| !block.statements.is_empty())
+    {
+        return Err(invalid(
+            function,
+            "captured generator spawn requires an exact constructor frame",
+        ));
+    }
+    for (index, argument) in arguments.iter().enumerate() {
+        let OperandKind::Move(place) = &argument.kind else {
+            return Err(invalid(function, "generator capture must move its owned parameter"));
+        };
+        if usize::try_from(place.local).map_err(|_| invalid(function, "negative generator capture slot"))? != index + 1
+            || !matches!(place.projection, Projection::Whole)
+        {
+            return Err(invalid(
+                function,
+                "generator capture order differs from constructor parameters",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validate terminator values and every normal and unwinding successor.
 fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup: bool) -> Result<(), PlanError> {
     match value {
@@ -900,6 +934,9 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
             edge(function, *true_target, cleanup)
         }
         TerminatorKind::Call(callee, arguments, destination, target, action) => {
+            if matches!(callee.kind, CalleeKind::SpawnGenerator(..)) && !arguments.is_empty() {
+                validate_generator_constructor(function, arguments)?;
+            }
             let (parameters, result) = signature(plan, callee)?;
             if parameters.len() != arguments.len() {
                 return Err(invalid(

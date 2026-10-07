@@ -280,7 +280,8 @@ pub enum CalleeKind:
     CloneModel(int, str)
     Instantiated(str, PlanType)
     InstantiatedPair(str, PlanType, PlanType)
-    # The producer is an explicit planned function, instantiated as a Rust FnOnce item.
+    # The explicit producer takes its yield handle before the source-ordered owned captures. A zero-capture spawn
+    # uses a function item; a captured spawn is a constructor whose call arguments initialize one native FnOnce environment.
     SpawnGenerator(str, ListLeaf, int)
     YieldGenerator(ListLeaf, int)
     CollectGenerator(ListLeaf, int)

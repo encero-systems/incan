@@ -75,10 +75,11 @@ pub def producer_frame(mut function: Function, handle: int, leaf: ListLeaf, dept
     """Move the implicit yield handle into parameter slot one after lowering the ordinary Body IR frame."""
     # Body IR's local mapping remains unchanged during lowering. Only the completed plan is permuted, so the
     # implicit runtime argument never impersonates a checked source local or changes evaluation order.
-    original = function.locals[1]
-    function.locals[1] = function.locals[handle]
-    function.locals[handle] = original
-    function.parameters = [Parameter(name="__incan_yield", ty=PlanType.GeneratorYield(leaf, depth), span=function.span)]
+    original = function.locals[handle]
+    for index in range(handle, 1, -1):
+        function.locals[index] = function.locals[index - 1]
+    function.locals[1] = original
+    function.parameters = [Parameter(name="__incan_yield", ty=PlanType.GeneratorYield(leaf, depth), span=function.span)] + function.parameters
     for index in range(len(function.blocks)):
         block = function.blocks[index]
         mut statements: list[Statement] = []
@@ -92,11 +93,11 @@ pub def producer_frame(mut function: Function, handle: int, leaf: ListLeaf, dept
 
 
 def swap_index(index: int, handle: int) -> int:
-    """Exchange the implicit parameter slot and its provisional local slot."""
-    if index == 1:
-        return handle
+    """Insert the implicit handle before source parameters while preserving every other slot order."""
     if index == handle:
         return 1
+    if index > 0 and index < handle:
+        return index + 1
     return index
 
 
@@ -191,23 +192,43 @@ pub def producer_name(name: str) -> str:
     return f"__incan_generator_producer_{name}"
 
 
-pub def generator_constructor(name: str, leaf: ListLeaf, depth: int, span: SourceSpan) -> Function:
+pub def generator_constructor(
+    name: str,
+    parameters: list[Parameter],
+    leaf: ListLeaf,
+    depth: int,
+    span: SourceSpan,
+) -> Function:
     """Construct the lazy runtime wrapper without executing the producer's prefix."""
     result = PlanType.Generator(leaf, depth)
     output = plan_place(0, span)
     call = Callee(kind=CalleeKind.SpawnGenerator(producer_name(name), leaf, depth), span=span)
-    return Function(
-        name=name,
-        parameters=[],
-        return_type=result,
-        locals=[Local(ty=result, span=span)],
-        blocks=[plan_block([], TerminatorKind.Call(call, [], output, 1, Unwind.Continue), span), plan_block(
-            [],
-            TerminatorKind.Return,
-            span,
-        )],
-        span=span,
-    )
+    mut locals = [Local(ty=result, span=span)]
+    mut captures: list[Operand] = []
+    mut blocks = []
+    for index in range(len(parameters)):
+        locals.append(Local(ty=parameters[index].ty, span=parameters[index].span))
+        parameter = plan_place(index + 1, span)
+        captures.append(read_place(parameter, true, span))
+        # Legacy validates exact f32 ingress before constructing the deferred producer.
+        if parameters[index].ty == PlanType.F32:
+            checked = Callee(kind=CalleeKind.External("incan_std_core::num::require_finite_f32"), span=span)
+            blocks.append(
+                plan_block(
+                    [],
+                    TerminatorKind.Call(
+                        checked,
+                        [read_place(parameter, false, span)],
+                        parameter,
+                        len(blocks) + 1,
+                        Unwind.Continue,
+                    ),
+                    span,
+                ),
+            )
+    blocks.append(plan_block([], TerminatorKind.Call(call, captures, output, len(blocks) + 1, Unwind.Continue), span))
+    blocks.append(plan_block([], TerminatorKind.Return, span))
+    return Function(name=name, parameters=parameters, return_type=result, locals=locals, blocks=blocks, span=span)
 
 
 pub def generator_yield(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:

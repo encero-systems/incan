@@ -32,7 +32,7 @@ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
 }
 
 /// Construct an admitted native AST type without generating or parsing Rust source.
-fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     if let Some(ty) = generator_signature_ty(kind, span) {
         return ty;
     }
@@ -236,7 +236,9 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             sig: signature,
             contract: None,
             define_opaque: None,
-            body: Some(placeholder(span)),
+            body: Some(
+                crate::captured_generators::declaration_body(function, span).unwrap_or_else(|| placeholder(span)),
+            ),
             eii_impls: ThinVec::new(),
         })),
         span,

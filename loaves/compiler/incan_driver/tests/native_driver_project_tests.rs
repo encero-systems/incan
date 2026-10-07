@@ -601,7 +601,20 @@ fn direct_route_generators_match_legacy() -> Result<(), Box<dyn std::error::Erro
     let source = root.join("generators.incn");
     fs::write(
         &source,
-        r#"def counter() -> Generator[int]:
+        r#"def mark(value: int) -> int:
+    println(value)
+    return value
+
+def parameterized(start: int, end: int) -> Generator[int]:
+    println(start)
+    for value in range(start, end):
+        yield value
+
+def labels(prefix: str) -> Generator[str]:
+    println(prefix)
+    yield prefix
+
+def counter() -> Generator[int]:
     println(10)
     for value in range(1, 3):
         yield value
@@ -632,6 +645,18 @@ def main() -> None:
     println(first(remaining))
     println(first(remaining))
     println(counter__producer())
+    unused_parameters = parameterized(90, 92)
+    pending = parameterized(mark(4), mark(6))
+    println(50)
+    for value in pending:
+        println(value)
+    mut prefix = "captured"
+    texts = labels(prefix)
+    prefix = "changed"
+    println(prefix)
+    println(60)
+    for text in texts:
+        println(text)
 "#,
     )?;
     let native = root.join("native");
@@ -668,7 +693,27 @@ def main() -> None:
         actual.stderr, expected.stderr,
         "generator stderr must be byte-identical"
     );
-    assert_eq!(actual.stdout, b"20\n10\n1\n2\n3\n10\n1\n2\n3\n-1\n40\n");
+    assert_eq!(
+        actual.stdout,
+        b"20\n10\n1\n2\n3\n10\n1\n2\n3\n-1\n40\n4\n6\n50\n4\n4\n5\nchanged\n60\ncaptured\ncaptured\n"
+    );
+    let named = root.join("named-generator.incn");
+    fs::write(
+        &named,
+        "def mark(value: int) -> int:\n    println(value)\n    return value\n\ndef values(first: int, second: int) -> Generator[int]:\n    yield first\n    yield second\n\ndef main() -> None:\n    pending = values(second=mark(2), first=mark(1))\n    for value in pending:\n        println(value)\n",
+    )?;
+    let rejected = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &named,
+        &root.join("named-native"),
+        &fixture.sysroot,
+        &corpus::runtime_closure(&fixture.formatting, "release")?,
+    )
+    .output()?;
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("unsupported Body IR reordered generator ArgumentBinding")
+    );
     Ok(())
 }
 

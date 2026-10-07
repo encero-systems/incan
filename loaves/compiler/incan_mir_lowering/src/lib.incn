@@ -949,6 +949,15 @@ def ordered_arguments(
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Use the body's parameter types when materializing arguments in source order."""
+    # Legacy evaluates a permuted named call in declaration order; Body IR has already evaluated it in source order.
+    # Refuse that known parity gap rather than reorder earlier statements in the lowering.
+    if body.is_generator():
+        match binding:
+            RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=_defaults) =>
+                for index in range(len(bindings)):
+                    if int(bindings[index].slot) != index:
+                        return Err("unsupported Body IR reordered generator ArgumentBinding")
+            _ => pass
     mut types: list[PlanType] = []
     for parameter in body.params:
         ty = native_source_type(builder.nominals, builder.enums, parameter.ty)?
@@ -1742,7 +1751,13 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
                 native_source_type(module.nominal_declarations, module.enum_declarations, body.return_type)?,
             ):
                 Some((leaf, depth)) => functions.append(
-                    generator_constructor(function_name(body), leaf, depth, function.span),
+                    generator_constructor(
+                        function_name(body),
+                        frame_parameters(module, body, source, file)?,
+                        leaf,
+                        depth,
+                        function.span,
+                    ),
                 )
                 None => return Err("unsupported Body IR generator return type")
         merge_externals(externals, runtime)
@@ -1784,8 +1799,10 @@ def lower_function(
     declared_type = native_source_type(module.nominal_declarations, module.enum_declarations, body.return_type)?
     mut return_type = declared_type
     if body.is_generator():
-        if len(body.params) != 0:
-            return Err("unsupported Body IR generator producer parameters")
+        for parameter in body.params:
+            capture = frame_type(module, body.locals[int(parameter.local.index())])?
+            if list_parameter_type(capture, parameter.mutable) != capture:
+                return Err("unsupported Body IR borrowed generator parameter")
         return_type = PlanType.Unit
     mut builder = Builder(
         locals=frame_locals(module, body, return_type, span, source, file)?,
