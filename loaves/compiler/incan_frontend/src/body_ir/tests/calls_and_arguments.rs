@@ -111,6 +111,33 @@ fn model_json_retains_checked_selection() -> Result<(), Box<dyn std::error::Erro
             matches!(derive, "json" | "chosen" | "picked")
         );
         assert!(!module.render_snapshot().contains("unsupported("));
+        let target = body_named(&module, "main")?
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Method(target),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .ok_or("expected the checked JSON method target")?;
+        let identity = target
+            .canonical
+            .as_ref()
+            .ok_or("expected the canonical JSON method identity")?;
+        assert_eq!(identity.declaration_name, "to_json", "{identity:?}");
+        assert_eq!(
+            identity.kind,
+            incan_semantics_core::SemanticSourceTargetKind::Method,
+            "{identity:?}"
+        );
+        assert_eq!(
+            identity.origin,
+            incan_semantics_core::SymbolOrigin::Module(vec!["std".into(), "serde".into(), "json".into()]),
+            "{identity:?}"
+        );
     }
     Ok(())
 }
