@@ -1691,6 +1691,7 @@ dependencies = [
  "oven_rustc",
  "oven_store",
  "rust_inspect",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
