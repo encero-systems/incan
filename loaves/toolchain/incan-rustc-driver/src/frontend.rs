@@ -47,7 +47,9 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
     for declaration in &program.declarations {
         use incan_frontend::ast::Declaration;
         let kind = match &declaration.node {
-            Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Import(_) | Declaration::Const(_) => continue,
+            Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Import(_) | Declaration::Const(_) => {
+                continue;
+            }
             Declaration::Static(_) => "Static",
             Declaration::Model(model) => {
                 if !incan_frontend::body_ir::is_direct_replacement_plain_model(model) {
@@ -64,7 +66,15 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
                 }
                 continue;
             }
-            Declaration::Class(_) => "Class",
+            Declaration::Class(class) => {
+                if !incan_frontend::body_ir::is_direct_replacement_class(class) {
+                    return Err(format!(
+                        "unsupported source Class traits, inheritance, type parameters, decorators, aliases, properties or defaults on {} on the native route",
+                        class.name
+                    ));
+                }
+                continue;
+            }
             Declaration::Enum(_) => "Enum",
             Declaration::Trait(_) => "Trait",
             Declaration::Newtype(_) => "Newtype",
