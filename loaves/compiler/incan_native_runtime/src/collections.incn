@@ -1,0 +1,128 @@
+"""Legacy HashSet and HashMap operations for checked direct-route collection plans."""
+
+from std.derives.copying import Clone
+from std.derives.comparison import Eq, Hash
+from rust::std::fmt import Display
+from rust::std::clone import Clone as RuntimeClone
+from rust::std::collections import HashMap as RuntimeDict
+from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get
+
+
+pub def empty_set[T with (Eq, Hash)]() -> Set[T]:
+    """Create the same hash collection as the legacy Set constructor."""
+    return Set()
+
+
+pub def insert_set[T with (Eq, Hash)](mut values: Set[T], value: T) -> None:
+    """Insert one owned element, preserving legacy duplicate elimination."""
+    values.add(value)
+
+
+pub def length_set[T](values: &Set[T]) -> int:
+    """Read the hash set's size without consuming it."""
+    return len(values)
+
+
+pub def contains_set[T with (Eq, Hash)](values: &Set[T], value: T) -> bool:
+    """Use the legacy set membership helper and its element comparison."""
+    reference: &T = value
+    return set_contains(values, reference)
+
+
+pub def clone_set[T with Clone](values: &Set[T]) -> Set[T]:
+    """Copy a set only when the checked read requires an owned copy."""
+    return RuntimeClone.clone(values)
+
+
+pub def empty_dict[K with (Eq, Hash), V]() -> Dict[K, V]:
+    """Create the legacy dictionary representation."""
+    return Dict()
+
+
+pub def insert_dict[K with (Eq, Hash), V](mut values: Dict[K, V], key: K, value: V) -> None:
+    """Insert or overwrite a key in the same order as the source operands."""
+    values.insert(key, value)
+
+
+pub def length_dict[K, V](values: &Dict[K, V]) -> int:
+    """Read a dictionary's size without consuming its binding."""
+    return len(values)
+
+
+pub def contains_dict[K with (Eq, Hash), V](values: &Dict[K, V], key: K) -> bool:
+    """Test dictionary keys through the legacy membership helper."""
+    reference: &K = key
+    return dict_contains_key(values, reference)
+
+
+pub def clone_dict[K with Clone, V with Clone](values: &Dict[K, V]) -> Dict[K, V]:
+    """Materialize an owned dictionary for checked value-preserving reads."""
+    return RuntimeClone.clone(values)
+
+
+pub def get_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K) -> V:
+    """Index a dictionary with the legacy missing-key diagnostic."""
+    reference: &K = key
+    return RuntimeClone.clone(dict_get(values, reference))
+
+
+pub def keys_dict[K with Clone, V](values: &Dict[K, V]) -> list[K]:
+    """Copy keys in the legacy HashMap iteration order."""
+    mut keys: list[K] = []
+    mapping: &RuntimeDict[K, V] = values
+    for key in mapping.keys():
+        keys.append(key)
+    return keys
+
+
+pub def values_dict[K with (Eq, Hash, Clone, Display), V with Clone](values: &Dict[K, V]) -> list[V]:
+    """Copy values in the legacy HashMap iteration order."""
+    mut items: list[V] = []
+    mapping: &RuntimeDict[K, V] = values
+    for key in mapping.keys():
+        reference: &K = key
+        items.append(RuntimeClone.clone(dict_get(values, reference)))
+    return items
+
+
+pub def default_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K, default: V) -> V:
+    """Copy the stored value or return the eagerly evaluated default, as legacy does."""
+    reference: &K = key
+    if dict_contains_key(values, reference):
+        return RuntimeClone.clone(dict_get(values, reference))
+    return default
+
+
+pub def nth_set[T with Clone](values: &Set[T], index: int) -> T:
+    """Copy one element in the live HashSet order; lowering proves the cursor in bounds."""
+    mut items: list[T] = []
+    for value in values:
+        items.append(value)
+    return items[index]
+
+
+pub def nth_dict[K with Clone, V](values: &Dict[K, V], index: int) -> K:
+    """Copy one key in the live HashMap order without sorting the container."""
+    return keys_dict(values)[index]
+
+
+pub def extend_list_set[T with (Eq, Hash, Clone)](mut values: Set[T], source: &list[T]) -> None:
+    """Insert list elements in their source order, preserving repeated source bindings."""
+    for value in source:
+        values.add(value)
+
+
+pub def extend_set[T with (Eq, Hash, Clone)](mut values: Set[T], source: &Set[T]) -> None:
+    """Insert a source set's elements using the same hash collection representation."""
+    for value in source:
+        values.add(value)
+
+
+pub def extend_dict[K with (Eq, Hash, Clone, Display), V with Clone](
+    mut values: Dict[K, V],
+    source: &Dict[K, V],
+) -> None:
+    """Apply a mapping spread at its written position, overwriting earlier keys."""
+    mapping: &RuntimeDict[K, V] = source
+    for key in mapping.keys():
+        values.insert(key, source[key])

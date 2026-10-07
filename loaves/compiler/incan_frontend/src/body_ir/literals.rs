@@ -87,6 +87,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Retain a canonical set conversion as a set aggregate splicing one checked iterable operand.
+    ///
+    /// The constructor identity has already been checked by the caller. A sequence spread expresses the element
+    /// conversion without inventing a named function target; the source keeps its ordinary ownership fact.
+    pub(super) fn lower_set_constructor_source(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let element = self.lower_spread_element(source, bir::SpreadKind::Sequence, scope, out);
+        let ty = self.resolve_ty(span);
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        self.push_assign_temp(
+            bir::Rvalue::Aggregate(bir::AggregateKind::Set, vec![element]),
+            ty,
+            scope,
+            hir_span(span),
+            out,
+        )
+    }
+
     /// Lower `start..end` / `start..=end` used as a **value** into a [`bir::AggregateKind::Range`] aggregate.
     ///
     /// A range is a value, not only a loop header: `r = 0..10` typechecks, so Body IR has to be able to hold one
