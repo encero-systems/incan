@@ -9,6 +9,7 @@ pub mod backend_selection;
 pub mod bake;
 pub mod caller_facet;
 pub mod caller_owned;
+mod file_freshness;
 pub mod inline_command;
 pub mod library_exports;
 pub mod library_outputs;
@@ -27,6 +28,7 @@ pub mod provider_compilation;
 pub mod provider_metadata;
 pub mod publication;
 pub mod reuse;
+mod rust_bake_reuse;
 pub mod rust_extern;
 pub mod source_authority;
 #[cfg(any(test, feature = "test_support"))]

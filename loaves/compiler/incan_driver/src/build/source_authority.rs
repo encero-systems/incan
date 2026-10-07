@@ -398,12 +398,12 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 path.display()
             )));
         }
-        let digest = digest_bytes(&fs::read(path).map_err(|error| {
+        let digest = super::file_freshness::digest_file(path).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot hash project build authority at {}: {error}",
                 path.display()
             ))
-        })?);
+        })?;
         if records.insert(record_key.clone(), digest).is_some() {
             return Err(CliError::failure(format!(
                 "Oven Alpha project build authority contains duplicate path `{record_key}`"

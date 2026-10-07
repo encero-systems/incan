@@ -1337,7 +1337,23 @@ pub fn bake_oven_project_targets(
             .as_ref()
             .is_some_and(|project| !project.scripts.is_empty());
     if !rust_units.is_empty() && !has_incan_target {
-        return bake_project_rust_units(&manifest, &rust_units, package_features, requested_target);
+        let store = open_default_oven_store()?;
+        let key = crate::build::rust_bake_reuse::rust_bake_reuse_key(&manifest, package_features, requested_target)?;
+        if let Some(key) = &key
+            && let Some(report) =
+                crate::build::rust_bake_reuse::try_reuse_rust_bake(&project_root, &rust_units, &store, key)?
+        {
+            return Ok(report);
+        }
+        let report = bake_project_rust_units(&manifest, &rust_units, package_features, requested_target)?;
+        if let Some(key) = &key
+            && crate::build::rust_bake_reuse::rust_bake_reuse_key(&manifest, package_features, requested_target)?
+                .as_ref()
+                .is_some_and(|current| current == key)
+        {
+            crate::build::rust_bake_reuse::publish_rust_bake(&store, key, &report)?;
+        }
+        return Ok(report);
     }
     let targets = discover_oven_bake_project_targets(&project_root)?;
     let dependency_surface_entrypoint = oven_bake_dependency_surface_entrypoint(&targets)

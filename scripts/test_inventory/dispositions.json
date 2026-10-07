@@ -144,6 +144,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/file_freshness.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven build-input freshness and content identity; shared by both compilation routes.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/inline_command.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
@@ -277,6 +285,14 @@
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/rust_bake_reuse.rs": {
+      "disposition": "unaffected",
+      "notes": "Receipt-bound Oven bake reuse for Rust caller projects; shared build infrastructure.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -3565,7 +3581,8 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "tests": {},
+      "tests": {
+      },
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity"
     },
     "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
