@@ -459,6 +459,75 @@ mod census;
 #[path = "native_driver_project_tests/tail.rs"]
 mod tail;
 
+/// Compile one source through both routes and compare successful execution bytes against a fixed oracle.
+fn assert_native_legacy_bytes(name: &str, program: &str, stdout: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let source = root.join(format!("{name}.incn"));
+    fs::write(&source, program)?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native parity compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "legacy parity compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release").join(name)).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy parity execution");
+    success(&actual, "native parity execution");
+    assert_eq!(actual.stdout, stdout);
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    Ok(())
+}
+
+/// Nested empty list literals retain checker-proven element types and match legacy bytes.
+#[test]
+fn direct_route_nested_empty_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "nested_empty_lists",
+        "def main() -> None:\n    rows = [[], [1]]\n    println(len(rows))\n    println(rows[1][0])\n    deep = [[[]], [[2]]]\n    println(len(deep))\n    println(deep[1][0][0])\n",
+        b"2\n1\n2\n2\n",
+    )
+}
+
+/// Contextual None payloads construct nested intrinsic carriers with their proven types.
+#[test]
+fn direct_route_contextual_none_payloads_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "contextual_none_payloads",
+        "def number(value: Result[Option[int], str]) -> int:\n    match value:\n        Ok(optional) => return optional.unwrap_or(0)\n        Err(_) => return -1\n\ndef main() -> None:\n    println(number(Ok(None)))\n    println(number(Ok(Some(7))))\n    println(number(Err(\"failure\")))\n",
+        b"0\n7\n-1\n",
+    )
+}
+
+/// Inferred bindings and in-place matches construct Results with the checker-settled open sides.
+#[test]
+fn direct_route_settled_result_sides_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "settled_result_sides",
+        "def value() -> Result[int, str]:\n    inferred = Ok(9)\n    return inferred\n\ndef main() -> None:\n    inferred = Ok(7)\n    match inferred:\n        Ok(number) => println(number)\n        Err(_) => pass\n    match Ok(8):\n        Ok(number) => println(number)\n        Err(_) => pass\n    println(value().unwrap_or(0))\n",
+        b"7\n8\n9\n",
+    )
+}
+
 /// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
 /// reaches lowering.
 #[test]
