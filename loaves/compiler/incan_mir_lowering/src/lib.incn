@@ -954,8 +954,9 @@ def ordered_arguments(
     if body.is_generator():
         match binding:
             RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=_defaults) =>
-                for index in range(len(bindings)):
-                    if int(bindings[index].slot) != index:
+                # Bindings are listed per operand; a slot that differs from its written position is a permuted call.
+                for bound in bindings:
+                    if int(bound.slot) != int(bound.written_position):
                         return Err("unsupported Body IR reordered generator ArgumentBinding")
             _ => pass
     mut types: list[PlanType] = []
