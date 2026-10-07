@@ -72,7 +72,8 @@ pub enum PlanType:
     StringRef borrows an owned String, while StrRef is a string literal's shared str view.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
-    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float keys and tuple leaves are not admitted in hashed collections.
+    Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
+    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float and model keys are refused; flat tuple keys exclude floating-point fields.
     """
 
     Int

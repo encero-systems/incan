@@ -19,6 +19,11 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 .map(|element| ty(&tuple_element_type(element.clone()), span))
                 .collect(),
         ),
+        PlanType::Decimal => {
+            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+            path.segments.push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
+            ast::TyKind::Path(None, path)
+        }
         PlanType::List(leaf, depth) => {
             let mut element = ty(
                 &list_leaf_type((*leaf).clone()),
