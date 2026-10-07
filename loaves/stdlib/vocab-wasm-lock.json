@@ -1,0 +1,285 @@
+{
+  "schema": "incan.oven.loaf-resolution/2",
+  "units": [
+    {
+      "archive_digest": "sha256:8266c23d74c993d464c322ffe017b4498ad0a16c1b5a95a8167c90c2bb5406c1",
+      "domain": "target",
+      "edges": [],
+      "features": [],
+      "loaf": "crates-io/itoa",
+      "target_predicates": [],
+      "version": "1.0.18"
+    },
+    {
+      "archive_digest": "sha256:bed7b0556ffe1d85a868c073a8830f029bb2d1fafa9a67658b72b5a80e411e66",
+      "domain": "target",
+      "edges": [],
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ],
+      "loaf": "crates-io/memchr",
+      "target_predicates": [],
+      "version": "2.8.3"
+    },
+    {
+      "archive_digest": "sha256:0f3b8c415712c5717caf9a4928f0a86ed2b0bb40246c3e14c13a170a23aa027f",
+      "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "host",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
+      "features": [
+        "default",
+        "proc-macro"
+      ],
+      "loaf": "crates-io/proc-macro2",
+      "target_predicates": [],
+      "version": "1.0.107"
+    },
+    {
+      "archive_digest": "sha256:13dde5b3676f73d06ce192241223020aeb4935cb990a1101a2681107b87583d2",
+      "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        }
+      ],
+      "features": [
+        "default",
+        "proc-macro"
+      ],
+      "loaf": "crates-io/quote",
+      "target_predicates": [],
+      "version": "1.0.47"
+    },
+    {
+      "archive_digest": "sha256:0740c17a91f9322696dd72fdf54d6362b8da024f51503fdf812fc2646a4c8bc8",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        },
+        {
+          "dependency_key": "serde_derive",
+          "domain": "host",
+          "loaf": "crates-io/serde_derive",
+          "version": "1.0.229"
+        }
+      ],
+      "features": [
+        "default",
+        "derive",
+        "serde_derive",
+        "std"
+      ],
+      "loaf": "crates-io/serde",
+      "target_predicates": [],
+      "version": "1.0.229"
+    },
+    {
+      "archive_digest": "sha256:016c38337099f52a9a156b8f388f3d0b9cb0e50a46423577520e88476be1e764",
+      "domain": "target",
+      "edges": [],
+      "features": [
+        "alloc",
+        "default",
+        "result",
+        "std"
+      ],
+      "loaf": "crates-io/serde_core",
+      "target_predicates": [
+        {
+          "declaration": 0,
+          "matches": false,
+          "target": "cfg(any())"
+        }
+      ],
+      "version": "1.0.229"
+    },
+    {
+      "archive_digest": "sha256:d9eca4ee6ca48b26c8879174ab4ce53186386ac9729d05ba3b2c4c92e9491cab",
+      "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "host",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "syn",
+          "domain": "host",
+          "loaf": "crates-io/syn",
+          "version": "3.0.6"
+        }
+      ],
+      "features": [
+        "default"
+      ],
+      "loaf": "crates-io/serde_derive",
+      "target_predicates": [],
+      "version": "1.0.229"
+    },
+    {
+      "archive_digest": "sha256:fbaa5d6302282e35f970e3e8f9e3df5af26ec2174cbb603d4ed429ad8798a379",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "itoa",
+          "domain": "target",
+          "loaf": "crates-io/itoa",
+          "version": "1.0.18"
+        },
+        {
+          "dependency_key": "memchr",
+          "domain": "target",
+          "loaf": "crates-io/memchr",
+          "version": "2.8.3"
+        },
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        },
+        {
+          "dependency_key": "zmij",
+          "domain": "target",
+          "loaf": "crates-io/zmij",
+          "version": "1.0.23"
+        }
+      ],
+      "features": [
+        "default",
+        "raw_value",
+        "std"
+      ],
+      "loaf": "crates-io/serde_json",
+      "target_predicates": [
+        {
+          "declaration": 3,
+          "matches": false,
+          "target": "cfg(any())"
+        }
+      ],
+      "version": "1.0.151"
+    },
+    {
+      "archive_digest": "sha256:a8a606533b95b09dae0cef1dc2652b46c0cf9b8b87b2aab87daae57ed482affb",
+      "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "host",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "host",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ],
+      "loaf": "crates-io/syn",
+      "target_predicates": [],
+      "version": "2.0.119"
+    },
+    {
+      "archive_digest": "sha256:54b8f708b674e17c51fd66ee68787d696dfc36ad88b3eb15f7a77847108c07b8",
+      "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "host",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "host",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ],
+      "loaf": "crates-io/syn",
+      "target_predicates": [],
+      "version": "3.0.6"
+    },
+    {
+      "archive_digest": "sha256:d8fb134fce081f3df28654a548970d4d596498160d12ce434f55607983b06504",
+      "domain": "host",
+      "edges": [],
+      "features": [],
+      "loaf": "crates-io/unicode-ident",
+      "target_predicates": [],
+      "version": "1.0.26"
+    },
+    {
+      "archive_digest": "sha256:d8fb134fce081f3df28654a548970d4d596498160d12ce434f55607983b06504",
+      "domain": "target",
+      "edges": [],
+      "features": [],
+      "loaf": "crates-io/unicode-ident",
+      "target_predicates": [],
+      "version": "1.0.26"
+    },
+    {
+      "archive_digest": "sha256:95543d1823c32220ade82651984d26619e3779a89cc46ebc1fd24f5c6f4cd828",
+      "domain": "target",
+      "edges": [],
+      "features": [],
+      "loaf": "crates-io/zmij",
+      "target_predicates": [],
+      "version": "1.0.23"
+    }
+  ]
+}

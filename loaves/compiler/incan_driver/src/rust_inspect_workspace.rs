@@ -534,6 +534,62 @@ pub fn ensure_rust_inspect_workspace(
     )
 }
 
+/// Prepare only an authored Loaf and Rust probe for the direct inspector, without generating Cargo metadata.
+///
+/// Selected source authority is installed separately by the caller. Dependencies are deliberately absent here:
+/// this stub cannot resolve them or replace the frozen closure's aliases, features, or source selections.
+#[cfg(feature = "rust_inspect")]
+pub fn ensure_direct_rust_inspect_workspace(
+    project_root: &Path,
+    project_name: &str,
+    edition: Option<&str>,
+    derive_paths: &[String],
+    selection_inputs: &std::collections::BTreeMap<String, String>,
+) -> CliResult<PathBuf> {
+    let declaration = toml::Value::Table(toml::map::Map::from_iter([
+        (
+            "project".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([
+                (
+                    "name".to_string(),
+                    toml::Value::String(format!("{project_name}_rust_inspect")),
+                ),
+                ("version".to_string(), toml::Value::String("0.0.0".to_string())),
+            ])),
+        ),
+        (
+            "rust".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([
+                (
+                    "name".to_string(),
+                    toml::Value::String(format!("{}_rust_inspect", project_name.replace('-', "_"))),
+                ),
+                ("type".to_string(), toml::Value::String("lib".to_string())),
+                (
+                    "edition".to_string(),
+                    toml::Value::String(edition.unwrap_or("2024").to_string()),
+                ),
+            ])),
+        ),
+    ]));
+    let declaration = toml::to_string(&declaration).map_err(|error| CliError::failure(error.to_string()))?;
+    let mut source = String::new();
+    for (index, path) in derive_paths.iter().enumerate() {
+        source.push_str(&format!("#[derive({path})]\nstruct __IncanDeriveProbe{index};\n"));
+    }
+    source.push_str("fn main() {}\n");
+    let selection = serde_json::to_string(selection_inputs).map_err(|error| CliError::failure(error.to_string()))?;
+    let fingerprint = oven_store::digest_bytes(format!("{declaration}\0{source}\0{selection}").as_bytes());
+    let root = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
+    fs::create_dir_all(root.join("src")).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join("loaf.toml"), declaration).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join("src/main.rs"), &source).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join("src/lib.rs"), source).map_err(|error| CliError::failure(error.to_string()))?;
+    fs::write(root.join(::rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(root)
+}
+
 /// Generate a rust-inspect workspace whose Cargo package identity matches the canonical lock owner.
 #[allow(clippy::too_many_arguments)]
 pub fn ensure_rust_inspect_workspace_with_cargo_package_name(

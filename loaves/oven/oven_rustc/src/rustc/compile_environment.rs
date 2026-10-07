@@ -9,8 +9,10 @@ pub(super) fn validated_compile_environment(
 ) -> Result<BTreeMap<String, String>, OvenRustcError> {
     for (name, value) in environment {
         let binary_name = name.strip_prefix("CARGO_BIN_EXE_");
-        let allowed = name == "CARGO_MANIFEST_DIR"
-            || name.starts_with("CARGO_PKG_")
+        let allowed = matches!(
+            name.as_str(),
+            "CARGO_MANIFEST_DIR" | "CARGO_MANIFEST_PATH" | "CARGO_CRATE_NAME" | "CARGO_PRIMARY_PACKAGE"
+        ) || name.starts_with("CARGO_PKG_")
             || binary_name.is_some_and(|name| !name.is_empty());
         if !allowed {
             return Err(OvenRustcError::InvalidInput {
@@ -18,7 +20,7 @@ pub(super) fn validated_compile_environment(
                 message: format!("does not permit `{name}`"),
             });
         }
-        if value.is_empty() || value.contains('\0') {
+        if (value.is_empty() && !name.starts_with("CARGO_PKG_")) || value.contains('\0') {
             return Err(OvenRustcError::InvalidInput {
                 field: "artifact manifest compile environment",
                 message: format!("has an invalid value for `{name}`"),
@@ -85,4 +87,27 @@ pub fn resolve_compile_environment_value(name: &str, value: &str, source: &Path)
         })?;
     }
     Ok(ancestor.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BTreeMap, OvenRustcError, validated_compile_environment};
+
+    /// Cargo represents missing optional package fields and a release version's prerelease field as empty strings.
+    #[test]
+    fn package_envelope_accepts_empty_metadata_and_crate_coordinates() -> Result<(), OvenRustcError> {
+        let values = BTreeMap::from([
+            ("CARGO_PKG_VERSION_PRE".into(), String::new()),
+            ("CARGO_PKG_AUTHORS".into(), String::new()),
+            ("CARGO_MANIFEST_PATH".into(), "/source/Cargo.toml".into()),
+            ("CARGO_CRATE_NAME".into(), "example".into()),
+            ("CARGO_PRIMARY_PACKAGE".into(), "1".into()),
+        ]);
+        assert_eq!(validated_compile_environment(&values)?, values);
+        assert!(validated_compile_environment(&BTreeMap::from([("CARGO_CRATE_NAME".into(), String::new())])).is_err());
+        assert!(
+            validated_compile_environment(&BTreeMap::from([("CARGO_PKG_NAME".into(), "bad\0value".into())])).is_err()
+        );
+        Ok(())
+    }
 }

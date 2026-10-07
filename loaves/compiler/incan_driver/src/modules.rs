@@ -6,8 +6,8 @@
 //! imported types resolved.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{env, fs};
 
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::result_methods;
@@ -24,9 +24,7 @@ use incan_frontend::module::{
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{ast_walk, diagnostics, typechecker};
 use incan_provider::dependency_resolver::{DependencyError, InlineRustImport};
-use incan_provider::inventory::sdk_provider_bootstrap_namespace_roots;
-use incan_provider::{FeatureSelection, ProviderModuleResolution, ProviderPlan, SDK_PROVIDER_BUILD_ENV};
-use oven_model::manifest::ProjectManifest;
+use incan_provider::{FeatureSelection, ProviderModuleResolution, ProviderPlan};
 /// Return whether a parsed module uses RFC 088 iterator surface methods that require stdlib adapter modules.
 pub fn uses_iterator_adapter_surface(program: &Program) -> bool {
     ast_walk::any_expr_in_program(program, |expr| match expr {
@@ -208,16 +206,12 @@ pub fn library_source_seeds(
     source_files.sort();
 
     let entry_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let sdk_namespace_roots = if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
-        let project_root = session
-            .manifest
-            .as_ref()
-            .map(ProjectManifest::project_root)
-            .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")));
-        Some(sdk_provider_bootstrap_namespace_roots(project_root)?)
-    } else {
-        None
-    };
+    let granted_roots = session
+        .provider_plan
+        .bootstrap_sdk_namespace_roots()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let sdk_namespace_roots = (!granted_roots.is_empty()).then_some(granted_roots);
     let mut logical_sources = BTreeMap::<Vec<String>, PathBuf>::new();
     let mut seeds = vec![(path.to_path_buf(), "main".to_string(), vec!["main".to_string()])];
     for source_file in source_files {
@@ -308,7 +302,7 @@ fn collect_modules_detailed_from_seeds(
     let mut processed = HashSet::new();
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
-    let compiling_sdk_provider = env::var_os(SDK_PROVIDER_BUILD_ENV).is_some();
+    let compiling_sdk_provider = session.provider_plan.bootstrap_sdk_namespace_roots().next().is_some();
     let stdlib_module_segments = |module_path: &[String]| {
         if compiling_sdk_provider {
             module_path.iter().skip(1).cloned().collect()

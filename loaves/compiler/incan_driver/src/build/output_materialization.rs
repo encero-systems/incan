@@ -1091,6 +1091,7 @@ mod tests {
             target_identity: OvenBakeProjectTarget::Library.as_str().to_string(),
             project_identity: baked_project_owner_identity(project.path())?,
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
+            dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/lib.incn".to_string(),

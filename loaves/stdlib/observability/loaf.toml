@@ -7,3 +7,5 @@ private = true
 [sdk]
 profile = "minimal"
 components = ["stdlib-data"]
+
+[dependencies]

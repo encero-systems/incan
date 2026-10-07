@@ -6,6 +6,7 @@
 //! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
 mod case_partition;
+pub mod compile_closure;
 mod equivalence;
 mod gate;
 mod harvest;

@@ -70,7 +70,7 @@ use oven_model::manifest::ProjectManifest;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcError, OvenTrustedDirectRustcTargetRequest,
-    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_run,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_run,
     bake_trusted_direct_rustc_run_with_artifact_role,
 };
 use oven_store::store::OvenArtifactKind;
@@ -309,20 +309,24 @@ fn bake_oven_library_with_dependencies(
     } else {
         selected.receipt.clone()
     };
-    let direct = bake_trusted_direct_rustc_library(&OvenTrustedDirectRustcTargetRequest {
-        receipt: &coherent_receipt,
-        artifacts: selected.plan_selection.artifacts(),
-        artifact_root: selected.plan_selection.output_guard_root(),
-        artifact_plan: Some(&artifact_plan),
-        rustc: &oven.rustc,
-        source: &prepared.generator.crate_root_path(),
-        output: &oven_library_path(prepared, oven, profile),
-        crate_name: &oven.crate_name,
-        edition: &oven.rust_edition,
-        source_evidence_key: "generated-root",
-        features: &selected.receipt.intent.features,
-        prefer_dynamic: false,
-    });
+    let store = open_default_oven_store()?;
+    let direct = bake_trusted_direct_rustc_library_in_store(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &coherent_receipt,
+            artifacts: selected.plan_selection.artifacts(),
+            artifact_root: selected.plan_selection.output_guard_root(),
+            artifact_plan: Some(&artifact_plan),
+            rustc: &oven.rustc,
+            source: &prepared.generator.crate_root_path(),
+            output: &oven_library_path(prepared, oven, profile),
+            crate_name: &oven.crate_name,
+            edition: &oven.rust_edition,
+            source_evidence_key: "generated-root",
+            features: &selected.receipt.intent.features,
+            prefer_dynamic: false,
+        },
+        &store,
+    );
 
     classify_direct_rustc_bake(&oven.crate_name, direct).map(|bake| (bake, artifact_plan))
 }
@@ -911,6 +915,11 @@ fn project_rust_unit_receipt(
             oven_rustc::rustc::driver_grant::authorize_driver_grant(role, context.rustc).map_err(oven_rustc_error)?
     {
         request = request.with_build_unit_input(oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT, grant);
+    }
+    if let Some(identity) =
+        oven_rustc::rustc::pinned_link_closure_identity(context.rustc, context.target).map_err(oven_rustc_error)?
+    {
+        request = request.with_build_unit_input("link-closure", identity);
     }
     let evidence = generated_project_source_evidence(&request).map_err(|error| CliError::failure(error.to_string()))?;
     let receipt = receipt_generated_project_with_source_evidence(&request, &evidence)
@@ -1711,17 +1720,42 @@ pub fn bake_oven_project_targets(
             Some(&mut authority_context),
         )?;
         let (registry_dependencies, dev_registry_dependencies) =
-            canonical_project_inspection_dependencies(dependency_surface)?;
+            canonical_project_inspection_dependencies(dependency_surface, debug_target_receipts.first())?;
+        if debug_target_receipts
+            .first()
+            .is_some_and(|receipt| receipt.sources.build_unit_inputs.contains_key("sdk-native-closure"))
+        {
+            let uncovered = registry_dependencies
+                .iter()
+                .chain(&dev_registry_dependencies)
+                .filter(|dependency| matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            if !uncovered.is_empty() {
+                return Err(CliError::failure(format!(
+                    "native SDK inspection has no admitted source authority for registry dependencies: {}",
+                    uncovered.join(", ")
+                )));
+            }
+        }
         let source_authority_digest = authority_context.final_project_source_authority(&project_root)?;
         #[cfg(feature = "rust_inspect")]
-        let project_locked_registry_packages = project_locked_registry_packages(
-            rust_inspect_manifest_dirs
-                .iter()
-                .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
-                .collect::<Vec<_>>()
-                .iter()
-                .map(PathBuf::as_path),
-        )?;
+        let project_locked_registry_packages = if registry_dependencies
+            .iter()
+            .chain(&dev_registry_dependencies)
+            .all(|dependency| !matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
+        {
+            Vec::new()
+        } else {
+            project_locked_registry_packages(
+                rust_inspect_manifest_dirs
+                    .iter()
+                    .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(PathBuf::as_path),
+            )?
+        };
         #[cfg(not(feature = "rust_inspect"))]
         let project_locked_registry_packages = Vec::new();
         let inspection_authority = publish_project_inspection_authority(
