@@ -49,6 +49,52 @@ fn model_derives_retain_checked_native_selection() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// Derived Display retains its checked selection and the Debug prerequisite for native formatting.
+#[test]
+fn model_display_retains_checked_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Display)\nmodel Record:\n    value: int\n\ndef main() -> None:\n    record = Record(value=7)\n    println(record)\n",
+        &["m", "model_display"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained Display model".into());
+    };
+    assert_eq!(
+        declaration.derives,
+        ["Display", "Debug", "Clone", "FieldInfo", "IncanClass"]
+    );
+    assert!(!module.render_snapshot().contains("unsupported("));
+    Ok(())
+}
+
+/// Imported JSON derive spellings resolve to canonical serde macro selections before entering Body IR.
+#[test]
+fn model_json_retains_checked_selection() -> Result<(), Box<dyn std::error::Error>> {
+    for derive in [
+        "json",
+        "Serialize",
+        "json.Serialize",
+        "JsonSerialize",
+        "chosen",
+        "picked",
+    ] {
+        let source = format!(
+            "from std.serde import json\nfrom std.serde.json import Serialize\nfrom std.serde.json import Serialize as JsonSerialize\nimport std.serde.json as chosen\nfrom std.serde import json as picked\n\n@derive({derive})\nmodel Record:\n    value: int\n\ndef main() -> None:\n    record = Record(value=7)\n    println(record.to_json())\n"
+        );
+        let module = build(&source, &["m", "model_json"])?;
+        let [declaration] = module.nominal_declarations.as_slice() else {
+            return Err(format!("expected one retained JSON model for {derive}").into());
+        };
+        assert!(declaration.derives.iter().any(|name| name == "serde::Serialize"));
+        assert_eq!(
+            declaration.derives.iter().any(|name| name == "serde::Deserialize"),
+            matches!(derive, "json" | "chosen" | "picked")
+        );
+        assert!(!module.render_snapshot().contains("unsupported("));
+    }
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {

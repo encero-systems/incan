@@ -1,6 +1,7 @@
 """Native nominal operations delegate to the same Rust derives as legacy emission."""
 
 from rust::std::fmt import Debug
+from rust::serde import Serialize
 from rust::std::cmp import PartialEq, PartialOrd
 
 
@@ -37,3 +38,28 @@ pub def greater_model[T with PartialOrd](left: &T, right: &T) -> bool:
 pub def greater_equal_model[T with PartialOrd](left: &T, right: &T) -> bool:
     """Compare through the derived greater-than-or-equal implementation."""
     return PartialOrd.ge(left, right)
+
+
+pub def serialize_model[T with Serialize](value: &T) -> str:
+    """Use the same serde stringify and structured error boundary as the legacy JSON protocol default."""
+    return json_stringify(value)
+
+
+pub def serialize_int(value: int) -> str:
+    """Serialize the canonical signed Incan integer through the legacy JSON builtin boundary."""
+    return json_stringify(value)
+
+
+pub def serialize_float(value: float) -> str:
+    """Preserve serde's floating-point spelling and nonfinite-value behavior."""
+    return json_stringify(value)
+
+
+pub def serialize_bool(value: bool) -> str:
+    """Serialize a boolean as the same lowercase JSON literal as legacy."""
+    return json_stringify(value)
+
+
+pub def serialize_string(value: &str) -> str:
+    """Serialize borrowed string text with serde's escaping without consuming its source owner."""
+    return json_stringify(value)

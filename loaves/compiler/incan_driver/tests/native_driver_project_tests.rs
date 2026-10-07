@@ -988,3 +988,66 @@ def main() -> None:
     assert!(!refused_binary.exists());
     Ok(())
 }
+
+/// Derived Display uses the same Debug structure in println, string conversion, and interpolation as legacy.
+#[test]
+fn model_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_display",
+        r#"@derive(Display)
+model Record:
+    number: int
+    label: str
+
+def main() -> None:
+    record = Record(number=7, label="quoted\"\n")
+    println(record)
+    println(f"record={record}")
+    println(str(record))
+    println(f"{record:?}")
+    println(record.label)
+"#,
+        None,
+    )
+}
+
+/// JSON module bundles, imported aliases, and qualified derives serialize through the legacy serde boundary.
+#[test]
+fn model_json_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_json",
+        r#"from std.serde import json
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(json)
+model Record:
+    number: int
+    label: str
+
+@derive(JsonSerialize)
+model Alias:
+    enabled: bool
+
+@derive(json.Serialize)
+model Qualified:
+    value: float
+
+def main() -> None:
+    record = Record(number=7, label="quoted\"\n")
+    alias = Alias(enabled=true)
+    qualified = Qualified(value=2.5)
+    println(record.to_json())
+    println(json_stringify(record))
+    println(json_stringify(123))
+    println(json_stringify(-7))
+    println(json_stringify(2.5))
+    println(json_stringify(true))
+    println(json_stringify("escaped\"\n"))
+    println(alias.to_json())
+    println(qualified.to_json())
+    println(record.to_json())
+    println(record.label)
+"#,
+        None,
+    )
+}

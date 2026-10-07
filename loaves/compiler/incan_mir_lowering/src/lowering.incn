@@ -95,7 +95,13 @@ from classes import frame_type, function_name, method_receiver
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
 from models import model_type, model_place, place_type, constructor_index
-from model_values import debug_model_operand, compare_models
+from model_values import (
+    debug_model_operand,
+    display_model_operand,
+    serialize_model_operand,
+    is_json_serialize_method,
+    compare_models,
+)
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant, pattern_variant
 from unions import (
     native_source_type,
@@ -120,6 +126,7 @@ from numerics import (
 )
 from strings import text_helper
 from frame import (
+    frame_place_type,
     Builder,
     temporary,
     forget_owned,
@@ -841,6 +848,8 @@ def lower_method_call(
         None => return Err("unsupported Body IR Method without canonical identity")
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
+    if is_json_serialize_method(target):
+        return lower_model_json_builtin(builder, arguments, destination, span)
     index = method_index(module, target, builder.locals[builder.local_offset:], arguments[0], span)?
     body = module.bodies[index]
     receiver_type, borrow = method_receiver(
@@ -1178,7 +1187,77 @@ def lower_builtin(
         RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
         RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
+        RustBuiltin.JsonStringify => return lower_model_json_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+
+
+def lower_model_json_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Serialize exactly one checked operand through the same implementation as the JSON protocol default."""
+    if len(arguments) != 1:
+        return Err("unsupported Body IR json_stringify arity")
+    match arguments[0].as_one():
+        Some(value) =>
+            result = call_destination(builder, destination, PlanType.String, span)?
+            if serialize_model_operand(builder, value, result, span)?:
+                return Ok(None)
+            return serialize_scalar_json(builder, value, result, span)
+        None => return Err("unsupported Body IR json_stringify spread argument")
+
+
+def serialize_scalar_json(
+    mut builder: Builder,
+    value: &RustOperand,
+    result: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve canonical scalar carriers and borrow string storage for the legacy JSON builtin."""
+    match value:
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Str(_text) => return serialize_json_text(builder, value, result, span)
+                _ => pass
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            if frame_place_type(builder.locals, place) == PlanType.String:
+                return serialize_json_text(builder, value, result, span)
+    operand = value_operand(builder, value, span)?
+    ty = operand_type(builder, operand)?
+    mut name = ""
+    match ty:
+        PlanType.Int =>
+            name = "serialize_int"
+        PlanType.Float =>
+            name = "serialize_float"
+        PlanType.Bool =>
+            name = "serialize_bool"
+        _ => return Err(f"unsupported Body IR JSON serialization type {ty:?}")
+    external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    return Ok(None)
+
+
+def serialize_json_text(
+    mut builder: Builder,
+    value: &RustOperand,
+    result: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow string text before any value-read ownership transformation can move its source."""
+    operand = borrow_text_operand(builder, value, span)?
+    external_call(
+        builder,
+        "incan_native_runtime::serialize_string",
+        [PlanType.StringRef],
+        PlanType.String,
+        [operand],
+        result,
+        span,
+    )
+    return Ok(None)
 
 
 def lower_print(mut builder: Builder, arguments: &list[RustArgumentElement], span: SourceSpan) -> Result[None, str]:
@@ -1541,6 +1620,9 @@ def format_parts(
 
 pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
     """Produce an owned `String` holding a value's display text, honoring the value's ownership fact."""
+    match display_model_operand(builder, value, span)?:
+        Some(text) => return Ok(text)
+        None => pass
     match value:
         RustOperand.Place(read) =>
             if len(read.place.projection) != 0 and is_collection(

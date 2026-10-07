@@ -418,16 +418,56 @@ struct FunctionDefaultSource {
 /// Determine whether a model can carry the small direct-replacement declaration fact.
 ///
 /// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
-/// runtime admits builtin Rust derives and checked field aliases but cannot execute other model decorators or generic
-/// substitution without retained facts. Non-generic methods remain separate bodies; adopted trait slots are retained in
-/// the module implementation registry. Field defaults have declaration-owned deferred computations; each
-/// construction's checked binding selects the omitted slots without repeating source expressions at call sites.
+/// runtime admits builtin Rust derives, checked JSON protocol derives, and field aliases without serde renames, but
+/// cannot execute other model decorators or generic substitution without retained facts. Non-generic methods remain
+/// separate bodies; adopted trait slots are retained in the module implementation registry. Field defaults have
+/// declaration-owned deferred computations; each construction's checked binding selects the omitted slots without
+/// repeating source expressions at call sites.
 pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
     model
         .decorators
         .iter()
         .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
-        && model.type_params.is_empty()
+        && has_direct_replacement_model_shape(model)
+}
+
+/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths.
+/// Serde field renames remain refused until their checked metadata crosses the Body IR and plan boundary.
+pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
+    if is_direct_replacement_plain_model(model) {
+        return true;
+    }
+    let Some(names) = type_info.declarations.model_derives.get(&model.name) else {
+        return false;
+    };
+    model.decorators.iter().all(|decorator| {
+        decorator.node.name == "derive"
+            && decorator.node.path.segments == ["derive"]
+            && decorator.node.type_args.is_empty()
+    }) && names.iter().all(|name| {
+        matches!(
+            name.as_str(),
+            "Debug"
+                | "Clone"
+                | "Eq"
+                | "PartialEq"
+                | "Hash"
+                | "Ord"
+                | "PartialOrd"
+                | "Default"
+                | "Display"
+                | "FieldInfo"
+                | "IncanClass"
+                | "serde::Serialize"
+                | "serde::Deserialize"
+        )
+    }) && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+        && has_direct_replacement_model_shape(model)
+}
+
+/// Keep the structural admission boundary shared by builtin and checked serde derive selections.
+fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
+    model.type_params.is_empty()
         && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && model.method_aliases.is_empty()
         && model.method_partials.is_empty()
@@ -439,14 +479,15 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
 }
 
 /// Admit only the bare builtin derive decorator whose complete native trait selection Body IR retains.
-/// Qualified, bundled, foreign, and semantic derives need their own checked expansion facts and remain refused.
+/// Qualified, bundled, foreign, and semantic derives need their own checked expansion facts and remain refused. Display
+/// retains its checked selection and uses the implied Debug rendering.
 pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
     decorator.name == "derive"
         && decorator.path.segments == ["derive"]
         && decorator.type_args.is_empty()
         && decorator.args.iter().all(|argument| {
             matches!(argument, ast::DecoratorArg::Positional(value) if matches!(&value.node,
-                ast::Expr::Ident(name) if matches!(name.as_str(), "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default")))
+                ast::Expr::Ident(name) if matches!(name.as_str(), "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display")))
         })
 }
 

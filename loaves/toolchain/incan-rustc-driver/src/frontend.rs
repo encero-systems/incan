@@ -53,7 +53,12 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
             }
             Declaration::Static(_) => continue,
             Declaration::Model(model) => {
-                if !incan_frontend::body_ir::is_direct_replacement_plain_model(model) {
+                if type_info.declarations.model_derives.get(&model.name).is_some_and(|names| names.iter().any(|name| name.starts_with("serde::")))
+                    && model.fields.iter().any(|field| field.node.metadata.alias.is_some())
+                {
+                    return Err(format!("unsupported source Model serde field aliases on {} on the native route", model.name));
+                }
+                if !incan_frontend::body_ir::is_direct_replacement_checked_model(model, type_info) {
                     return Err(format!(
                         "unsupported source Model {} on {} on the native route",
                         model_refusal_feature(model), model.name

@@ -362,6 +362,9 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
         AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing, TokenStream,
     };
     let mut tokens = Vec::new();
+    if name.starts_with("serde::") {
+        tokens.push(AttrTokenTree::Token(Token::new(TokenKind::PathSep, span), Spacing::Alone));
+    }
     if matches!(name, "FieldInfo" | "IncanClass") {
         tokens.push(AttrTokenTree::Token(
             Token::from_ast_ident(ident("incan_derive", span)),
@@ -372,10 +375,12 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
             Spacing::Alone,
         ));
     }
-    tokens.push(AttrTokenTree::Token(
-        Token::from_ast_ident(ident(name, span)),
-        Spacing::Alone,
-    ));
+    for (index, segment) in name.split("::").enumerate() {
+        if index != 0 {
+            tokens.push(AttrTokenTree::Token(Token::new(TokenKind::PathSep, span), Spacing::Alone));
+        }
+        tokens.push(AttrTokenTree::Token(Token::from_ast_ident(ident(segment, span)), Spacing::Alone));
+    }
     let arguments = AttrTokenStream::new(tokens);
     let attribute_tokens = LazyAttrTokenStream::new_direct(AttrTokenStream::new(vec![
         AttrTokenTree::Token(Token::new(TokenKind::Pound, span), Spacing::JointHidden),

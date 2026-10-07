@@ -2,6 +2,11 @@
 
 pub from model_values import (
     debug_model,
+    serialize_model,
+    serialize_int,
+    serialize_float,
+    serialize_bool,
+    serialize_string,
     equal_model,
     unequal_model,
     less_model,

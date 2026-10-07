@@ -155,7 +155,7 @@ pub(super) fn collect_local_nominal_declarations(
                 return collect_plain_newtype(declaration.span, newtype, module_identity, type_info);
             }
             let (name, fields, visibility, type_parameter_count, class_layout) = match &declaration.node {
-                ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => (
+                ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => (
                     &model.name,
                     &model.fields,
                     model.visibility,
@@ -462,7 +462,7 @@ pub(super) fn collect_local_trait_implementations(
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
         let (adoptions, methods) = match &declaration.node {
-            ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => {
+            ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => {
                 (&model.traits, &model.methods)
             }
             ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),

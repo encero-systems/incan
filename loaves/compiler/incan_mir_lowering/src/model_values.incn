@@ -1,6 +1,7 @@
 """Derived nominal formatting and comparisons over the retained source field layout."""
 
-from rust::incan_semantics_core::body_ir import Operand as RustOperand, BinOp
+from rust::incan_semantics_core::body_ir import Operand as RustOperand, BinOp, MethodTarget
+from rust::incan_semantics_core import SymbolOrigin, SemanticSourceTargetKind
 from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, terminate_call, frame_place_type
@@ -131,3 +132,54 @@ pub def compare_models(
     match nominal_place(builder, left, span)?:
         None => return Ok(false)
         Some(first) => return compare_places(builder, destination, operator, first, right, span)
+
+
+pub def display_model_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """Use the checked derived Display form, which legacy defines as the model's Debug text."""
+    match nominal_place(builder, value, span)?:
+        None => return Ok(None)
+        Some(place) =>
+            match frame_place_type(builder.locals, place):
+                PlanType.Model(owner, _name) =>
+                    if "Display" not in builder.nominals[owner].derives:
+                        return Err("unsupported Body IR model display without derived Display")
+                _ => return Err("unsupported Body IR model display carrier")
+            return Ok(Some(debug_model(builder, place, span)?))
+
+
+pub def serialize_model_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    destination: Place,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Serialize a retained model with checked serde capability, borrowing its original storage."""
+    match nominal_place(builder, value, span)?:
+        None => return Ok(false)
+        Some(place) =>
+            ty = frame_place_type(builder.locals, place)
+            match ty:
+                PlanType.Model(owner, _name) =>
+                    if "serde::Serialize" not in builder.nominals[owner].derives:
+                        return Err("unsupported Body IR model JSON serialization without serde::Serialize")
+                _ => return Err("unsupported Body IR model JSON carrier")
+            argument = borrow_model(builder, place, ty, span)?
+            model_call(builder, "serialize_model", ty, PlanType.String, [argument], destination, span)?
+            return Ok(true)
+
+
+pub def is_json_serialize_method(target: &MethodTarget) -> bool:
+    """Recognize the checker-selected JSON protocol default by declaring module and member identity."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "to_json":
+                return false
+            match identity.origin:
+                SymbolOrigin.Module(path) =>
+                    return len(path) == 3 and path[0] == "std" and path[1] == "serde" and path[2] == "json"
+                _ => return false
+        None => return false
