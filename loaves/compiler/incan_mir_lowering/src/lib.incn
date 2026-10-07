@@ -22,6 +22,8 @@ pub from pub::incan_mir_plan import (
     EnumDeclaration,
     EnumVariant,
     SizedNumeric,
+    TupleElement,
+    tuple_element_type,
     Local,
     ModelDeclaration,
     Operand,

@@ -2,8 +2,9 @@
 
 from rust::incan_semantics_core::body_ir import AssertionKind, Operand as RustOperand, Constant as RustConstant
 from pub::incan_mir_plan import PlanType, SourceSpan, TerminatorKind, Constant
-from frame import external_call
-from lowering import scalar_operand, display_operand, owned_literal, literal
+from frame import external_call, literal
+from text_plan import owned_literal
+from lowering import scalar_operand, display_operand
 from frame import Builder, read_place, temporary, drop_owned
 
 
