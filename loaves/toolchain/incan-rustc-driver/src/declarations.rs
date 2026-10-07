@@ -10,8 +10,32 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct an admitted scalar, model, or list AST type without generating or parsing Rust source.
-fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+/// Declare the exact owned or borrowed runtime handle, leaving other plan types to their ordinary declaration path.
+fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let (name, leaf, depth, mutability) = match kind {
+        PlanType::Generator(leaf, depth) => ("Generator", leaf, *depth, None),
+        PlanType::GeneratorMutRef(leaf, depth) => ("Generator", leaf, *depth, Some(ast::Mutability::Mut)),
+        PlanType::GeneratorYield(leaf, depth) => ("GeneratorYield", leaf, *depth, None),
+        PlanType::GeneratorYieldRef(leaf, depth) => ("GeneratorYield", leaf, *depth, Some(ast::Mutability::Not)),
+        _ => return None,
+    };
+    let owned = generator_ty(name, leaf, depth, span);
+    Some(match mutability {
+        None => owned,
+        Some(mutbl) => Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ref(None, ast::MutTy { ty: owned, mutbl }),
+            span,
+            tokens: None,
+        }),
+    })
+}
+
+/// Construct an admitted native AST type without generating or parsing Rust source.
+pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let Some(ty) = generator_signature_ty(kind, span) {
+        return ty;
+    }
     let kind = match kind {
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
@@ -138,6 +162,34 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     })
 }
 
+/// Declare the runtime generator's canonical type without creating an alternative wrapper layout.
+fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast::Ty> {
+    let element = if depth == 0 {
+        match leaf {
+            ListLeaf::Int => PlanType::Int,
+            ListLeaf::Float => PlanType::Float,
+            ListLeaf::Bool => PlanType::Bool,
+            ListLeaf::Str => PlanType::String,
+        }
+    } else {
+        PlanType::List(leaf.clone(), depth)
+    };
+    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    path.segments.push(ast::PathSegment::from_ident(ident("iter", span)));
+    let mut segment = ast::PathSegment::from_ident(ident(name, span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&element, span)))],
+    })));
+    path.segments.push(segment);
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    })
+}
+
 /// A diverging placeholder satisfies every admitted signature; `mir_built` replaces its body.
 fn placeholder(span: Span) -> Box<ast::Block> {
     let empty = Box::new(ast::Block {
@@ -200,7 +252,9 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             sig: signature,
             contract: None,
             define_opaque: None,
-            body: Some(placeholder(span)),
+            body: Some(
+                crate::captured_generators::declaration_body(function, span).unwrap_or_else(|| placeholder(span)),
+            ),
             eii_impls: ThinVec::new(),
         })),
         span,
