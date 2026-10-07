@@ -100,12 +100,13 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
         .select_payloads_for_execution(&identities)
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     for (unit, owner) in catalog.units.iter().zip(&selected) {
-        let key = serde_json::to_string(&unit.binding).map_err(|error| ProviderError::failure(error.to_string()))?;
+        let key = serde_json::to_string(&unit.binding.identity_binding())
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
         let actual: oven_rustc::sdk_closure::SdkLockedUnit =
             serde_json::from_slice(&owner.payload).map_err(|error| ProviderError::failure(error.to_string()))?;
-        let actual = serde_json::to_value(actual).map_err(|error| ProviderError::failure(error.to_string()))?;
-        let expected =
-            serde_json::to_value(&unit.binding).map_err(|error| ProviderError::failure(error.to_string()))?;
+        let actual = serde_json::to_value(actual.identity_binding()).map_err(|error| ProviderError::failure(error.to_string()))?;
+        let expected = serde_json::to_value(unit.binding.identity_binding())
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
         if receipts.get(&key) != Some(&unit.receipt_identity)
             || actual != expected
             || owner.manifest.domain != format!("sdk-source-unit-{}", unit.binding.domain)
@@ -115,7 +116,7 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
                 Path::new(&unit.relative_path)
                     .extension()
                     .and_then(|extension| extension.to_str()),
-                Some("rlib" | "dylib")
+                Some("rlib" | "dylib" | "so" | "dll")
             )
             || !owner
                 .admitted_materialized_files()
@@ -246,7 +247,8 @@ pub fn prepare_sdk_native_closure(
 pub fn sdk_native_receipts(closure: &SdkCompiledClosure) -> ProviderResult<BTreeMap<String, String>> {
     let mut receipts = BTreeMap::new();
     for unit in closure.units() {
-        let key = serde_json::to_string(unit.binding()).map_err(|error| ProviderError::failure(error.to_string()))?;
+        let key = serde_json::to_string(&unit.binding().identity_binding())
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
         if receipts.insert(key, unit.compiled_identity().to_string()).is_some() {
             return Err(ProviderError::failure("duplicate native SDK binding"));
         }

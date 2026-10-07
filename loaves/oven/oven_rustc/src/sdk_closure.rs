@@ -76,6 +76,20 @@ pub struct SdkLockedUnit {
     pub edges: Option<Vec<SdkLockedEdge>>,
 }
 
+impl SdkLockedUnit {
+    /// The binding a compiled unit is named and stored under: everything except the lock's dependency edges.
+    ///
+    /// An edge only records which locked unit a dependency resolved to, and that unit's own identity already enters
+    /// this unit's build through its extern artifact. Keeping edges out means one unit identity names one stored
+    /// payload and archive whether the lock that selected it carried edges (schema 2) or not (schema 1).
+    pub fn identity_binding(&self) -> SdkLockedUnit {
+        SdkLockedUnit {
+            edges: None,
+            ..self.clone()
+        }
+    }
+}
+
 /// One resolver-owned dependency alias and its exact locked destination.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -738,7 +752,7 @@ fn publish_unit(
         receipt,
         domain,
         kind: OvenArtifactKind::Engine,
-        payload: serde_json::to_vec(&unit.binding)?,
+        payload: serde_json::to_vec(&unit.binding.identity_binding())?,
         materialized_files: files,
         materialized_directories: Vec::new(),
     })?;
