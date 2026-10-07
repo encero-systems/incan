@@ -2815,10 +2815,12 @@ def enum_payload_read(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Preserve projected copy/borrow facts while materializing the source binding's owned value."""
+    # Legacy matches a cloned enum by value, so a moved payload binding is materialized like a cloned one.
     match fact:
         OwnershipFact.Copy => return Ok(read_place(place, false, span))
         OwnershipFact.Clone => pass
         OwnershipFact.Borrow => pass
+        OwnershipFact.Move => pass
         _ => return Err("unsupported Body IR enum payload binding ownership")
     if is_list(place_type(builder.locals, place)):
         return carrier_payload_value(builder, place, span)
