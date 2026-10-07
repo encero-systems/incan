@@ -13,9 +13,9 @@ from rust::sha1 import Sha1
 from rust::sha2 import Digest, Sha224, Sha256, Sha384, Sha512
 from rust::sha3 import Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256
 from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
-from rust::xxhash_rust::xxh3 with ["xxh3"] import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
-from rust::xxhash_rust::xxh32 with ["xxh32"] import Xxh32
-from rust::xxhash_rust::xxh64 with ["xxh64"] import Xxh64
+from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
+from rust::xxhash_rust::xxh32 import Xxh32
+from rust::xxhash_rust::xxh64 import Xxh64
 from std.traits.error import Error
 
 

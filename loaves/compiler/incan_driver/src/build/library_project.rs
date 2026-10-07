@@ -175,6 +175,90 @@ pub fn prepare_library_project_with_caller_facet(
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
     caller_facet: Option<&CallerFacetRequest>,
 ) -> CliResult<PreparedLibraryProject> {
+    match prepare_library_project_with_context(
+        file_path,
+        output_dir,
+        cargo_policy,
+        package_features,
+        sdk_profile_override,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+        generated_cargo_target_dir,
+        normal_oven,
+        include_interop_execution,
+        oven_plan_mode,
+        authority_context,
+        caller_facet,
+        None,
+    )? {
+        LibraryPreparation::Project(project) => Ok(*project),
+        LibraryPreparation::Native { .. } => Err(CliError::failure("unexpected native library publication")),
+    }
+}
+
+/// Products of a library preparation, keeping native publication separate from project execution plans.
+pub(crate) enum LibraryPreparation {
+    /// Generated ordinary project with its execution plan.
+    Project(Box<PreparedLibraryProject>),
+    /// Checked native SDK facade and portable executable surfaces.
+    Native {
+        manifest: Box<LibraryManifest>,
+        executable: Vec<u8>,
+    },
+}
+
+/// Check a native SDK component using the same checked export and metadata publication as other libraries.
+pub(crate) fn prepare_native_sdk_component(
+    project_root: &Path,
+    output: &Path,
+    context: &crate::build::native_sdk::NativeSdkPublicationContext<'_>,
+) -> CliResult<LibraryPreparation> {
+    let entry = project_root.join("src/lib.incn");
+    let entry = entry
+        .to_str()
+        .ok_or_else(|| CliError::failure("invalid SDK entry path"))?;
+    let output = output
+        .to_str()
+        .ok_or_else(|| CliError::failure("invalid SDK output path"))?;
+    prepare_library_project_with_context(
+        Some(entry),
+        Some(output),
+        CargoPolicy::default(),
+        &FeatureSelection::default(),
+        None,
+        Vec::new(),
+        false,
+        false,
+        None,
+        true,
+        false,
+        OvenProjectPlanMode::ExplicitBake,
+        None,
+        None,
+        Some(context),
+    )
+}
+
+/// Prepare ordinary libraries or native SDK publication without crossing into compatibility metadata readers.
+#[allow(clippy::too_many_arguments)]
+fn prepare_library_project_with_context(
+    file_path: Option<&str>,
+    output_dir: Option<&str>,
+    cargo_policy: CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    generated_cargo_target_dir: Option<&Path>,
+    normal_oven: bool,
+    include_interop_execution: bool,
+    oven_plan_mode: OvenProjectPlanMode,
+    authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+    caller_facet: Option<&CallerFacetRequest>,
+    native_sdk: Option<&crate::build::native_sdk::NativeSdkPublicationContext<'_>>,
+) -> CliResult<LibraryPreparation> {
     let prepare_start = Instant::now();
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
@@ -186,6 +270,9 @@ pub fn prepare_library_project_with_caller_facet(
         ));
     };
     enforce_project_toolchain_constraint(&manifest)?;
+    if let Some(context) = native_sdk {
+        context.validate_component_facets(&manifest)?;
+    }
     let project_version = manifest
         .project
         .as_ref()
@@ -193,7 +280,14 @@ pub fn prepare_library_project_with_caller_facet(
         .unwrap_or_else(|| "0.1.0".to_string());
 
     let lib_entry = validate_library_entrypoint(&manifest)?;
-    let compilation_session = if normal_oven {
+    let compilation_session = if let Some(context) = native_sdk {
+        CompilationSession::discover_for_native_sdk_component(
+            &lib_entry,
+            context.inventory,
+            &context.namespace_roots,
+            &context.native_facets,
+        )?
+    } else if normal_oven {
         CompilationSession::discover_for_oven(&lib_entry, package_features, sdk_profile_override)?
     } else {
         crate::session::CompilationSession::discover_with_selections(
@@ -230,7 +324,11 @@ pub fn prepare_library_project_with_caller_facet(
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
+    let semantic_sdk_paths = if native_sdk.is_some() {
+        Vec::new()
+    } else {
+        semantic_sdk_path_dependencies(&project_requirements)
+    };
     let provider_semantic_identities =
         compilation_session.provider_semantic_identities(&provider_plan, &semantic_sdk_paths)?;
     let semantic = incan_provider::lock_semantics::semantic_lock_state_with_provider_identities(
@@ -305,6 +403,9 @@ pub fn prepare_library_project_with_caller_facet(
             return Err(CliError::failure(msg.trim_end()));
         }
     };
+    // Compiled Incan providers participate in linking; their checked types do not require Rust source inspection.
+    #[cfg(feature = "rust_inspect")]
+    let inspection_dependencies = resolved.dependencies.clone();
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     record_timing(&mut timings_ms, "library_resolve_dependencies", dependency_start);
     #[cfg(feature = "rust_inspect")]
@@ -314,7 +415,7 @@ pub fn prepare_library_project_with_caller_facet(
 
     let lock_start = Instant::now();
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
-    if normal_oven {
+    if normal_oven && native_sdk.is_none() {
         if cargo_no_default_features || cargo_all_features || !cargo_features.cargo_features.is_empty() {
             return Err(CliError::failure(
                 "Oven Alpha normal library builds do not accept Cargo feature controls; use Incan package features instead",
@@ -409,7 +510,7 @@ pub fn prepare_library_project_with_caller_facet(
         )
     };
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
-    let mut oven_build_inputs = normal_oven
+    let mut oven_build_inputs = (normal_oven && native_sdk.is_none())
         .then(|| {
             oven_build_unit_inputs_with_provider_identities(
                 &provider_plan,
@@ -419,8 +520,10 @@ pub fn prepare_library_project_with_caller_facet(
             )
         })
         .transpose()?;
-    let source_compiler_vocab_support =
-        normal_oven && manifest.vocab().is_some() && oven_cargo_compat::source_compiler_vocab_support_is_available();
+    let source_compiler_vocab_support = normal_oven
+        && native_sdk.is_none()
+        && manifest.vocab().is_some()
+        && oven_cargo_compat::source_compiler_vocab_support_is_available();
     if source_compiler_vocab_support && let Some(build_inputs) = oven_build_inputs.as_mut() {
         // A source-built compiler seals this helper at the explicit publisher boundary. Keep that closure in a
         // distinct build unit so a v0.5.0 plan without it can neither shadow nor become ambiguous with the
@@ -447,7 +550,9 @@ pub fn prepare_library_project_with_caller_facet(
         .map(|rustc| rustc_identity(rustc))
         .transpose()
         .map_err(|error| CliError::failure(error.to_string()))?;
-    let oven_store = normal_oven.then(open_default_oven_store).transpose()?;
+    let oven_store = (normal_oven && native_sdk.is_none())
+        .then(open_default_oven_store)
+        .transpose()?;
     if include_interop_execution {
         let (build_inputs, target) = match (oven_build_inputs.as_mut(), oven_target.as_deref()) {
             (Some(build_inputs), Some(target)) => (build_inputs, target),
@@ -461,75 +566,82 @@ pub fn prepare_library_project_with_caller_facet(
     }
     let empty_oven_build_inputs = BTreeMap::new();
     #[cfg(feature = "rust_inspect")]
-    let rust_inspect_manifest_dir = if normal_oven {
-        !metadata_query_paths.is_empty()
+    let rust_inspect_manifest_dir = if let Some(context) = native_sdk {
+        Some(context.inspection_workspace()?)
     } else {
-        library_rust_inspection_required(artifact_only, &metadata_query_paths)
-    }
-    .then(|| {
         if normal_oven {
-            Ok((
-                // Rust inspection is compiler-owned preparation state, not part of the generated provider artifact.
-                // Keeping its Cargo target below `target/lib` leaks build-script outputs (including valid symlinks)
-                // into the provider integrity boundary and needlessly makes every consumer traverse that cache.
-                oven_model::lock::compiler_lock_state_dir(&project_root).join("rust_inspect_target"),
-                None::<crate::generated_cache::GeneratedCacheLease>,
-            ))
+            !metadata_query_paths.is_empty()
         } else {
-            resolve_generated_cargo_target(
-                generated_cargo_target_dir,
-                &project_root,
-                &project_root,
-                &lock_cargo_package_name,
-                "rust-inspect",
-                lock_payload_for_typecheck.as_deref(),
-                &cargo_features,
-                &cargo_flags,
-            )
-            .map(|target| {
-                let (path, lease, _identity) = target.into_parts();
-                (path, lease)
-            })
-            .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))
+            library_rust_inspection_required(artifact_only, &metadata_query_paths)
         }
-    })
-    .transpose()?
-    .map(|(rust_inspect_target_path, _rust_inspect_cache_lease)| {
-        let rust_inspect_start = Instant::now();
-        let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
-            project_root: &project_root,
-            project_name: project_name.as_str(),
-            cargo_package_name: &lock_cargo_package_name,
-            rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
-            resolved: &resolved,
-            project_requirements: &project_requirements,
-            lock_payload: lock_payload_for_typecheck.clone(),
-            cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
-            clear_cargo_lock,
-            cargo_policy_flags: cargo_flags.clone(),
-            cargo_target_dir: &rust_inspect_target_path,
-            rust_inspect_query_paths: &metadata_query_paths,
-            rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-            prepare_when_empty: true,
-            direct_oven_inspection: normal_oven,
-            force_direct_prewarm: false,
-            oven_source_authority: normal_oven.then(|| OvenRustInspectSourceAuthorityRequest {
-                project_version: &project_version,
-                target: oven_target.as_deref().unwrap_or_default(),
-                toolchain: oven_toolchain.as_deref().unwrap_or_default(),
-                profile: "debug",
-                features: &cargo_features.cargo_features,
-                build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
-                registry_dependencies: &resolved.dependencies,
-            }),
-            prepared_project_source_authorities: None,
-            explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
-        })?
-        .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
-        record_timing(&mut timings_ms, "library_rust_inspect_prewarm", rust_inspect_start);
-        Ok::<_, CliError>(rust_inspect_manifest_dir)
-    })
-    .transpose()?;
+        .then(|| {
+            if normal_oven {
+                Ok((
+                    // Rust inspection is compiler-owned preparation state, not part of the generated provider
+                    // artifact. Keeping its Cargo target below `target/lib` leaks build-script
+                    // outputs (including valid symlinks) into the provider integrity boundary and
+                    // needlessly makes every consumer traverse that cache.
+                    oven_model::lock::compiler_lock_state_dir(&project_root).join("rust_inspect_target"),
+                    None::<crate::generated_cache::GeneratedCacheLease>,
+                ))
+            } else {
+                resolve_generated_cargo_target(
+                    generated_cargo_target_dir,
+                    &project_root,
+                    &project_root,
+                    &lock_cargo_package_name,
+                    "rust-inspect",
+                    lock_payload_for_typecheck.as_deref(),
+                    &cargo_features,
+                    &cargo_flags,
+                )
+                .map(|target| {
+                    let (path, lease, _identity) = target.into_parts();
+                    (path, lease)
+                })
+                .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))
+            }
+        })
+        .transpose()?
+        .map(|(rust_inspect_target_path, _rust_inspect_cache_lease)| {
+            let rust_inspect_start = Instant::now();
+            let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+                project_root: &project_root,
+                project_name: project_name.as_str(),
+                cargo_package_name: &lock_cargo_package_name,
+                rust_edition: manifest.rust_edition().map(str::to_string),
+                resolved: &resolved,
+                project_requirements: &project_requirements,
+                lock_payload: lock_payload_for_typecheck.clone(),
+                cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
+                clear_cargo_lock,
+                cargo_policy_flags: cargo_flags.clone(),
+                cargo_target_dir: &rust_inspect_target_path,
+                rust_inspect_query_paths: &metadata_query_paths,
+                rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
+                prepare_when_empty: true,
+                direct_oven_inspection: normal_oven,
+                force_direct_prewarm: false,
+                oven_source_authority: normal_oven.then(|| OvenRustInspectSourceAuthorityRequest {
+                    project_version: &project_version,
+                    target: oven_target.as_deref().unwrap_or_default(),
+                    toolchain: oven_toolchain.as_deref().unwrap_or_default(),
+                    profile: "debug",
+                    features: &cargo_features.cargo_features,
+                    build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
+                    registry_dependencies: &inspection_dependencies,
+                }),
+                prepared_project_source_authorities: None,
+                explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
+            })?
+            .ok_or_else(|| {
+                CliError::failure("rust-inspect workspace preparation did not return a manifest directory")
+            })?;
+            record_timing(&mut timings_ms, "library_rust_inspect_prewarm", rust_inspect_start);
+            Ok::<_, CliError>(rust_inspect_manifest_dir)
+        })
+        .transpose()?
+    };
 
     let typecheck_start = Instant::now();
     let mut all_errors = String::new();
@@ -785,6 +897,48 @@ pub fn prepare_library_project_with_caller_facet(
             collect_library_rust_abi(rust_inspect_manifest_dir.manifest_dir(), &metadata_query_paths)?;
     }
     record_timing(&mut timings_ms, "library_build_manifest_metadata", manifest_start);
+    if let Some(context) = native_sdk {
+        library_manifest.contract_metadata.provider.implementation_facets =
+            crate::build::provider_metadata::native_sdk_implementation_facets(
+                &library_manifest.contract_metadata.provider.namespace_claims,
+            )?;
+        context.validate_component_facets(&manifest)?;
+        // The desugarer module is built here and copied into the component by `package_desugarer_artifact`.
+        let desugarer_scratch = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
+        if let Some(vocab) = incan_provider::vocab_extraction::collect_native_sdk_vocab_metadata(
+            &manifest,
+            &project_root,
+            context.closure,
+            &resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?,
+            desugarer_scratch.path(),
+        )? {
+            package_desugarer_artifact(&out_dir, vocab.pending_desugarer_artifact.as_ref())?;
+            library_manifest.vocab = Some(vocab.payload);
+            library_manifest.soft_keywords.activations = vocab.compatibility_activations;
+        }
+        #[cfg(feature = "rust_inspect")]
+        let inspection = rust_inspect_manifest_dir
+            .as_ref()
+            .map(|workspace| workspace.manifest_dir());
+        #[cfg(not(feature = "rust_inspect"))]
+        let inspection = None;
+        crate::build::native_sdk::generate_native_sdk_sources(
+            &out_dir,
+            &project_name,
+            &modules,
+            &checked_type_info_by_path,
+            stdlib_cache,
+            &provider_plan,
+            &mut library_manifest,
+            &selected_exports,
+            &declared,
+            inspection,
+        )?;
+        return Ok(LibraryPreparation::Native {
+            manifest: Box::new(library_manifest),
+            executable: executable_surface,
+        });
+    }
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
     // ---- Backend selection (#986) — declared before codegen, refused visibly if unavailable ----
@@ -882,7 +1036,7 @@ pub fn prepare_library_project_with_caller_facet(
     generator.set_include_dev_dependencies(
         lock_payload_for_typecheck.is_some() || oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
     );
-    let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
+    let rust_edition = manifest.rust_edition().map(str::to_string);
     generator.set_rust_edition(rust_edition.clone());
     #[cfg(feature = "rust_inspect")]
     if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir.as_ref() {
@@ -1041,6 +1195,8 @@ pub fn prepare_library_project_with_caller_facet(
         let store = oven_store
             .as_ref()
             .ok_or_else(|| CliError::failure("normal Oven library build omitted its bounded store"))?;
+        let link_closure =
+            oven_rustc::rustc::pinned_link_closure_identity(&rustc, &target).map_err(oven_rustc_error)?;
         let mut profiles = BTreeMap::new();
         let oven_receipt_source_evidence_start = Instant::now();
         let mut source_evidence_request = OvenGeneratedProjectRequest::new(
@@ -1096,6 +1252,9 @@ pub fn prepare_library_project_with_caller_facet(
                     provider_compilation_requirements_digest(&provider_compilations)
                         .map_err(|error| CliError::failure(error.to_string()))?,
                 );
+            }
+            if let Some(identity) = &link_closure {
+                receipt_request = receipt_request.with_build_unit_input("link-closure", identity);
             }
             let receipt = receipt_generated_project_with_source_evidence(&receipt_request, &generated_source_evidence)
                 .map_err(|error| CliError::failure(error.to_string()))?;
@@ -1334,7 +1493,7 @@ pub fn prepare_library_project_with_caller_facet(
         }
     }
 
-    Ok(PreparedLibraryProject {
+    Ok(LibraryPreparation::Project(Box::new(PreparedLibraryProject {
         checked_exports,
         executable_surface,
         generator,
@@ -1350,5 +1509,5 @@ pub fn prepare_library_project_with_caller_facet(
         rust_inspect_manifest_dir: rust_inspect_manifest_dir
             .as_ref()
             .map(|workspace| workspace.manifest_dir().to_path_buf()),
-    })
+    })))
 }

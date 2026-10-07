@@ -15,6 +15,8 @@ pub mod library_exports;
 pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
+pub mod native_sdk;
+pub(crate) mod native_sdk_plan;
 pub mod output_materialization;
 pub mod output_paths;
 pub mod output_selection;
@@ -30,6 +32,7 @@ pub mod publication;
 pub mod reuse;
 mod rust_bake_reuse;
 pub mod rust_extern;
+mod rust_source_freshness;
 pub mod source_authority;
 #[cfg(any(test, feature = "test_support"))]
 pub mod test_support;
@@ -522,6 +525,10 @@ pub struct OvenProjectOutputPayload {
     /// without putting an absolute worktree path into a portable Loaf.
     pub project_identity: String,
     pub source_authority_digest: String,
+    /// Authority of dependencies and non-Incan inputs, allowing development source edits without replaying stale
+    /// outputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_authority_digest: Option<String>,
     /// Derived semantic dependency fingerprint recorded by the canonical lock at bake time.
     ///
     /// The canonical lock projection remains part of `source_authority_digest`, but excludes this one derived field.
@@ -529,6 +536,10 @@ pub struct OvenProjectOutputPayload {
     /// strict commands still recompute and reject it before completed-output selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock_dependencies_fingerprint: Option<String>,
+    /// Exact compiler executable that produced this output; absent legacy records cannot authorize an upfront bake
+    /// hit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiler_identity_digest: Option<String>,
     pub compiler_version: String,
     pub entrypoint_relative_path: String,
     pub build_unit_identity: String,
@@ -812,10 +823,12 @@ pub struct CompiledProviderMetadataInputs<'a> {
 /// Command-local memo for exact project source-authority nodes.
 ///
 /// One explicit project bake can prepare several targets and profiles that all reach the same provider roots. The
-/// memo avoids walking those authored trees again within that command; it is never stored globally or carried into a
-/// later command. Callers that need a final publication check deliberately create a fresh digester instead.
+/// memo avoids walking authored trees again within that command. Rust closure digests additionally have a persistent
+/// stat-guarded cache, checked against observed inputs on every command. Final publication uses a fresh digester.
 #[derive(Default)]
 pub struct ProjectSourceAuthorityDigester {
+    /// Only this root may omit its own Incan sources when hashing development dependency authority.
+    pub development_root: Option<PathBuf>,
     pub project_digests: HashMap<PathBuf, String>,
     pub rust_crate_digests: HashMap<PathBuf, String>,
     pub rust_source_closure_digests: BTreeMap<PathBuf, String>,

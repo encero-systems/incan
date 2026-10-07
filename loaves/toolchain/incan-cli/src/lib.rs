@@ -148,6 +148,10 @@ pub enum CacheCategory {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Publish or reuse checked native SDK components from the source catalog.
+    #[command(name = "prepare-sdk", hide = true)]
+    PrepareSdk,
+
     /// Compile to Rust and build an executable through Oven Alpha direct-rustc
     Build {
         /// Source file to compile
@@ -1209,6 +1213,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 detect,
             },
         ),
+        Some(Command::PrepareSdk) => {
+            let inventory = incan_driver::build::native_sdk::prepare_or_discover_sdk_inventory()?.ok_or_else(|| {
+                incan_driver::error::CliError::failure("no SDK source catalog or installed inventory")
+            })?;
+            println!("{}", inventory.root.display());
+            Ok(ExitCode::SUCCESS)
+        }
         Some(Command::Lock { args }) => oven_cli::run_lock_command(args),
         None => {
             // Default: type check the file if provided

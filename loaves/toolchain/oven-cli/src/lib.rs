@@ -22,6 +22,8 @@ pub use incan_driver::error::{CliError, CliResult, ExitCode};
 /// Run one `oven` command family member.
 pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
     match command {
+        OvenCommand::ConvertCargo { workspace, project } => commands::oven::convert_cargo::run(&workspace, &project),
+        OvenCommand::CompileClosure(arguments) => commands::oven::compile_closure::run(arguments),
         OvenCommand::SdkHandoff { command } => commands::oven_sdk_handoff(command),
         OvenCommand::RetainSuiteOutput { clock, arguments } => commands::oven_retain_suite_output(clock, &arguments),
         OvenCommand::ReconcilePartitions { reports, summary } => {

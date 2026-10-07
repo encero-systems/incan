@@ -1,7 +1,7 @@
 from rust::std::cell import RefCell
 from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
 from rust::std::rc import Rc
-from rust::byteorder @ "1" import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
+from rust::byteorder import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
 from std.derives.collection import FallibleIterator
 from std.traits.error import Error
 

@@ -518,13 +518,13 @@ pub(super) fn validate_rust_target(target: &str) -> Result<(), OvenRustcError> {
     Ok(())
 }
 
-/// Validate editions that the Alpha direct runner explicitly supports.
+/// Validate Rust editions accepted by the pinned compiler for adopted Loaf sources.
 pub(super) fn validate_edition(edition: &str) -> Result<(), OvenRustcError> {
-    if matches!(edition, "2021" | "2024") {
+    if matches!(edition, "2015" | "2018" | "2021" | "2024") {
         return Ok(());
     }
     Err(OvenRustcError::InvalidInput {
         field: "edition",
-        message: "must be one of 2021 or 2024".to_string(),
+        message: "must be one of 2015, 2018, 2021 or 2024".to_string(),
     })
 }

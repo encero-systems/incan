@@ -272,6 +272,8 @@ pub fn try_reuse_baked_project(
     // Do not preserve this pre-refresh lock projection as this command's publication authority: an explicit bake
     // may refresh an old lock after the cache probe misses, and that compiler-owned refresh is not an authored edit.
     let source_authority_digest = authority_context.cache_probe_source_authority(project_root)?;
+    let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
+    let compiler_identity_digest = super::source_authority::current_compiler_identity_digest()?;
     let mut selected_outputs = Vec::new();
     for (project_target, entrypoint, profile, receipt_path, receipt) in expected_outputs {
         let Some(output) = select_baked_project_output_with_source_authority(
@@ -286,7 +288,10 @@ pub fn try_reuse_baked_project(
         else {
             return Ok(None);
         };
-        if output.payload.lock_dependencies_fingerprint != lock_dependencies_fingerprint {
+        if output.payload.compiler_identity_digest.as_deref() != Some(&compiler_identity_digest)
+            || output.payload.dependency_authority_digest.as_deref() != Some(&dependency_authority_digest)
+            || output.payload.lock_dependencies_fingerprint != lock_dependencies_fingerprint
+        {
             return Ok(None);
         }
         match project_target {

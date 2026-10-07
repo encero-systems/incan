@@ -1,0 +1,22 @@
+[dependencies]
+globset = { loaf = "crates-io/globset", version = "0.4.18" }
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+semver = { loaf = "crates-io/semver", version = "1.0.27" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+toml_edit = { features = ["parse", "serde"], loaf = "crates-io/toml_edit", version = "0.25" }
+
+[project]
+description = "Oven's project model: manifest, workspace, lifecycle policy, toolchain layout and interop declarations"
+license = "Apache-2.0"
+name = "oven_model"
+private = true
+version = "0.6.0-dev.5"
+
+[rust]
+edition = "2024"
+name = "oven_model"
+type = "lib"

@@ -75,6 +75,7 @@ enum Scalar {
     Tuple(Vec<Scalar>),
     String,
     StringRef,
+    Decimal,
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -114,6 +115,7 @@ enum Leaf {
     Model(i64),
     U8,
     Unit,
+    Decimal,
 }
 
 impl Leaf {
@@ -128,6 +130,7 @@ impl Leaf {
             ListLeaf::Model(index, _) => Leaf::Model(*index),
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::Unit => Leaf::Unit,
+            ListLeaf::Decimal => Leaf::Decimal,
         }
     }
 }
@@ -189,6 +192,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Unit => Scalar::Unit,
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
+        PlanType::Decimal => Scalar::Decimal,
         PlanType::StringRef => Scalar::StringRef,
         PlanType::StrRef => Scalar::StrRef,
         PlanType::StringArray(count) => Scalar::StringArray(*count),
@@ -782,6 +786,7 @@ fn source_signature_type(ty: Scalar) -> bool {
                 | Scalar::Bool
                 | Scalar::Unit
                 | Scalar::String
+                | Scalar::Decimal
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)

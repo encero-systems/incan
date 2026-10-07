@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 /// Metadata for the exact open file whose bytes were hashed, including replacement and preserved-mtime edits.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct FileStamp {
+pub(super) struct FileStamp {
     length: u64,
     modified: u128,
     identity: Vec<u64>,
@@ -19,13 +19,38 @@ struct FileStamp {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileDigestRecord {
+    scheme: String,
     stamp: FileStamp,
     digest: String,
 }
 
+/// Portable memo of one named authority transformation, selected by actual source bytes and scheme.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityDigestRecord {
+    scheme: String,
+    digest: String,
+}
+
+/// Reject incomplete or malformed cache identities before they can authorize a reuse decision.
+fn valid_digest(digest: &str) -> bool {
+    digest
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 /// Read metadata from the held handle so a path replacement cannot stamp bytes from another file.
 fn stamp(file: &fs::File) -> io::Result<FileStamp> {
-    let metadata = file.metadata()?;
+    stamp_metadata(&file.metadata()?)
+}
+
+/// Observe a regular input without reading bytes, for before/after source-closure guards.
+pub(super) fn stat_file(path: &Path) -> io::Result<FileStamp> {
+    stamp_metadata(&fs::symlink_metadata(path)?)
+}
+
+/// Encode replacement-sensitive metadata without mixing the local path into content authority.
+fn stamp_metadata(metadata: &fs::Metadata) -> io::Result<FileStamp> {
     if !metadata.is_file() {
         return Err(io::Error::other("build input must be a regular file"));
     }
@@ -77,11 +102,32 @@ pub(super) fn digest_file(path: &Path) -> io::Result<String> {
 
 /// Compute one regular-file digest in an explicit cache root, allowing isolated tests without environment mutation.
 fn digest_file_in(path: &Path, cache: Option<&Path>) -> io::Result<String> {
+    digest_file_with_in(path, cache, "raw-sha256-v1", |bytes| {
+        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+    })
+}
+
+/// Cache a named authority scheme independently of raw file digests; changed schemes always recompute.
+pub(super) fn digest_file_with(
+    path: &Path,
+    scheme: &str,
+    digest: impl FnOnce(&[u8]) -> io::Result<String>,
+) -> io::Result<String> {
+    digest_file_with_in(path, cache_root().as_deref(), scheme, digest)
+}
+
+/// Observe and cache the digest of one open regular file under an explicit authority scheme.
+fn digest_file_with_in(
+    path: &Path,
+    cache: Option<&Path>,
+    scheme: &str,
+    compute: impl FnOnce(&[u8]) -> io::Result<String>,
+) -> io::Result<String> {
     let path = fs::canonicalize(path)?;
     let cache_path = cache.map(|root| {
         root.join(format!(
             "{:x}.json",
-            Sha256::digest(path.as_os_str().as_encoded_bytes())
+            Sha256::digest([scheme.as_bytes(), path.as_os_str().as_encoded_bytes()].concat())
         ))
     });
     let mut file = fs::File::open(&path)?;
@@ -91,29 +137,42 @@ fn digest_file_in(path: &Path, cache: Option<&Path>) -> io::Result<String> {
             .as_ref()
             .and_then(|path| fs::read(path).ok())
             .and_then(|bytes| serde_json::from_slice::<FileDigestRecord>(&bytes).ok())
+        && record.scheme == scheme
         && record.stamp == before
-        && record
-            .digest
-            .strip_prefix("sha256:")
-            .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && valid_digest(&record.digest)
     {
         return Ok(record.digest);
     }
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 65536];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hash.update(&buffer[..read]);
-    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let content_path = cache.filter(|_| scheme != "raw-sha256-v1").map(|root| {
+        root.join("content").join(format!(
+            "{:x}.json",
+            Sha256::digest([scheme.as_bytes(), Sha256::digest(&bytes).as_slice()].concat())
+        ))
+    });
+    let portable = content_path
+        .as_ref()
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<AuthorityDigestRecord>(&bytes).ok())
+        .filter(|record| record.scheme == scheme && valid_digest(&record.digest));
+    let digest = match portable {
+        Some(record) => record.digest,
+        None => compute(&bytes)?,
+    };
     if stamp(&file)? != before {
         return Err(io::Error::other("build input changed while hashing"));
     }
-    let digest = format!("sha256:{:x}", hash.finalize());
+    if let Some(path) = content_path {
+        let record = AuthorityDigestRecord {
+            scheme: scheme.to_string(),
+            digest: digest.clone(),
+        };
+        let _published = publish_json(&path, &record);
+    }
     if let Some(cache_path) = cache_path {
         let record = FileDigestRecord {
+            scheme: scheme.to_string(),
             stamp: before,
             digest: digest.clone(),
         };
@@ -124,6 +183,11 @@ fn digest_file_in(path: &Path, cache: Option<&Path>) -> io::Result<String> {
 
 /// Publish a complete cache record atomically; concurrent commands may replace equivalent observations.
 fn publish_record(path: &Path, record: &FileDigestRecord) -> io::Result<()> {
+    publish_json(path, record)
+}
+
+/// Atomically publish a complete named cache record without making caching a correctness requirement.
+fn publish_json(path: &Path, record: &impl Serialize) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("digest cache has no parent"))?;
@@ -173,6 +237,36 @@ mod tests {
             fs::write(entry?.path(), b"invalid")?;
         }
         assert_eq!(digest, digest_file_in(&source, Some(&cache))?);
+        Ok(())
+    }
+
+    /// Scheme changes cannot consume another authority's cached digest; unchanged stamps skip computation.
+    #[test]
+    fn authority_scheme_is_bound_and_warm_hits_skip_computation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("source.incn");
+        fs::write(&source, "def main() -> None:\n    pass\n")?;
+        let raw = digest_file_in(&source, Some(root.path()))?;
+        let authority = format!("sha256:{:x}", Sha256::digest(b"normalized tokens"));
+        assert_ne!(raw, authority);
+        assert_eq!(
+            authority,
+            digest_file_with_in(&source, Some(root.path()), "tokens-v1", |_| Ok(authority.clone()))?
+        );
+        assert_eq!(
+            authority,
+            digest_file_with_in(&source, Some(root.path()), "tokens-v1", |_| Err(io::Error::other(
+                "warm hit recomputed"
+            )))?
+        );
+        assert_eq!(raw, digest_file_in(&source, Some(root.path()))?);
+        fs::write(&source, "def main() -> None:\n    print(1)\n")?;
+        assert!(
+            digest_file_with_in(&source, Some(root.path()), "tokens-v1", |_| Err(io::Error::other(
+                "changed stamp recomputed"
+            )))
+            .is_err()
+        );
         Ok(())
     }
 

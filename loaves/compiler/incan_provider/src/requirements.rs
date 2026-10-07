@@ -92,11 +92,11 @@ pub enum LibraryDependencyPreparation {
     OvenDirectRustc,
 }
 
-/// Decide whether session construction is inside the explicitly named legacy-Cargo provider publisher.
+/// Decide whether session construction may prepare a missing native SDK inventory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SdkInventorySource {
-    /// Existing compatibility behavior for commands that still explicitly own legacy artifact preparation.
-    PrepareLegacyCargoIfAbsent,
+    /// Prepare the sealed native SDK publication when no current inventory exists.
+    PrepareNativeIfAbsent,
     /// Oven consumer mode: read an installed/prepared inventory only and never create Cargo state on a cache miss.
     DiscoverOnly,
 }
@@ -477,7 +477,7 @@ pub fn collect_project_requirements(
             continue;
         };
         for dep in namespace.extra_crate_deps {
-            let spec = dependency_spec_from_stdlib_dep(dep);
+            let spec = dependency_spec_from_stdlib_dep(dep)?;
             if matches!(spec.source, DependencySource::Path { .. }) {
                 merge_sdk_path_dependency(
                     &mut requirements.sdk_path_dependencies,
@@ -539,6 +539,15 @@ pub fn collect_project_requirements(
 /// or features.
 pub fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
     let mut dependencies = requirements.sdk_path_dependencies.clone();
+    // Native provider receipts already bind the complete SDK support closure. Its source Cargo packages cannot
+    // become another semantic authority or be read to establish the same support identity a second time.
+    if dependencies.iter().any(|dependency| {
+        matches!(&dependency.source,
+        DependencySource::Path { path } if path.join("native-provider.json").is_file())
+    }) {
+        dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+        return dependencies;
+    }
     let toolchain_crates = incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
         .into_iter()
         .chain(requirements.stdlib_facets.iter().map(String::as_str));
@@ -579,37 +588,55 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> ProviderResult<D
             "stdlib dependency metadata for `{crate_name}` is missing from the registry"
         ))
     })?;
-    Ok(dependency_spec_from_stdlib_dep(dep))
+    dependency_spec_from_stdlib_dep(dep)
 }
 
 /// Build the exact dependency specification one stdlib dependency requirement contributes to a generated root.
 ///
 /// Checked publisher manifests that declare the same crate must agree with this specification by dependency meaning.
 /// Equivalent version-range spellings unify to one stable spelling; every other identity field must agree exactly.
-pub fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
+pub fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> ProviderResult<DependencySpec> {
     match dep.source {
-        StdlibExtraCrateSource::Version(version) => DependencySpec {
-            crate_name: dep.crate_name.to_string(),
-            version: Some(version.to_string()),
-            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: stdlib::extra_crate_package_alias(dep.crate_name).map(str::to_string),
-        },
-        StdlibExtraCrateSource::Path(relative_path) => DependencySpec {
+        StdlibExtraCrateSource::Declared => declared_stdlib_dependency(dep.crate_name)?.ok_or_else(|| {
+            ProviderError::failure(format!("stdlib Loaf manifests do not declare `{}`", dep.crate_name))
+        }),
+        StdlibExtraCrateSource::Path(relative_path) => Ok(DependencySpec {
             crate_name: dep.crate_name.to_string(),
             version: None,
-            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
+            features: Vec::new(),
             default_features: true,
             source: DependencySource::Path {
                 path: oven_model::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
             },
             optional: false,
             package: None,
-        },
+        }),
     }
-    .normalized()
+}
+
+/// Resolve a namespace's named Rust dependency from admitted component Loaf declarations.
+///
+/// Shared dependencies union their declared features. Incompatible requirements or policy refuse rather than
+/// silently selecting whichever component happens to precede another in the embedded inventory.
+pub fn declared_stdlib_dependency(crate_name: &str) -> ProviderResult<Option<DependencySpec>> {
+    let mut merged: Vec<DependencySpec> = Vec::new();
+    for (component, content) in stdlib::COMPONENT_MANIFESTS {
+        let manifest = oven_model::manifest::ProjectManifest::from_str(content, Path::new("loaf.toml"))
+            .map_err(|error| ProviderError::failure(format!("stdlib component `{component}`: {error}")))?;
+        if let Some(spec) = manifest.rust_dependencies().get(crate_name) {
+            let mut candidate = spec.clone();
+            if let Some(existing) = merged.first_mut() {
+                let mut features = existing.features.clone();
+                features.extend(candidate.features.iter().cloned());
+                features.sort();
+                features.dedup();
+                existing.features = features.clone();
+                candidate.features = features;
+            }
+            merge_requirement_dependency(&mut merged, candidate, format!("stdlib component `{component}`"))?;
+        }
+    }
+    Ok(merged.into_iter().next())
 }
 
 /// Merge a dependency requirement into a collection of requirements.
@@ -645,6 +672,20 @@ fn retain_canonical_requirement_spelling(existing: &mut DependencySpec, candidat
 #[cfg(test)]
 mod semantic_requirement_identity_tests {
     use super::*;
+    /// Dependency policy comes from the converted component manifests, including adopted package aliases.
+    #[test]
+    fn amended_loaf_stdlib_requirements_use_declared_policy() -> ProviderResult<()> {
+        let bzip = declared_stdlib_dependency("bzip2")?.ok_or_else(|| ProviderError::failure("missing bzip2"))?;
+        assert_eq!(bzip.version.as_deref(), Some("0.6"));
+        let md5 = declared_stdlib_dependency("md5")?.ok_or_else(|| ProviderError::failure("missing md5"))?;
+        assert_eq!(md5.package.as_deref(), Some("md-5"));
+        let hmac = declared_stdlib_dependency("hmac")?.ok_or_else(|| ProviderError::failure("missing hmac"))?;
+        assert_eq!(hmac.features, ["reset"]);
+        let tokio = declared_stdlib_dependency("tokio")?.ok_or_else(|| ProviderError::failure("missing tokio"))?;
+        assert_eq!(tokio.features, ["macros", "net", "rt-multi-thread", "sync", "time"]);
+        assert!(declared_stdlib_dependency("not_declared")?.is_none());
+        Ok(())
+    }
 
     #[test]
     fn equivalent_requirement_merges_choose_one_stable_spelling() -> ProviderResult<()> {

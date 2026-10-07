@@ -123,6 +123,8 @@ pub def _io_error(codec: Option[Codec], operation: str, detail: str) -> Compress
 pub def _validate_chunk_size(codec: Option[Codec], operation: str, chunk_size: int) -> Result[None, CompressionError]:
     """
     Reject a non-positive stream chunk size before touching source or target streams.
+
+    Positive int values fit u64, so the backend Read.take conversions preserve the validated size.
     """
     if chunk_size <= 0:
         return Err(
