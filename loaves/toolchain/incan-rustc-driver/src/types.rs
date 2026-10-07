@@ -79,7 +79,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::USize => tcx.types.usize,
         PlanType::Bool => tcx.types.bool,
         PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
-        PlanType::FunctionItem(name, _) => Ty::new_fn_def(tcx, crate::callees::planned(tcx, name)?, []),
+        PlanType::FunctionItem(name, _) => Ty::new_fn_def(tcx, crate::callees::planned(tcx, name)?, tcx.mk_args(&[])),
         PlanType::Unit => tcx.types.unit,
         PlanType::UnitFunction => Ty::new_fn_ptr(
             tcx,
@@ -127,7 +127,7 @@ pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, dept
             .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::iter::{name}")))?;
     }
     let element = if depth == 0 {
-        primitive_type(tcx, leaf)?
+        collection_leaf_type(tcx, leaf)?
     } else {
         list_type(tcx, leaf, depth)?
     };

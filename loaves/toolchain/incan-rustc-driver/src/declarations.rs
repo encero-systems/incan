@@ -161,12 +161,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
 /// Declare the runtime generator's canonical type without creating an alternative wrapper layout.
 fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast::Ty> {
     let element = if depth == 0 {
-        match leaf {
-            ListLeaf::Int => PlanType::Int,
-            ListLeaf::Float => PlanType::Float,
-            ListLeaf::Bool => PlanType::Bool,
-            ListLeaf::Str => PlanType::String,
-        }
+        list_leaf_type(leaf.clone())
     } else {
         PlanType::List(leaf.clone(), depth)
     };

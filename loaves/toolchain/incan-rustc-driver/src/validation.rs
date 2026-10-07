@@ -1027,12 +1027,7 @@ fn generator_element(leaf: &ListLeaf, depth: i64) -> Scalar {
     if depth != 0 {
         return Scalar::List(Leaf::of(leaf), depth);
     }
-    match leaf {
-        ListLeaf::Int => Scalar::Int,
-        ListLeaf::Float => Scalar::Float,
-        ListLeaf::Bool => Scalar::Bool,
-        ListLeaf::Str => Scalar::String,
-    }
+    scalar(&crate::plan::list_leaf_type(leaf.clone()))
 }
 
 /// Captured spawn is a constructor boundary, not an arbitrary closure operation in an ordinary planned body.
