@@ -36,6 +36,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 Primitive.Bool => return Ok(PlanType.Bool)
                 Primitive.Unit => return Ok(PlanType.Unit)
                 Primitive.Str => return Ok(PlanType.String)
+                Primitive.Bytes => return Ok(PlanType.List(ListLeaf.U8, 1))
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
         RustType.Tuple(elements) => return tuple_type(elements)
         RustType.Generic(base=base, args=arguments) =>
@@ -51,6 +52,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.Float => return Ok(PlanType.List(ListLeaf.Float, 1))
                 PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
                 PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
+                PlanType.U8 => return Ok(PlanType.List(ListLeaf.U8, 1))
                 PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
                 PlanType.Model(index, name) => return Ok(PlanType.List(ListLeaf.Model(index, name), 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))

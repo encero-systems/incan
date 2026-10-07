@@ -777,6 +777,63 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare exact byte literals, copied byte vectors, and borrowed parameters with legacy.
+#[test]
+fn direct_route_bytes_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("bytes")?;
+    let source = root.join("bytes.incn");
+    fs::write(
+        &source,
+        r#"
+def count(value: bytes) -> int:
+    """Observe borrowed byte storage without consuming the caller's vector."""
+    return len(value)
+
+def main() -> None:
+    """Exercise empty and unsigned byte literals and independent copied storage."""
+    values = b"\x00\x7f\x80\xff"
+    copied = values
+    println(count(values))
+    println(count(b""))
+    println(values[0])
+    println(copied[1])
+    println(values[2])
+    println(copied[3])
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("bytes-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native bytes compilation",
+    );
+    let legacy_root = root.join("bytes-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy bytes compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/bytes")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy bytes execution");
+    success(&actual, "native bytes execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"4\n0\n0\n127\n128\n255\n");
+    Ok(())
+}
+
 /// Prove class construction, shared and mutable receivers, and passing classes against legacy.
 #[test]
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
