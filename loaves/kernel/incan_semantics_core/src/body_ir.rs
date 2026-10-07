@@ -243,7 +243,7 @@ pub struct TraitImplementation {
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
@@ -266,9 +266,16 @@ pub struct NominalDeclaration {
     pub field_public: Vec<bool>,
     /// Whether the source nominal declaration is public.
     pub public: bool,
-    /// Whether any declared field has a default; the native route refuses these declarations.
+    /// Whether any declared field has a default; missing executable default facts must refuse omitted fields.
     pub has_field_defaults: bool,
-    /// Legacy implicit nominal derives, retained by the frontend rather than inferred by consumers.
+    /// Declaration-owned deferred field computations, with one parameter slot per canonical field and a private
+    /// local frame. The empty block is not a callable implementation; consumers evaluate only defaults selected by
+    /// a checked constructor binding. Older artifacts without this frame must refuse omitted fields.
+    #[serde(default)]
+    pub field_default_body: Option<Box<Body>>,
+    /// Checked builtin and implicit nominal derives, retained in legacy normalization order. A selected `Default`
+    /// over source field defaults requires a custom implementation rather than a Rust derive macro; consumers that
+    /// cannot implement it must refuse that combination.
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,

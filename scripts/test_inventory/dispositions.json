@@ -5731,7 +5731,7 @@
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },

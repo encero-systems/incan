@@ -155,7 +155,7 @@ pub(super) fn collect_local_nominal_declarations(
                 return collect_plain_newtype(declaration.span, newtype, module_identity, type_info);
             }
             let (name, fields, visibility, type_parameter_count, class_layout) = match &declaration.node {
-                ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => (
+                ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => (
                     &model.name,
                     &model.fields,
                     model.visibility,
@@ -217,9 +217,14 @@ pub(super) fn collect_local_nominal_declarations(
                     .collect::<Option<Vec<_>>>()?,
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
-                derives: incan_lang::lang::derives::plain_model_derives()
-                    .map(str::to_owned)
-                    .to_vec(),
+                field_default_body: None,
+                derives: if class_layout.is_some() {
+                    incan_lang::lang::derives::plain_model_derives()
+                        .map(str::to_owned)
+                        .to_vec()
+                } else {
+                    type_info.declarations.model_derives.get(name)?.clone()
+                },
                 field_types: fields
                     .iter()
                     .map(|field| {
@@ -287,6 +292,7 @@ fn collect_plain_newtype(
         field_public: vec![true],
         public: newtype.visibility == ast::Visibility::Public,
         has_field_defaults: false,
+        field_default_body: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
         type_parameter_count: 0,
@@ -456,7 +462,7 @@ pub(super) fn collect_local_trait_implementations(
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
         let (adoptions, methods) = match &declaration.node {
-            ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => {
+            ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => {
                 (&model.traits, &model.methods)
             }
             ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),

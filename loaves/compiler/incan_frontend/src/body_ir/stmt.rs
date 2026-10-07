@@ -227,6 +227,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// (`loaves/kernel/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`) -- `fa.compound_op` is purely a
     /// formatter hint for round-tripping `+=` spelling and carries no separate lowering semantics here, so this
     /// only needs to build the write-side place and lower `value` normally.
+    /// Field alias writes remain named refusals because legacy still emits their alias spelling as a Rust field.
     pub(super) fn lower_field_assignment(
         &mut self,
         field_assignment: &ast::FieldAssignmentStmt,
@@ -235,10 +236,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let mut place = self.lower_expr_to_place(&field_assignment.object, scope, out);
-        place.projection.push(bir::PlaceElem::field(
-            field_assignment.field.clone(),
-            self.type_info.resolved_identity(field_assignment.target_span).cloned(),
-        ));
+        let projection = self.lower_checked_field_projection(
+            &field_assignment.object,
+            &field_assignment.field,
+            field_assignment.target_span,
+        );
+        // Legacy writes still emit the source alias as a Rust field (#1337 lane repro). Do not admit a write
+        // that legacy cannot compile merely because the checker already selected its canonical storage.
+        if matches!(&projection, bir::PlaceElem::Field { name, .. } if name != &field_assignment.field) {
+            self.push_unsupported_stmt(
+                format!("model field alias assignment `{}`", field_assignment.field),
+                span,
+                out,
+            );
+            return;
+        }
+        place.projection.push(projection);
         if !place.permits_write() {
             let target = place.global().map_or_else(
                 || "field assignment target".to_string(),

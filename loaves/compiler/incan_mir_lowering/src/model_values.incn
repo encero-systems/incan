@@ -1,0 +1,185 @@
+"""Derived nominal formatting and comparisons over the retained source field layout."""
+
+from rust::incan_semantics_core::body_ir import Operand as RustOperand, BinOp, MethodTarget
+from rust::incan_semantics_core import SymbolOrigin, SemanticSourceTargetKind
+from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, terminate_call, place_type
+from models import model_place
+
+
+def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+    """Locate a checked model operand without applying value-read cloning before a shared trait call."""
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.local_id():
+                None => return Ok(None)
+                Some(_local) => pass
+            mut place = model_place(builder.nominals, builder.locals[builder.local_offset:], read.place, span)?
+            place.local += builder.local_offset
+            match place_type(builder.locals, place):
+                PlanType.Model(_owner, _name) => return Ok(Some(place))
+                _ => pass
+        _ => pass
+    return Ok(None)
+
+
+def borrow_model(mut builder: Builder, value: Place, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow a nominal value for a runtime trait call, retaining its owner's initialized storage."""
+    match ty:
+        PlanType.Model(owner, name) =>
+            reference = temporary(builder, PlanType.ModelRef(owner, name), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+            return Ok(read_place(reference, false, span))
+        _ => return Err("unsupported Body IR model trait receiver")
+
+
+def model_call(
+    mut builder: Builder,
+    name: str,
+    ty: PlanType,
+    result: PlanType,
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Retain the exact nominal instantiation and shared-reference signature for metadata validation."""
+    match ty:
+        PlanType.Model(owner, model_name) =>
+            reference = PlanType.ModelRef(owner, model_name)
+            mut parameters: list[PlanType] = []
+            for _argument in arguments:
+                parameters.append(reference)
+            path = f"incan_native_runtime::{name}"
+            builder.externals.append(
+                ExternalFunction(path=path, type_arguments=[ty], parameters=parameters, return_type=result, span=span),
+            )
+            terminate_call(builder, CalleeKind.Instantiated(path, ty), arguments, destination, span)
+            if result == PlanType.String:
+                builder.owned.append(destination.local)
+            return Ok(None)
+        _ => return Err("unsupported Body IR model trait instantiation")
+
+
+pub def debug_model(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Place, str]:
+    """Render with the nominal's derived Debug implementation rather than reconstructing field text."""
+    ty = place_type(builder.locals, value)
+    operand = borrow_model(builder, value, ty, span)?
+    result = temporary(builder, PlanType.String, span)
+    model_call(builder, "debug_model", ty, PlanType.String, [operand], result, span)?
+    return Ok(result)
+
+
+pub def debug_model_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Accept explicit Debug formatting only for a retained nominal place."""
+    match nominal_place(builder, value, span)?:
+        Some(place) => return debug_model(builder, place, span)
+        None => return Err("unsupported Body IR nonmodel FormatStyle.Debug")
+
+
+def comparison_name(operator: &BinOp) -> Result[str, str]:
+    """Select a trait operation without translating nominal comparisons into scalar MIR."""
+    match operator:
+        BinOp.Eq => return Ok("equal_model")
+        BinOp.Ne => return Ok("unequal_model")
+        BinOp.Lt => return Ok("less_model")
+        BinOp.Le => return Ok("less_equal_model")
+        BinOp.Gt => return Ok("greater_model")
+        BinOp.Ge => return Ok("greater_equal_model")
+        _ => return Err("unsupported Body IR model binary operator")
+
+
+def compare_places(
+    mut builder: Builder,
+    destination: Place,
+    operator: &BinOp,
+    first: Place,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Require matching retained nominal carriers before borrowing the two comparison operands."""
+    match nominal_place(builder, right, span)?:
+        None => return Err("unsupported Body IR mixed model comparison")
+        Some(second) =>
+            ty = place_type(builder.locals, first)
+            if ty != place_type(builder.locals, second):
+                return Err("unsupported Body IR distinct model comparison")
+            name = comparison_name(operator)?
+            match ty:
+                PlanType.Model(owner, _model_name) =>
+                    mut required = "PartialOrd"
+                    if operator == BinOp.Eq or operator == BinOp.Ne:
+                        required = "PartialEq"
+                    if required not in builder.nominals[owner].derives:
+                        return Err(f"unsupported Body IR model comparison without derived {required}")
+                _ => return Err("unsupported Body IR model comparison carrier")
+            arguments = [borrow_model(builder, first, ty, span)?, borrow_model(builder, second, ty, span)?]
+            model_call(builder, name, ty, PlanType.Bool, arguments, destination, span)?
+            return Ok(true)
+
+
+pub def compare_models(
+    mut builder: Builder,
+    destination: Place,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Route model comparisons through retained derives; other operands remain with their existing lowering."""
+    match nominal_place(builder, left, span)?:
+        None => return Ok(false)
+        Some(first) => return compare_places(builder, destination, operator, first, right, span)
+
+
+pub def display_model_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """Use the checked derived Display form, which legacy defines as the model's Debug text."""
+    match nominal_place(builder, value, span)?:
+        None => return Ok(None)
+        Some(place) =>
+            match place_type(builder.locals, place):
+                PlanType.Model(owner, _name) =>
+                    if "Display" not in builder.nominals[owner].derives:
+                        return Err("unsupported Body IR model display without derived Display")
+                _ => return Err("unsupported Body IR model display carrier")
+            return Ok(Some(debug_model(builder, place, span)?))
+
+
+pub def serialize_model_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    destination: Place,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Serialize a retained model with checked serde capability, borrowing its original storage."""
+    match nominal_place(builder, value, span)?:
+        None => return Ok(false)
+        Some(place) =>
+            ty = place_type(builder.locals, place)
+            match ty:
+                PlanType.Model(owner, _name) =>
+                    if "serde::Serialize" not in builder.nominals[owner].derives:
+                        return Err("unsupported Body IR model JSON serialization without serde::Serialize")
+                _ => return Err("unsupported Body IR model JSON carrier")
+            argument = borrow_model(builder, place, ty, span)?
+            model_call(builder, "serialize_model", ty, PlanType.String, [argument], destination, span)?
+            return Ok(true)
+
+
+pub def is_json_serialize_method(target: &MethodTarget) -> bool:
+    """Recognize the checker-selected JSON protocol default by declaring module and member identity."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "to_json":
+                return false
+            match identity.origin:
+                SymbolOrigin.Module(path) =>
+                    return len(path) == 3 and path[0] == "std" and path[1] == "serde" and path[2] == "json"
+                _ => return false
+        None => return false

@@ -134,7 +134,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
             let mut item = declarations::model(model, span);
-            for derive in &model.derives {
+            for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
                 item.attrs.push(declarations::derive_attribute(
                     &compiler.sess.psess.attr_id_generator,
                     derive,

@@ -800,6 +800,105 @@ fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
         &fixture.formatting,
     )
 }
+/// Builtin model derives retain the legacy declaration and shared-argument cloning behavior.
+#[test]
+fn model_derives_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_derives",
+        r#"@derive(Debug, Clone, Eq, Hash, Ord, Default)
+model Point:
+    x: int
+    label: str
+
+def copy(point: Point) -> Point:
+    return point
+
+def main() -> None:
+    point = Point(x=3, label="derived\"\n")
+    other = copy(point)
+    later = Point(x=3, label="z")
+    higher = Point(x=4, label="a")
+    println(point.x)
+    println(other.label)
+    println(f"{point:?}")
+    println(f"debug={point:?}")
+    println(point == other)
+    println(point != later)
+    println(point < later)
+    println(point <= other)
+    println(higher > later)
+    println(higher >= later)
+    println(point.x)
+"#,
+        None,
+    )
+}
+
+/// Field aliases share canonical storage across construction, reads, receiver methods, and writes.
+#[test]
+fn model_field_aliases_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_field_aliases",
+        r#"model AliasRecord:
+    value [alias="wire_value"]: int
+    label [alias="wire_label"]: str
+
+    def read(self) -> int:
+        return self.wire_value
+
+def main() -> None:
+    mut value = AliasRecord(wire_label="aliased", wire_value=7)
+    println(value.value)
+    println(value.wire_value)
+    println(value.read())
+    value.value = 9
+    println(value.value)
+    println(value.label)
+    println(value.wire_label)
+"#,
+        None,
+    )
+}
+
+/// Model field defaults execute for each omitted slot and preserve the legacy default effects and owned text.
+#[test]
+fn model_field_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_field_defaults",
+        r#"def default_number() -> int:
+    println(100)
+    return 7
+
+def default_text() -> str:
+    println(200)
+    prefix = "default"
+    return prefix + "!"
+
+model Defaults:
+    required: int
+    number: int = default_number()
+    label: str = default_text()
+    flag: bool = true
+    fraction: float = 2.5
+
+def main() -> None:
+    first = Defaults(required=1)
+    second = Defaults(label="supplied", required=2, number=9)
+    third = Defaults(required=3)
+    println(first.required)
+    println(first.number)
+    println(first.label)
+    println(first.flag)
+    println(first.fraction)
+    println(second.number)
+    println(second.label)
+    println(third.number)
+    println(third.label)
+"#,
+        None,
+    )
+}
+
 /// Scalar and string defaults execute at omitted calls, while supplied arguments bypass them.
 #[test]
 fn direct_route_defaults_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -1225,4 +1324,76 @@ def main() -> None:
         assert!(!refused_output.exists());
     }
     Ok(())
+}
+
+/// Derived Display uses the same Debug structure in println, string conversion, and interpolation as legacy.
+#[test]
+fn model_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_display",
+        r#"@derive(Display)
+model Record:
+    number: int
+    label: str
+
+def main() -> None:
+    record = Record(number=7, label="quoted\"\n")
+    println(record)
+    println(f"record={record}")
+    println(str(record))
+    println(f"{record:?}")
+    println(record.label)
+"#,
+        None,
+    )
+}
+
+/// JSON module bundles, imported aliases, and qualified derives serialize through the legacy serde boundary.
+#[test]
+fn model_json_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_json",
+        r#"from std.serde import json
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(json)
+model Record:
+    number: int
+    label: str
+
+@derive(JsonSerialize)
+model Alias:
+    enabled: bool
+
+@derive(json.Serialize)
+model Qualified:
+    value: float
+
+def next_value() -> str:
+    println("evaluated")
+    return "line\né"
+
+def main() -> None:
+    record = Record(number=7, label="quoted\"\n")
+    alias = Alias(enabled=true)
+    qualified = Qualified(value=2.5)
+    println(record.to_json())
+    println(json_stringify(record))
+    println(json_stringify(123))
+    println(json_stringify(None))
+    println(json_stringify(9223372036854775807))
+    println(json_stringify(-9223372036854775807))
+    println(json_stringify(next_value()))
+    println(std.builtins.json_stringify(next_value()))
+    println(json_stringify(-7))
+    println(json_stringify(2.5))
+    println(json_stringify(true))
+    println(json_stringify("escaped\"\n"))
+    println(alias.to_json())
+    println(qualified.to_json())
+    println(record.to_json())
+    println(record.label)
+"#,
+        None,
+    )
 }

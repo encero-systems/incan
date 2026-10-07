@@ -84,6 +84,11 @@ pub(super) fn project_nominal(
     for ty in &nominal.field_types {
         audit.ty(ty)?;
     }
+    if let Some(defaults) = &source.field_default_body {
+        let projected = project_body(defaults, module, library, public)?;
+        nominal.field_default_body = Some(Box::new(projected.body));
+        audit.requirements.extend(projected.requirements);
+    }
     nominal.named_type_identities = audit.used_nominal_types;
     Ok((nominal, audit.requirements))
 }
