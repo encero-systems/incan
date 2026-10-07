@@ -693,18 +693,19 @@ fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
 fn direct_route_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let root = fixture.scratch("modules")?;
-    let source = root.join("main.incn");
+    let source = root.join("src/main.incn");
+    fs::create_dir_all(root.join("src"))?;
     fs::write(
         &source,
         "from facade import exported as compute\nimport helper\n\ndef calculate(a: int, b: int) -> int:\n  return a - b\n\ndef main() -> None:\n  println(compute(b=2, a=40))\n  println(helper.calculate(3, 4))\n  println(calculate(9, 2))\n",
     )?;
     fs::write(
-        root.join("helper.incn"),
+        root.join("src/helper.incn"),
         "def hidden(a: int) -> int:\n  return a\n\npub def calculate(a: int, b: int) -> int:\n  return hidden(a) + b\n",
     )?;
-    fs::create_dir_all(root.join("facade"))?;
+    fs::create_dir_all(root.join("src/facade"))?;
     fs::write(
-        root.join("facade/__init__.incn"),
+        root.join("src/facade/__init__.incn"),
         "pub from helper import calculate as exported\n",
     )?;
     let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
