@@ -683,10 +683,61 @@ fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dy
     Ok(())
 }
 
+/// A closure expression over a sized carrier keeps that carrier's native arithmetic through its lifted function,
+/// pointer reification, and indirect calls: `100000 * 100000` wraps in `i32` exactly as legacy's release build does,
+/// where an `i64` slip would print `10000000000`.
+#[test]
+fn direct_route_sized_numeric_closures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("sized-closures")?;
+    let source = root.join("sized_closures.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def main() -> None:\n",
+            "    square: (i32) -> i32 = (value) => value * value\n",
+            "    println(square(100000))\n",
+            "    cube: (i32) -> i32 = (value) => value * value * value\n",
+            "    println(cube(2000))\n",
+            "    println(cube(-7))\n",
+        ),
+    )?;
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy sized-numeric closure compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/sized_closures")).output()?;
+    success(&legacy, "legacy sized-numeric closure execution");
+    assert_eq!(legacy.stdout, b"1410065408\n-589934592\n-343\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native sized-numeric closure compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native sized-numeric closure execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
+
 /// Prove stored items, aliases, explicit pointer coercions, returned pointers, and indirect invocation separately
 /// before the same focused test exercises closure-holding contracts.
 fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let source = root.join("function-items.incn");
+    let source = root.join("function_items.incn");
     fs::write(
         &source,
         concat!(
@@ -700,7 +751,7 @@ fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<()
             "    stored_echo = echo\n    println(stored_echo(\"hello\"))\n",
         ),
     )?;
-    let legacy_root = root.join("function-items-legacy");
+    let legacy_root = root.join("function_items_legacy");
     success(
         &support::repo_command()
             .current_dir(root)
@@ -710,11 +761,11 @@ fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<()
             .output()?,
         "legacy function-item compilation",
     );
-    let legacy = Command::new(legacy_root.join("oven/release/function-items")).output()?;
+    let legacy = Command::new(legacy_root.join("oven/release/function_items")).output()?;
     success(&legacy, "legacy function-item execution");
     assert_eq!(legacy.stdout, b"8\n10\n12\nhello\n");
     let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
-    let native = root.join("function-items-native");
+    let native = root.join("function_items_native");
     success(
         &corpus::source_command(
             &fixture.driver_binary("release"),

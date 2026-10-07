@@ -79,6 +79,10 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::USize => tcx.types.usize,
         PlanType::Bool => tcx.types.bool,
         PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
+        PlanType::Closure(signature) => Ty::new_box(tcx, callable_object_type(tcx, signature)?),
+        PlanType::ClosureRef(signature) => {
+            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
+        }
         PlanType::FunctionItem(name, _) => Ty::new_fn_def(tcx, crate::callees::planned(tcx, name)?, tcx.mk_args(&[])),
         PlanType::Unit => tcx.types.unit,
         PlanType::UnitFunction => Ty::new_fn_ptr(
@@ -150,6 +154,41 @@ fn function_pointer_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Res
         .collect::<Result<Vec<_>, _>>()?;
     let signature = tcx.mk_fn_sig_safe_rust_abi(inputs, native_type(tcx, result)?);
     Ok(Ty::new_fn_ptr(tcx, rustc_middle::ty::Binder::dummy(signature)))
+}
+
+/// Build the `dyn Fn(inputs) -> output` object a boxed closure or closure-holding parameter holds.
+///
+/// The object's trait and its `FnOnce::Output` projection come from language items, never from source spellings.
+pub fn callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+        function: "callable object".into(),
+        reason: "callable signature has no return type".into(),
+    })?;
+    let missing = |item: &str| PlanError::UnknownCallee(item.into());
+    let fn_trait = tcx.lang_items().fn_trait().ok_or_else(|| missing("Fn"))?;
+    let output = tcx
+        .lang_items()
+        .fn_once_output()
+        .ok_or_else(|| missing("FnOnce::Output"))?;
+    let arguments = callable_arguments_type(tcx, parameters)?;
+    let predicates = tcx.mk_poly_existential_predicates(&[
+        rustc_middle::ty::Binder::dummy(rustc_middle::ty::ExistentialPredicate::Trait(
+            rustc_middle::ty::ExistentialTraitRef::new(tcx, fn_trait, [arguments]),
+        )),
+        rustc_middle::ty::Binder::dummy(rustc_middle::ty::ExistentialPredicate::Projection(
+            rustc_middle::ty::ExistentialProjection::new(tcx, output, [arguments], native_type(tcx, result)?.into()),
+        )),
+    ]);
+    Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_static))
+}
+
+/// The tuple a callable object's call takes, holding each checked input in order.
+pub fn callable_arguments_type<'tcx>(tcx: TyCtxt<'tcx>, parameters: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let inputs = parameters
+        .iter()
+        .map(|ty| native_type(tcx, ty))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Ty::new_tup(tcx, &inputs))
 }
 
 /// Resolve the real standard String definition rather than manufacturing an ADT layout.

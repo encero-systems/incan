@@ -81,6 +81,8 @@ from rust::incan_semantics_core::body_ir import (
     HelperOp as RustHelper,
     NamedCallableTarget as RustNamedCallableTarget,
     LocalCallableTarget as RustLocalCallableTarget,
+    CallableParam as RustCallableParam,
+    LocalId as RustLocalId,
     Operand as RustOperand,
     OwnershipFact,
     Place as RustPlace,
@@ -219,6 +221,11 @@ from closures import (
     callable_copy_type,
     callable_signature,
     function_pointer_storage,
+    parameter_representation,
+    return_representation,
+    closure_arguments,
+    closure_capture_type,
+    closure_constructor,
 )
 # =====================================================================================================================
 # Boundary types and validation
@@ -342,6 +349,20 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
             OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable ownership")
             OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable borrow")
             _ => return Ok(read_place(target, false, span))
+    match place_type(builder.locals, target):
+        PlanType.ClosureRef(_signature) =>
+            match fact:
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable-object ownership")
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable-object borrow")
+                _ => return Ok(read_place(target, false, span))
+        PlanType.Closure(_signature) =>
+            match fact:
+                OwnershipFact.Move =>
+                    if target.projection != Projection.Whole:
+                        return Err("unsupported Body IR partial closure move")
+                    return Ok(read_place(target, true, span))
+                _ => return Err("unsupported Body IR closure read outside a call, argument, or move")
+        _ => pass
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
@@ -667,19 +688,30 @@ def validate_ready_race_assignment(value: &RustRvalue) -> Result[None, str]:
 
 def lower_return(mut builder: Builder, value: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
     """Store the result in the return slot, drop every live owner, and return."""
-    return_type = builder.locals[0].ty
     mut result = literal(Constant.Unit, span)
     match value:
         Some(operand) =>
-            if builder.locals[0].ty == PlanType.String:
-                text = display_operand(builder, operand, span)?
-                forget_owned(builder, text.local)
-                result = read_place(text, true, span)
-            else:
-                result = boundary_operand(builder, operand, return_type, span)?
-                track_rvalue_moves(builder, RvalueKind.Use(result))
+            result = return_operand(builder, operand, span)?
         None => pass
-    result = coerce_numeric_operand(builder, result, return_type, span)?
+    return finish_return(builder, result, span)
+
+
+def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize a returned value for the return slot's type, taking ownership of an owned result."""
+    return_type = builder.locals[0].ty
+    if return_type == PlanType.String:
+        text = display_operand(builder, operand, span)?
+        forget_owned(builder, text.local)
+        return Ok(read_place(text, true, span))
+    result = boundary_operand(builder, operand, return_type, span)?
+    track_rvalue_moves(builder, RvalueKind.Use(result))
+    return Ok(result)
+
+
+def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:
+    """Store a materialized result in the return slot, drop every live owner, and return."""
+    return_type = builder.locals[0].ty
+    result = coerce_numeric_operand(builder, value, return_type, span)?
     if callable_copy_type(return_type):
         assign_callable(builder, plan_place(0, span), result, true, span)?
     else:
@@ -752,10 +784,25 @@ def lower_local_assignment(
             return Ok(None)
         None => pass
     match value:
+        RustRvalue.Closure(params=parameters, captured_operands=captures, body=closure) =>
+            if not closure.function_item:
+                return lower_closure(
+                    module,
+                    builder,
+                    target,
+                    parameters,
+                    captures,
+                    closure.capture_locals,
+                    closure.stmts,
+                    closure.result,
+                    span,
+                )
         RustRvalue.Use(operand) =>
             if callable_copy_type(place_type(builder.locals, target)):
                 callable = scalar_operand(builder, operand, span)?
-                return assign_callable(builder, target, callable, target.local in builder.function_pointer_locals, span)
+                match operand_type(builder, callable)?:
+                    PlanType.Closure(signature) => return move_closure(builder, target, callable, signature, span)
+                    _ => return assign_callable(builder, target, callable, target.local in builder.function_pointer_locals, span)
         _ => pass
     match builder.locals[target.local].ty:
         PlanType.GeneratorMutRef(_leaf, _depth) =>
@@ -857,6 +904,201 @@ def assign_callable(
     builder.locals[target.local].ty = ty
     builder.emit(plan_assign(target, operation, span))
     return Ok(None)
+
+
+def move_closure(mut builder: Builder, target: Place, value: Operand, signature: list[PlanType], span: SourceSpan) -> Result[None, str]:
+    """Transfer an owned closure into a callable binding, which takes the closure's own boxed type."""
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected closure assignment")
+    if target.local in builder.function_pointer_locals:
+        return Err("unsupported Body IR capturing closure stored as a function pointer")
+    if callable_signature(place_type(builder.locals, target))? != signature:
+        return Err("invalid Body IR closure assignment signature")
+    track_rvalue_moves(builder, RvalueKind.Use(value))
+    drop_owned(builder, target.local, span)
+    builder.locals[target.local].ty = PlanType.Closure(signature)
+    builder.emit(plan_assign(target, RvalueKind.Use(value), span))
+    builder.owned.append(target.local)
+    return Ok(None)
+
+
+def synthesize(mut builder: Builder, function: Function) -> None:
+    """Retain one synthesized function per name; a forwarding environment for one item is shared."""
+    for retained in builder.synthesized:
+        if retained.name == function.name:
+            return
+    builder.synthesized.append(function)
+
+
+def lower_closure(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: Place,
+    parameters: &list[RustCallableParam],
+    captures: &list[RustOperand],
+    capture_locals: &list[RustLocalId],
+    statements: &list[RustStatement],
+    result: &RustOperand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Lift a closure expression's body into a planned function, then bind the value the source requires.
+
+    A closure without captures is that function's item, so it reuses item storage, pointer reification, and calls. A
+    capturing closure boxes one environment holding its captures by value, which is the checker's snapshot contract.
+    """
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected closure construction")
+    if builder.local_offset != 0:
+        return Err("unsupported Body IR closure inside a deferred default")
+    if len(captures) != len(capture_locals):
+        return Err("invalid Body IR closure capture layout")
+    signature = callable_signature(place_type(builder.locals, target))?
+    mut operands: list[Operand] = []
+    mut capture_types: list[PlanType] = []
+    for capture in captures:
+        operand = scalar_operand(builder, capture, span)?
+        ty = operand_type(builder, operand)?
+        if not closure_capture_type(ty):
+            return Err("unsupported Body IR closure capture outside int, float, and bool")
+        operands.append(operand)
+        capture_types.append(ty)
+    name = f"__incan_closure_{builder.name}_{len(builder.synthesized)}"
+    lifted = lift_closure(
+        module,
+        builder,
+        name,
+        capture_types,
+        parameters,
+        capture_locals,
+        statements,
+        result,
+        signature,
+        span,
+    )?
+    synthesize(builder, lifted)
+    item = RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span))
+    if len(capture_types) == 0:
+        if target.local in builder.function_pointer_locals:
+            held = temporary(builder, PlanType.FunctionItem(name, signature), span)
+            builder.emit(plan_assign(held, item, span))
+            return assign_callable(builder, target, read_place(held, false, span), true, span)
+        builder.locals[target.local].ty = PlanType.FunctionItem(name, signature)
+        builder.emit(plan_assign(target, item, span))
+        return Ok(None)
+    if target.local in builder.function_pointer_locals:
+        return Err("unsupported Body IR capturing closure stored as a function pointer")
+    _ = closure_arguments(signature)?
+    constructor = closure_constructor(f"{name}_new", name, capture_types, signature, span)
+    synthesize(builder, constructor)
+    drop_owned(builder, target.local, span)
+    builder.locals[target.local].ty = PlanType.Closure(signature)
+    terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, target, span)
+    builder.owned.append(target.local)
+    return Ok(None)
+
+
+def lift_closure(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    name: str,
+    captures: list[PlanType],
+    parameters: &list[RustCallableParam],
+    capture_locals: &list[RustLocalId],
+    statements: &list[RustStatement],
+    result: &RustOperand,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Function, str]:
+    """
+    Build a closure body as a planned function taking its captures, then its inputs, by value.
+
+    The enclosing frame's locals keep their Body IR slots after those arguments, so the closure's statements lower with
+    the ordinary local offset; a prologue moves each argument into the capture or parameter local the body reads.
+    """
+    if len(parameters) + 1 != len(signature):
+        return Err("invalid Body IR closure parameter count")
+    mut arguments: list[PlanType] = []
+    for ty in captures:
+        arguments.append(ty)
+    for index in range(len(signature) - 1):
+        arguments.append(signature[index])
+    count = len(arguments)
+    mut locals = [Local(ty=signature[-1], span=span)]
+    mut lifted_parameters: list[Parameter] = []
+    for index in range(count):
+        locals.append(Local(ty=arguments[index], span=span))
+        lifted_parameters.append(Parameter(name=f"__incan_argument_{index}", ty=arguments[index], span=span))
+    for index in range(1, len(builder.locals)):
+        locals.append(builder.locals[index])
+    mut pointer_locals: list[int] = []
+    for local in builder.function_pointer_locals:
+        if local != 0:
+            pointer_locals.append(local + count)
+    mut lifted = Builder(
+        locals=locals,
+        parameter_count=count,
+        blocks=[],
+        current=0,
+        source=builder.source,
+        file=builder.file,
+        module_identity=builder.module_identity,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[],
+        closed=[],
+        nominals=builder.nominals,
+        iterators=[],
+        borrowed_items=[],
+        enums=builder.enums,
+        intrinsics=builder.intrinsics,
+        statics=builder.statics,
+        local_offset=count,
+        generator_handle=-1,
+        unions=builder.unions,
+        function_pointer_locals=pointer_locals,
+        name=name,
+        synthesized=[],
+    )
+    _ = lifted.new_block(span)
+    for index in range(count):
+        mut destination = 0
+        if index < len(captures):
+            destination = int(capture_locals[index].index()) + 1 + count
+        else:
+            destination = int(parameters[index - len(captures)].local.index()) + 1 + count
+        if lifted.locals[destination].ty != arguments[index]:
+            return Err("invalid Body IR closure argument type")
+        owned = arguments[index] == PlanType.String
+        lifted.emit(
+            plan_assign(
+                plan_place(destination, span),
+                RvalueKind.Use(read_place(plan_place(index + 1, span), owned, span)),
+                span,
+            ),
+        )
+        if owned:
+            lifted.owned.append(destination)
+    for statement in statements:
+        lower_statement(module, lifted, statement)?
+    if not lifted.closed[lifted.current]:
+        value = return_operand(lifted, result, span)?
+        finish_return(lifted, value, span)?
+    if len(lifted.synthesized) != 0:
+        return Err("unsupported Body IR closure nested in a closure")
+    for external in lifted.externals:
+        builder.externals.append(external)
+    return Ok(
+        Function(
+            name=name,
+            parameters=lifted_parameters,
+            return_type=signature[-1],
+            locals=lifted.locals,
+            blocks=lifted.blocks,
+            span=span,
+        ),
+    )
 
 
 def negation_as_subtraction(operation: RvalueKind, span: SourceSpan) -> RvalueKind:
@@ -1039,9 +1281,8 @@ def lower_method_call(
         parameter = body.params[index]
         if parameter.mutable:
             return Err("unsupported Body IR mutable Method argument")
-        types.append(
-            native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?,
-        )
+        declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
+        types.append(parameter_representation(body, int(parameter.local.index()), declared)?)
     ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
     mut operands = [read_place(reference, true, span)]
     for operand in ordinary:
@@ -1138,13 +1379,14 @@ def emit_local_call(
                 native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?,
                 span,
             )
-    result_type = native_source_type(
+    declared = native_source_type(
         builder.nominals,
         builder.enums,
         builder.unions,
         body.return_type,
         builder.intrinsics,
     )?
+    result_type = return_representation(body, declared)?
     return lower_callable_result(builder, CalleeKind.Planned(function_name(module, body)), operands, output, result_type, span)
 
 
@@ -1157,7 +1399,16 @@ def lower_callable_result(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve owned return replacement and unwind cleanup identically for declared and locally held callees."""
-    if result_type == PlanType.String or is_nominal_type(result_type) or is_owned_collection(result_type):
+    mut owned_closure = false
+    match result_type:
+        PlanType.Closure(_signature) =>
+            # The destination's function type takes the returned closure's own boxed representation.
+            if output.projection != Projection.Whole:
+                return Err("unsupported Body IR projected closure result")
+            builder.locals[output.local].ty = result_type
+            owned_closure = true
+        _ => pass
+    if result_type == PlanType.String or is_nominal_type(result_type) or is_owned_collection(result_type) or owned_closure:
         result = temporary(builder, result_type, span)
         terminate_call(builder, callee, operands, result, span)
         builder.owned.append(result.local)
@@ -1193,8 +1444,69 @@ def lower_callable_value(
             output = scalar_place(builder, place, span)?
         None =>
             output = temporary(builder, result, span)
+    match place_type(builder.locals, callable):
+        PlanType.Closure(_held) => return call_closure(builder, callable, signature, operands, output, span)
+        PlanType.ClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
+        _ => pass
     value = place_read(builder, target.operand.place, target.operand.fact, span)?
     return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
+
+
+def call_closure(
+    mut builder: Builder,
+    callable: Place,
+    signature: list[PlanType],
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Pack the call's inputs into one tuple and invoke the borrowed callable object."""
+    elements = closure_arguments(signature)?
+    packed = temporary(builder, PlanType.Tuple(elements), span)
+    track_rvalue_moves(builder, RvalueKind.Tuple(operands))
+    builder.emit(plan_assign(packed, RvalueKind.Tuple(operands), span))
+    receiver = callable_object(builder, callable, signature, span)?
+    return lower_callable_result(
+        builder,
+        CalleeKind.CallClosure(signature),
+        [receiver, read_place(packed, true, span)],
+        output,
+        signature[-1],
+        span,
+    )
+
+
+def callable_object(mut builder: Builder, callable: Place, signature: list[PlanType], span: SourceSpan) -> Result[Operand, str]:
+    """Borrow an owned closure, or copy a received view, as the shared callable object a call takes."""
+    match place_type(builder.locals, callable):
+        PlanType.ClosureRef(_held) => return Ok(read_place(callable, false, span))
+        PlanType.Closure(_held) =>
+            view = temporary(builder, PlanType.ClosureRef(signature), span)
+            builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
+            return Ok(read_place(view, false, span))
+        _ => return Err("unsupported Body IR callable without an object representation")
+
+
+def callable_argument(mut builder: Builder, value: &RustOperand, signature: list[PlanType], span: SourceSpan) -> Result[Operand, str]:
+    """Give a closure-holding parameter a shared callable object; a function item is boxed behind a forwarding environment."""
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            source = place_type(builder.locals, place)
+            if callable_signature(source)? != signature:
+                return Err("invalid Body IR callable argument signature")
+            match source:
+                PlanType.FunctionItem(name, _held) =>
+                    constructor = f"__incan_item_closure_{name}"
+                    synthesize(builder, closure_constructor(constructor, name, [], signature, span))
+                    boxed = temporary(builder, PlanType.Closure(signature), span)
+                    terminate_call(builder, CalleeKind.Planned(constructor), [], boxed, span)
+                    builder.owned.append(boxed.local)
+                    return callable_object(builder, boxed, signature, span)
+                PlanType.FunctionPointer(_held) =>
+                    return Err("unsupported Body IR function pointer passed to a closure-holding parameter")
+                _ => return callable_object(builder, place, signature, span)
+        _ => return Err("unsupported Body IR constant passed to a closure-holding parameter")
 
 
 def lower_stdlib_delegation(
@@ -1278,7 +1590,8 @@ def ordered_arguments(
             _ => pass
     mut types: list[PlanType] = []
     for parameter in body.params:
-        ty = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
+        declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
+        ty = parameter_representation(body, int(parameter.local.index()), declared)?
         if is_nominal_type(ty) and parameter.mutable and not is_generator_type(ty):
             return Err("unsupported Body IR mutable model parameter")
         if ty == PlanType.String and parameter.mutable:
@@ -1337,7 +1650,10 @@ pub def call_argument_operand(
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Share checked collection borrows, owned strings, union injection, and numeric coercion across call slots."""
+    """Share checked collection borrows, owned strings, callable objects, union injection, and numeric coercion across call slots."""
+    match ty:
+        PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
+        _ => pass
     if is_list(ty) or is_collection(ty):
         return checked_list_argument(builder, value, is_mutable_list_reference(ty), span)
     if is_generator_reference(ty):
@@ -2203,11 +2519,12 @@ pub def lower_program(
     mut externals: list[ExternalFunction] = []
     for index in range(len(checked)):
         for body in checked[index].bodies:
-            function, runtime = lower_function(context, body, unions, sources[index], files[index], intrinsics)?
+            function, runtime, synthesized = lower_function(context, body, unions, sources[index], files[index], intrinsics)?
             for retained in functions:
                 if retained.name == function.name:
                     return Err(f"unsupported Body IR overloaded function {body.name}")
             functions.append(function)
+            append_synthesized(functions, synthesized)?
             if body.is_async and function_name(context, body) == "main":
                 entry_function, entry_runtime = async_entry(function)
                 functions.append(entry_function)
@@ -2250,8 +2567,9 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
         for retained in functions:
             if retained.name == function_name(module, body):
                 return Err(f"unsupported Body IR overloaded function {body.name}")
-        function, runtime = lower_function(module, body, unions, source, file, intrinsics)?
+        function, runtime, synthesized = lower_function(module, body, unions, source, file, intrinsics)?
         functions.append(function)
+        append_synthesized(functions, synthesized)?
         if body.is_async and function_name(module, body) == "main":
             entry_function, entry_runtime = async_entry(function)
             functions.append(entry_function)
@@ -2302,6 +2620,20 @@ def append_generator_constructor(
         None => return Err("unsupported Body IR generator return type")
 
 
+def append_synthesized(mut functions: list[Function], additions: list[Function]) -> Result[None, str]:
+    """Add closure bodies and constructors once; two functions sharing one item's forwarding environment agree on it."""
+    for addition in additions:
+        mut present = false
+        for retained in functions:
+            if retained.name == addition.name:
+                if retained != addition:
+                    return Err(f"invalid Body IR synthesized function collision {addition.name}")
+                present = true
+        if not present:
+            functions.append(addition)
+    return Ok(None)
+
+
 def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> None:
     """Add each runtime function the plan does not declare yet; one declaration per path and generic instantiation."""
     for external in additions:
@@ -2320,19 +2652,22 @@ def lower_function(
     source: str,
     file: str,
     intrinsics: list[EnumDeclaration],
-) -> Result[tuple[Function, list[ExternalFunction]], str]:
-    """Build one function's native frame from its checked locals, parameters and body."""
+) -> Result[tuple[Function, list[ExternalFunction], list[Function]], str]:
+    """Build one function's native frame from its checked locals, parameters and body, with any functions its closures synthesize."""
     match body.extern_delegation:
         Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
         None => pass
     validate_callable_representation(body)?
     span = location(body.span, source, file)
-    declared_type = native_source_type(
-        module.nominal_declarations,
-        module.enum_declarations,
-        unions,
-        body.return_type,
-        intrinsics,
+    declared_type = return_representation(
+        body,
+        native_source_type(
+            module.nominal_declarations,
+            module.enum_declarations,
+            unions,
+            body.return_type,
+            intrinsics,
+        )?,
     )?
     mut return_type = declared_type
     if body.is_generator():
@@ -2369,6 +2704,8 @@ def lower_function(
         generator_handle=-1,
         unions=unions,
         function_pointer_locals=function_pointer_storage(body),
+        name=evaluator_name(module, body),
+        synthesized=[],
     )
     _ = builder.new_block(span)
     if body.is_generator():
@@ -2408,7 +2745,7 @@ def lower_function(
                 producer_frame(function, builder.generator_handle, leaf, depth)
                 function.name = producer_name(function.name)
             None => return Err("unsupported Body IR generator return type")
-    return Ok((function, builder.externals))
+    return Ok((function, builder.externals, builder.synthesized))
 
 
 def frame_locals(
@@ -2442,7 +2779,7 @@ def frame_locals(
                     ty = list_parameter_type(ty, false)
         for parameter in body.params:
             if parameter.local == local.id:
-                ty = list_parameter_type(ty, parameter.mutable)
+                ty = list_parameter_type(parameter_representation(body, index - 1, ty)?, parameter.mutable)
         locals.append(Local(ty=ty, span=location(local.span, source, file)))
     return Ok(locals)
 
@@ -2457,7 +2794,11 @@ def frame_parameters(
     """The frame's parameters, in declaration order; mutable string, mutable model, and defaulted parameters are refused."""
     mut parameters: list[Parameter] = []
     for parameter in body.params:
-        ty = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
+        ty = parameter_representation(
+            body,
+            int(parameter.local.index()),
+            frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?,
+        )?
         if is_nominal_type(ty) and parameter.mutable and not is_generator_type(ty):
             return Err("unsupported Body IR mutable model parameter")
         if ty == PlanType.String and parameter.mutable:

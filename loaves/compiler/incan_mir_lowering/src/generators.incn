@@ -150,6 +150,7 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.UnitFunction(name) => return RvalueKind.UnitFunction(name)
         RvalueKind.FunctionItem(callee) => return RvalueKind.FunctionItem(swap_callee(callee, handle))
         RvalueKind.ReifyFunction(value) => return RvalueKind.ReifyFunction(swap_operand(value, handle))
+        RvalueKind.ClosureObject(place) => return RvalueKind.ClosureObject(swap_place(place, handle))
 
 
 def swap_statement(value: StatementKind, handle: int) -> StatementKind:

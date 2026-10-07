@@ -163,6 +163,11 @@ pub fn rvalue<'tcx>(
             ),
             mir::WithRetag::Yes,
         ),
+        RvalueKind::ClosureObject(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Shared,
+            place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
+        ),
         RvalueKind::ReifyFunction(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerCoercion(
                 rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
