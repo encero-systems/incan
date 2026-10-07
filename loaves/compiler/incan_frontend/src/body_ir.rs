@@ -325,7 +325,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         constant_declarations,
         type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
-        trait_implementations: collect::collect_local_trait_implementations(program, type_info),
+        trait_implementations: collect::collect_local_trait_implementations(program, type_info, &nominal_declarations),
         enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
         static_declarations: collect::collect_scalar_statics(program, type_info),
@@ -502,18 +502,24 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
-/// Admit only a concrete tuple wrapper whose construction adds no hooks, constraints, or trait behavior.
+/// Admit concrete tuple wrappers with ordinary methods and nongeneric trait adoptions.
+///
+/// Checked construction hooks and constraints remain refused by the declaration collector; aliases, interop edges,
+/// associated types, and generic methods require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
         && newtype.decorators.is_empty()
         && newtype.type_params.is_empty()
-        && newtype.traits.is_empty()
+        && newtype.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && newtype.rebindings.is_empty()
         && newtype.method_aliases.is_empty()
         && newtype.method_partials.is_empty()
         && newtype.associated_types.is_empty()
         && newtype.interop_edges.is_empty()
-        && newtype.methods.is_empty()
+        && newtype
+            .methods
+            .iter()
+            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.

@@ -509,10 +509,13 @@ pub(super) fn collect_local_trait_declarations(
 /// Retain non-generic local trait slots and their checked concrete implementation identities.
 ///
 /// Successful typechecking already proves adoption and method compatibility. This registry retains only local,
-/// unambiguous method declarations; imported, generic, and overloaded implementations never gain a guessed target.
+/// unambiguous method declarations with admitted owner layouts; imported, generic, and overloaded implementations never
+/// gain a guessed target. A refused checked newtype constructor cannot contribute an implementation without its owner
+/// layout.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
+    nominal_declarations: &[bir::NominalDeclaration],
 ) -> Vec<bir::TraitImplementation> {
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
@@ -521,6 +524,9 @@ pub(super) fn collect_local_trait_implementations(
                 (&model.traits, &model.methods)
             }
             ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),
+            ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
+                (&newtype.traits, &newtype.methods)
+            }
             _ => continue,
         };
         let Some(owner) = type_info
@@ -530,6 +536,12 @@ pub(super) fn collect_local_trait_implementations(
         else {
             continue;
         };
+        if !nominal_declarations
+            .iter()
+            .any(|declaration| &declaration.canonical == owner)
+        {
+            continue;
+        }
         for adoption in adoptions {
             if !adoption.node.type_args.is_empty() {
                 continue;
