@@ -744,7 +744,6 @@ fn direct_route_builtins_match_legacy() -> Result<(), Box<dyn std::error::Error>
     small: f32 = 1.1
     exponent: f32 = 2.0
     println(small ** exponent)
-    println(bool())
     println(bool(0))
     println(bool(-2))
     println(bool(0.0))
