@@ -952,6 +952,7 @@ def lower_call(
 
 
 def lower_value_enum_method(
+    module: &BodyIrModule,
     mut builder: Builder,
     owner: int,
     arguments: &list[RustArgumentElement],
@@ -998,7 +999,7 @@ def lower_value_enum_method(
         if result_type == PlanType.String:
             lower_string_assignment(builder, output, raw, span)?
         else:
-            operation = scalar_rvalue(builder, raw, span)?
+            operation = scalar_rvalue(module, builder, raw, span)?
             builder.emit(plan_assign(output, operation, span))
         builder.finish(TerminatorKind.Goto(join), span)
         builder.current = next
@@ -1032,7 +1033,7 @@ def lower_method_call(
     if is_json_serialize_method(target):
         return lower_model_json_builtin(builder, arguments, destination, span)
     match value_method_owner(module, target, builder.locals[builder.local_offset:], arguments[0], span)?:
-        Some(owner) => return lower_value_enum_method(builder, owner, arguments, destination, span)
+        Some(owner) => return lower_value_enum_method(module, builder, owner, arguments, destination, span)
         None => pass
     index = method_index(module, target, builder.locals[builder.local_offset:], arguments[0], span)?
     body = module.bodies[index]
