@@ -111,6 +111,11 @@ pub fn binary(op: &BinaryOp, checked: bool) -> mir::BinOp {
         BinaryOp::LessEqual => mir::BinOp::Le,
         BinaryOp::Greater => mir::BinOp::Gt,
         BinaryOp::GreaterEqual => mir::BinOp::Ge,
+        BinaryOp::BitAnd => mir::BinOp::BitAnd,
+        BinaryOp::BitOr => mir::BinOp::BitOr,
+        BinaryOp::BitXor => mir::BinOp::BitXor,
+        BinaryOp::ShiftLeft => mir::BinOp::Shl,
+        BinaryOp::ShiftRight => mir::BinOp::Shr,
     }
 }
 
@@ -167,6 +172,7 @@ pub fn rvalue<'tcx>(
             match op {
                 UnaryOp::Not => mir::UnOp::Not,
                 UnaryOp::Negate => mir::UnOp::Neg,
+                UnaryOp::Invert => mir::UnOp::Not,
             },
             operand(tcx, sources, value)?,
         ),

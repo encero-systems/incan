@@ -598,6 +598,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs": {
+      "disposition": "keep",
+      "notes": "Direct-route small statements, operators and places compared byte for byte with legacy output",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs": {
       "disposition": "keep",
       "notes": "lex/parse/typecheck only.",

@@ -456,6 +456,9 @@ fn check_source_pipeline(
 #[path = "native_driver_project_tests/census.rs"]
 mod census;
 
+#[path = "native_driver_project_tests/tail.rs"]
+mod tail;
+
 /// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
 /// reaches lowering.
 #[test]
