@@ -721,6 +721,33 @@ def main() -> None:
     )
 }
 
+/// Prove carriers retained only inside closed function instances, including forwarded calls, against legacy.
+#[test]
+fn type_parameter_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def show[T with Display](value: T) -> None:
+    stored: Option[T] = Some(value)
+    println(stored.unwrap_or(value))
+
+def forward[T with Display](value: T) -> None:
+    show[T](value)
+
+def identity[T](value: Option[T]) -> Option[T]:
+    return value
+
+def main() -> None:
+    forward[int](7)
+    forward[str]("text")
+    println(identity[int](Some(9)).unwrap_or(0))
+"#,
+    )
+}
+
 /// Prove list indexing, mutation, shared parameters, owned returns and iteration against legacy.
 #[test]
 fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
