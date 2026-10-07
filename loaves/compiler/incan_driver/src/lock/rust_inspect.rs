@@ -108,13 +108,7 @@ pub fn prepare_rust_inspect_workspace(
                 .ok_or_else(|| {
                     CliError::failure("explicit Loaf baker did not supply its locked Rust inspection source authority")
                 })?;
-            let destination = rust_inspect_manifest_dir.join(::rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE);
-            fs::copy(&source, &destination).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to install explicit baker Rust inspection authority from {}: {error}",
-                    source.display()
-                ))
-            })?;
+            install_explicit_baker_inspection_authority(&source, &rust_inspect_manifest_dir)?;
         } else if let Some(authority_request) = oven_source_authority {
             let prepared = prepare_oven_inspection_authority(
                 &rust_inspect_manifest_dir,
@@ -142,6 +136,34 @@ pub fn prepare_rust_inspect_workspace(
         _project_source_authorities: project_source_authorities,
         _sdk_native: sdk_native,
     }))
+}
+
+/// Install the explicit baker's sealed inspection authority and, when the baker sealed one, its frozen Loaf graph.
+///
+/// The fixture workspace is Loaf-only, so an authority that names registry sources is inspectable only together with
+/// the frozen graph the baker sealed beside it; without that graph inspection refuses rather than rediscovering.
+fn install_explicit_baker_inspection_authority(source: &Path, manifest_dir: &Path) -> CliResult<()> {
+    let destination = manifest_dir.join(::rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE);
+    fs::copy(source, &destination).map_err(|error| {
+        CliError::failure(format!(
+            "failed to install explicit baker Rust inspection authority from {}: {error}",
+            source.display()
+        ))
+    })?;
+    let Some(graph) = source
+        .parent()
+        .map(|root| root.join(::rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE))
+        .filter(|graph| graph.is_file())
+    else {
+        return Ok(());
+    };
+    fs::copy(&graph, manifest_dir.join(::rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE)).map_err(|error| {
+        CliError::failure(format!(
+            "failed to install explicit baker frozen Loaf graph from {}: {error}",
+            graph.display()
+        ))
+    })?;
+    Ok(())
 }
 
 /// Select sysroot or sealed Loaf inspection sources while retaining every authority lease.

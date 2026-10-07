@@ -68,6 +68,8 @@ INCAN_TEST_LOAF_REGISTRY_COMMIT ?=
 # Directory the release bake writes incan.pub harvest proposals into from its own runtime-foundation capture.
 INCAN_TEST_HARVEST_DIR ?=
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
+# Directories whose executables own the C toolchain a recorded native-link fact names (the macOS Command Line Tools).
+INCAN_OVEN_LINK_OWNERS ?= $(if $(filter Darwin,$(shell uname -s)),/Library/Developer/CommandLineTools,)
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
 	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
@@ -76,7 +78,8 @@ TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_TEST_OVEN_FIXTURE_HOME="$(INCAN_TEST_OVEN_FIXTURE_HOME)" \
 	INCAN_SOURCE_ROOT="$(CURDIR)" \
 	INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
-	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib"
+	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+	INCAN_OVEN_LINK_OWNERS="$(INCAN_OVEN_LINK_OWNERS)"
 TEST_RUNTIME_ENV = $(TEST_ENV) \
 	INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
 	INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
@@ -528,6 +531,8 @@ test-prewarm-oven-loafs: test-prewarm-sdk
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+		INCAN_SDK_NATIVE_BLOBS="$(INCAN_SDK_NATIVE_BLOBS)" \
+		INCAN_SDK_NATIVE_INDEX="$(INCAN_SDK_NATIVE_INDEX)" \
 		"$(TARGET_DIR)/debug/incan" oven legacy-cargo bake-loafs \
 			--compiler-root "$(CURDIR)" \
 			--output "$(INCAN_TEST_OVEN_LOAF_ROOT)" \
