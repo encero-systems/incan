@@ -84,7 +84,8 @@ from rust::incan_semantics_core::body_ir import (
 )
 # ---- Admission helpers owned by this Loaf ----
 from rust::incan_semantics_core import SymbolOrigin
-from classes import frame_type, function_name, method_index, method_receiver
+from classes import frame_type, function_name, method_receiver
+from traits import method_index, specialize_traits, validate_static_receiver
 from models import model_type, model_place, place_type, constructor_index
 from numbers import float_operand
 from numerics import (
@@ -136,6 +137,9 @@ pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
     for declaration in module.value_enum_declarations:
         if not module.is_well_formed_value_enum_declaration(declaration):
             return Err("invalid Body IR value enum declaration identity")
+    for implementation in module.trait_implementations:
+        if not module.is_well_formed_trait_implementation(implementation):
+            return Err("invalid Body IR trait implementation identity")
     for body in module.bodies:
         if not module.body_has_canonical_direct_call_id(body):
             return Err("invalid Body IR body identity")
@@ -853,10 +857,10 @@ def lower_method_call(
             if identity.origin == SymbolOrigin.Builtin:
                 return lower_list_method(builder, target, arguments, destination, span)
         None => return Err("unsupported Body IR Method without canonical identity")
-    index = method_index(module, target)?
-    body = module.bodies[index]
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
+    index = method_index(module, target, builder.locals, arguments[0], span)?
+    body = module.bodies[index]
     receiver_type, borrow = method_receiver(module, builder.locals, index, arguments[0], span)?
     reference = temporary(builder, receiver_type, span)
     builder.emit(plan_assign(reference, borrow, span))
@@ -894,7 +898,9 @@ def lower_named_target(
             # forwards to a Rust call.
             match module.body_for_canonical_target(identity):
                 None => return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
-                Some(body) => return lower_local_call(builder, target, body, arguments, destination, span)
+                Some(body) =>
+                    _ = validate_static_receiver(module, target)?
+                    return lower_local_call(builder, target, body, arguments, destination, span)
 
 
 def lower_local_call(
@@ -1735,6 +1741,12 @@ pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Pl
     _ = validate_module(module)?
     if len(module.fieldless_enum_declarations) != 0 or len(module.value_enum_declarations) != 0:
         return Err("unsupported Body IR fieldless enum or value enum declaration")
+    specialized = specialize_traits(module)?
+    return lower_concrete_module(specialized, source, file)
+
+
+def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
+    """Lower ordinary bodies and closed trait defaults after validating the original identities."""
     models = lower_model_declarations(module, file)?
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []

@@ -1,0 +1,116 @@
+"""Concrete source-trait specialization and checker-selected static dispatch."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    MethodTarget,
+    NamedCallableTarget,
+    ArgumentElement,
+    Operand as RustOperand,
+)
+from pub::incan_mir_plan import Local, SourceSpan, PlanType
+from classes import receiver_mode
+from models import model_type, model_place, place_type
+
+
+pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
+    """Instantiate open default receivers only for frontend-retained concrete implementations."""
+    mut result = module.clone()
+    result.bodies.clear()
+    for body in module.bodies:
+        if len(body.locals) == 0 or body.locals[0].ty != RustType.SelfType:
+            result.bodies.push(body.clone())
+            continue
+        for implementation in module.trait_implementations:
+            if body.canonical == Some(implementation.implementation):
+                result.bodies.push(specialize_body(body, str(implementation.owner.declaration_name)))
+    return Ok(result)
+
+
+def specialize_body(body: &Body, owner: str) -> Body:
+    """Instantiate a trait default for one implementing owner: same statements and identities, Self closed."""
+    # Bind the concrete type to a typed local before storing it into fields: the legacy route that compiles this
+    # Loaf loses the callee identity of a call written directly on the right of a foreign field store (dev.8 drops
+    # this indirection).
+    concrete: RustType = concrete_self_type(owner)
+    mut result = body.clone()
+    for index in range(len(result.locals)):
+        if result.locals[index].ty == RustType.SelfType:
+            result.locals[index].ty = concrete.clone()
+    for index in range(len(result.params)):
+        if result.params[index].ty == RustType.SelfType:
+            result.params[index].ty = concrete.clone()
+    if result.return_type == RustType.SelfType:
+        result.return_type = concrete.clone()
+    return result
+
+
+def concrete_self_type(owner: str) -> RustType:
+    """
+    Name the implementing owner as the concrete Self type.
+
+    A function of its own because the legacy route that compiles this Loaf needs the foreign enum constructor at an
+    explicit typed return boundary (dev.8 can inline it).
+    """
+    return RustType.Named(owner)
+
+
+pub def method_index(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+) -> Result[int, str]:
+    """Select the checked implementation using the concrete receiver's retained layout identity."""
+    if len(target.type_args) != 0:
+        return Err("unsupported Body IR generic Method")
+    match target.canonical:
+        None => return Err("unsupported Body IR unproven Method")
+        Some(_identity) => pass
+    owner = receiver_owner(module, locals, argument, span)?
+    mut canonical = target.canonical.clone()
+    for implementation in module.trait_implementations:
+        if implementation.owner == module.nominal_declarations[owner].canonical and Some(implementation.method) == canonical:
+            canonical = Some(implementation.implementation)
+            break
+    for index in range(len(module.bodies)):
+        body = module.bodies[index]
+        if body.canonical != canonical or len(body.params) == 0:
+            continue
+        if body.locals[0].ty != RustType.Named(str(module.nominal_declarations[owner].name)):
+            continue
+        match receiver_mode(body.locals[0].origin):
+            Some(_mutable) => return Ok(index)
+            None => return Err("unsupported Body IR Method without receiver")
+    return Err("unsupported Body IR nonlocal or trait-object Method")
+
+
+def receiver_owner(
+    module: &BodyIrModule,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+) -> Result[int, str]:
+    """Read the concrete receiver from its native place, never from a method spelling."""
+    match argument.as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    place = model_place(module.nominal_declarations, locals, read.place, span)?
+                    match place_type(locals, place):
+                        PlanType.Model(owner, _name) => return Ok(owner)
+                        _ => return Err("unsupported Body IR trait-object receiver")
+                _ => return Err("unsupported Body IR Method nonplace receiver")
+        None => return Err("unsupported Body IR Method spread receiver")
+
+
+pub def validate_static_receiver(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[None, str]:
+    """Require a concrete retained nominal for associated calls, never execute a bare trait's default."""
+    match target.receiver_type:
+        Some(ty) =>
+            match model_type(module.nominal_declarations, ty)?:
+                PlanType.Model(_owner, _name) => return Ok(None)
+                _ => return Err("unsupported Body IR nonnominal static receiver")
+        None => return Ok(None)

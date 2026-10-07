@@ -314,6 +314,8 @@ fn build_body_ir_module_v0_with_provider_operations(
         .collect::<Vec<_>>();
     apply_top_level_input_contract_refusal(program, &mut bodies);
     bir::BodyIrModule {
+        trait_declarations: collect::collect_local_trait_declarations(program, type_info),
+        trait_implementations: collect::collect_local_trait_implementations(program, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
         module_id,
         nominal_declarations,
@@ -366,7 +368,7 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
 /// Source-local plain models and non-generic classes with canonical checked layouts.
 ///
-/// Unsupported traits, inheritance, properties, and aliases never enter this constructor registry.
+/// Unsupported inheritance, properties, and aliases never enter this constructor registry.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
@@ -413,28 +415,32 @@ struct FunctionDefaultSource {
 /// Determine whether a model can carry the small direct-replacement declaration fact.
 ///
 /// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
-/// runtime cannot execute model decorators, trait behavior, methods, field aliases, or generic substitution without
-/// facts that Body IR does not retain. Field defaults remain represented by each construction's checked binding, so a
-/// fully supplied construction may execute while any omitted default still refuses at that constructor's span.
+/// runtime cannot execute model decorators, field aliases, or generic substitution without facts that Body IR does not
+/// retain. Non-generic methods remain separate bodies; adopted trait slots are retained in the module implementation
+/// registry. Field defaults remain represented by each construction's checked binding, so a fully supplied construction
+/// may execute while any omitted default still refuses at that constructor's span.
 pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
     model.decorators.is_empty()
         && model.type_params.is_empty()
-        && model.traits.is_empty()
+        && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && model.method_aliases.is_empty()
         && model.method_partials.is_empty()
         && model.properties.is_empty()
-        && model.methods.is_empty()
+        && model
+            .methods
+            .iter()
+            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
         && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
-/// Inheritance, traits, generic substitution, decorators, properties, aliases, and defaults remain refused.
+/// Inheritance, generic substitution, decorators, properties, aliases, and defaults remain refused.
 pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
     class.decorators.is_empty()
         && class.type_params.is_empty()
+        && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && class.extends.is_none()
-        && class.traits.is_empty()
         && class.method_aliases.is_empty()
         && class.method_partials.is_empty()
         && class.properties.is_empty()

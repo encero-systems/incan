@@ -1087,3 +1087,88 @@ fn list_parameter_last_reads_clone_without_dropping_caller_storage() -> Result<(
     }
     Ok(())
 }
+
+/// Concrete adopters retain canonical trait slots and distinguish required implementations from defaults.
+#[test]
+fn concrete_trait_implementation_facts_preserve_default_and_required_targets() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"trait Reading:
+  def get(self) -> int: ...
+  def bump(mut self, amount: int) -> None: ...
+  def advance(mut self) -> None:
+    self.bump(1)
+  def doubled(self) -> int:
+    return self.get() + self.get()
+
+class Counter with Reading:
+  value: int
+  def get(self) -> int:
+    return self.value
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+def main() -> None:
+  mut counter = Counter(value=7)
+  counter.advance()
+  println(counter.get())
+"#;
+    let module = build(source, &["m", "concrete_traits"])?;
+    assert_eq!(module.trait_declarations.len(), 1);
+    assert_eq!(module.trait_implementations.len(), 4);
+    for implementation in &module.trait_implementations {
+        assert!(module.is_well_formed_trait_implementation(implementation));
+        assert_eq!(implementation.owner.declaration_name, "Counter");
+        assert_eq!(
+            implementation.method == implementation.implementation,
+            matches!(implementation.method.declaration_name.as_str(), "doubled" | "advance")
+        );
+        let mut tampered = implementation.clone();
+        tampered.owner.declaration_span.start += 1;
+        assert!(!module.is_well_formed_trait_implementation(&tampered));
+    }
+    for body in &module.bodies {
+        assert!(module.body_has_canonical_direct_call_id(body));
+    }
+    let doubled = body_named(&module, "doubled")?;
+    let required = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "get")
+        .ok_or("the required trait slot must be retained")?;
+    let mut calls = 0;
+    for statement in &doubled.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Method(target),
+            ..
+        } = &statement.kind
+        {
+            assert_eq!(target.canonical.as_ref(), Some(&required.method));
+            calls += 1;
+        }
+    }
+    assert_eq!(calls, 2, "both calls in the default must retain the checked trait slot");
+    let advance = body_named(&module, "advance")?;
+    assert!(matches!(
+        advance.locals[0].origin,
+        bir::LocalOrigin::Receiver { mutable: true }
+    ));
+    let bump = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "bump")
+        .ok_or("the mutable required trait slot must be retained")?;
+    let target = advance
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("the mutable default must retain its method call")?;
+    assert_eq!(target.canonical.as_ref(), Some(&bump.method));
+    Ok(())
+}
