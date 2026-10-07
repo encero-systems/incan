@@ -1,7 +1,7 @@
 //! Pinned adopted-closure compilation through the shared SDK executor.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use oven_rustc::sdk_closure::{
     ClosureCompileRequest, SdkCompiledClosure, SdkLockedUnit, prepare_closure, validate_locked_root_features,
@@ -265,10 +265,7 @@ fn resolve_lock(
         return Err("selected rustc could not report cfg".into());
     }
     std::fs::write(staging.join("target.cfg"), cfg.stdout)?;
-    let source_root = std::env::var_os("INCAN_SOURCE_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or(std::env::current_dir()?);
-    let driver = source_root.join("workspaces/oven/src/loaf_lock_main.incn");
+    let driver = resolver_driver()?;
     let compiler = std::env::current_exe()?.with_file_name("incan");
     let roots: Roots = serde_json::from_slice(&std::fs::read(&arguments.roots)?)?;
     let roots_file = staging.join("roots.json");
@@ -295,6 +292,26 @@ fn resolve_lock(
     let _: Lock = serde_json::from_slice(&resolved.stdout)?;
     std::fs::write(&lock, resolved.stdout)?;
     Ok(lock)
+}
+
+/// Locate the Incan lock driver that belongs to this toolchain, independent of the caller's working directory.
+///
+/// `INCAN_SOURCE_ROOT` names the compiler source root explicitly. Otherwise the driver is found beside the toolchain's
+/// own standard-library root (`<root>/loaves/stdlib`), the same root SDK preparation uses, so resolving from an index
+/// checkout or a project directory selects the same resolver as resolving from the compiler checkout.
+fn resolver_driver() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    const DRIVER: &str = "workspaces/oven/src/loaf_lock_main.incn";
+    let source_root = match std::env::var_os("INCAN_SOURCE_ROOT").filter(|root| !root.is_empty()) {
+        Some(root) => PathBuf::from(root),
+        None => oven_model::toolchain_layout::find_stdlib_root()
+            .and_then(|stdlib| stdlib.parent()?.parent().map(Path::to_path_buf))
+            .ok_or("compile-closure cannot locate this toolchain's source root; set INCAN_SOURCE_ROOT")?,
+    };
+    let driver = source_root.join(DRIVER);
+    if !driver.is_file() {
+        return Err(format!("this toolchain has no Incan lock driver at {}", driver.display()).into());
+    }
+    Ok(driver)
 }
 
 /// Read one immutable Git object without consulting the index checkout's working files.
