@@ -1910,6 +1910,13 @@ model Alias:
 model Qualified:
     value: float
 
+@derive(json.Serialize)
+model Custom:
+    number: int
+
+    def to_json(self) -> str:
+        return "custom"
+
 def next_value() -> str:
     println("evaluated")
     return "line\né"
@@ -1918,6 +1925,7 @@ def main() -> None:
     record = Record(number=7, label="quoted\"\n")
     alias = Alias(enabled=true)
     qualified = Qualified(value=2.5)
+    custom = Custom(number=9)
     println(record.to_json())
     println(json_stringify(record))
     println(json_stringify(123))
@@ -1932,6 +1940,8 @@ def main() -> None:
     println(json_stringify("escaped\"\n"))
     println(alias.to_json())
     println(qualified.to_json())
+    println(custom.to_json())
+    println(json_stringify(custom))
     println(record.to_json())
     println(record.label)
 "#,
