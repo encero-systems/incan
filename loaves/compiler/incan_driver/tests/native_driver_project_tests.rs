@@ -495,6 +495,7 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
 fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let root = fixture.scratch("closures")?;
+    check_function_item_values(fixture, &root)?;
     let source = root.join("closures.incn");
     fs::write(
         &source,
@@ -552,6 +553,56 @@ fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dy
     let actual = Command::new(native).output()?;
     success(&actual, "native function values and closure expressions execution");
     assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
+
+/// Prove stored items, aliases, explicit pointer coercions, returned pointers, and indirect invocation separately
+/// before the same focused test exercises closure-holding contracts.
+fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let source = root.join("function-items.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def double(value: int) -> int:\n    return value * 2\n\n",
+            "def pointer() -> (int) -> int:\n    return double\n\n",
+            "def echo(value: str) -> str:\n    return value\n\n",
+            "def main() -> None:\n",
+            "    stored = double\n    alias = stored\n    typed: (int) -> int = double\n",
+            "    println(alias(4))\n    println(typed(5))\n",
+            "    returned = pointer()\n    println(returned(6))\n",
+            "    stored_echo = echo\n    println(stored_echo(\"hello\"))\n",
+        ),
+    )?;
+    let legacy_root = root.join("function-items-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy function-item compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/function-items")).output()?;
+    success(&legacy, "legacy function-item execution");
+    assert_eq!(legacy.stdout, b"8\n10\n12\nhello\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("function-items-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native function-item compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native function-item execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    eprintln!("stored function items and pointers matched legacy byte for byte");
     Ok(())
 }
 

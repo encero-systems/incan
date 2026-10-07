@@ -115,7 +115,7 @@ fn synthetic_body() -> Body {
     Body {
         decl_id: id.clone(), direct_call_id: id,
         canonical: Some(CanonicalSymbolId::module_declaration(vec!["fixture".into()], "sample", SemanticSourceTargetKind::Function, span)),
-        name: "sample".into(), span, return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+        name: "sample".into(), span, return_type: IncanType::Primitive(IncanPrimitiveType::Unit), callable_representation: None,
         named_type_identities: Default::default(), locals: vec![], params: vec![], param_locals: vec![], scopes: vec![],
         block: Block { scope: ScopeId(0), stmts: vec![Statement { kind: StatementKind::Return { value: None }, span }] },
         runtime_requirements: vec![], panic_facts: vec![], is_async: false, extern_delegation: None,

@@ -1,6 +1,6 @@
 """Plain-model layout admission from canonical frontend records."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
     ConstructorTarget,
@@ -9,24 +9,20 @@ from rust::incan_semantics_core::body_ir import (
     PlaceElem as RustPlaceElem,
 )
 from pub::incan_mir_plan import PlanType, Local, Place, Projection, SourceSpan
+from types import primitive_type
+from closures import function_pointer_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Resolve source-local nominal types only against their retained declaration registry."""
+    """Admit primitive and callable types; resolve source-local nominals only against their retained registry."""
     match ty:
         RustType.Named(name) =>
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
                     return Ok(PlanType.Model(index, str(name)))
             return Err(f"unsupported Body IR nominal type {name}")
-        RustType.Primitive(primitive) =>
-            match primitive:
-                Primitive.Int => return Ok(PlanType.Int)
-                Primitive.Float => return Ok(PlanType.Float)
-                Primitive.Bool => return Ok(PlanType.Bool)
-                Primitive.Unit => return Ok(PlanType.Unit)
-                Primitive.Str => return Ok(PlanType.String)
-                _ => return Err(f"unsupported Body IR primitive type {primitive}")
+        RustType.Primitive(primitive) => return primitive_type(primitive)
+        RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         _ => return Err(f"unsupported Body IR type {ty}")
 
 

@@ -414,6 +414,7 @@ fn unsupported_race_arm_in_a_default_is_found_at_its_nested_source_span() {
     );
 }
 
+/// Default validation descends into structured computations and preserves the unsupported statement's own span.
 #[test]
 fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans() {
     // A source default can construct a closure or generator, or evaluate a match, whose structured Body IR owns
@@ -443,6 +444,7 @@ fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans
                 params: Vec::new(),
                 captured_operands: Vec::new(),
                 body: Box::new(bir::ClosureBody {
+                    function_item: false,
                     capture_locals: Vec::new(),
                     stmts: vec![unsupported(closure_span, "closure body")],
                     result: result.clone(),

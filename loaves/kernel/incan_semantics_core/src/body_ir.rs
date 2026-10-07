@@ -344,6 +344,26 @@ impl ValueEnumVariantDeclaration {
     }
 }
 
+/// Checked callable representation choices for a declaration's signature.
+///
+/// The function type describes the call surface, but does not distinguish a function pointer from a parameter or
+/// return that must hold a capturing closure. These checker facts preserve that distinction without asking a
+/// consumer to rediscover it from the declaration's syntax or its body's uses.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CallableRepresentation {
+    /// Explicitly annotated local bindings that require function-pointer coercion rather than inferred item storage.
+    #[serde(default)]
+    pub function_pointer_locals: Vec<LocalId>,
+    /// Local bindings whose checked callable value holds an environment, including bindings annotated with a
+    /// function type. They infer the closure's own type rather than require function-pointer coercion.
+    #[serde(default)]
+    pub closure_holding_locals: Vec<LocalId>,
+    /// Parameter locals whose checked function type accepts closures through an `Fn` bound.
+    pub closure_holding_parameters: Vec<LocalId>,
+    /// The checked return type holds a capturing closure through an opaque `Fn` implementation.
+    pub closure_holding_return: bool,
+}
+
 /// Body IR v0 for a single function or method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
@@ -367,6 +387,10 @@ pub struct Body {
     pub span: HirSourceSpan,
     /// Fully resolved source return type used to validate direct-execution results.
     pub return_type: IncanType,
+    /// Signature representation facts retained from the checker. Older representations have no such proof;
+    /// consumers must refuse callable signatures when this is absent rather than assume function-pointer coercion.
+    #[serde(default)]
+    pub callable_representation: Option<CallableRepresentation>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
     /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
@@ -1662,6 +1686,11 @@ impl DefaultComputation {
 /// own parameters and captures show up in the ordinary `locals:` listing like any other local.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosureBody {
+    /// Whether this computation came from a named function read. Its canonical item identity lives once in the
+    /// forwarding call. A source closure expression or partial remains distinct even when it forwards the same
+    /// arguments without captures.
+    #[serde(default)]
+    pub function_item: bool,
     /// The closure's own captured-binding locals, in the same order as [`Rvalue::Closure::captured_operands`] --
     /// `capture_locals[i]` is where a read of the `i`-th captured operand's value is durably bound inside the
     /// closure body, so subsequent reads inside the body see it as an ordinary local rather than re-reading the
@@ -3612,6 +3641,7 @@ mod tests {
     use super::*;
     use crate::{CompilerNodeKind, IncanPrimitiveType, SemanticSourceTargetKind};
 
+    /// Build a scalar-only body for structural and serialization tests, without callable representation facts.
     fn sample_body() -> Body {
         let decl_id = CompilerNodeId::declaration("m", "add");
         let direct_call_id = CompilerNodeId::declaration_span("m", 0, 30);
@@ -3625,6 +3655,7 @@ mod tests {
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
+            callable_representation: None,
             named_type_identities: Default::default(),
             locals: vec![
                 LocalDecl {
@@ -4214,6 +4245,7 @@ mod tests {
                             false,
                         )],
                         body: Box::new(ClosureBody {
+                            function_item: false,
                             capture_locals: vec![capture_local],
                             stmts: Vec::new(),
                             result: Operand::place(

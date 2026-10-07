@@ -91,6 +91,9 @@ fn call_operand<'tcx>(
     sources: &Sources<'_>,
     callee: &crate::plan::Callee,
 ) -> Result<mir::Operand<'tcx>, PlanError> {
+    if let crate::plan::CalleeKind::Value(value) = &callee.kind {
+        return operand(tcx, sources, value);
+    }
     let mut arguments = Vec::new();
     if let crate::plan::CalleeKind::CloneModel(_, name) = &callee.kind {
         arguments.push(crate::types::model_type(tcx, name)?.into());

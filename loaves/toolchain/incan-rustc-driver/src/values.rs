@@ -105,6 +105,23 @@ pub fn rvalue<'tcx>(
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
         RvalueKind::Use(value) => mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes),
+        RvalueKind::FunctionItem(callee) => mir::Rvalue::Use(
+            mir::Operand::function_handle(
+                tcx,
+                crate::callees::resolve(tcx, callee)?,
+                [],
+                sources.span(&callee.span)?,
+            ),
+            mir::WithRetag::Yes,
+        ),
+        RvalueKind::ReifyFunction(value) => mir::Rvalue::Cast(
+            mir::CastKind::PointerCoercion(
+                rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer,
+                mir::CoercionSource::Implicit,
+            ),
+            operand(tcx, sources, value)?,
+            native_type(tcx, destination_type)?,
+        ),
         RvalueKind::IntToFloat(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
         }

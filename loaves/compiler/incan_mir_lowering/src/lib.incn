@@ -67,6 +67,7 @@ from rust::incan_semantics_core::body_ir import (
     FormatStyle as RustFormatStyle,
     HelperOp as RustHelper,
     NamedCallableTarget as RustNamedCallableTarget,
+    LocalCallableTarget as RustLocalCallableTarget,
     Operand as RustOperand,
     OwnershipFact,
     Place as RustPlace,
@@ -80,9 +81,14 @@ from rust::incan_semantics_core::body_ir import (
 from models import model_type, model_place, place_type, constructor_index
 from numbers import float_operand
 from strings import text_helper
-# =====================================================================================================================
-# Boundary types and validation
-# =====================================================================================================================
+from closures import (
+    validate_callable_representation,
+    source_function_item,
+    function_assignment,
+    callable_copy_type,
+    callable_signature,
+    function_pointer_storage,
+)
 
 
 pub type BodyIrModule = rusttype RustBodyIrModule:
@@ -133,9 +139,6 @@ pub def is_continue(statement: &BodyStatementKind) -> bool:
     match statement:
         BodyStatementKind.Continue => return true
         _ => return false
-# =====================================================================================================================
-# Translating checked values
-# =====================================================================================================================
 
 
 def location(span: &RustSpan, source: str, file: str) -> SourceSpan:
@@ -168,6 +171,11 @@ def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) 
 def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
     """Turn a place read into a copy or move exactly as Body IR's ownership fact says."""
     target = scalar_place(builder, value, span)?
+    if callable_copy_type(place_type(builder.locals, target)):
+        match fact:
+            OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable ownership")
+            OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable borrow")
+            _ => return Ok(read_place(target, false, span))
     # Model clones use their derived implementation; string clones and borrows are handled by `display_operand`.
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
@@ -290,9 +298,6 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
         RustRvalue.Generator(source=_source, captured_operands=_captures, body=_body) =>
             return Err("unsupported Body IR Generator")
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
-# =====================================================================================================================
-# The frame builder and ownership
-# =====================================================================================================================
 
 
 model Builder:
@@ -315,6 +320,7 @@ model Builder:
     owned: list[int]
     closed: list[bool]
     nominals: list[RustNominalDeclaration]
+    function_pointer_locals: list[int]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -489,9 +495,6 @@ def external_call(
     # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
     if result == PlanType.String:
         builder.owned.append(destination.local)
-# =====================================================================================================================
-# Statements and control flow
-# =====================================================================================================================
 
 
 def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) -> Result[None, str]:
@@ -509,7 +512,7 @@ def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &Rus
     span = location(statement.span, builder.source, builder.file)
     match statement.kind:
         RustStatementKind.Assign(place=destination, rvalue=value) =>
-            return lower_assignment(builder, destination, value, span)
+            return lower_assignment(module, builder, destination, value, span)
         RustStatementKind.If(cond=condition, then_block=then_body, else_block=else_body) =>
             return lower_if(module, builder, condition, then_body, else_body, span)
         RustStatementKind.Loop(body=body) => return lower_loop(module, builder, body, span)
@@ -555,7 +558,10 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
                 result = scalar_operand(builder, operand, span)?
                 track_rvalue_moves(builder, RvalueKind.Use(result))
         None => pass
-    builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
+    if callable_copy_type(builder.locals[0].ty):
+        assign_callable(builder, plan_place(0, span), result, true, span)?
+    else:
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
     drop_all_owned(builder, span)
     builder.finish(TerminatorKind.Return, span)
     return Ok(None)
@@ -575,6 +581,7 @@ def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Res
 
 
 def lower_assignment(
+    module: &BodyIrModule,
     mut builder: Builder,
     destination: &RustPlace,
     value: &RustRvalue,
@@ -582,6 +589,23 @@ def lower_assignment(
 ) -> Result[None, str]:
     """Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first."""
     target = scalar_place(builder, destination, span)?
+    match source_function_item(module, value)?:
+        Some(item) =>
+            name, ty = item
+            if target.projection != Projection.Whole:
+                return Err("unsupported Body IR projected function-item construction")
+            builder.locals[target.local].ty = ty
+            builder.emit(
+                plan_assign(target, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span)), span),
+            )
+            return Ok(None)
+        None => pass
+    match value:
+        RustRvalue.Use(value) =>
+            if callable_copy_type(place_type(builder.locals, target)):
+                operand = scalar_operand(builder, value, span)?
+                return assign_callable(builder, target, operand, target.local in builder.function_pointer_locals, span)
+        _ => pass
     if place_type(builder.locals, target) == PlanType.String:
         return lower_string_assignment(builder, target, value, span)
     match value:
@@ -713,9 +737,6 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     builder.owned = incoming
     builder.current = after
     return Ok(None)
-# =====================================================================================================================
-# Calls
-# =====================================================================================================================
 
 
 def lower_call(
@@ -732,6 +753,8 @@ def lower_call(
                     match callable:
                         CallableTarget.Named(target) =>
                             return lower_named_target(module, builder, target, arguments, destination, span)
+                        CallableTarget.Local(target) =>
+                            return lower_callable_value(builder, target, arguments, destination, span)
                         _ => return Err("unsupported Body IR local callable value")
                 RustCallee.Method(_target) => return Err("unsupported Body IR Method")
                 RustCallee.Helper(helper) => return lower_runtime_helper(builder, helper, arguments, destination, span)
@@ -786,16 +809,28 @@ def lower_local_call(
         None =>
             output = temporary(builder, model_type(builder.nominals, body.return_type)?, span)
     result_type = model_type(builder.nominals, body.return_type)?
+    return lower_callable_result(builder, CalleeKind.Planned(str(body.name)), operands, output, result_type, span)
+
+
+def lower_callable_result(
+    mut builder: Builder,
+    callee: CalleeKind,
+    operands: list[Operand],
+    output: Place,
+    result_type: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve owned return replacement and unwind cleanup identically for declared and locally held callees."""
     if result_type == PlanType.String or is_model_type(result_type):
         result = temporary(builder, result_type, span)
-        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, result, span)
+        terminate_call(builder, callee, operands, result, span)
         builder.owned.append(result.local)
         drop_owned(builder, output.local, span)
         forget_owned(builder, result.local)
         builder.emit(plan_assign(output, RvalueKind.Use(read_place(result, true, span)), span))
         builder.owned.append(output.local)
     else:
-        terminate_call(builder, CalleeKind.Planned(str(body.name)), operands, output, span)
+        terminate_call(builder, callee, operands, output, span)
     return Ok(None)
 
 
@@ -906,7 +941,8 @@ def ordered_slot_operands(
                             text = display_operand(builder, value, span)?
                             operands[slot] = read_place(text, true, span)
                         else:
-                            operands[slot] = scalar_operand(builder, value, span)?
+                            operand = scalar_operand(builder, value, span)?
+                            operands[slot] = function_argument(builder, types[slot], operand, span)?
                     None => return Err("unsupported Body IR named or spread ArgumentElement")
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
@@ -1031,9 +1067,6 @@ def lower_float_builtin(
                 PlanType.Float => builder.emit(plan_assign(output, RvalueKind.Use(operand), span))
                 _ => return Err("unsupported Body IR Float input type")
             return Ok(None)
-# =====================================================================================================================
-# Plain model construction and field replacement
-# =====================================================================================================================
 
 
 def clone_model_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
@@ -1111,9 +1144,6 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
-# =====================================================================================================================
-# Formatting and strings
-# =====================================================================================================================
 
 
 def lower_format(
@@ -1381,9 +1411,6 @@ def lower_text_helper(
                 builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
-# =====================================================================================================================
-# Module and function entry points
-# =====================================================================================================================
 
 
 def lower_str_builtin(
@@ -1486,6 +1513,7 @@ def lower_function(
     match body.extern_delegation:
         Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
         None => pass
+    validate_callable_representation(body)?
     span = location(body.span, source, file)
     return_type = model_type(module.nominal_declarations, body.return_type)?
     mut builder = Builder(
@@ -1500,6 +1528,7 @@ def lower_function(
         owned=[],
         closed=[],
         nominals=module.nominal_declarations,
+        function_pointer_locals=function_pointer_storage(body),
     )
     parameters = frame_parameters(module, body, source, file)?
     _ = builder.new_block(span)
@@ -1523,6 +1552,64 @@ def lower_function(
         span=span,
     )
     return Ok((function, builder.externals))
+
+
+def assign_callable(
+    mut builder: Builder,
+    target: Place,
+    value: Operand,
+    pointer_storage: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Store a Copy callable with its retained item type or the source-required function-pointer coercion."""
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected callable assignment")
+    source = operand_type(builder, value)?
+    ty, operation = function_assignment(place_type(builder.locals, target), source, value, pointer_storage)?
+    builder.locals[target.local].ty = ty
+    builder.emit(plan_assign(target, operation, span))
+    return Ok(None)
+
+
+def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: SourceSpan) -> Result[Operand, str]:
+    """Reify an item passed into a function-pointer signature without changing its inferred binding type."""
+    match ty:
+        PlanType.FunctionPointer(_signature) =>
+            source = operand_type(builder, value)?
+            _type, operation = function_assignment(ty, source, value, true)?
+            match operation:
+                RvalueKind.ReifyFunction(_value) =>
+                    result = temporary(builder, ty, span)
+                    builder.emit(plan_assign(result, operation, span))
+                    return Ok(read_place(result, false, span))
+                _ => return Ok(value)
+        _ => return Ok(value)
+
+
+def lower_callable_value(
+    mut builder: Builder,
+    target: &RustLocalCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call an admitted function item or pointer; closure environments retain a distinct named refusal."""
+    callable = scalar_place(builder, target.operand.place, span)?
+    signature = callable_signature(place_type(builder.locals, callable))?
+    if len(signature) == 0:
+        return Err("invalid Body IR callable signature without return type")
+    mut parameters: list[PlanType] = []
+    for index in range(len(signature) - 1):
+        parameters.append(signature[index])
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span)?
+    result = signature[-1]
+    mut output = temporary(builder, result, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None => pass
+    value = place_read(builder, target.operand.place, target.operand.fact, span)?
+    return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
 
 
 def frame_locals(
@@ -1561,3 +1648,27 @@ def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: 
             _ => return Err("unsupported Body IR defaulted parameter")
         parameters.append(Parameter(name=parameter.name, ty=ty, span=location(parameter.span, source, file)))
     return Ok(parameters)
+# =====================================================================================================================
+# Boundary types and validation
+# =====================================================================================================================
+# =====================================================================================================================
+# Translating checked values
+# =====================================================================================================================
+# =====================================================================================================================
+# The frame builder and ownership
+# =====================================================================================================================
+# =====================================================================================================================
+# Statements and control flow
+# =====================================================================================================================
+# =====================================================================================================================
+# Calls
+# =====================================================================================================================
+# =====================================================================================================================
+# Plain model construction and field replacement
+# =====================================================================================================================
+# =====================================================================================================================
+# Formatting and strings
+# =====================================================================================================================
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
