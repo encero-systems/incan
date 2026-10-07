@@ -33,6 +33,7 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
         .find(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
     let program = &module.ast;
+    let type_info = analysis.type_info_for_path(&path).ok_or("entry analysis is missing")?;
     // Legacy's `incan_ir::check_for_this_import` injects entrypoint output for this exact module import.
     // Until Body IR carries that effect, accepting the declaration would silently erase observable behavior.
     for declaration in &program.declarations {
@@ -54,15 +55,14 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
             Declaration::Model(model) => {
                 if !incan_frontend::body_ir::is_direct_replacement_plain_model(model) {
                     return Err(format!(
-                        "unsupported source nonplain Model {} on the native route",
-                        model.name
+                        "unsupported source Model {} on {} on the native route",
+                        model_refusal_feature(model), model.name
                     ));
                 }
-                if model.fields.iter().any(|field| field.node.default.is_some()) {
-                    return Err(format!(
-                        "unsupported source Model defaults on {} on the native route",
-                        model.name
-                    ));
+                if model.fields.iter().any(|field| field.node.default.is_some())
+                    && type_info.declarations.model_derives.get(&model.name).is_some_and(|derives| derives.iter().any(|derive| derive == "Default"))
+                {
+                    return Err(format!("unsupported source Model derived Default over field defaults on {} on the native route", model.name));
                 }
                 continue;
             }
@@ -107,13 +107,55 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
         };
         return Err(format!("unsupported source {kind} on the native route"));
     }
-    let type_info = analysis.type_info_for_path(&path).ok_or("entry analysis is missing")?;
     let body_ir = build_body_ir_module_v0(program, &module.path_segments, type_info);
     let static_count = program.declarations.iter().filter(|declaration| matches!(declaration.node, incan_frontend::ast::Declaration::Static(_))).count();
     if static_count != body_ir.static_declarations.len() {
         return Err("unsupported source Static initializer or carrier on the native route".to_owned());
     }
     Ok(body_ir)
+}
+
+/// Name the first unsupported model feature without relaxing the frontend's declaration admission predicate.
+fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
+
+    // ---- Structural declaration features ----
+    if !model.type_params.is_empty() {
+        return "type parameters".to_owned();
+    }
+    if model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()) {
+        return "generic trait adoption".to_owned();
+    }
+
+    // ---- Member binding features ----
+    if !model.method_aliases.is_empty() {
+        return "method aliases".to_owned();
+    }
+    if !model.method_partials.is_empty() {
+        return "method partials".to_owned();
+    }
+    if !model.properties.is_empty() {
+        return "properties".to_owned();
+    }
+
+    // ---- Method facts ----
+    if model.methods.iter().any(|method| !method.node.type_params.is_empty() || !method.node.decorators.is_empty()) {
+        return "generic or decorated methods".to_owned();
+    }
+
+    // ---- Decorator expansion ----
+    if let Some(decorator) = model.decorators.iter().find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node)) {
+        let arguments = decorator.node.args.iter().filter_map(|argument| {
+            match argument {
+                incan_frontend::ast::DecoratorArg::Positional(value) => match &value.node {
+                    incan_frontend::ast::Expr::Ident(name) => Some(name.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }).collect::<Vec<_>>().join(", ");
+        return format!("decorator @{}({arguments})", decorator.node.name);
+    }
+    "unsupported declaration shape".to_owned()
 }
 
 /// Exact caller-declared native libraries and their dependency search directories.

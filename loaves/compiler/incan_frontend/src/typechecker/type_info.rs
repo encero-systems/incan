@@ -923,6 +923,8 @@ pub struct DeclarationArtifacts {
     pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
     /// Explicit and automatic native derives selected by checking for each source enum.
     pub enum_derives: HashMap<String, Vec<String>>,
+    /// Explicit builtin and implicit native derives selected for source models, in legacy emission order.
+    pub model_derives: HashMap<String, Vec<String>>,
     /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.

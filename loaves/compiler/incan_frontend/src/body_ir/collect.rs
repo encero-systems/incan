@@ -217,9 +217,14 @@ pub(super) fn collect_local_nominal_declarations(
                     .collect::<Option<Vec<_>>>()?,
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
-                derives: incan_lang::lang::derives::plain_model_derives()
-                    .map(str::to_owned)
-                    .to_vec(),
+                field_default_body: None,
+                derives: if class_layout.is_some() {
+                    incan_lang::lang::derives::plain_model_derives()
+                        .map(str::to_owned)
+                        .to_vec()
+                } else {
+                    type_info.declarations.model_derives.get(name)?.clone()
+                },
                 field_types: fields
                     .iter()
                     .map(|field| {
@@ -287,6 +292,7 @@ fn collect_plain_newtype(
         field_public: vec![true],
         public: newtype.visibility == ast::Visibility::Public,
         has_field_defaults: false,
+        field_default_body: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
         type_parameter_count: 0,

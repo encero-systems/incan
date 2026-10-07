@@ -417,6 +417,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .copied()
             .zip(written_exprs)
             .collect();
+        // Legacy stages reordered arguments, but otherwise evaluates fields in declaration order. The current
+        // aggregate boundary evaluates supplied operands before deferred defaults, so it cannot interleave an
+        // observable supplied expression after an omitted field. Preserve that gap as a named refusal.
+        let reordered = field_binding.argument_slots.windows(2).any(|pair| pair[0] > pair[1]);
+        if !reordered
+            && planned.iter().any(|(slot, expression)| {
+                (0..*slot).any(|prior| !field_binding.argument_slots.contains(&prior))
+                    && !matches!(expression.node, ast::Expr::Literal(_))
+            })
+        {
+            return self.unsupported_operand(
+                format!("model field-default evaluation interleaved with supplied arguments on `{name}`"),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
         let (operands, binding) = match self.lower_planned_args(&planned, field_binding.field_count, &[], scope, out) {
             Ok(bound) => bound,
             Err(description) => {

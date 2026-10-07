@@ -3443,6 +3443,31 @@ impl TypeChecker {
         self.validate_derives(&model.decorators);
         self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
         let derives = self.extract_derive_names(&model.decorators);
+        let mut native_derives = Vec::new();
+        for derive in &derives {
+            if !native_derives.contains(derive) {
+                native_derives.push(derive.clone());
+            }
+        }
+        for (derive, implied) in derives::DERIVE_IMPLICATIONS {
+            if native_derives.iter().any(|name| name == derives::as_str(*derive)) {
+                for implied in *implied {
+                    let name = derives::as_str(*implied).to_owned();
+                    if !native_derives.contains(&name) {
+                        native_derives.push(name);
+                    }
+                }
+            }
+        }
+        for derive in derives::plain_model_derives() {
+            if !native_derives.iter().any(|name| name == derive) {
+                native_derives.push(derive.to_owned());
+            }
+        }
+        self.type_info
+            .declarations
+            .model_derives
+            .insert(model.name.clone(), native_derives);
         self.validate_descriptor_model_shape(model, &derives);
         let has_validate = derives
             .iter()

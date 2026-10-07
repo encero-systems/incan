@@ -3,13 +3,15 @@
 use super::primitives::*;
 use super::refusals::*;
 use super::*;
+use incan_semantics_core::SymbolNamespace;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Classify source-written tuple projections from the checked base type, preserving nominal field authority.
+    /// Classify tuple projections and retain the declaration name selected for a checked nominal field alias.
     ///
     /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
-    /// structural. Other fields retain their checked canonical identity, including an explicit unresolved value.
-    fn lower_checked_field_projection(
+    /// structural. Checked member fields use the canonical declaration's name and identity together, so an alias
+    /// cannot become a second storage slot. Unresolved fields preserve their source spelling and remain unproven.
+    pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
         name: &str,
@@ -29,6 +31,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             bir::PlaceElem::structural_field(name)
         } else {
+            if let Some(identity) = self.type_info.resolved_identity(span)
+                && identity.namespace == SymbolNamespace::Member
+                && identity.kind == SemanticSourceTargetKind::Field
+            {
+                return bir::PlaceElem::field(identity.declaration_name.clone(), Some(identity.clone()));
+            }
             bir::PlaceElem::field(name, self.type_info.resolved_identity(span).cloned())
         }
     }

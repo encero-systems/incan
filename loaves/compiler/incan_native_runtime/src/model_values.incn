@@ -1,0 +1,39 @@
+"""Native nominal operations delegate to the same Rust derives as legacy emission."""
+
+from rust::std::fmt import Debug
+from rust::std::cmp import PartialEq, PartialOrd
+
+
+pub def debug_model[T with Debug](value: &T) -> str:
+    """Render the actual derived Debug implementation, including field order and string escaping."""
+    return f"{value:?}"
+
+
+pub def equal_model[T with PartialEq](left: &T, right: &T) -> bool:
+    """Compare through the derived PartialEq implementation without consuming either model."""
+    return PartialEq.eq(left, right)
+
+
+pub def unequal_model[T with PartialEq](left: &T, right: &T) -> bool:
+    """Preserve the derived PartialEq inequality contract."""
+    return PartialEq.ne(left, right)
+
+
+pub def less_model[T with PartialOrd](left: &T, right: &T) -> bool:
+    """Preserve lexicographic derived partial ordering."""
+    return PartialOrd.lt(left, right)
+
+
+pub def less_equal_model[T with PartialOrd](left: &T, right: &T) -> bool:
+    """Compare through PartialOrd, preserving unordered field results."""
+    return PartialOrd.le(left, right)
+
+
+pub def greater_model[T with PartialOrd](left: &T, right: &T) -> bool:
+    """Compare through the derived greater-than implementation."""
+    return PartialOrd.gt(left, right)
+
+
+pub def greater_equal_model[T with PartialOrd](left: &T, right: &T) -> bool:
+    """Compare through the derived greater-than-or-equal implementation."""
+    return PartialOrd.ge(left, right)

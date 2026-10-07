@@ -1,5 +1,14 @@
 """Language formatting and collection helpers used by the direct native route."""
 
+pub from model_values import (
+    debug_model,
+    equal_model,
+    unequal_model,
+    less_model,
+    less_equal_model,
+    greater_model,
+    greater_equal_model,
+)
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
 pub from collections import extend_list_set, extend_set, extend_dict
 pub from collections import (

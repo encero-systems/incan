@@ -652,7 +652,7 @@ fn external_signature_type(ty: Scalar) -> bool {
     source_signature_type(ty)
         || matches!(
             ty,
-            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice
+            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::ModelRef(_)
         )
 }
 
@@ -919,7 +919,11 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
         let derives_valid = if tuple {
             declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
-        } else { declaration.derives == ["Debug", "Clone", "FieldInfo", "IncanClass"] };
+        } else {
+            ["Debug", "Clone", "FieldInfo", "IncanClass"].iter().all(|required| declaration.derives.iter().any(|derive| derive == required))
+                && declaration.derives.iter().all(|derive| matches!(derive.as_str(), "Debug" | "Clone" | "FieldInfo" | "IncanClass" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default"))
+                && declaration.derives.iter().collect::<BTreeSet<_>>().len() == declaration.derives.len()
+        };
         if !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.fields.len() != declaration.field_public.len()

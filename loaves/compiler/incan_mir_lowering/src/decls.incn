@@ -30,8 +30,8 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
     unions = collect_unions(module)
     mut models: list[ModelDeclaration] = []
     for declaration in module.nominal_declarations:
-        if declaration.has_field_defaults:
-            return Err(f"unsupported Body IR model defaults on {declaration.name}")
+        if declaration.has_field_defaults and "Default" in declaration.derives:
+            return Err(f"unsupported Body IR derived Default over field defaults on {declaration.name}")
         mut fields: list[Parameter] = []
         for slot in range(len(declaration.fields)):
             fields.append(
