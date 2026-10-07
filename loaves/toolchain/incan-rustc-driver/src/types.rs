@@ -125,7 +125,7 @@ pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, dept
             .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::iter::{name}")))?;
     }
     let element = if depth == 0 {
-        primitive_type(tcx, leaf)?
+        collection_leaf_type(tcx, leaf)?
     } else {
         list_type(tcx, leaf, depth)?
     };
