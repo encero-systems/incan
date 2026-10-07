@@ -834,6 +834,65 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare unit and scalar tuple hash-key membership and insertion against legacy, including string ownership.
+#[test]
+fn direct_route_hash_leaves_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("hash-leaves")?;
+    let source = root.join("hash_leaves.incn");
+    fs::write(
+        &source,
+        r#"
+def unit_value() -> None:
+    """Return a concrete unit hash key."""
+    pass
+
+def main() -> None:
+    """Exercise unit keys, tuple keys, duplicate elimination, and owned text."""
+    mut units = {unit_value()}
+    units.add(unit_value())
+    println(len(units))
+    println(unit_value() in units)
+    mut rows: dict[tuple[str, int], int] = {("key", 1): 7}
+    println(("key", 1) in rows)
+    rows.insert(("other", 2), 9)
+    println(len(rows))
+    keys = {("left", 1), ("right", 2)}
+    println(("left", 1) in keys)
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("hash-leaves-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native hash leaves compilation",
+    );
+    let legacy_root = root.join("hash-leaves-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy hash leaves compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/hash_leaves")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy hash leaves execution");
+    success(&actual, "native hash leaves execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"1\ntrue\ntrue\n2\ntrue\n");
+    Ok(())
+}
+
 /// Prove class construction, shared and mutable receivers, and passing classes against legacy.
 #[test]
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -29,7 +29,7 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Scalar, flat tuple, and retained model leaves; hashed collections admit only their checked scalar subset."""
+    """Scalar, flat tuple, and retained model leaves; hash keys exclude floats and models, and dictionary values stay scalar."""
 
     Int
     Float
@@ -39,6 +39,7 @@ pub enum ListLeaf:
     Model(int, str)
     U8
     Unit
+    Decimal
 
 
 @derive(Clone, PartialEq)
@@ -97,6 +98,7 @@ pub enum PlanType:
     Tuple(list[TupleElement])
     String
     StringRef
+    Decimal
     StrRef
     StringArray(int)
     StrArray(int)
@@ -132,6 +134,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Model(index, name) => return PlanType.Model(index, name)
         ListLeaf.U8 => return PlanType.U8
         ListLeaf.Unit => return PlanType.Unit
+        ListLeaf.Decimal => return PlanType.Decimal
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:

@@ -35,6 +35,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 Primitive.Bytes => return Ok(PlanType.List(ListLeaf.U8, 1))
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
         RustType.Tuple(elements) => return tuple_type(elements)
+        RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
@@ -49,6 +50,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
                 PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
                 PlanType.U8 => return Ok(PlanType.List(ListLeaf.U8, 1))
+                PlanType.Decimal => return Ok(PlanType.List(ListLeaf.Decimal, 1))
                 PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
                 PlanType.Model(index, name) => return Ok(PlanType.List(ListLeaf.Model(index, name), 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
