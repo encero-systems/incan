@@ -873,7 +873,8 @@ struct ProjectRustBakeContext<'a> {
     project_version: &'a str,
 }
 
-/// Receipt one Rust source unit with the exact callee and caller-facet identities it consumes.
+/// Receipt one Rust source unit with the exact callee, caller-facet, and declared driver native-link identities it
+/// consumes.
 fn project_rust_unit_receipt(
     context: &ProjectRustBakeContext<'_>,
     unit_name: &str,
@@ -906,6 +907,7 @@ fn project_rust_unit_receipt(
     .with_build_unit_input("callee-incan-unit", callee_identity)
     .with_build_unit_input("caller-facet", facet_id);
     let mut request = request;
+    let mut declared_driver = false;
     if let Some(role) = context
         .manifest
         .rust_binary_roles()
@@ -915,10 +917,15 @@ fn project_rust_unit_receipt(
             oven_rustc::rustc::driver_grant::authorize_driver_grant(role, context.rustc).map_err(oven_rustc_error)?
     {
         request = request.with_build_unit_input(oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT, grant);
+        declared_driver = true;
     }
-    if let Some(identity) =
-        oven_rustc::rustc::pinned_link_closure_identity(context.rustc, context.target).map_err(oven_rustc_error)?
-    {
+    let link_identity = if declared_driver {
+        oven_rustc::rustc::pinned_driver_link_closure_identity(context.rustc, context.target)
+    } else {
+        oven_rustc::rustc::pinned_link_closure_identity(context.rustc, context.target)
+    }
+    .map_err(oven_rustc_error)?;
+    if let Some(identity) = link_identity {
         request = request.with_build_unit_input("link-closure", identity);
     }
     let evidence = generated_project_source_evidence(&request).map_err(|error| CliError::failure(error.to_string()))?;

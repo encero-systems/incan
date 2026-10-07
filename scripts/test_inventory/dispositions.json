@@ -11381,6 +11381,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/convert_cargo.rs": {
+      "disposition": "keep",
+      "notes": "Explicit one-time Cargo adoption preserves Loaf dependency declarations and refuses unsupported inputs before writing; it runs no Cargo process.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level.",

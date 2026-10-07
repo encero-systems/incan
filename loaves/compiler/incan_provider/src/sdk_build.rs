@@ -63,11 +63,12 @@ fn prepare_native_sdk_provider_inventory(
     let _lock = acquire_sdk_provider_store_lock(&publication.store_root)?;
     let closure = crate::sdk_native::prepare_sdk_native_closure(&publication.stdlib_root, &catalog, inputs)?;
     let receipts = crate::sdk_native::sdk_native_receipts(&closure)?;
-    let identity = crate::sdk_store::sdk_provider_sealed_store_identity(
+    let identity = crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
         &publication.stdlib_root,
         &publication.executable,
         &publication.distribution_profile,
         &receipts,
+        inputs.compiler_graph.as_deref(),
     )?;
     if let Some(inventory) = load_published_sdk_inventory(&publication.store_root, &identity)? {
         validate_native_sdk_entry(&inventory.root, &receipts)?;
@@ -91,11 +92,12 @@ fn prepare_native_sdk_provider_inventory(
             &publication.distribution_profile,
             &mut publish,
         )?;
-        let current_identity = crate::sdk_store::sdk_provider_sealed_store_identity(
+        let current_identity = crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
             &publication.stdlib_root,
             &publication.executable,
             &publication.distribution_profile,
             &receipts,
+            inputs.compiler_graph.as_deref(),
         )?;
         if current_identity != identity {
             return Err(ProviderError::failure(
@@ -769,6 +771,7 @@ mod tests {
         fs::write(&executable, "compiler identity")?;
         let store = temp.path().join("store");
         let inputs = crate::sdk_native::SdkNativeInputs {
+            compiler_graph: None,
             blobs: temp.path().to_path_buf(),
             index: temp.path().to_path_buf(),
             output: store.join(".native"),

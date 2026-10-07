@@ -403,6 +403,9 @@ fn prepare_library_project_with_context(
             return Err(CliError::failure(msg.trim_end()));
         }
     };
+    // Compiled Incan providers participate in linking; their checked types do not require Rust source inspection.
+    #[cfg(feature = "rust_inspect")]
+    let inspection_dependencies = resolved.dependencies.clone();
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     record_timing(&mut timings_ms, "library_resolve_dependencies", dependency_start);
     #[cfg(feature = "rust_inspect")]
@@ -626,7 +629,7 @@ fn prepare_library_project_with_context(
                     profile: "debug",
                     features: &cargo_features.cargo_features,
                     build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
-                    registry_dependencies: &resolved.dependencies,
+                    registry_dependencies: &inspection_dependencies,
                 }),
                 prepared_project_source_authorities: None,
                 explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,

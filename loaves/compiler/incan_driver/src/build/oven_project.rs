@@ -298,6 +298,8 @@ pub fn prepare_oven_project(
                 .collect::<String>();
             CliError::failure(message.trim_end())
         })?;
+    // Compiled Incan providers participate in linking; their checked types do not require Rust source inspection.
+    let inspection_dependencies = resolved.dependencies.clone();
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let inline_path_dependencies = oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?;
     record_timing(&mut prepare_timings, "prepare_resolve_dependencies", lap);
@@ -417,7 +419,7 @@ pub fn prepare_oven_project(
                 profile,
                 features: &cargo_features.cargo_features,
                 build_unit_inputs: &oven_build_inputs,
-                registry_dependencies: &resolved.dependencies,
+                registry_dependencies: &inspection_dependencies,
             }),
             prepared_project_source_authorities,
             explicit_oven_bake: oven_plan_mode == OvenProjectPlanMode::ExplicitBake,

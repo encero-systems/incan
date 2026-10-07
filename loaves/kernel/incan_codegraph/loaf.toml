@@ -1,14 +1,15 @@
 [dependencies]
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 
 [project]
-description = "Shared language vocabulary and semantic helpers for the Incan compiler and runtime"
+description = "Stable codegraph facts for Incan tooling and agent context"
 license = "Apache-2.0"
-name = "incan_lang"
+name = "incan_codegraph"
 private = true
 version = "0.6.0-dev.6"
 
 [rust]
 edition = "2024"
-name = "incan_lang"
+name = "incan_codegraph"
 type = "lib"

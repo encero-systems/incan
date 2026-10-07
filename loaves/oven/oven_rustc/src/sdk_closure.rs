@@ -24,7 +24,10 @@ mod environment;
 mod local;
 mod native;
 
-pub use local::{compile_local_sdk_facet, compile_local_sdk_facet_for_target};
+pub use local::{
+    LocalFacetSelection, compile_local_sdk_facet, compile_local_sdk_facet_for_target, compile_local_sdk_facets,
+    local_sdk_facet_source_digest,
+};
 
 struct CompileContext<'a> {
     rustc: &'a Path,

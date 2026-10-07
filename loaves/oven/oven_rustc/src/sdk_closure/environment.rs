@@ -82,6 +82,9 @@ pub(super) fn adopted_about(
     commit: &str,
     bindings: &[SdkLockedUnit],
 ) -> Result<BTreeMap<String, serde_json::Value>, Error> {
+    if bindings.is_empty() {
+        return Ok(BTreeMap::new());
+    }
     let listing = std::process::Command::new("git")
         .arg("-C")
         .arg(index)

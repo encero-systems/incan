@@ -7,6 +7,7 @@
 
 mod case_partition;
 pub mod compile_closure;
+pub mod convert_cargo;
 mod equivalence;
 mod gate;
 mod harvest;

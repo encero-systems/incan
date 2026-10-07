@@ -170,6 +170,15 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Convert selected Cargo workspace library closures into authored Loaf declarations once
+    ConvertCargo {
+        /// Workspace owning Cargo.toml and Cargo.lock; read only during this explicit adoption
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+        /// Library project directories relative to the workspace; may be repeated
+        #[arg(long, required = true)]
+        project: Vec<PathBuf>,
+    },
     /// Compile a pinned adopted-Loaf closure without Cargo or build-script execution
     CompileClosure(CompileClosureArgs),
     /// Transfer one compiler-selected SDK between CI jobs under a bound envelope

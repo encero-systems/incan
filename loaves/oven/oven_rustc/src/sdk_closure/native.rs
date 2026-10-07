@@ -60,6 +60,16 @@ fn prepare_link(
     let owner = select_owner(link, roots)?;
     let receipt = receipt_with_build_unit_input(receipt, "sdk-link-fact", serde_json::to_string(link)?)?;
     let domain = "adopted-native-link";
+    oven_store::store_mirror::import_matching_from_mirrors(
+        context.store,
+        &oven_store::store_mirror::configured_mirrors(|name| std::env::var_os(name)),
+        Some(&receipt),
+        |manifest| {
+            manifest.kind == OvenArtifactKind::Engine
+                && manifest.domain == domain
+                && manifest.receipt_identity == receipt.identity
+        },
+    )?;
     let selected = context.store.select_payloads_matching_for_execution(|manifest| {
         manifest.kind == OvenArtifactKind::Engine
             && manifest.domain == domain

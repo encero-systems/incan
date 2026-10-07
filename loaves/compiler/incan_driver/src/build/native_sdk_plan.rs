@@ -14,9 +14,10 @@ use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArti
 
 /// Keep project dependency roots separate from registry capabilities supplied by the receipt-selected SDK.
 ///
-/// The project source digest still binds its declarations. SDK registry requests must match the exact retained
+/// The project source digest still binds its declarations. SDK requests must match the exact retained
 /// package/version/features/domain selection and the receipt's canonical catalog digest. They require no project
-/// Cargo lock or duplicate source catalog; missing or incompatible requests remain project roots and refuse normally.
+/// Cargo lock or duplicate source catalog; local companions additionally reproduce their source snapshot identity.
+/// Missing or incompatible requests remain project roots and refuse normally.
 pub(crate) fn project_dependencies_without_sdk_registry_inputs(
     dependencies: &[DependencySpec],
     receipt: Option<&oven_store::OvenReceipt>,
@@ -40,9 +41,7 @@ pub(crate) fn project_dependencies_without_sdk_registry_inputs(
     let selection = incan_provider::sdk_native::select_sdk_native_artifacts(&inventory.root)?;
     let mut project = Vec::new();
     for dependency in dependencies {
-        if matches!(dependency.source, oven_model::manifest::DependencySource::Registry)
-            && incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)?
-        {
+        if incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)? {
             continue;
         }
         project.push(dependency.clone());

@@ -275,6 +275,24 @@ pub fn sdk_provider_sealed_store_identity(
     distribution_profile: &str,
     native_receipts: &std::collections::BTreeMap<String, String>,
 ) -> ProviderResult<String> {
+    let graph = std::env::var_os("INCAN_SDK_NATIVE_COMPILER_GRAPH").map(PathBuf::from);
+    sdk_provider_sealed_store_identity_with_graph(
+        stdlib_root,
+        executable,
+        distribution_profile,
+        native_receipts,
+        graph.as_deref(),
+    )
+}
+
+/// Compute publication identity using the explicit graph admitted by the native publisher.
+pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
+    stdlib_root: &Path,
+    executable: &Path,
+    distribution_profile: &str,
+    native_receipts: &std::collections::BTreeMap<String, String>,
+    compiler_graph: Option<&Path>,
+) -> ProviderResult<String> {
     if native_receipts.is_empty() || !stdlib_root.join("sdk-lock.json").is_file() {
         return Err(ProviderError::failure(
             "sealed SDK publication requires its seed and retained native receipts",
@@ -288,6 +306,10 @@ pub fn sdk_provider_sealed_store_identity(
     hasher.update([0]);
     hasher.update(sdk_provider_compiler_digest(executable)?);
     hash_sealed_sdk_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    if let Some(graph) = compiler_graph {
+        hasher.update(b"compiler-native-graph\0");
+        hasher.update(crate::sdk_native::compiler_native_graph_digest(graph)?.as_bytes());
+    }
     // Discovery must invalidate a stale receipt hint when an external local companion changes, before preparation
     // has had an opportunity to produce that companion's replacement native receipt.
     if let Some(source_root) = stdlib_root.parent().and_then(Path::parent) {
@@ -817,6 +839,21 @@ mod tests {
             companion_before,
             sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?,
             "a stale discovery receipt hint cannot hide changed local kernel sources"
+        );
+        let graph = root.path().join("compiler-graph.json");
+        let registry_lock = root.path().join("registry-lock.json");
+        fs::write(&registry_lock, "first native resolution")?;
+        fs::write(
+            &graph,
+            r#"{"index_commit":"retained-pin","registry_lock":"registry-lock.json","facets":[]}"#,
+        )?;
+        let explicit =
+            sdk_provider_sealed_store_identity_with_graph(&stdlib, &executable, "full", &receipts, Some(&graph))?;
+        fs::write(&registry_lock, "changed native resolution")?;
+        assert_ne!(
+            explicit,
+            sdk_provider_sealed_store_identity_with_graph(&stdlib, &executable, "full", &receipts, Some(&graph))?,
+            "explicit graph freshness must not depend on environment configuration"
         );
         Ok(())
     }

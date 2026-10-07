@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use oven_rustc::sdk_closure::{
-    ClosureCompileRequest, SdkCompiledClosure, compile_local_sdk_facet, compile_local_sdk_facet_for_target,
-    prepare_closure, prepare_sdk_seed,
+    ClosureCompileRequest, LocalFacetSelection, SdkCompiledClosure, compile_local_sdk_facet,
+    compile_local_sdk_facet_for_target, compile_local_sdk_facets, prepare_closure, prepare_sdk_seed,
 };
 use oven_store::store::{OvenStore, OvenStoreExecutionPayload, OvenStoreLimits};
 use rust_inspect::{
@@ -151,6 +151,8 @@ pub struct SdkNativeInputs {
     pub output: PathBuf,
     /// Managed compiler selected for all local and adopted units.
     pub rustc: PathBuf,
+    /// Optional explicit compiler-companion graph with a resolved registry closure and selected local facets.
+    pub compiler_graph: Option<PathBuf>,
 }
 
 impl SdkNativeInputs {
@@ -168,6 +170,7 @@ impl SdkNativeInputs {
             output: store.join(".native"),
             rustc: oven_rustc::rustc::resolve_active_rustc()
                 .map_err(|error| ProviderError::failure(error.to_string()))?,
+            compiler_graph: std::env::var_os("INCAN_SDK_NATIVE_COMPILER_GRAPH").map(PathBuf::from),
         })
     }
 }
@@ -182,13 +185,33 @@ pub fn prepare_sdk_native_closure(
     catalog: &SdkSourceCatalog,
     inputs: &SdkNativeInputs,
 ) -> ProviderResult<SdkCompiledClosure> {
-    let mut closure = prepare_sdk_seed(
-        &stdlib.join("sdk-lock.json"),
-        &inputs.blobs,
-        &inputs.output,
-        &inputs.rustc,
-        &inputs.index,
-    )
+    let graph = inputs
+        .compiler_graph
+        .as_ref()
+        .map(|path| read_compiler_graph(path))
+        .transpose()?;
+    let mut closure = if let Some((owner, graph)) = &graph {
+        prepare_closure(&ClosureCompileRequest {
+            primary: &[],
+            lock: &owner.join(&graph.registry_lock),
+            blobs: &inputs.blobs,
+            output: &inputs.output,
+            rustc: &inputs.rustc,
+            index: &inputs.index,
+            index_commit: &graph.index_commit,
+            target: &oven_rustc::rustc::rustc_host_target(&inputs.rustc)
+                .map_err(|error| ProviderError::failure(error.to_string()))?,
+            profile: "debug",
+        })
+    } else {
+        prepare_sdk_seed(
+            &stdlib.join("sdk-lock.json"),
+            &inputs.blobs,
+            &inputs.output,
+            &inputs.rustc,
+            &inputs.index,
+        )
+    }
     .map_err(|error| ProviderError::failure(error.to_string()))?;
     std::fs::write(
         inputs.output.join("closure-report.json"),
@@ -206,16 +229,26 @@ pub fn prepare_sdk_native_closure(
         ("loaves/stdlib/derive/incan_web_macros", "host", Vec::new()),
         ("loaves/kernel/incan_vocab", "target", vec!["serde".to_string()]),
     ] {
+        let requested = graph.as_ref().and_then(|(owner, graph)| {
+            graph.facets.iter().find(|facet| {
+                owner.join(&facet.project).canonicalize().ok() == source_root.join(relative).canonicalize().ok()
+            })
+        });
+        let features = requested.map(|facet| facet.features.as_slice()).unwrap_or(&features);
         if let Err(error) = compile_local_sdk_facet(
             &mut closure,
             &source_root.join(relative),
-            &features,
+            features,
             domain,
             &inputs.output,
             &inputs.rustc,
         ) {
             local_failures.push(format!("SDK companion {relative}: {error}"));
         }
+    }
+    if let Some((owner, graph)) = &graph {
+        compile_local_sdk_facets(&mut closure, &graph.facets, owner, &inputs.output, &inputs.rustc)
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
     }
     if let Err(error) = attach_vocabulary_desugarer_closure(&mut closure, stdlib, source_root, inputs) {
         local_failures.push(format!("SDK vocabulary desugarer closure: {error}"));
@@ -248,6 +281,49 @@ pub fn prepare_sdk_native_closure(
     )
     .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(closure)
+}
+
+/// Explicit compiler-companion selection, resolved before SDK publication and independent of Cargo metadata.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompilerNativeGraph {
+    /// Immutable registry revision governing adopted sources and facts.
+    index_commit: String,
+    /// Complete registry resolution including the ordinary SDK inputs, relative to this document.
+    registry_lock: PathBuf,
+    /// Selected local compilation units with their exact feature and domain policy.
+    facets: Vec<LocalFacetSelection>,
+}
+
+/// Read the explicit native graph relative to its canonical owner; missing input never falls back to Cargo.
+fn read_compiler_graph(path: &Path) -> ProviderResult<(PathBuf, CompilerNativeGraph)> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    let owner = path
+        .parent()
+        .ok_or_else(|| ProviderError::failure("compiler graph has no owner"))?
+        .to_path_buf();
+    let graph =
+        serde_json::from_slice(&std::fs::read(&path).map_err(|error| ProviderError::failure(error.to_string()))?)
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+    Ok((owner, graph))
+}
+
+/// Bind explicit companion policy, registry resolution, and every local source snapshot to SDK freshness.
+pub(crate) fn compiler_native_graph_digest(path: &Path) -> ProviderResult<String> {
+    let (owner, graph) = read_compiler_graph(path)?;
+    let mut bytes = std::fs::read(path).map_err(|error| ProviderError::failure(error.to_string()))?;
+    bytes.extend(
+        std::fs::read(owner.join(graph.registry_lock)).map_err(|error| ProviderError::failure(error.to_string()))?,
+    );
+    for facet in graph.facets {
+        let digest =
+            oven_rustc::sdk_closure::local_sdk_facet_source_digest(&owner.join(facet.project), &std::env::temp_dir())
+                .map_err(|error| ProviderError::failure(error.to_string()))?;
+        bytes.extend(digest.as_bytes());
+    }
+    Ok(oven_store::digest_bytes(&bytes))
 }
 
 /// Target triple every SDK vocabulary desugarer is compiled for.
@@ -357,9 +433,9 @@ pub fn write_sdk_native_authority(closure: &SdkCompiledClosure, root: &Path) -> 
 
 /// Check a consumer requirement against one admitted SDK selection without resolving another dependency graph.
 ///
-/// Registry requirements bind package, version, domain, and features. Path requirements must name either an exact
-/// published SDK provider root or a compiler-owned facet source root from the current SDK catalog; arbitrary paths
-/// with matching package names cannot borrow the SDK's native authority.
+/// Registry requirements bind package, version, domain, and features. Path requirements must name an exact
+/// published SDK provider root, a catalog-owned facet, or reproduce the complete source identity of an admitted
+/// compiler companion. A matching package name alone never borrows the SDK's native authority.
 pub fn sdk_native_dependency_is_covered(
     inventory: &crate::SdkInventory,
     selection: &SdkNativeSelection,
@@ -380,6 +456,7 @@ pub fn sdk_native_dependency_is_covered(
                 .is_none_or(|requirement| requirement.matches(&version))
         })
     };
+    let mut local_digest = None;
     if let DependencySource::Path { path } = &dependency.source {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         for provider in inventory
@@ -397,7 +474,17 @@ pub fn sdk_native_dependency_is_covered(
             }
         }
         if !sdk_native_facet_path_matches(package, &canonical)? {
-            return Ok(false);
+            if !selection
+                .units
+                .iter()
+                .any(|unit| unit.binding.loaf == package && !unit.binding.loaf.starts_with("crates-io/"))
+            {
+                return Ok(false);
+            }
+            local_digest = Some(
+                oven_rustc::sdk_closure::local_sdk_facet_source_digest(&canonical, &std::env::temp_dir())
+                    .map_err(|error| ProviderError::failure(error.to_string()))?,
+            );
         }
     } else if !matches!(dependency.source, DependencySource::Registry) {
         return Ok(false);
@@ -418,6 +505,9 @@ pub fn sdk_native_dependency_is_covered(
                 DependencySource::Git { .. } => false,
             };
             package_matches
+                && local_digest
+                    .as_ref()
+                    .is_none_or(|digest| unit.binding.archive_digest == *digest)
                 && accepts_version(&unit.binding.version)
                 && (unit.binding.domain == "target"
                     || Path::new(&unit.relative_path)
@@ -469,6 +559,60 @@ fn sdk_native_facet_path_matches(crate_name: &str, path: &Path) -> ProviderResul
 
 #[cfg(test)]
 mod tests {
+    /// A compiler companion path is admitted by source identity and refuses mutation even when its name is unchanged.
+    #[test]
+    fn compiler_companion_path_requires_current_source_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("companion");
+        std::fs::create_dir_all(project.join("src"))?;
+        std::fs::write(
+            project.join("loaf.toml"),
+            "[project]\nname='companion'\nversion='1.0.0'\n[rust]\nname='companion'\ntype='lib'\nedition='2024'\n",
+        )?;
+        std::fs::write(project.join("src/lib.rs"), "pub fn value() -> u8 { 1 }")?;
+        let seed = root.path().join("seed.json");
+        std::fs::write(&seed, r#"{"schema":"incan.oven.loaf-resolution/1","units":[]}"#)?;
+        let output = root.path().join("native");
+        let rustc = oven_rustc::rustc::resolve_active_rustc()?;
+        let mut closure = oven_rustc::sdk_closure::prepare_sdk_seed(&seed, root.path(), &output, &rustc, root.path())?;
+        oven_rustc::sdk_closure::compile_local_sdk_facet(&mut closure, &project, &[], "target", &output, &rustc)?;
+        let authority = root.path().join("authority");
+        std::fs::create_dir(&authority)?;
+        super::write_sdk_native_authority(&closure, &authority)?;
+        super::write_sdk_native_artifact_catalog(&closure, &output.join("store"), &authority)?;
+        let selection = super::select_sdk_native_artifacts(&authority)?;
+        let inventory = crate::SdkInventory {
+            root: authority,
+            sdk_id: "fixture".to_string(),
+            sdk_version: "1.0.0".to_string(),
+            compiler_requirement: "*".to_string(),
+            provider_codegen_revision: incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
+            components: std::collections::BTreeMap::new(),
+            profiles: std::collections::BTreeMap::new(),
+        };
+        let request = oven_model::manifest::DependencySpec {
+            crate_name: "companion".to_string(),
+            version: Some("1".to_string()),
+            features: Vec::new(),
+            default_features: false,
+            source: oven_model::manifest::DependencySource::Path { path: project.clone() },
+            optional: false,
+            package: None,
+        };
+        assert!(super::sdk_native_dependency_is_covered(
+            &inventory, &selection, &request
+        )?);
+        std::fs::write(project.join("Cargo.toml"), "poisoned Cargo input")?;
+        assert!(super::sdk_native_dependency_is_covered(
+            &inventory, &selection, &request
+        )?);
+        std::fs::write(project.join("src/lib.rs"), "pub fn value() -> u8 { 2 }")?;
+        assert!(!super::sdk_native_dependency_is_covered(
+            &inventory, &selection, &request
+        )?);
+        Ok(())
+    }
+
     /// Component imports parse using their Loaf dependency declarations instead of removed inline version hints.
     #[test]
     fn system_sources_use_loaf_dependency_declarations() -> Result<(), Box<dyn std::error::Error>> {
