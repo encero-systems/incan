@@ -1608,6 +1608,8 @@ pub struct RustFacet {
     pub kind: Option<String>,
     /// Explicit Rust language edition.
     pub edition: Option<String>,
+    /// Whether the upstream package declared a build script; when true, a binding compiles only with a recorded fact.
+    pub build_script: Option<bool>,
 }
 
 /// One declared Loaf edge; target alternatives never lose their authored identity.
@@ -1748,6 +1750,8 @@ struct RustTables {
     kind: Option<String>,
     #[serde(default)]
     edition: Option<String>,
+    #[serde(rename = "build-script", default)]
+    build_script: Option<bool>,
     #[serde(default)]
     dependencies: Option<DependencyTable>,
     #[serde(rename = "dev-dependencies", default)]
@@ -2704,6 +2708,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
             name: rust.name.clone(),
             kind: rust.kind.clone(),
             edition: rust.edition.clone(),
+            build_script: rust.build_script,
         }),
         loaf_dependencies,
         deprecations,

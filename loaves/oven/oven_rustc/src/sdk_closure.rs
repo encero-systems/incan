@@ -387,10 +387,10 @@ fn prepare_units(
                 None => Vec::new(),
             };
             Ok(PreparedUnit {
+                build_script: declares_build_script(&manifest) || archive.has_build_script(),
                 binding,
                 manifest,
                 root,
-                build_script: archive.has_build_script(),
                 fact,
                 fact_out,
             })
@@ -666,6 +666,18 @@ fn publish_unit(
         .pop()
         .ok_or("published SDK unit was not selected")?;
     Ok(owner)
+}
+
+/// Whether an adopted manifest states that its package has a build script (RFC 119 `[rust] build-script`).
+///
+/// The upstream script may live anywhere its manifest declared, so its presence is a stated fact, not something a
+/// root `build.rs` check can discover; a unit that declares one compiles only with a recorded fact for its binding.
+fn declares_build_script(manifest: &toml::Value) -> bool {
+    manifest
+        .get("rust")
+        .and_then(|rust| rust.get("build-script"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// Read a fact's generated files from the version's record directory at the pinned index commit.
@@ -1114,6 +1126,18 @@ fn std_library_digest(root: &Path, relative: &str) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stated build script requires a fact even when no `build.rs` sits at the package root.
+    #[test]
+    fn stated_build_script_is_honored_wherever_the_script_lives() -> Result<(), Error> {
+        let stated: toml::Value = toml::from_str("[rust]\nname = \"rustversion\"\nbuild-script = true\n")?;
+        let absent: toml::Value = toml::from_str("[rust]\nname = \"itoa\"\n")?;
+        let denied: toml::Value = toml::from_str("[rust]\nname = \"itoa\"\nbuild-script = false\n")?;
+        assert!(declares_build_script(&stated));
+        assert!(!declares_build_script(&absent));
+        assert!(!declares_build_script(&denied));
+        Ok(())
+    }
 
     /// Component catalogs and additional targets cannot change the selected sysroot library identity.
     #[test]
