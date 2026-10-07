@@ -2,6 +2,7 @@
 
 from pub::incan_mir_plan import (
     ListLeaf,
+    TupleElement,
     list_leaf_type,
     PlanType,
     Operand,
@@ -21,22 +22,42 @@ from rust::incan_semantics_core::body_ir import (
     OwnershipFact,
 )
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from tuples import tuple_type, generic_tuple_type
 
 
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
-    """Admit only legacy primitive representations; floating point keys lack Eq and Hash."""
+    """Admit primitive leaves and flat scalar tuple keys; floating point keys lack Eq and Hash."""
     match ty:
         RustType.Primitive(primitive) =>
             match primitive:
                 Primitive.Int => return Ok(ListLeaf.Int)
                 Primitive.Bool => return Ok(ListLeaf.Bool)
                 Primitive.Str => return Ok(ListLeaf.Str)
+                Primitive.Unit => return Ok(ListLeaf.Unit)
                 Primitive.Float =>
                     if not hashed:
                         return Ok(ListLeaf.Float)
                 _ => pass
+        RustType.Tuple(elements) =>
+            if hashed:
+                return hashed_tuple_leaf(tuple_type(elements)?)
+        RustType.Generic(base=_base, args=_arguments) =>
+            if hashed:
+                match generic_tuple_type(ty):
+                    Ok(tuple_ty) => return hashed_tuple_leaf(tuple_ty)
+                    Err(_reason) => pass
         _ => pass
     return Err(f"unsupported Body IR collection leaf {ty}")
+
+
+def hashed_tuple_leaf(ty: PlanType) -> Result[ListLeaf, str]:
+    """Keep tuple keys flat and exclude floats before selecting the runtime's Eq and Hash bounds."""
+    match ty:
+        PlanType.Tuple(elements) =>
+            if TupleElement.Float in elements:
+                return Err("unsupported Body IR floating-point tuple hash key")
+            return Ok(ListLeaf.Tuple(elements))
+        _ => return Err("unsupported Body IR hash tuple representation")
 
 
 pub def leaf_type(leaf: ListLeaf) -> PlanType:

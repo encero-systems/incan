@@ -54,6 +54,7 @@ from pub::incan_mir_plan import (
     scalar_example,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from bytes_plan import bytes_literal
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
@@ -2544,6 +2545,14 @@ def checked_list_argument(
             if mutable and read.fact != OwnershipFact.MutBorrow:
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             return list_borrow(builder, list_root_place(builder, read.place, span)?, mutable, span)
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Bytes(_bytes) =>
+                    if mutable:
+                        return Err("unsupported Body IR mutable byte literal argument")
+                    literal_place = bytes_literal(builder, constant, span)?
+                    return list_borrow(builder, literal_place, false, span)
+                _ => return Err("unsupported Body IR constant list argument")
         _ => return Err("unsupported Body IR constant list argument")
 
 
@@ -2551,6 +2560,9 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
     """Materialize owned list and string values using each checked read's fact."""
     match value:
         RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Bytes(_bytes) => return Ok(read_place(bytes_literal(builder, constant, span)?, true, span))
+                _ => pass
             match constant.clone():
                 RustConstant.Str(text) =>
                     text_place = owned_literal(builder, str(text), span)
