@@ -20,7 +20,10 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
-from rust::incan_semantics_core::body_ir import NominalDeclaration as RustNominalDeclaration
+from rust::incan_semantics_core::body_ir import (
+    NominalDeclaration as RustNominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
+)
 
 
 pub model Builder:
@@ -46,6 +49,7 @@ pub model Builder:
     pub iterators: list[tuple[int, int]]
     pub borrowed_items: list[int]
     pub nominals: list[RustNominalDeclaration]
+    pub enums: list[RustEnumDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -101,6 +105,7 @@ pub def track_rvalue_moves(mut builder: Builder, value: RvalueKind) -> None:
     match value:
         RvalueKind.Use(operand) => forget_moved_arguments(builder, [operand])
         RvalueKind.Model(_index, operands) => forget_moved_arguments(builder, operands)
+        RvalueKind.Enum(_owner, _variant, operands) => forget_moved_arguments(builder, operands)
         _ => pass
 
 
@@ -186,6 +191,7 @@ pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
 pub def frame_place_type(locals: list[Local], value: Place) -> PlanType:
     """Read retained scalar and owner projections, including supported collection reborrows."""
     match value.projection:
+        Projection.VariantField(_variant, _slot, ty) => return ty
         Projection.Field(_slot, ty) => return ty
         Projection.DerefField(_slot, ty) => return ty
         Projection.NumericValue(ty) => return ty

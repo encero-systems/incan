@@ -3,6 +3,76 @@
 
 use super::*;
 
+/// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.
+pub(super) fn collect_local_enum_declarations(
+    program: &ast::Program,
+    module_identity: &str,
+    type_info: &TypeCheckInfo,
+) -> Vec<bir::EnumDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Enum(value) = &declaration.node else {
+                return None;
+            };
+            if !is_direct_native_enum(value) {
+                return None;
+            }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            let variants = value
+                .variants
+                .iter()
+                .map(|variant| {
+                    let canonical = type_info
+                        .declarations
+                        .member_declaration_identities
+                        .get(&(variant.span.start, variant.span.end))?
+                        .clone();
+                    let fields = variant
+                        .node
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            type_info
+                                .declarations
+                                .enum_payload_types
+                                .get(&(field.span.start, field.span.end))
+                                .map(semantic_type_from_resolved)
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(bir::EnumVariantDeclaration {
+                        direct_declaration_id: CompilerNodeId::declaration_span(
+                            module_identity,
+                            variant.span.start,
+                            variant.span.end,
+                        ),
+                        canonical,
+                        name: variant.node.name.clone(),
+                        fields,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::EnumDeclaration {
+                direct_declaration_id: CompilerNodeId::declaration_span(
+                    module_identity,
+                    declaration.span.start,
+                    declaration.span.end,
+                ),
+                canonical,
+                name: value.name.clone(),
+                public: value.visibility == ast::Visibility::Public,
+                variants,
+                derives: type_info.declarations.enum_derives.get(&value.name)?.clone(),
+            })
+        })
+        .collect()
+}
+
 /// Collect the source expressions a synthesized local partial needs to retain target defaults in Body IR.
 pub(super) fn collect_function_default_sources(program: &ast::Program) -> FunctionDefaultSources {
     program

@@ -592,3 +592,86 @@ fn direct_route_collections_match_legacy() -> Result<(), Box<dyn std::error::Err
     )?;
     Ok(())
 }
+
+/// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
+#[test]
+fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("source-enum")?;
+    let source = root.join("source_enum.incn");
+    fs::write(
+        &source,
+        r#"enum Signal:
+    Ready
+    Waiting
+
+enum Shape:
+    Empty
+    Circle(int)
+    Rectangle(int, int)
+    Label(str)
+
+def make_shape(size: int) -> Shape:
+    return Shape.Circle(size)
+
+def area(shape: Shape) -> int:
+    match shape:
+        Shape.Empty => return 0
+        Shape.Circle(radius) => return radius * radius
+        Shape.Rectangle(width, height) => return width * height
+        Shape.Label(_) => return -1
+
+def label(shape: Shape) -> str:
+    match shape:
+        Shape.Label(text) => return text
+        _ => return "unlabeled"
+
+def signal_value(signal: Signal) -> int:
+    match signal:
+        Signal.Ready => return 1
+        Signal.Waiting => return 2
+
+def main() -> None:
+    shape = make_shape(7)
+    println(area(shape))
+    println(area(shape))
+    println(area(Shape.Empty))
+    println(area(Shape.Rectangle(3, 5)))
+    println(signal_value(Signal.Ready))
+    println(signal_value(Signal.Waiting))
+    text = Shape.Label("payload")
+    println(label(text))
+    println(label(text))
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "source enum native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "source enum legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/source_enum")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source enum legacy execution");
+    success(&actual, "source enum native execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"49\n49\n0\n15\n1\n2\npayload\npayload\n");
+    Ok(())
+}

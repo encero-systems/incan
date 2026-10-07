@@ -58,6 +58,26 @@ fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
 }
 
 impl TypeChecker {
+    /// Retain a nongeneric variant's checked positional payload signature for both constructor call spellings.
+    ///
+    /// Generic variants need a concrete instantiation before they can claim declaration-slot types.
+    pub(in crate::typechecker::check_expr) fn checked_enum_variant_parameters(
+        &self,
+        enum_name: &str,
+        variant: &str,
+    ) -> Option<Vec<CallableParam>> {
+        let TypeInfo::Enum(info) = self.lookup_semantic_type_info(enum_name)? else {
+            return None;
+        };
+        if !info.type_params.is_empty() {
+            return None;
+        }
+        let canonical = info.variant_aliases.get(variant).map(String::as_str).unwrap_or(variant);
+        info.variant_fields
+            .get(canonical)
+            .map(|fields| fields.iter().cloned().map(CallableParam::positional).collect())
+    }
+
     /// Record the identity already attached to the active direct callee binding.
     ///
     /// This deliberately reads the symbol table's resolution result instead of deriving an identity from the written
@@ -177,11 +197,16 @@ impl TypeChecker {
                     || enum_info.variant_aliases.contains_key(member_name))
             {
                 let variant_identity = enum_info.variant_identities.get(member_name).cloned();
+                let variant_params = self.checked_enum_variant_parameters(enum_name, member_name);
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
                 }
                 self.check_call_args(args);
+                // Retain the checked positional payload surface for Body IR's declaration-slot binder.
+                if let Some(parameters) = variant_params {
+                    self.type_info.record_call_site_callable_params_exact(span, &parameters);
+                }
                 if let Some(identity) = variant_identity {
                     self.type_info.record_resolved_identity(callee.span, identity);
                 }
