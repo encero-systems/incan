@@ -316,6 +316,7 @@ fn build_body_ir_module_v0_with_provider_operations(
     bir::BodyIrModule {
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
         trait_implementations: collect::collect_local_trait_implementations(program, type_info),
+        enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
         module_id,
         nominal_declarations,
@@ -471,6 +472,16 @@ pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
             .variants
             .iter()
             .all(|variant| variant.node.fields.is_empty() && variant.node.value.is_none())
+}
+
+/// Admit normal enum layouts only when no methods, aliases, value backing, or generic substitution are required.
+pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
+    value.type_params.is_empty()
+        && value.value_type.is_none()
+        && value.traits.is_empty()
+        && value.variant_aliases.is_empty()
+        && value.methods.is_empty()
+        && value.decorators.iter().all(|decorator| decorator.node.name == "derive")
 }
 
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
