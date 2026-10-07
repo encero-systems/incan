@@ -69,14 +69,22 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
             Declaration::Class(class) => {
                 if !incan_frontend::body_ir::is_direct_replacement_class(class) {
                     return Err(format!(
-                        "unsupported source Class traits, inheritance, type parameters, decorators, aliases, properties or defaults on {} on the native route",
+                        "unsupported source Class generic trait adoptions, inheritance, type parameters, decorators, aliases, properties or defaults on {} on the native route",
                         class.name
                     ));
                 }
                 continue;
             }
             Declaration::Enum(_) => "Enum",
-            Declaration::Trait(_) => "Trait",
+            Declaration::Trait(item) => {
+                if !item.type_params.is_empty() || !item.traits.is_empty() || !item.decorators.is_empty()
+                    || !item.method_aliases.is_empty() || !item.method_partials.is_empty() || !item.properties.is_empty()
+                    || item.methods.iter().any(|method| !method.node.type_params.is_empty() || !method.node.decorators.is_empty())
+                {
+                    return Err("unsupported source generic Trait, supertraits, decorators, aliases or properties on the native route".to_owned());
+                }
+                continue;
+            },
             Declaration::Newtype(_) => "Newtype",
             Declaration::Alias(_) => "Alias",
             Declaration::Partial(_) => "Partial",

@@ -1,4 +1,4 @@
-//! Unchanged compute benchmark proof using the Oven-built driver and authored formatting runtime.
+//! Native/legacy output comparisons using the Oven-built driver and authored formatting runtime.
 
 use super::*;
 
@@ -504,5 +504,98 @@ fn check_numeric_failure(
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains(message), "{name}: {error}");
     }
+    Ok(())
+}
+
+/// Prove required/default trait methods, receiver borrowing, field writes, and static dispatch against legacy.
+pub(super) fn check_source_trait(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let closure = runtime_closure(runtime, "release")?;
+    let project = root.join("source-trait");
+    fs::create_dir_all(&project)?;
+    let source = project.join("source_trait.incn");
+    fs::write(
+        &source,
+        r#"trait Reading:
+  def get(self) -> int: ...
+  def bump(mut self, amount: int) -> None: ...
+  def seed() -> int: ...
+
+  def advance(mut self) -> None:
+    self.bump(1)
+
+  def doubled(self) -> int:
+    return self.get() + self.get()
+
+  def offset() -> int:
+    return 3
+
+class Counter with Reading:
+  value: int
+
+  def get(self) -> int:
+    return self.value
+
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+  def seed() -> int:
+    return 5
+
+model Other with Reading:
+  value: int
+
+  def get(self) -> int:
+    return self.value + 1
+
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+  def seed() -> int:
+    return 6
+
+def main() -> None:
+  mut counter = Counter(value=7)
+  println(counter.get())
+  println(counter.doubled())
+  other = Other(value=8)
+  println(other.get())
+  println(other.doubled())
+  println(Other.offset())
+  println(Counter.seed())
+  println(Other.seed())
+  counter.advance()
+  println(counter.get())
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "source trait native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "source trait legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/source_trait")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source trait legacy execution");
+    success(&actual, "source trait native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "source trait output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"7\n14\n9\n18\n3\n5\n6\n8\n");
+
     Ok(())
 }
