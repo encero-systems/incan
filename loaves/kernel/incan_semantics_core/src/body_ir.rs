@@ -58,6 +58,12 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Checker-evaluated scalar and text constants, addressed by their declaring canonical identity.
+    #[serde(default)]
+    pub constant_declarations: Vec<ConstantDeclaration>,
+    /// Alias-expanded checked types for nongeneric source aliases; aliases introduce no runtime storage.
+    #[serde(default)]
+    pub type_alias_declarations: Vec<TypeAliasDeclaration>,
     /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
     #[serde(default)]
     pub enum_declarations: Vec<EnumDeclaration>,
@@ -102,6 +108,26 @@ pub struct BodyIrModule {
     pub trait_implementations: Vec<TraitImplementation>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
+}
+
+/// Canonical immutable value evaluated by the declaring compilation, with no runtime storage or initialization.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstantDeclaration {
+    /// Exact checker-selected declaration; aliases never mint another value identity.
+    pub canonical: CanonicalSymbolId,
+    /// The checked scalar or text value retained by constant evaluation.
+    pub value: Constant,
+}
+
+/// Declaring compilation's checked meaning of an erased type alias, including canonical named member types.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TypeAliasDeclaration {
+    /// Canonical declaration selected through an alias or facade binding.
+    pub canonical: CanonicalSymbolId,
+    /// Alias-expanded semantic type, without a consumer-side name lookup.
+    pub ty: IncanType,
+    /// Checker-retained named type identities; publication removes unused entries and audits the required closure.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// Canonical persistent storage with a checker-typed, effect-free initializer.
@@ -4470,6 +4496,8 @@ mod tests {
     #[test]
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
+            constant_declarations: Vec::new(),
+            type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
             enum_declarations: Vec::new(),
