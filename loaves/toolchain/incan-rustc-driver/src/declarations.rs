@@ -48,7 +48,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         ),
         PlanType::Decimal => {
             let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments.push(ast::PathSegment::from_ident(ident("Decimal128", span)));
+            path.segments.push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
             ast::TyKind::Path(None, path)
         }
         PlanType::List(leaf, depth) => {
