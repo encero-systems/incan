@@ -1,0 +1,334 @@
+"""Lazy generator representation and producer-frame layout on the direct route."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from pub::incan_mir_plan import (
+    Callee,
+    CalleeKind,
+    ExternalFunction,
+    Function,
+    ListLeaf,
+    Local,
+    Operand,
+    OperandKind,
+    Parameter,
+    Place,
+    PlanType,
+    Projection,
+    Rvalue,
+    RvalueKind,
+    SourceSpan,
+    Statement,
+    StatementKind,
+    Terminator,
+    TerminatorKind,
+    Unwind,
+)
+from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+from collections import primitive_leaf, leaf_type
+from frame import Builder, temporary, terminate_call, read_place, drop_owned
+
+
+pub def generator_type(ty: &RustType) -> Option[Result[PlanType, str]]:
+    """Admit only generators whose immediate elements already have a native primitive representation."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "Generator" and base != "Iterator":
+                return None
+            if len(arguments) != 1:
+                return Some(Err(f"unsupported Body IR type {ty}"))
+            match primitive_leaf(arguments[0], false):
+                Ok(leaf) => return Some(Ok(PlanType.Generator(leaf, 0)))
+                Err(_error) => return Some(Err(f"unsupported Body IR type {ty}"))
+        _ => return None
+
+
+pub def generator_shape(ty: PlanType) -> Option[tuple[ListLeaf, int]]:
+    """Recognize a lazy generator or its mutable reference without treating either as a materialized list."""
+    match ty:
+        PlanType.Generator(leaf, depth) => return Some((leaf, depth))
+        PlanType.GeneratorMutRef(leaf, depth) => return Some((leaf, depth))
+        _ => return None
+
+
+pub def is_generator_type(ty: PlanType) -> bool:
+    """Recognize owned generators at the parameter ownership boundary."""
+    match ty:
+        PlanType.Generator(_leaf, _depth) => return true
+        _ => return false
+
+
+pub def is_generator_reference(ty: PlanType) -> bool:
+    """Recognize mutable generator parameters that retain caller-owned state."""
+    match ty:
+        PlanType.GeneratorMutRef(_leaf, _depth) => return true
+        _ => return false
+
+
+pub def generator_element(leaf: ListLeaf, depth: int) -> PlanType:
+    """Recover the generator's exact yielded type; depth zero is a primitive element."""
+    if depth == 0:
+        return leaf_type(leaf)
+    return PlanType.List(leaf, depth)
+
+
+pub def producer_frame(mut function: Function, handle: int, leaf: ListLeaf, depth: int) -> None:
+    """Move the implicit yield handle into parameter slot one after lowering the ordinary Body IR frame."""
+    # Body IR's local mapping remains unchanged during lowering. Only the completed plan is permuted, so the
+    # implicit runtime argument never impersonates a checked source local or changes evaluation order.
+    original = function.locals[1]
+    function.locals[1] = function.locals[handle]
+    function.locals[handle] = original
+    function.parameters = [Parameter(name="__incan_yield", ty=PlanType.GeneratorYield(leaf, depth), span=function.span)]
+    for index in range(len(function.blocks)):
+        block = function.blocks[index]
+        mut statements: list[Statement] = []
+        for statement in block.statements:
+            statements.append(Statement(kind=swap_statement(statement.kind, handle), span=statement.span))
+        function.blocks[index].statements = statements
+        function.blocks[index].terminator = Terminator(
+            kind=swap_terminator(block.terminator.kind, handle),
+            span=block.terminator.span,
+        )
+
+
+def swap_index(index: int, handle: int) -> int:
+    """Exchange the implicit parameter slot and its provisional local slot."""
+    if index == 1:
+        return handle
+    if index == handle:
+        return 1
+    return index
+
+
+def swap_place(value: Place, handle: int) -> Place:
+    """Preserve projections and provenance while permuting a frame slot."""
+    return Place(local=swap_index(value.local, handle), projection=value.projection, span=value.span)
+
+
+def swap_operand(value: Operand, handle: int) -> Operand:
+    """Keep ownership facts intact when permuting the completed producer frame."""
+    mut kind = value.kind
+    match kind:
+        OperandKind.Copy(place) =>
+            kind = OperandKind.Copy(swap_place(place, handle))
+        OperandKind.Move(place) =>
+            kind = OperandKind.Move(swap_place(place, handle))
+        _ => pass
+    return Operand(kind=kind, span=value.span)
+
+
+def swap_operands(values: list[Operand], handle: int) -> list[Operand]:
+    """Permute argument slots in their retained evaluation order."""
+    mut result: list[Operand] = []
+    for value in values:
+        result.append(swap_operand(value, handle))
+    return result
+
+
+def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
+    """Permute every place-bearing plan expression without changing its operation."""
+    match value:
+        RvalueKind.Use(value) => return RvalueKind.Use(swap_operand(value, handle))
+        RvalueKind.Binary(op, left, right) =>
+            return RvalueKind.Binary(op, swap_operand(left, handle), swap_operand(right, handle))
+        RvalueKind.Unary(op, value) => return RvalueKind.Unary(op, swap_operand(value, handle))
+        RvalueKind.NumericCast(value, source, target) =>
+            return RvalueKind.NumericCast(swap_operand(value, handle), source, target)
+        RvalueKind.IntToFloat(value) => return RvalueKind.IntToFloat(swap_operand(value, handle))
+        RvalueKind.FloatToInt(value) => return RvalueKind.FloatToInt(swap_operand(value, handle))
+        RvalueKind.BoolToInt(value) => return RvalueKind.BoolToInt(swap_operand(value, handle))
+        RvalueKind.Array(values) => return RvalueKind.Array(swap_operands(values, handle))
+        RvalueKind.Model(owner, values) => return RvalueKind.Model(owner, swap_operands(values, handle))
+        RvalueKind.Enum(owner, variant, values) => return RvalueKind.Enum(owner, variant, swap_operands(values, handle))
+        RvalueKind.Discriminant(place) => return RvalueKind.Discriminant(swap_place(place, handle))
+        RvalueKind.TagToInt(value) => return RvalueKind.TagToInt(swap_operand(value, handle))
+        RvalueKind.Borrow(place) => return RvalueKind.Borrow(swap_place(place, handle))
+        RvalueKind.MutBorrow(place) => return RvalueKind.MutBorrow(swap_place(place, handle))
+        RvalueKind.UnsizeSlice(value) => return RvalueKind.UnsizeSlice(swap_operand(value, handle))
+
+
+def swap_statement(value: StatementKind, handle: int) -> StatementKind:
+    """Preserve explicit storage lifetimes alongside assignments during producer permutation."""
+    match value:
+        StatementKind.Assign(place, value) =>
+            return StatementKind.Assign(
+                swap_place(place, handle),
+                Rvalue(kind=swap_rvalue(value.kind, handle), span=value.span),
+            )
+        StatementKind.StorageLive(index) => return StatementKind.StorageLive(swap_index(index, handle))
+        StatementKind.StorageDead(index) => return StatementKind.StorageDead(swap_index(index, handle))
+
+
+def swap_terminator(value: TerminatorKind, handle: int) -> TerminatorKind:
+    """Keep all control-flow targets and unwind edges while permuting operand slots."""
+    match value:
+        TerminatorKind.SwitchBool(condition, left, right) =>
+            return TerminatorKind.SwitchBool(swap_operand(condition, handle), left, right)
+        TerminatorKind.Call(callee, arguments, destination, target, unwind) =>
+            return TerminatorKind.Call(
+                callee,
+                swap_operands(arguments, handle),
+                swap_place(destination, handle),
+                target,
+                unwind,
+            )
+        TerminatorKind.Drop(place, target, unwind) =>
+            return TerminatorKind.Drop(swap_place(place, handle), target, unwind)
+        TerminatorKind.AssertOverflow(condition, op, left, right, target, unwind) =>
+            return TerminatorKind.AssertOverflow(
+                swap_operand(condition, handle),
+                op,
+                swap_operand(left, handle),
+                swap_operand(right, handle),
+                target,
+                unwind,
+            )
+        _ => return value
+
+
+pub def producer_name(name: str) -> str:
+    """Use the frontend-reserved prefix so producer declarations and spawn callbacks cannot collide with source names."""
+    return f"__incan_generator_producer_{name}"
+
+
+pub def generator_constructor(name: str, leaf: ListLeaf, depth: int, span: SourceSpan) -> Function:
+    """Construct the lazy runtime wrapper without executing the producer's prefix."""
+    result = PlanType.Generator(leaf, depth)
+    output = plan_place(0, span)
+    call = Callee(kind=CalleeKind.SpawnGenerator(producer_name(name), leaf, depth), span=span)
+    return Function(
+        name=name,
+        parameters=[],
+        return_type=result,
+        locals=[Local(ty=result, span=span)],
+        blocks=[plan_block([], TerminatorKind.Call(call, [], output, 1, Unwind.Continue), span), plan_block(
+            [],
+            TerminatorKind.Return,
+            span,
+        )],
+        span=span,
+    )
+
+
+pub def generator_yield(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[None, str]:
+    """Send one owned value through the existing runtime's rendezvous yield handle."""
+    if builder.generator_handle < 0:
+        return Err("unsupported Body IR Yield outside generator producer")
+    handle = plan_place(builder.generator_handle, span)
+    match builder.locals[handle.local].ty:
+        PlanType.GeneratorYield(leaf, depth) =>
+            reference = temporary(builder, PlanType.GeneratorYieldRef(leaf, depth), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(handle), span))
+            output = temporary(builder, PlanType.Unit, span)
+            terminate_call(
+                builder,
+                CalleeKind.YieldGenerator(leaf, depth),
+                [read_place(reference, false, span), value],
+                output,
+                span,
+            )
+            return Ok(None)
+        _ => return Err("invalid native generator yield handle")
+
+
+pub def generator_collect(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:
+    """Consume the runtime generator once, preserving its lazy producer and exact yield order."""
+    match generator_shape(builder.locals[receiver.local].ty):
+        Some((leaf, depth)) =>
+            if builder.locals[receiver.local].ty != PlanType.Generator(leaf, depth):
+                return Err("unsupported Body IR collect of borrowed generator")
+            terminate_call(
+                builder,
+                CalleeKind.CollectGenerator(leaf, depth),
+                [read_place(receiver, true, span)],
+                output,
+                span,
+            )
+            return Ok(None)
+        None => return Err("unsupported Body IR generator collect receiver")
+
+
+pub def generator_reference(mut builder: Builder, receiver: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow the live generator or reborrow an existing iterator alias without copying its mutable reference."""
+    match generator_shape(builder.locals[receiver.local].ty):
+        Some((leaf, depth)) =>
+            mut source = receiver
+            if builder.locals[receiver.local].ty == PlanType.GeneratorMutRef(leaf, depth):
+                source.projection = Projection.Deref(PlanType.Generator(leaf, depth))
+            reference = temporary(builder, PlanType.GeneratorMutRef(leaf, depth), span)
+            builder.emit(plan_assign(reference, RvalueKind.MutBorrow(source), span))
+            return Ok(read_place(reference, true, span))
+        None => return Err("unsupported Body IR generator borrow receiver")
+
+
+def generator_runtime_call(
+    mut builder: Builder,
+    name: str,
+    element: PlanType,
+    parameters: list[PlanType],
+    result: PlanType,
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> None:
+    """Retain one exact generic runtime signature alongside its poll-frame call."""
+    path = f"incan_native_runtime::{name}"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, element), operands, output, span)
+
+
+pub def generator_next(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:
+    """Poll one lazy item, branching to the existing loop exit on exhaustion without replaying the prefix."""
+    if len(builder.loops) == 0:
+        return Err("invalid Body IR generator poll outside loop")
+    match generator_shape(builder.locals[receiver.local].ty):
+        None => return Err("unsupported Body IR generator poll receiver")
+        Some((leaf, depth)) =>
+            element = generator_element(leaf, depth)
+            storage_type = PlanType.List(leaf, depth + 1)
+            storage = temporary(builder, storage_type, span)
+            generator_runtime_call(builder, "empty_list", element, [], storage_type, [], storage, span)
+            builder.owned.append(storage.local)
+            item_reference = temporary(builder, PlanType.ListMutRef(leaf, depth + 1), span)
+            builder.emit(plan_assign(item_reference, RvalueKind.MutBorrow(storage), span))
+            reference = generator_reference(builder, receiver, span)?
+            available = temporary(builder, PlanType.Bool, span)
+            generator_runtime_call(
+                builder,
+                "poll_generator",
+                element,
+                [PlanType.GeneratorMutRef(leaf, depth), PlanType.ListMutRef(leaf, depth + 1)],
+                PlanType.Bool,
+                [reference, read_place(item_reference, true, span)],
+                available,
+                span,
+            )
+            exhausted = builder.new_block(span)
+            selected = builder.new_block(span)
+            owners = builder.owned
+            builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
+            # Each branch owns the initialized poll buffer independently; even exhaustion must drop it.
+            builder.current = exhausted
+            drop_owned(builder, storage.local, span)
+            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            builder.current = selected
+            builder.owned = owners
+            drop_owned(builder, output.local, span)
+            final_reference = temporary(builder, PlanType.ListMutRef(leaf, depth + 1), span)
+            builder.emit(plan_assign(final_reference, RvalueKind.MutBorrow(storage), span))
+            generator_runtime_call(
+                builder,
+                "pop_list",
+                element,
+                [PlanType.ListMutRef(leaf, depth + 1)],
+                element,
+                [read_place(final_reference, true, span)],
+                output,
+                span,
+            )
+            if element == PlanType.String or depth > 0:
+                builder.owned.append(output.local)
+            drop_owned(builder, storage.local, span)
+            return Ok(None)

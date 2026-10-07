@@ -35,6 +35,7 @@ pub model Builder:
     `closed` marks blocks whose terminator is final, so an `if` whose branches both return leaves its join closed.
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
+    `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
     """
 
     pub locals: list[Local]
@@ -52,6 +53,7 @@ pub model Builder:
     pub nominals: list[RustNominalDeclaration]
     pub enums: list[RustEnumDeclaration]
     pub statics: list[RustStaticDeclaration]
+    pub generator_handle: int
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

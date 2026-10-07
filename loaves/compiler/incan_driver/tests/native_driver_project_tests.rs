@@ -593,6 +593,85 @@ fn direct_route_collections_match_legacy() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// Compare deferred creation, ordered yields, collection, mutable polling, and exhaustion with legacy.
+#[test]
+fn direct_route_generators_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("generators")?;
+    let source = root.join("generators.incn");
+    fs::write(
+        &source,
+        r#"def counter() -> Generator[int]:
+    println(10)
+    for value in range(1, 3):
+        yield value
+    yield 3
+
+def counter__producer() -> int:
+    return 40
+
+def first(mut values: Generator[int]) -> int:
+    for value in values:
+        return value
+    return -1
+
+def outer(mut values: Generator[int]) -> int:
+    return first(values)
+
+def main() -> None:
+    unused = counter()
+    values = counter()
+    println(20)
+    collected = values.collect()
+    println(collected[0])
+    println(collected[1])
+    println(collected[2])
+    mut remaining = counter()
+    println(first(remaining))
+    println(outer(remaining))
+    println(first(remaining))
+    println(first(remaining))
+    println(counter__producer())
+"#,
+    )?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &corpus::runtime_closure(&fixture.formatting, "release")?,
+        )
+        .output()?,
+        "generator native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "generator legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/generators")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "generator legacy execution");
+    success(&actual, "generator native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "generator output must be byte-identical"
+    );
+    assert_eq!(
+        actual.stderr, expected.stderr,
+        "generator stderr must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"20\n10\n1\n2\n3\n10\n1\n2\n3\n-1\n40\n");
+    Ok(())
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

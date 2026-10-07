@@ -10,19 +10,25 @@ use rustc_middle::ty::{Ty, TyCtxt};
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
         PlanType::EnumTag => tcx.types.isize,
+        PlanType::Generator(leaf, depth) => generator_type(tcx, "Generator", leaf, *depth)?,
+        PlanType::GeneratorMutRef(leaf, depth) => Ty::new_mut_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            generator_type(tcx, "Generator", leaf, *depth)?,
+        ),
+        PlanType::GeneratorYield(leaf, depth) => generator_type(tcx, "GeneratorYield", leaf, *depth)?,
+        PlanType::GeneratorYieldRef(leaf, depth) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            generator_type(tcx, "GeneratorYield", leaf, *depth)?,
+        ),
         PlanType::Enum(_, name) => enum_type(tcx, name)?,
         PlanType::EnumRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::Model(_, name) => model_type(tcx, name)?,
-        PlanType::ModelMutRef(_, name) => {
-            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?)
-        }
-        PlanType::ModelRef(_, name) => {
-            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?)
-        }
+        PlanType::ModelMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
+        PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::List(leaf, depth) => list_type(tcx, leaf, *depth)?,
-        PlanType::ListRef(leaf, depth) => {
-            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
-        }
+        PlanType::ListRef(leaf, depth) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?),
         PlanType::ListMutRef(leaf, depth) => {
             Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
         }
@@ -82,11 +88,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             tcx.lifetimes.re_erased,
             array_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
         ),
-        PlanType::StringSlice => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            Ty::new_slice(tcx, string_type(tcx)?),
-        ),
+        PlanType::StringSlice => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, Ty::new_slice(tcx, string_type(tcx)?)),
         PlanType::StrSlice => Ty::new_imm_ref(
             tcx,
             tcx.lifetimes.re_erased,
@@ -95,27 +97,45 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
     })
 }
 
+/// Resolve the legacy runtime's actual generator ADT from dependency metadata and retain its element type.
+pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
+    for segment in ["iter", name] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::iter::{name}")))?;
+    }
+    let element = if depth == 0 {
+        primitive_type(tcx, leaf)?
+    } else {
+        list_type(tcx, leaf, depth)?
+    };
+    Ok(Ty::new_adt(
+        tcx,
+        tcx.adt_def(definition),
+        tcx.mk_args(&[element.into()]),
+    ))
+}
+
 /// Resolve the real standard String definition rather than manufacturing an ADT layout.
 fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
-    let definition = tcx
-        .lang_items()
-        .string()
-        .ok_or_else(|| PlanError::Invalid {
-            function: "String".into(),
-            reason: "the native dependency closure has no String language item".into(),
-        })?;
-    Ok(tcx
-        .type_of(definition)
-        .instantiate_identity()
-        .skip_normalization())
+    let definition = tcx.lang_items().string().ok_or_else(|| PlanError::Invalid {
+        function: "String".into(),
+        reason: "the native dependency closure has no String language item".into(),
+    })?;
+    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
 /// Translate a checked exact array length without a signed or truncating conversion.
-fn array_type<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    element: Ty<'tcx>,
-    count: i64,
-) -> Result<Ty<'tcx>, PlanError> {
+fn array_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<Ty<'tcx>, PlanError> {
     let count = u64::try_from(count).map_err(|_| PlanError::Invalid {
         function: "array".into(),
         reason: "array length must be nonnegative".into(),
@@ -131,18 +151,13 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
         .map(|item| item.owner_id.to_def_id())
         .find(|def| {
             tcx.def_kind(*def) == rustc_hir::def::DefKind::Struct
-                && tcx
-                    .opt_item_name(*def)
-                    .is_some_and(|symbol| symbol.as_str() == name)
+                && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
         })
         .ok_or_else(|| PlanError::Invalid {
             function: name.into(),
             reason: "model declaration is missing".into(),
         })?;
-    Ok(tcx
-        .type_of(definition)
-        .instantiate_identity()
-        .skip_normalization())
+    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
 /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.

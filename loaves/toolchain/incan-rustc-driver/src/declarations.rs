@@ -10,8 +10,32 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct an admitted scalar, model, or list AST type without generating or parsing Rust source.
+/// Declare the exact owned or borrowed runtime handle, leaving other plan types to their ordinary declaration path.
+fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let (name, leaf, depth, mutability) = match kind {
+        PlanType::Generator(leaf, depth) => ("Generator", leaf, *depth, None),
+        PlanType::GeneratorMutRef(leaf, depth) => ("Generator", leaf, *depth, Some(ast::Mutability::Mut)),
+        PlanType::GeneratorYield(leaf, depth) => ("GeneratorYield", leaf, *depth, None),
+        PlanType::GeneratorYieldRef(leaf, depth) => ("GeneratorYield", leaf, *depth, Some(ast::Mutability::Not)),
+        _ => return None,
+    };
+    let owned = generator_ty(name, leaf, depth, span);
+    Some(match mutability {
+        None => owned,
+        Some(mutbl) => Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ref(None, ast::MutTy { ty: owned, mutbl }),
+            span,
+            tokens: None,
+        }),
+    })
+}
+
+/// Construct an admitted native AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let Some(ty) = generator_signature_ty(kind, span) {
+        return ty;
+    }
     let kind = match kind {
         PlanType::List(leaf, depth) => {
             let mut element = ty(
@@ -117,6 +141,34 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind,
+        span,
+        tokens: None,
+    })
+}
+
+/// Declare the runtime generator's canonical type without creating an alternative wrapper layout.
+fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast::Ty> {
+    let element = if depth == 0 {
+        match leaf {
+            ListLeaf::Int => PlanType::Int,
+            ListLeaf::Float => PlanType::Float,
+            ListLeaf::Bool => PlanType::Bool,
+            ListLeaf::Str => PlanType::String,
+        }
+    } else {
+        PlanType::List(leaf.clone(), depth)
+    };
+    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    path.segments.push(ast::PathSegment::from_ident(ident("iter", span)));
+    let mut segment = ast::PathSegment::from_ident(ident(name, span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&element, span)))],
+    })));
+    path.segments.push(segment);
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
         span,
         tokens: None,
     })
@@ -240,10 +292,14 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
         ast::ItemKind::Struct(
             ident(&model.name, span),
             ast::Generics::default(),
-            if tuple { ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID) } else { ast::VariantData::Struct {
-                fields,
-                recovered: ast::Recovered::No,
-            } },
+            if tuple {
+                ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
+            } else {
+                ast::VariantData::Struct {
+                    fields,
+                    recovered: ast::Recovered::No,
+                }
+            },
         ),
         span,
     );
@@ -265,8 +321,8 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
         if !tuple {
             fields.push(name_token(&field.name, span));
             fields.push(AttrTokenTree::Token(
-            ast::token::Token::new(TokenKind::Colon, span),
-            Spacing::Alone,
+                ast::token::Token::new(TokenKind::Colon, span),
+                Spacing::Alone,
             ));
         }
         fields.extend(type_tokens(&ty(&field.ty, span)));
@@ -284,11 +340,18 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
     tokens.push(AttrTokenTree::Delimited(
         DelimSpan::from_single(span),
         DelimSpacing::new(Spacing::Alone, Spacing::Alone),
-        if tuple { Delimiter::Parenthesis } else { Delimiter::Brace },
+        if tuple {
+            Delimiter::Parenthesis
+        } else {
+            Delimiter::Brace
+        },
         AttrTokenStream::new(fields),
     ));
     if tuple {
-        tokens.push(AttrTokenTree::Token(ast::token::Token::new(TokenKind::Semi, span), Spacing::Alone));
+        tokens.push(AttrTokenTree::Token(
+            ast::token::Token::new(TokenKind::Semi, span),
+            Spacing::Alone,
+        ));
     }
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
 }

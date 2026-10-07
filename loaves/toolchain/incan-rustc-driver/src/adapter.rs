@@ -156,12 +156,25 @@ impl rustc_driver::Callbacks for Callbacks {
             };
             krate.items.push(declarations::function(function, span));
         }
-        let roots: BTreeSet<_> = self
+        let mut roots: BTreeSet<_> = self
             .plan
             .externals
             .iter()
             .filter_map(|external| external.path.split("::").next())
             .collect();
+        if self.plan.functions.iter().any(|function| {
+            function.locals.iter().any(|local| {
+                matches!(
+                    local.ty,
+                crate::plan::PlanType::Generator(..)
+                    | crate::plan::PlanType::GeneratorMutRef(..)
+                        | crate::plan::PlanType::GeneratorYield(..)
+                        | crate::plan::PlanType::GeneratorYieldRef(..)
+                )
+            })
+        }) {
+            roots.insert("incan_std_core");
+        }
         for root in roots {
             krate
                 .items
