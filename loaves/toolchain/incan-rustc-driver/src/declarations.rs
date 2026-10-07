@@ -1,6 +1,6 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
-use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, tuple_element_type};
+use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, tuple_element_type};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -21,12 +21,7 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         ),
         PlanType::List(leaf, depth) => {
             let mut element = ty(
-                &match leaf {
-                    ListLeaf::Int => PlanType::Int,
-                    ListLeaf::Float => PlanType::Float,
-                    ListLeaf::Bool => PlanType::Bool,
-                    ListLeaf::Str => PlanType::String,
-                },
+                &list_leaf_type((*leaf).clone()),
                 span,
             );
             for _ in 0..*depth {
@@ -461,12 +456,7 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
             .iter()
             .map(|leaf| {
                 ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(
-                    &match leaf {
-                        ListLeaf::Int => PlanType::Int,
-                        ListLeaf::Float => PlanType::Float,
-                        ListLeaf::Bool => PlanType::Bool,
-                        ListLeaf::Str => PlanType::String,
-                    },
+                    &list_leaf_type((*leaf).clone()),
                     span,
                 )))
             })

@@ -1,7 +1,7 @@
 //! Mapping admitted plan types to the pinned rustc representation.
 
 use crate::error::PlanError;
-use crate::plan::{ListLeaf, PlanType, SizedNumeric, tuple_element_type};
+use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, tuple_element_type};
 use rustc_middle::ty::{Ty, TyCtxt};
 
 /// Translate admitted scalar, model, and collection types to their canonical native representations.
@@ -129,7 +129,7 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
 
 /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.
 fn list_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
-    let mut element = primitive_type(tcx, leaf)?;
+    let mut element = collection_leaf_type(tcx, leaf)?;
     if depth < 1 {
         return Err(PlanError::Invalid {
             function: "list".into(),
@@ -190,7 +190,7 @@ fn hash_collection_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaves: &[&ListLeaf
         })?;
     let elements = leaves
         .iter()
-        .map(|leaf| primitive_type(tcx, leaf))
+        .map(|leaf| collection_leaf_type(tcx, leaf))
         .collect::<Result<Vec<_>, _>>()?;
     let arguments = rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, arguments| {
         match usize::try_from(parameter.index)
@@ -208,14 +208,9 @@ fn hash_collection_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaves: &[&ListLeaf
     Ok(Ty::new_adt(tcx, tcx.adt_def(definition), arguments))
 }
 
-/// Map the shared checked primitive leaf once for all collection layouts.
-fn primitive_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, PlanError> {
-    match leaf {
-        ListLeaf::Int => Ok(tcx.types.i64),
-        ListLeaf::Float => Ok(tcx.types.f64),
-        ListLeaf::Bool => Ok(tcx.types.bool),
-        ListLeaf::Str => string_type(tcx),
-    }
+/// Map the checked scalar or tuple leaf once for all collection layouts.
+fn collection_leaf_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, PlanError> {
+    native_type(tcx, &list_leaf_type(leaf.clone()))
 }
 
 /// Resolve an injected source enum or concrete standard-carrier alias by its validated plan declaration name.

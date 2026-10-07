@@ -172,10 +172,8 @@ from collections import (
     insert_collection,
     extend_collection,
 )
-
 # =====================================================================================================================
 # Boundary types and validation
-
 # =====================================================================================================================
 from rust::incan_semantics_core::body_ir import DictEntry, PlaceOperand as RustPlaceOperand
 from lists import (
@@ -250,10 +248,8 @@ pub def is_continue(statement: &BodyStatementKind) -> bool:
     match statement:
         BodyStatementKind.Continue => return true
         _ => return false
-
 # =====================================================================================================================
 # Translating checked values
-
 # =====================================================================================================================
 
 
@@ -428,10 +424,8 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
         RustRvalue.Generator(source=_source, captured_operands=_captures, body=_body) =>
             return Err("unsupported Body IR Generator")
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
-
 # =====================================================================================================================
 # The frame builder and ownership
-
 # =====================================================================================================================
 
 
@@ -467,10 +461,8 @@ def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str
         if owner not in incoming:
             drop_owned(builder, owner, span)
     return Ok(None)
-
 # =====================================================================================================================
 # Statements and control flow
-
 # =====================================================================================================================
 
 
@@ -781,10 +773,8 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     builder.owned = incoming
     builder.current = after
     return Ok(None)
-
 # =====================================================================================================================
 # Calls
-
 # =====================================================================================================================
 
 
@@ -1388,10 +1378,8 @@ def coerce_numeric_operand(
     builder.emit(plan_assign(converted, RvalueKind.NumericCast(operand, source, target), span))
     validate_exact_float(builder, converted, span)
     return Ok(read_place(converted, false, span))
-
 # =====================================================================================================================
 # Plain model construction and field replacement
-
 # =====================================================================================================================
 
 
@@ -1530,10 +1518,8 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
-
 # =====================================================================================================================
 # Formatting and strings
-
 # =====================================================================================================================
 
 
@@ -1818,10 +1804,8 @@ def lower_str_builtin(
             builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
-
 # =====================================================================================================================
 # Module and function entry points
-
 # =====================================================================================================================
 
 
@@ -2158,7 +2142,7 @@ def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
         argument = list_index_operand(builder, source, slot, span)?
         place = read_list_element(builder, place, argument, span)?
     ty = builder.locals[place.local].ty
-    return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty), span))
+    return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty) or tuple_has_owners(ty), span))
 
 
 def read_list_element(mut builder: Builder, place: Place, argument: Operand, span: SourceSpan) -> Result[Place, str]:
@@ -2570,7 +2554,7 @@ def list_next(
     item_reference = list_borrow(builder, receiver, false, span)?
     target = list_root_place(builder, destination, span)?
     drop_owned(builder, target.local, span)
-    if element == PlanType.String or is_list(element):
+    if element == PlanType.String or is_list(element) or tuple_has_owners(element):
         if target.local not in builder.borrowed_items:
             builder.borrowed_items.append(target.local)
     iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], target, span)?
@@ -3161,6 +3145,12 @@ def lower_sequence_builtin(
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR sequence builtin type")?
     if depth != 1:
         return Err("unsupported Body IR nested sequence builtin")
+    if builtin == RustBuiltin.Sorted:
+        match leaf:
+            ListLeaf.Tuple(elements) =>
+                if TupleElement.Float in elements:
+                    return Err("unsupported Body IR builtin Sorted tuple containing float")
+            _ => pass
     reference = borrowed_list_argument(builder, arguments, 0, false, span)?
     if builtin == RustBuiltin.Sum:
         mut name = "sum_int"

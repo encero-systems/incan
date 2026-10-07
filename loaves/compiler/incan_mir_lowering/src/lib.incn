@@ -19,6 +19,7 @@ pub from pub::incan_mir_plan import (
     Constant,
     Function,
     ListLeaf,
+    list_leaf_type,
     EnumDeclaration,
     EnumVariant,
     SizedNumeric,
