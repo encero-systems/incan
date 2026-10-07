@@ -645,6 +645,82 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
     )
 }
 
+/// Prove two checked instantiations of a function with type parameters against legacy output.
+#[test]
+fn type_parameter_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-function")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def identity[T](value: T) -> T:
+    return value
+
+def forward[T](value: T) -> T:
+    copied = value
+    return identity[T](value)
+
+def main() -> None:
+    println(identity[int](42))
+    println(identity[bool](true))
+    println(identity(7))
+    println(forward[int](9))
+    println(identity[str]("text"))
+"#,
+    )
+}
+
+/// Prove closed class layouts and methods with type parameters against legacy output.
+#[test]
+fn type_parameter_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-class")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def identity[T](value: T) -> T:
+    return value
+
+class Box[T]:
+    pub value: T
+
+    def get(self) -> T:
+        return self.value
+
+    def forward(self) -> T:
+        return identity[T](self.value)
+
+    def pick[U](self, value: U) -> U:
+        return value
+
+class Picker:
+    def pick[T](self, value: T) -> T:
+        return value
+
+def read_box(value: Box[int]) -> int:
+    return value.get()
+
+def main() -> None:
+    whole = Box[int](value=42)
+    flag = Box[bool](value=true)
+    text = Box[str](value="stored")
+    println(whole.get())
+    println(read_box(whole))
+    println(text.forward())
+    println(flag.get())
+    println(text.get())
+    println(whole.pick[int](7))
+    println(flag.pick[int](8))
+    picker = Picker()
+    println(picker.pick[int](9))
+    println(picker.pick(true))
+    println(picker.pick[str]("picked"))
+"#,
+    )
+}
+
 /// Prove list indexing, mutation, shared parameters, owned returns and iteration against legacy.
 #[test]
 fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {

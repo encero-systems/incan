@@ -1426,11 +1426,11 @@ pub struct CallArtifacts {
     /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
     /// keeps backend emission from re-deriving the frontend's binding decision from raw IR shape.
     pub fixed_unpack_plans: HashMap<(usize, usize), FixedUnpackPlan>,
-    /// RFC 054: For call expressions that used explicit bracketed type arguments, maps the **full call expression
-    /// span** `(start, end)` to the final monomorphized type arguments in callee type-parameter order.
+    /// Map a full call expression span `(start, end)` to its checked type arguments in declaration order.
     ///
-    /// Populated only after a successful generic function or method check when `[...]` was present; lowering prefers
-    /// this over re-lowering AST type nodes so `_` placeholders never reach codegen as `IrType::Unknown`.
+    /// Functions retain both inferred and explicit bindings; methods retain explicit bindings (RFC 054). Body IR
+    /// consumes these decisions for native instantiation. Legacy emission consumes them only for written `[...]`,
+    /// preserving Rust inference on other calls and ensuring `_` never reaches codegen as `IrType::Unknown`.
     ///
     /// ## Span stability
     ///

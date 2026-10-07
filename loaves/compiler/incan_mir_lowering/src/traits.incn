@@ -9,8 +9,8 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentElement,
     Operand as RustOperand,
 )
-from pub::incan_mir_plan import Local, SourceSpan, PlanType
-from classes import receiver_mode
+from pub::incan_mir_plan import Local, SourceSpan, PlanType, EnumDeclaration
+from classes import receiver_mode, frame_type
 from models import model_type, model_place, place_type
 
 
@@ -64,8 +64,6 @@ pub def method_index(
     span: SourceSpan,
 ) -> Result[int, str]:
     """Select the checked implementation using the concrete receiver's retained layout identity."""
-    if len(target.type_args) != 0:
-        return Err("unsupported Body IR generic Method")
     match target.canonical:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
@@ -79,12 +77,21 @@ pub def method_index(
         body = module.bodies[index]
         if body.canonical != canonical or len(body.params) == 0:
             continue
-        if body.locals[0].ty != RustType.Named(str(module.nominal_declarations[owner].name)):
+        receiver = frame_type(module, body.locals[0], [])?
+        if not receiver_matches(receiver, owner):
             continue
         match receiver_mode(body.locals[0].origin):
             Some(_mutable) => return Ok(index)
             None => return Err("unsupported Body IR Method without receiver")
     return Err("unsupported Body IR nonlocal or trait-object Method")
+
+
+def receiver_matches(receiver: PlanType, owner: int) -> bool:
+    """Match the declared receiver frame against the caller's checked concrete nominal carrier."""
+    match receiver:
+        PlanType.ModelRef(index, _name) => return index == owner
+        PlanType.ModelMutRef(index, _name) => return index == owner
+        _ => return false
 
 
 def receiver_owner(
