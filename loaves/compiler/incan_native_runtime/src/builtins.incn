@@ -54,9 +54,22 @@ pub def truth_list[T](value: &list[T]) -> bool:
 
 
 pub def power_i64(left: int, right: int) -> int:
-    """Use the legacy integer exponent conversion and release overflow behavior."""
-    exponent = u32(right & 4294967295)
-    return left.pow(exponent)
+    """Match legacy's `i64::pow`: the same `u32` exponent truncation and Rust's square-and-multiply steps.
+
+    Each step uses `*`, which overflows exactly as Rust's `pow` does in the same profile, so results and overflow
+    panics agree with legacy.
+    """
+    mut exponent = right & 4294967295
+    if exponent == 0:
+        return 1
+    mut base = left
+    mut accumulator = 1
+    while exponent > 1:
+        if exponent & 1 == 1:
+            accumulator = accumulator * base
+        exponent = exponent // 2
+        base = base * base
+    return accumulator * base
 
 
 pub def power_f64(left: float, right: float) -> float:
