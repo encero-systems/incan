@@ -40,14 +40,11 @@ fn pinned_driver_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 /// Run the explicit publisher in the fixture-owned home and preserve full failure diagnostics.
-///
-/// Tests need only the debug profile; a release build of the driver's compiler closure would double every bake.
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
     let rustc = pinned_driver_rustc()?;
     let output = command
-        .env("INCAN_OVEN_BAKE_PROFILES", "debug")
         .env("RUSTC", rustc)
         .args(["oven", "bake", "--project"])
         .arg(project)
@@ -216,60 +213,64 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
     )?;
     bake(&runtime_caller, home)?;
     let sysroot = &fixture.sysroot;
-    // Tests bake the debug profile only (see `bake`).
-    let profile = "debug";
-    let receipt_path = oven_store::default_receipt_path(&runtime).with_file_name("library-debug-receipt.json");
-    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
-    let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
-        .ok_or("runtime fixture must select its compiler-owned native closure")?;
-    let directories = &closure.artifact_plan.dependency_search_paths;
-    let binary = fixture.driver_binary(profile);
-    let runtime_rlib = runtime
-        .join("target/lib/oven")
-        .join(profile)
-        .join("libnative_output.rlib");
-    for mode in ["normal", "overflow", "dangling"] {
-        let output_binary = root.join(format!("scalar-{profile}-{mode}"));
-        let compile = Command::new(&binary)
-            .env_remove("RUSTC_BOOTSTRAP")
-            .arg(&source)
-            .arg("scalar")
-            .arg(&output_binary)
-            .arg(sysroot)
-            .arg(&runtime_rlib)
-            .arg(mode)
-            .args(directories)
-            .output()?;
-        if mode == "dangling" {
-            assert!(!compile.status.success());
-            assert!(
-                String::from_utf8_lossy(&compile.stderr).contains("UnknownBlock"),
-                "{}",
-                String::from_utf8_lossy(&compile.stderr)
-            );
-            assert!(!output_binary.exists());
-            continue;
-        }
-        success(&compile, "native plan compilation");
-        let run = Command::new(&output_binary).output()?;
-        if mode == "normal" {
-            success(&run, "scalar binary");
-            assert_eq!(String::from_utf8(run.stdout)?, "42\n");
+    for profile in ["debug", "release"] {
+        let receipt_path = if profile == "release" {
+            oven_store::default_receipt_path(&runtime)
         } else {
-            assert!(!run.status.success());
-            assert!(
-                String::from_utf8_lossy(&run.stderr).contains("scalar.incn:3:12"),
-                "{}",
-                String::from_utf8_lossy(&run.stderr)
-            );
+            oven_store::default_receipt_path(&runtime).with_file_name("library-debug-receipt.json")
+        };
+        let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
+        let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
+            .ok_or("runtime fixture must select its compiler-owned native closure")?;
+        let directories = &closure.artifact_plan.dependency_search_paths;
+        let binary = fixture.driver_binary(profile);
+        let runtime_rlib = runtime
+            .join("target/lib/oven")
+            .join(profile)
+            .join("libnative_output.rlib");
+        for mode in ["normal", "overflow", "dangling"] {
+            let output_binary = root.join(format!("scalar-{profile}-{mode}"));
+            let compile = Command::new(&binary)
+                .env_remove("RUSTC_BOOTSTRAP")
+                .arg(&source)
+                .arg("scalar")
+                .arg(&output_binary)
+                .arg(sysroot)
+                .arg(&runtime_rlib)
+                .arg(mode)
+                .args(directories)
+                .output()?;
+            if mode == "dangling" {
+                assert!(!compile.status.success());
+                assert!(
+                    String::from_utf8_lossy(&compile.stderr).contains("UnknownBlock"),
+                    "{}",
+                    String::from_utf8_lossy(&compile.stderr)
+                );
+                assert!(!output_binary.exists());
+                continue;
+            }
+            success(&compile, "native plan compilation");
+            let run = Command::new(&output_binary).output()?;
+            if mode == "normal" {
+                success(&run, "scalar binary");
+                assert_eq!(String::from_utf8(run.stdout)?, "42\n");
+            } else {
+                assert!(!run.status.success());
+                assert!(
+                    String::from_utf8_lossy(&run.stderr).contains("scalar.incn:3:12"),
+                    "{}",
+                    String::from_utf8_lossy(&run.stderr)
+                );
+            }
         }
+        check_startup_refusals(&binary, &source, root, sysroot, &runtime_rlib)?;
+        check_source_pipeline(&binary, root, &fixture.sysroot, formatting, profile)?;
     }
-    check_startup_refusals(&binary, &source, root, sysroot, &runtime_rlib)?;
-    check_source_pipeline(&binary, root, &fixture.sysroot, formatting, profile)?;
-    let driver = fixture.driver_binary("debug");
-    corpus::check_strings(&driver, root, &fixture.sysroot, formatting)?;
+    let release = fixture.driver_binary("release");
+    corpus::check_strings(&release, root, &fixture.sysroot, formatting)?;
     for name in ["fib", "collatz", "mandelbrot"] {
-        corpus::check_benchmark(&driver, root, &fixture.sysroot, formatting, name)?;
+        corpus::check_benchmark(&release, root, &fixture.sysroot, formatting, name)?;
     }
     Ok(())
 }
@@ -462,9 +463,9 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
         &source,
         "from std.math import gcd as common, sqrt as root\nimport std.math\nfrom std.derives.comparison import Eq\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> None:\n  println(common(b=18, a=48))\n  println(math.lcm(4, 6))\n  println(gcd(4, 6))\n  println(root(16.0))\n  println(math.sqrt(25.0))\n",
     )?;
-    let closure = corpus::runtime_closure(runtime, "debug")?;
+    let closure = corpus::runtime_closure(runtime, "release")?;
     let native = root.join("imports-native");
-    let binary = fixture.driver_binary("debug");
+    let binary = fixture.driver_binary("release");
     check_async_frontend_refusal(&binary, &root, sysroot, &closure)?;
     success(
         &corpus::source_command(&binary, &source, &native, sysroot, &closure).output()?,
@@ -524,8 +525,20 @@ fn check_async_frontend_refusal(
 fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_plain_model(
-        &fixture.driver_binary("debug"),
+        &fixture.driver_binary("release"),
         &fixture.scratch("plain-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove list indexing, mutation, shared parameters, owned returns and iteration against legacy.
+#[test]
+fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_lists(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("lists")?,
         &fixture.sysroot,
         &fixture.formatting,
     )

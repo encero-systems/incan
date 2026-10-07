@@ -1,0 +1,85 @@
+"""List operations using the legacy route's Vec representation and indexing helpers."""
+
+from std.derives.copying import Clone
+from rust::std::clone import Clone as RuntimeClone
+from rust::incan_std_core::collections import (
+    list_contains as runtime_contains,
+    list_count as runtime_count,
+    list_index as runtime_index,
+    list_get_mut as runtime_get_mut,
+)
+from std.derives.comparison import Eq
+
+
+pub def empty_list[T]() -> list[T]:
+    """Allocate an empty homogeneous list."""
+    return []
+
+
+pub def append_list[T](mut values: list[T], value: T) -> None:
+    """Append one owned value to the caller's list."""
+    values.append(value)
+
+
+pub def length_list[T](values: &list[T]) -> int:
+    """Read a list's length without consuming its binding."""
+    return len(values)
+
+
+pub def get_list[T with Clone](values: &list[T], index: int) -> T:
+    """Read an element using Python indices and the legacy runtime errors."""
+    return values[index]
+
+
+pub def borrow_list_mut[T](values: &mut list[T], index: int) -> &mut T:
+    """Borrow a nested element through the legacy negative-index and bounds checks."""
+    return runtime_get_mut(values, index)
+
+
+pub def set_list[T](mut values: list[T], index: int, value: T) -> None:
+    """Replace an element through a caller-owned mutable list borrow."""
+    values[index] = value
+
+
+pub def clone_list[T with Clone](values: &list[T]) -> list[T]:
+    """Duplicate a list when Body IR records a value-preserving read."""
+    return RuntimeClone.clone(values)
+
+
+pub def contains_list[T with Eq](values: &list[T], value: T) -> bool:
+    """Test membership with the same element comparisons as the legacy list helper."""
+    reference: &T = value
+    return runtime_contains(values, reference)
+
+
+pub def count_list[T with Eq](values: &list[T], value: T) -> int:
+    """Count matching elements through the legacy helper."""
+    reference: &T = value
+    return runtime_count(values, reference)
+
+
+pub def index_list[T with Eq](values: &list[T], value: T) -> int:
+    """Find the first matching position, preserving the legacy missing-value error."""
+    reference: &T = value
+    return runtime_index(values, reference)
+
+
+pub def extend_list[T with Clone](mut values: list[T], other: &list[T]) -> None:
+    """Append a copy of the other list's elements without consuming it."""
+    for index in range(len(other)):
+        values.append(other[index])
+
+
+pub def pop_list[T](mut values: list[T]) -> T:
+    """Remove the last element with the legacy empty-list error."""
+    return values.pop()
+
+
+pub def remove_list[T](mut values: list[T], index: int) -> None:
+    """Remove one element using legacy Python-style index normalization."""
+    values.remove(index)
+
+
+pub def swap_list[T](mut values: list[T], left: int, right: int) -> None:
+    """Swap two elements with the legacy negative-index and bounds behavior."""
+    values.swap(left, right)

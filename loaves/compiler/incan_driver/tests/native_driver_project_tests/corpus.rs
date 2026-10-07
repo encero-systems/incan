@@ -18,7 +18,7 @@ pub(super) fn check_strings(
     )?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "debug")?)?,
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
         "native strings compilation",
     );
     let legacy_output = project.join("legacy");
@@ -118,7 +118,7 @@ pub(super) fn check_benchmark(
     runtime: &Path,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "debug")?;
+    let closure = runtime_closure(runtime, "release")?;
     let original = support::repo_root()
         .join("workspaces/benchmarks/compute")
         .join(name)
@@ -161,7 +161,7 @@ pub(super) fn check_plain_model(
     sysroot: &Path,
     runtime: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "debug")?;
+    let closure = runtime_closure(runtime, "release")?;
     let project = root.join("plain-model");
     fs::create_dir_all(&project)?;
     let source = project.join("plain_model.incn");
@@ -206,6 +206,89 @@ pub(super) fn check_plain_model(
         String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR non-float true division operands"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
+}
+
+/// Lists preserve legacy indexing, mutation, shared parameters, owned returns, and loop output.
+pub(super) fn check_lists(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("lists");
+    fs::create_dir_all(&project)?;
+    let source = project.join("lists.incn");
+    fs::write(
+        &source,
+        r#"
+def bump(mut values: list[int]) -> None:
+    values.append(8)
+    values[-1] = 9
+
+def count(values: list[int]) -> int:
+    return len(values)
+
+def copy_values(values: list[int]) -> list[int]:
+    return values
+
+def main() -> None:
+    mut numbers = [1, 2, 3]
+    mut words = ["one", "two"]
+    numbers.append(4)
+    words.append("three")
+    numbers[-1] = 7
+    println(numbers[-1])
+    println(words[-1])
+    println(2 in numbers)
+    println("three" in words)
+    bump(numbers)
+    println(count(numbers))
+    copied = copy_values(numbers)
+    println(copied[-1])
+    for value in numbers:
+        println(value)
+    for word in words:
+        println(word)
+    mut fractions = [1.5, 2.5]
+    fractions.append(-1.0)
+    for fraction in fractions:
+        println(fraction)
+    mut flags = [true, false]
+    flags.append(true)
+    println(flags[-1])
+    mut nested = [[1, 2], [3]]
+    nested[0][-1] = 8
+    println(nested[0][1])
+    nested.append([4])
+    for row in nested:
+        println(len(row))
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "native lists compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy lists compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/lists")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy lists execution");
+    success(&actual, "native lists execution");
+    assert_eq!(actual.stdout, expected.stdout, "list output must be byte-identical");
+    assert_eq!(
+        actual.stdout,
+        b"7\nthree\ntrue\ntrue\n5\n9\n1\n2\n3\n7\n9\none\ntwo\nthree\n1.5\n2.5\n-1.0\ntrue\n8\n2\n1\n1\n"
     );
     Ok(())
 }
