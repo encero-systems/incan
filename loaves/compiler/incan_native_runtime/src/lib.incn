@@ -15,6 +15,9 @@ pub from collections import (
     nth_set,
     nth_dict,
 )
+pub from builtins import power_i64, power_f64, power_f32
+pub from builtins import sum_int, sum_bool, truth_text, truth_list
+pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
 from rust::incan_std_core::iter import range as runtime_range
 pub from statics import (
     read_static_int,
@@ -26,6 +29,16 @@ pub from statics import (
 )
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (
+    length_text,
+    upper_text,
+    lower_text,
+    strip_text,
+    replace_text,
+    contains_text,
+    not_contains_text,
+    split_text,
+    split_default_text,
+    join_text,
     concat_text,
     equal_text,
     unequal_text,
@@ -35,6 +48,7 @@ pub from strings import (
     greater_equal_text,
 )
 pub from lists import empty_list, append_list, length_list, get_list, set_list, clone_list
+pub from lists import concat_list, sorted_list, sorted_float
 pub from lists import contains_list
 pub from lists import borrow_list_mut
 pub from lists import count_list, index_list, extend_list, pop_list, remove_list, swap_list

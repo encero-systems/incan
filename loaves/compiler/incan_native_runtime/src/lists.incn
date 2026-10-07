@@ -3,12 +3,13 @@
 from std.derives.copying import Clone
 from rust::std::clone import Clone as RuntimeClone
 from rust::incan_std_core::collections import (
+    list_concat as runtime_concat,
     list_contains as runtime_contains,
     list_count as runtime_count,
     list_index as runtime_index,
     list_get_mut as runtime_get_mut,
 )
-from std.derives.comparison import Eq
+from std.derives.comparison import Eq, Ord
 
 
 pub def empty_list[T]() -> list[T]:
@@ -83,3 +84,20 @@ pub def remove_list[T](mut values: list[T], index: int) -> None:
 pub def swap_list[T](mut values: list[T], left: int, right: int) -> None:
     """Swap two elements with the legacy negative-index and bounds behavior."""
     values.swap(left, right)
+
+
+pub def concat_list[T with Clone](left: &list[T], right: &list[T]) -> list[T]:
+    """Concatenate borrowed lists through the legacy helper without consuming either operand."""
+    return runtime_concat(left, right)
+
+
+pub def sorted_list[T with (Clone, Ord)](values: &list[T]) -> list[T]:
+    """Copy and sort ordered elements through legacy builtin emission."""
+    owned = RuntimeClone.clone(values)
+    return sorted(owned)
+
+
+pub def sorted_float(values: &list[float]) -> list[float]:
+    """Use legacy partial-order sorting, including its NaN ordering policy."""
+    owned = RuntimeClone.clone(values)
+    return sorted(owned)

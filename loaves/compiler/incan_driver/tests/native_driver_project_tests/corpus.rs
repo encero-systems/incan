@@ -102,6 +102,70 @@ pub(super) fn check_strings(
     Ok(())
 }
 
+/// Compare Unicode text helpers and global length byte for byte with legacy.
+pub(super) fn check_string_methods(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_builtin_source(
+        driver,
+        root,
+        sysroot,
+        runtime,
+        r#"def main() -> None:
+    text = "  café 世界  "
+    println(len(text))
+    println(text.len())
+    println(text.upper())
+    println(text.lower())
+    println(text.strip())
+    println(text.replace("café", "tea"))
+    println("世界" in text)
+    println(not ("absent" in text))
+    println("absent" not in text)
+    println("|".join("é,,猫".split(",")))
+    println("|".join(" a b ".split()))
+"#,
+    )
+}
+
+/// Compare a focused builtin program with legacy without normalizing its output.
+pub(super) fn check_builtin_source(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+    program: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("builtin-parity");
+    fs::create_dir_all(&project)?;
+    let source = project.join("probe.incn");
+    fs::write(&source, program)?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "native builtin compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy builtin compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/probe")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy builtin execution");
+    success(&actual, "native builtin execution");
+    assert_eq!(actual.stdout, expected.stdout, "builtin output must be byte-identical");
+    Ok(())
+}
+
 /// Explicit runtime artifacts and metadata search paths retained by its publisher receipt.
 pub(super) struct NativeClosure {
     externs: Vec<(String, PathBuf)>,
