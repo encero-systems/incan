@@ -18,6 +18,24 @@ use crate::{
 };
 
 impl BodyIrModule {
+    /// Prove a scalar static belongs to this module and its literal matches its exact retained carrier.
+    pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
+        use crate::body_ir::Constant;
+        use crate::{IncanPrimitiveType, IncanType};
+        self.declaration_id_for_canonical(
+            &declaration.canonical,
+            SymbolNamespace::OrdinaryLexical,
+            SemanticSourceTargetKind::Static,
+        )
+        .is_some()
+            && matches!(
+                (&declaration.ty, &declaration.initial),
+                (IncanType::Primitive(IncanPrimitiveType::Int), Constant::Int(_))
+                    | (IncanType::Primitive(IncanPrimitiveType::Float), Constant::Float(_))
+                    | (IncanType::Primitive(IncanPrimitiveType::Bool), Constant::Bool(_))
+            )
+    }
+
     /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.
     pub fn is_well_formed_native_enum_declaration(&self, declaration: &crate::body_ir::EnumDeclaration) -> bool {
         self.declaration_id_for_canonical(
@@ -167,8 +185,23 @@ impl BodyIrModule {
             })
     }
 
-    /// Whether a retained model or class layout agrees with its checked canonical identities.
+    /// Whether a retained model, class, or newtype layout agrees with its checked canonical identities.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
+        if declaration.canonical.kind == SemanticSourceTargetKind::Newtype {
+            return self.declaration_id_for_canonical(
+                &declaration.canonical,
+                SymbolNamespace::OrdinaryLexical,
+                SemanticSourceTargetKind::Newtype,
+            ) == Some(declaration.direct_declaration_id.clone())
+                && declaration.canonical.declaration_name == declaration.name
+                && declaration.fields == ["0"]
+                && declaration.field_identities == [declaration.canonical.clone()]
+                && declaration.field_types.len() == 1
+                && declaration.field_public == [true]
+                && declaration.type_parameter_count == 0
+                && !declaration.has_field_defaults;
+        }
+
         matches!(
             declaration.canonical.kind,
             SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
