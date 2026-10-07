@@ -96,16 +96,21 @@ impl VerifiedLoafArchive {
         self.files.contains_key(Path::new("build.rs"))
     }
 
-    /// Materialize verified source files into a fresh private root, omitting inert Cargo and build-script files.
+    /// Materialize verified source files into a fresh private root, omitting the package root's inert Cargo and
+    /// build-script files.
+    ///
+    /// Only files at the package root are withheld: a nested `src/build.rs` is an ordinary module (`mod build;`), and a
+    /// nested `Cargo.toml` is a fixture or a vendored crate's data, so both are sources like any other file.
     pub fn materialize(&self, root: &Path) -> io::Result<()> {
         std::fs::create_dir(root)?;
         for (relative, bytes) in &self.files {
-            if relative.file_name().is_some_and(|name| {
-                matches!(
-                    name.to_str(),
+            let at_package_root = relative.parent().is_some_and(|parent| parent.as_os_str().is_empty());
+            if at_package_root
+                && matches!(
+                    relative.to_str(),
                     Some("Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock" | "build.rs")
                 )
-            }) {
+            {
                 continue;
             }
             let destination = root.join(relative);

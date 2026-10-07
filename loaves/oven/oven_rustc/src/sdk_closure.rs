@@ -541,10 +541,29 @@ fn active_edges(unit: &PreparedUnit, units: &[PreparedUnit]) -> Result<Vec<(Stri
                 .into());
             }
             let (index, _) = candidates[0];
-            edges.push((name.replace('-', "_"), index));
+            edges.push((extern_alias(name, &units[index]), index));
         }
     }
     Ok(edges)
+}
+
+/// The crate name a dependent uses for one dependency, as rustc's `--extern` must spell it.
+///
+/// A dependency key that only repeats the package name is not a rename, so the dependent sees the dependency's
+/// library name (its `[rust] name`, e.g. `debug_unreachable` for the `new_debug_unreachable` package). A key that
+/// differs from the package name is a rename and is used as written. Hyphens become underscores either way.
+fn extern_alias(dependency_key: &str, target: &PreparedUnit) -> String {
+    let package = target.binding.loaf.rsplit('/').next().unwrap_or(&target.binding.loaf);
+    let library = target
+        .manifest
+        .get("rust")
+        .and_then(|rust| rust.get("name"))
+        .and_then(toml::Value::as_str);
+    let alias = match library {
+        Some(library) if dependency_key == package => library,
+        _ => dependency_key,
+    };
+    alias.replace('-', "_")
 }
 
 /// Follow recorded destinations without repeating semver selection; reject missing or conflicting bindings.
@@ -576,8 +595,8 @@ fn locked_edges(
             )
             .into());
         }
-        let alias = edge.dependency_key.replace('-', "_");
         let index = candidates[0].0;
+        let alias = extern_alias(&edge.dependency_key, &units[index]);
         if selected
             .insert(alias.clone(), index)
             .is_some_and(|previous| previous != index)
