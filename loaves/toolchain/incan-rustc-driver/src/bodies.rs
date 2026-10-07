@@ -24,7 +24,9 @@ fn statement<'tcx>(
     let kind = match &value.kind {
         StatementKind::Assign(destination, value) => {
             let ty = match &destination.projection {
-                crate::plan::Projection::Field(_, ty) => ty,
+                crate::plan::Projection::Field(_, ty)
+                | crate::plan::Projection::DerefField(_, ty)
+                | crate::plan::Projection::Deref(ty) => ty,
                 _ => &function.locals[values::index(destination.local)?].ty,
             };
             mir::StatementKind::Assign(Box::new((

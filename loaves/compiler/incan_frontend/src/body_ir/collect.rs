@@ -37,7 +37,7 @@ pub(super) fn collect_local_function_declarations(program: &ast::Program) -> Loc
     }
     declarations
 }
-/// Retain directly executable model declarations in source order.
+/// Retain directly executable model and class declarations in source order.
 ///
 /// Constructor argument binding already comes from the typechecker; this adds only the source-local declaration
 /// identity and canonical raw field order the direct runtime otherwise could not establish without reopening AST or
@@ -51,19 +51,29 @@ pub(super) fn collect_local_nominal_declarations(
         .declarations
         .iter()
         .filter_map(|declaration| {
-            let ast::Declaration::Model(model) = &declaration.node else {
-                return None;
+            let (name, fields, visibility, type_parameter_count, class_layout) = match &declaration.node {
+                ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => (
+                    &model.name,
+                    &model.fields,
+                    model.visibility,
+                    model.type_params.len(),
+                    None,
+                ),
+                ast::Declaration::Class(class) if is_direct_replacement_class(class) => (
+                    &class.name,
+                    &class.fields,
+                    class.visibility,
+                    class.type_params.len(),
+                    Some(type_info.declarations.class_layouts.get(&class.name)?),
+                ),
+                _ => return None,
             };
-            if !is_direct_replacement_plain_model(model) {
-                return None;
-            }
             let canonical = type_info
                 .declarations
                 .declaration_identities
                 .get(&(declaration.span.start, declaration.span.end))?
                 .clone();
-            let field_identities = model
-                .fields
+            let field_identities = fields
                 .iter()
                 .map(|field| {
                     type_info
@@ -80,40 +90,55 @@ pub(super) fn collect_local_nominal_declarations(
                     declaration.span.end,
                 ),
                 canonical,
-                name: model.name.clone(),
-                fields: model.fields.iter().map(|field| field.node.name.clone()).collect(),
+                name: name.clone(),
+                fields: fields.iter().map(|field| field.node.name.clone()).collect(),
                 field_identities,
-                field_public: model
-                    .fields
+                field_public: fields
                     .iter()
                     .map(|field| {
-                        type_info
-                            .declarations
-                            .model_field_visibilities
-                            .get(&model.name)
-                            .and_then(|fields| fields.get(&field.node.name))
-                            .map(|visibility| *visibility == ast::Visibility::Public)
+                        if let Some(layout) = class_layout {
+                            layout
+                                .fields
+                                .iter()
+                                .find(|checked| checked.name == field.node.name)
+                                .map(|checked| checked.visibility == ast::Visibility::Public)
+                        } else {
+                            type_info
+                                .declarations
+                                .model_field_visibilities
+                                .get(name)
+                                .and_then(|fields| fields.get(&field.node.name))
+                                .map(|visibility| *visibility == ast::Visibility::Public)
+                        }
                     })
                     .collect::<Option<Vec<_>>>()?,
-                public: model.visibility == ast::Visibility::Public,
-                has_field_defaults: model.fields.iter().any(|field| field.node.default.is_some()),
+                public: visibility == ast::Visibility::Public,
+                has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 derives: incan_lang::lang::derives::plain_model_derives()
                     .map(str::to_owned)
                     .to_vec(),
-                field_types: model
-                    .fields
+                field_types: fields
                     .iter()
                     .map(|field| {
-                        type_info
-                            .declarations
-                            .model_field_types
-                            .get(&(field.span.start, field.span.end))
-                            .map(semantic_type_from_resolved)
-                            .unwrap_or(IncanType::Unknown)
+                        if let Some(layout) = class_layout {
+                            layout
+                                .fields
+                                .iter()
+                                .find(|checked| checked.name == field.node.name)
+                                .map(|checked| semantic_type_from_resolved(&checked.ty))
+                                .unwrap_or(IncanType::Unknown)
+                        } else {
+                            type_info
+                                .declarations
+                                .model_field_types
+                                .get(&(field.span.start, field.span.end))
+                                .map(semantic_type_from_resolved)
+                                .unwrap_or(IncanType::Unknown)
+                        }
                     })
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
-                type_parameter_count: model.type_params.len(),
+                type_parameter_count,
             })
         })
         .collect()

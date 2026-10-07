@@ -1265,3 +1265,26 @@ fn calling_a_call_dunder_adopter_is_a_call_of_its_dunder() -> Result<(), Box<dyn
     );
     Ok(())
 }
+
+/// Class layouts and constructors retain canonical class and field identities, including receiver origins.
+#[test]
+fn source_local_class_retains_checked_layout_and_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Counter:\n  value: int\n\n  def get(self) -> int:\n    return self.value\n\n  def bump(mut self) -> None:\n    self.value += 1\n\ndef main() -> None:\n  mut counter = Counter(value=3)\n  counter.bump()\n";
+    let module = build(source, &["m", "class_layout"])?;
+    let declaration = module.nominal_declarations.first().ok_or("missing class declaration")?;
+    assert_eq!(declaration.canonical.kind, SemanticSourceTargetKind::Class);
+    assert_eq!(declaration.fields, ["value"]);
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    for (name, mutable) in [("get", false), ("bump", true)] {
+        let body = body_named(&module, name)?;
+        assert_eq!(body.locals[0].origin, bir::LocalOrigin::Receiver { mutable });
+        assert!(module.body_has_canonical_direct_call_id(body));
+        let mut tampered_body = body.clone();
+        tampered_body.locals[0].ty = IncanType::Named("ForeignOwner".to_string());
+        assert!(!module.body_has_canonical_direct_call_id(&tampered_body));
+    }
+    let mut tampered = declaration.clone();
+    tampered.canonical.kind = SemanticSourceTargetKind::Trait;
+    assert!(!module.is_well_formed_nominal_declaration(&tampered));
+    Ok(())
+}
