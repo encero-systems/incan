@@ -1,19 +1,23 @@
 //! Shared CLI-session source-to-Body-IR glue. All Body-IR-to-plan decisions belong to the Incan lowering Loaf.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use incan_driver::{modules::collect_modules_detailed_with_session, session::CompilationSession};
-use incan_frontend::body_ir::build_body_ir_module_v0;
-use incan_mir_lowering::caller::incan::lower_module;
+use incan_mir_lowering::caller::incan::lower_program;
 use incan_semantics_core::body_ir::BodyIrModule;
+
+/// Checked owning modules and their source provenance, with one explicit native entry module.
+struct CheckedProgram {
+    modules: Vec<BodyIrModule>,
+    sources: Vec<String>,
+    files: Vec<String>,
+    entry: usize,
+}
 
 /// Collect and analyze the original source through the CLI's compilation session, retaining canonical checked facts.
 /// Native-only declaration refusals follow analysis; provider activation, desugaring, and stdlib loading remain owned
 /// by the session.
-fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
+fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     let session = CompilationSession::discover_with_feature_selection(&path, &Default::default())
         .map_err(|error| error.to_string())?;
@@ -25,14 +29,80 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
     let analysis = session
         .analyze_modules(&modules, inspection.as_ref().map(|workspace| workspace.manifest_dir()))
         .map_err(|failure| failure.render_human())?;
-    if modules.len() != 1 {
-        return Err("unsupported source multi-module graph on the native route".to_owned());
-    }
-    let module = modules
+    let entry = modules
         .iter()
-        .find(|module| module.file_path == path)
+        .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
-    let program = &module.ast;
+    let facts = modules
+        .iter()
+        .map(|module| {
+            analysis
+                .type_info_for_path(&module.file_path)
+                .map(|info| info.semantic_fact_store(&module.path_segments))
+                .ok_or("module analysis is missing")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let roots = modules
+        .iter()
+        .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+        .flat_map(|info| info.declarations.declaration_identities.values().cloned());
+    let required = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
+        .reachable_from(roots)
+        .into_iter()
+        .filter(|identity| match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Package { library, .. } => !session
+                .provider_plan
+                .active_sdk_records()
+                .any(|provider| &provider.identity.name == library),
+            _ => false,
+        })
+        .collect();
+    let resolved =
+        incan_frontend::executable_resolution::resolve_executable_requirements(&session.provider_plan, &required)
+            .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
+    let mut bodies = resolved.modules;
+    // Published fragments retain canonical spans but do not carry source text. Do not attribute those spans to the
+    // entry.
+    let mut files = bodies
+        .iter()
+        .map(|module| module.module_id.path().to_owned())
+        .collect::<Vec<_>>();
+    let mut sources = vec![String::new(); bodies.len()];
+    let entry = entry + bodies.len();
+    for module in modules {
+        validate_declarations(&module.ast)?;
+        let type_info = analysis
+            .type_info_for_path(&module.file_path)
+            .ok_or("module analysis is missing")?;
+        let body_ir = incan_frontend::body_ir::build_body_ir_module_v0_with_executable_context(
+            &module.ast,
+            &module.path_segments,
+            type_info,
+            &bodies,
+        );
+        let static_count = module
+            .ast
+            .declarations
+            .iter()
+            .filter(|declaration| matches!(declaration.node, incan_frontend::ast::Declaration::Static(_)))
+            .count();
+        if static_count != body_ir.static_declarations.len() {
+            return Err("unsupported source Static initializer or carrier on the native route".to_owned());
+        }
+        bodies.push(body_ir);
+        sources.push(module.source);
+        files.push(module.file_path.to_string_lossy().into_owned());
+    }
+    Ok(CheckedProgram {
+        modules: bodies,
+        sources,
+        files,
+        entry,
+    })
+}
+
+/// Refuse declarations whose observable behavior the direct route cannot retain, independently for each module.
+fn validate_declarations(program: &incan_frontend::ast::Program) -> Result<(), String> {
     // Legacy's `incan_ir::check_for_this_import` injects entrypoint output for this exact module import.
     // Until Body IR carries that effect, accepting the declaration would silently erase observable behavior.
     for declaration in &program.declarations {
@@ -97,7 +167,9 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
                 }
                 continue;
             }
-            Declaration::Newtype(newtype) if incan_frontend::body_ir::is_direct_replacement_plain_newtype(newtype) => continue,
+            Declaration::Newtype(newtype) if incan_frontend::body_ir::is_direct_replacement_plain_newtype(newtype) => {
+                continue;
+            }
             Declaration::Newtype(_) => "nonplain Newtype",
             Declaration::Alias(_) => continue,
             Declaration::Partial(_) => "Partial",
@@ -107,13 +179,7 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
         };
         return Err(format!("unsupported source {kind} on the native route"));
     }
-    let type_info = analysis.type_info_for_path(&path).ok_or("entry analysis is missing")?;
-    let body_ir = build_body_ir_module_v0(program, &module.path_segments, type_info);
-    let static_count = program.declarations.iter().filter(|declaration| matches!(declaration.node, incan_frontend::ast::Declaration::Static(_))).count();
-    if static_count != body_ir.static_declarations.len() {
-        return Err("unsupported source Static initializer or carrier on the native route".to_owned());
-    }
-    Ok(body_ir)
+    Ok(())
 }
 
 /// Exact caller-declared native libraries and their dependency search directories.
@@ -148,10 +214,14 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ---- Checked source and Incan plan ----
-    let source = fs::read_to_string(&arguments[0])?;
     let source_path = PathBuf::from(&arguments[0]);
-    let module = incan_frontend::compiler_stack::run_on_compiler_stack(move || checked_module(&source_path))?;
-    let plan = lower_module(&module, source, arguments[0].clone())?;
+    let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || checked_modules(&source_path))?;
+    let plan = lower_program(
+        &program.modules,
+        program.sources,
+        program.files,
+        program.entry.try_into()?,
+    )?;
 
     // ---- Explicit native dependencies ----
     let dependencies = dependencies(&arguments[4..])?;

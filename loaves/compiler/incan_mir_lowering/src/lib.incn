@@ -8,6 +8,7 @@ from lowering import (
     count_continues as count_checked_continues,
     is_continue as checked_is_continue,
     lower_module as lower_checked_module,
+    lower_program as lower_checked_program,
 )
 pub from pub::incan_mir_plan import (
     BasicBlock,
@@ -61,3 +62,13 @@ pub def is_continue(statement: &BodyStatementKind) -> bool:
 pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
     """Delegate checked lowering while keeping a direct declaration for the native caller bridge."""
     return lower_checked_module(module, source, file)
+
+
+pub def lower_program(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+) -> Result[Plan, str]:
+    """Delegate project lowering while preserving the canonical caller boundary and source provenance."""
+    return lower_checked_program(modules, sources, files, entry)
