@@ -129,25 +129,28 @@ pub def constructor_index(
                     declaration.fields,
                 ):
                     return Err("invalid Body IR model constructor identity or layout")
-                if count != len(declaration.fields):
-                    return Err("unsupported Body IR incomplete model constructor")
-                validate_constructor_binding(target.binding, count)?
+                validate_constructor_binding(target.binding, count, len(declaration.fields))?
                 return Ok(index)
             return Err("unsupported Body IR unretained model constructor")
         None => return Err("unsupported Body IR nonlocal model constructor")
 
 
-def validate_constructor_binding(binding: &ArgumentBinding, count: int) -> Result[None, str]:
+def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: int) -> Result[None, str]:
     """Require every field slot exactly once; Body IR supplies elements in canonical field order."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            if len(defaults) != 0 or len(bindings) != count:
+            if len(bindings) != count or len(bindings) + len(defaults) != fields:
                 return Err("unsupported Body IR incomplete model constructor")
             mut slots: list[int] = []
             for binding in bindings:
                 slot = int(binding.slot)
-                if slot < 0 or slot >= count or slot in slots:
+                if slot < 0 or slot >= fields or slot in slots:
                     return Err("invalid Body IR model constructor slot map")
+                slots.append(slot)
+            for default in defaults:
+                slot = int(default.clone())
+                if slot < 0 or slot >= fields or slot in slots:
+                    return Err("invalid Body IR model default slot map")
                 slots.append(slot)
             return Ok(None)
         _ => return Err("unsupported Body IR unresolved model constructor")

@@ -25,6 +25,96 @@ fn option_constructor_retains_intrinsic_selection() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// Alias writes remain explicitly refused while legacy emits a nonexistent Rust field.
+#[test]
+fn model_field_alias_write_retains_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Record:\n    value [alias=\"wire_value\"]: int\n\ndef main() -> int:\n    mut record = Record(wire_value=1)\n    record.wire_value = 2\n    return record.wire_value\n",
+        &["m", "alias_write"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(
+        snapshot.contains("model field alias assignment `wire_value`"),
+        "{snapshot}"
+    );
+    Ok(())
+}
+
+/// Retain explicit, implied, and automatic model derives once, in the legacy emitter's order.
+#[test]
+fn model_derives_retain_checked_native_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Ord, Hash, Debug, Clone, Default)\nmodel Point:\n    x: int\n\ndef main() -> int:\n    return Point(x=3).x\n",
+        &["m", "model_derives"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained derived model".into());
+    };
+    assert_eq!(
+        declaration.derives,
+        [
+            "Ord",
+            "Hash",
+            "Debug",
+            "Clone",
+            "Default",
+            "PartialOrd",
+            "Eq",
+            "PartialEq",
+            "FieldInfo",
+            "IncanClass"
+        ]
+    );
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    Ok(())
+}
+
+/// Derived Display retains its checked selection and the Debug prerequisite for native formatting.
+#[test]
+fn model_display_retains_checked_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Display)\nmodel Record:\n    value: int\n\ndef main() -> None:\n    record = Record(value=7)\n    println(record)\n",
+        &["m", "model_display"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained Display model".into());
+    };
+    assert_eq!(
+        declaration.derives,
+        ["Display", "Debug", "Clone", "FieldInfo", "IncanClass"]
+    );
+    assert!(!module.render_snapshot().contains("unsupported("));
+    Ok(())
+}
+
+/// Imported JSON derive spellings resolve to canonical serde macro selections before entering Body IR.
+#[test]
+fn model_json_retains_checked_selection() -> Result<(), Box<dyn std::error::Error>> {
+    for derive in [
+        "json",
+        "Serialize",
+        "json.Serialize",
+        "JsonSerialize",
+        "chosen",
+        "picked",
+    ] {
+        let source = format!(
+            "from std.serde import json\nfrom std.serde.json import Serialize\nfrom std.serde.json import Serialize as JsonSerialize\nimport std.serde.json as chosen\nfrom std.serde import json as picked\n\n@derive({derive})\nmodel Record:\n    value: int\n\ndef main() -> None:\n    record = Record(value=7)\n    println(record.to_json())\n"
+        );
+        let module = build(&source, &["m", "model_json"])?;
+        let [declaration] = module.nominal_declarations.as_slice() else {
+            return Err(format!("expected one retained JSON model for {derive}").into());
+        };
+        assert!(declaration.derives.iter().any(|name| name == "serde::Serialize"));
+        assert_eq!(
+            declaration.derives.iter().any(|name| name == "serde::Deserialize"),
+            matches!(derive, "json" | "chosen" | "picked")
+        );
+        assert!(!module.render_snapshot().contains("unsupported("));
+    }
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {
@@ -241,6 +331,56 @@ fn construction_records_an_omitted_field_default_as_an_explicit_slot() -> Result
     assert!(
         snapshot.contains("constructor(P) defaults=[1][const(1)]"),
         "an omitted field must be recorded as a defaulted slot, not left implicit: {snapshot}"
+    );
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("missing nominal declaration")?;
+    let defaults = declaration
+        .field_default_body
+        .as_ref()
+        .ok_or("missing field-default frame")?;
+    assert_eq!(defaults.canonical.as_ref(), Some(&declaration.canonical));
+    assert_eq!(defaults.params.len(), 2);
+    assert!(matches!(
+        defaults.params[0].default,
+        bir::CallableParamDefault::Required
+    ));
+    assert!(matches!(
+        defaults.params[1].default,
+        bir::CallableParamDefault::Source(_)
+    ));
+    assert!(defaults.block.stmts.is_empty());
+    Ok(())
+}
+
+/// A declaration-owned string default retains the same allocator requirement as an ordinary callable frame.
+#[test]
+fn model_string_default_frame_retains_allocator_requirement() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model P:\n    text: str = \"default\"\n\ndef make() -> P:\n    return P()\n",
+        &["m", "default_allocator"],
+    )?;
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("missing nominal declaration")?;
+    let frame = declaration.field_default_body.as_ref().ok_or("missing default frame")?;
+    assert!(frame.runtime_requirements.contains(&AbiV0RuntimeRequirement::Allocator));
+    Ok(())
+}
+
+/// Refuse the aggregate boundary's missing interleaving fact instead of running a later argument before a default.
+#[test]
+fn constructor_refuses_interleaved_field_default_evaluation() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def effect() -> int:\n    return 1\n\nmodel P:\n    x: int = effect()\n    y: int\n\ndef make() -> P:\n    return P(y=effect())\n",
+        &["m", "default_order"],
+    )?;
+    assert!(
+        module
+            .render_snapshot()
+            .contains("model field-default evaluation interleaved with supplied arguments")
     );
     Ok(())
 }

@@ -14,6 +14,29 @@ from lowering import BodyIrModule, call_argument_operand, lower_statement
 from frame import Builder, drop_owned
 
 
+pub def model_default_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    index: int,
+    binding: &ArgumentBinding,
+    elements: &list[ArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Use the retained constructor frame only when checked field slots are omitted."""
+    declaration = builder.nominals[index]
+    match declaration.field_default_body:
+        Some(body) =>
+            if body.canonical != Some(declaration.canonical) or len(body.params) != len(declaration.fields):
+                return Err("invalid Body IR model default frame")
+            mut types: list[PlanType] = []
+            for ty in declaration.field_types:
+                types.append(
+                    native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?,
+                )
+            return default_arguments(module, builder, binding, elements, body, types, span)
+        None => return Err(f"unsupported Body IR unavailable field defaults on {declaration.name}")
+
+
 pub def default_arguments(
     module: &BodyIrModule,
     mut builder: Builder,

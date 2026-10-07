@@ -228,7 +228,7 @@ fn build_body_ir_module_v0_with_provider_operations(
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
-    let nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
+    let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
     let mut local_nominal_declarations = nominal_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
@@ -265,6 +265,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         provider_operations,
         rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
+    defaults::attach_model_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     let mut bodies = program
         .declarations
         .iter()
@@ -370,7 +371,8 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
 /// Source-local plain models and non-generic classes with canonical checked layouts.
 ///
-/// Unsupported inheritance, properties, and aliases never enter this constructor registry.
+/// Unsupported inheritance, properties, and callable aliases never enter this constructor registry; checked field
+/// aliases select canonical storage.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
@@ -417,13 +419,56 @@ struct FunctionDefaultSource {
 /// Determine whether a model can carry the small direct-replacement declaration fact.
 ///
 /// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
-/// runtime cannot execute model decorators, field aliases, or generic substitution without facts that Body IR does not
-/// retain. Non-generic methods remain separate bodies; adopted trait slots are retained in the module implementation
-/// registry. Field defaults remain represented by each construction's checked binding, so a fully supplied construction
-/// may execute while any omitted default still refuses at that constructor's span.
+/// runtime admits builtin Rust derives, checked JSON protocol derives, and field aliases without serde renames, but
+/// cannot execute other model decorators or generic substitution without retained facts. Non-generic methods remain
+/// separate bodies; adopted trait slots are retained in the module implementation registry. Field defaults have
+/// declaration-owned deferred computations; each construction's checked binding selects the omitted slots without
+/// repeating source expressions at call sites.
 pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
-    model.decorators.is_empty()
-        && model.type_params.is_empty()
+    model
+        .decorators
+        .iter()
+        .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
+        && has_direct_replacement_model_shape(model)
+}
+
+/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths.
+/// Serde field renames remain refused until their checked metadata crosses the Body IR and plan boundary.
+pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
+    if is_direct_replacement_plain_model(model) {
+        return true;
+    }
+    let Some(names) = type_info.declarations.model_derives.get(&model.name) else {
+        return false;
+    };
+    model.decorators.iter().all(|decorator| {
+        decorator.node.name == "derive"
+            && decorator.node.path.segments == ["derive"]
+            && decorator.node.type_args.is_empty()
+    }) && names.iter().all(|name| {
+        matches!(
+            name.as_str(),
+            "Debug"
+                | "Clone"
+                | "Eq"
+                | "PartialEq"
+                | "Hash"
+                | "Ord"
+                | "PartialOrd"
+                | "Default"
+                | "Display"
+                | "FieldInfo"
+                | "IncanClass"
+                | "serde::Serialize"
+                | "serde::Deserialize"
+        )
+    }) && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+        && has_direct_replacement_model_shape(model)
+}
+
+/// Keep the structural admission boundary shared by builtin and checked serde derive selections.
+fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
+    model.type_params.is_empty()
         && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && model.method_aliases.is_empty()
         && model.method_partials.is_empty()
@@ -432,7 +477,19 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
             .methods
             .iter()
             .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
-        && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+}
+
+/// Admit only the bare builtin derive decorator whose complete native trait selection Body IR retains.
+/// Qualified, bundled, foreign, and semantic derives need their own checked expansion facts and remain refused. Display
+/// retains its checked selection and uses the implied Debug rendering.
+pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
+    decorator.name == "derive"
+        && decorator.path.segments == ["derive"]
+        && decorator.type_args.is_empty()
+        && decorator.args.iter().all(|argument| {
+            matches!(argument, ast::DecoratorArg::Positional(value) if matches!(&value.node,
+                ast::Expr::Ident(name) if matches!(name.as_str(), "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display")))
+        })
 }
 
 /// Admit only a concrete tuple wrapper whose construction adds no hooks, constraints, or trait behavior.
