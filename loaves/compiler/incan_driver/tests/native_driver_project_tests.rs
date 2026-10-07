@@ -1822,6 +1822,106 @@ fn direct_route_packages_match_legacy() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// A checked package module binding selects callable bodies without requesting a namespace fragment.
+#[test]
+fn direct_route_package_module_binding_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-module-binding")?;
+    let library = root.join("deps/widgets");
+    fs::create_dir_all(library.join("src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = 'package_module_binding'\nversion = '0.1.0'\n[dependencies]\nwidgets = { path = 'deps/widgets' }\n",
+    )?;
+    fs::write(
+        library.join("loaf.toml"),
+        "[project]\nname = 'widgets'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(
+        library.join("src/lib.incn"),
+        "pub def label(value: str) -> str:\n    return value\n",
+    )?;
+    fs::write(
+        root.join("src/main.incn"),
+        "import pub::widgets as widgets_alias\n\ndef main() -> None:\n    println(widgets_alias.label('aliased'))\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    success(&publish.output()?, "module binding package publication");
+    assert_package_routes_match(fixture, &root, "package_module_binding", b"aliased\n")
+}
+
+/// A sibling-module model's canonical identity survives public package method calls without source recovery.
+#[test]
+fn direct_route_package_sibling_model_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-sibling-model")?;
+    let area = support::fixtures_dir().join("behavior/lowering_dependencies");
+    let behavior = support::behavior_fixtures::discover(&area)?
+        .into_iter()
+        .find(|case| case.name == "package_inherent_methods_issue1174")
+        .ok_or("package sibling model fixture is missing")?;
+    support::behavior_fixtures::materialize(&behavior, &root)?;
+    for provider in &behavior.providers {
+        let mut publish = support::cli_project::configured_incan_command(
+            &root.join(&provider.path),
+            &["oven", "bake", "--project", "."],
+        );
+        support::configure_explicit_oven_bake_command(&mut publish)?;
+        success(&publish.output()?, "sibling model package publication");
+    }
+    assert_package_routes_match(
+        fixture,
+        &root,
+        "package_inherent_methods_issue1174",
+        b"base=10 tax=2\ntotal=12\n",
+    )
+}
+
+/// Compare a published package consumer's complete native output and exit status against the legacy route.
+fn assert_package_routes_match(
+    fixture: &DriverFixture,
+    root: &Path,
+    binary_name: &str,
+    stdout: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = root.join("src/main.incn");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .current_dir(root)
+        .output()?,
+        "package native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "package legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release").join(binary_name)).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "package legacy execution");
+    success(&actual, "package native execution");
+    assert_eq!(actual.stdout, stdout);
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), expected.status.code());
+    Ok(())
+}
+
 /// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
 #[test]
 fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
