@@ -71,6 +71,23 @@ pub struct SdkLockedUnit {
     pub features: Vec<String>,
     /// Already evaluated dependency conditions.
     pub target_predicates: Vec<SdkLockedPredicate>,
+    /// Exact active dependency bindings; absent only in legacy resolution documents or local facets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edges: Option<Vec<SdkLockedEdge>>,
+}
+
+/// One resolver-owned dependency alias and its exact locked destination.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SdkLockedEdge {
+    /// Authored dependency alias, before Rust identifier normalization.
+    pub dependency_key: String,
+    /// Registry-qualified destination.
+    pub loaf: String,
+    /// Exact selected source version.
+    pub version: String,
+    /// Host or target compilation domain.
+    pub domain: String,
 }
 
 /// One evaluated dependency target condition from the seed.
@@ -165,8 +182,14 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
     } = *request;
     let started = std::time::Instant::now();
     let seed: Seed = serde_json::from_slice(&std::fs::read(lock)?)?;
-    if seed.schema != "incan.oven.loaf-resolution/1" {
+    if !matches!(
+        seed.schema.as_str(),
+        "incan.oven.loaf-resolution/1" | "incan.oven.loaf-resolution/2"
+    ) {
         return Err("unsupported SDK seed schema".into());
+    }
+    if seed.schema == "incan.oven.loaf-resolution/2" && seed.units.iter().any(|unit| unit.edges.is_none()) {
+        return Err("resolution schema 2 requires dependency edges on every unit; re-resolve the lock".into());
     }
     std::fs::create_dir_all(output)?;
     let toolchain = rustc_identity(rustc)?;
@@ -406,8 +429,11 @@ fn binding_label(unit: &SdkLockedUnit, profile: &str) -> String {
     )
 }
 
-/// Select active dependency declarations using the seed's features, predicates and host partition.
+/// Follow resolver-owned edges, or uniquely match legacy declarations using locked features and predicates.
 fn active_edges(unit: &PreparedUnit, units: &[PreparedUnit]) -> Result<Vec<(String, usize)>, Error> {
+    if let Some(edges) = &unit.binding.edges {
+        return locked_edges(unit, edges, units);
+    }
     let mut enabled: BTreeSet<String> = unit.binding.features.iter().cloned().collect();
     let mut optional = BTreeSet::new();
     loop {
@@ -494,7 +520,7 @@ fn active_edges(unit: &PreparedUnit, units: &[PreparedUnit]) -> Result<Vec<(Stri
                 .collect();
             if candidates.len() != 1 {
                 return Err(format!(
-                    "{} dependency {name}: expected one locked unit, found {}",
+                    "{} dependency {name}: legacy lock expected one locked unit, found {}; re-resolve the lock",
                     unit.binding.loaf,
                     candidates.len()
                 )
@@ -505,6 +531,51 @@ fn active_edges(unit: &PreparedUnit, units: &[PreparedUnit]) -> Result<Vec<(Stri
         }
     }
     Ok(edges)
+}
+
+/// Follow recorded destinations without repeating semver selection; reject missing or conflicting bindings.
+fn locked_edges(
+    unit: &PreparedUnit,
+    edges: &[SdkLockedEdge],
+    units: &[PreparedUnit],
+) -> Result<Vec<(String, usize)>, Error> {
+    let mut selected = BTreeMap::new();
+    for edge in edges {
+        let candidates: Vec<_> = units
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| {
+                candidate.binding.loaf == edge.loaf
+                    && candidate.binding.version == edge.version
+                    && candidate.binding.domain == edge.domain
+            })
+            .collect();
+        if candidates.len() != 1 {
+            return Err(format!(
+                "{} dependency {}: recorded {} {} ({}) has {} locked destinations; re-resolve the lock",
+                unit.binding.loaf,
+                edge.dependency_key,
+                edge.loaf,
+                edge.version,
+                edge.domain,
+                candidates.len()
+            )
+            .into());
+        }
+        let alias = edge.dependency_key.replace('-', "_");
+        let index = candidates[0].0;
+        if selected
+            .insert(alias.clone(), index)
+            .is_some_and(|previous| previous != index)
+        {
+            return Err(format!(
+                "{} dependency {alias}: conflicting recorded destinations",
+                unit.binding.loaf
+            )
+            .into());
+        }
+    }
+    Ok(selected.into_iter().collect())
 }
 
 /// Compile one admitted script-free unit through the existing receipt-bound library executor.
@@ -1236,6 +1307,7 @@ mod tests {
                 domain: domain.to_string(),
                 features: features.iter().map(|feature| (*feature).to_string()).collect(),
                 target_predicates: Vec::new(),
+                edges: None,
             },
             manifest: toml::from_str(manifest)?,
             root: PathBuf::new(),
@@ -1243,6 +1315,41 @@ mod tests {
             fact: None,
             fact_out: Vec::new(),
         })
+    }
+
+    /// Recorded destinations distinguish compatible versions; legacy ambiguity requires fresh resolution.
+    #[test]
+    fn recorded_edges_disambiguate_versions_and_reject_missing_destinations() -> Result<(), Error> {
+        let mut root = unit(
+            "crates-io/root",
+            "host",
+            "[dependencies]\nsyn={loaf='crates-io/syn',version='>=2, <4'}",
+            &[],
+        )?;
+        let mut older = unit("crates-io/syn", "host", "", &[])?;
+        older.binding.version = "2.0.119".into();
+        let mut newer = unit("crates-io/syn", "host", "", &[])?;
+        newer.binding.version = "3.0.6".into();
+        let mut units = vec![root, older, newer];
+        let error = match active_edges(&units[0], &units) {
+            Ok(_) => return Err("ambiguous legacy lock was accepted".into()),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("dependency syn"));
+        assert!(error.contains("re-resolve"));
+        units[0].binding.edges = Some(vec![SdkLockedEdge {
+            dependency_key: "syn".into(),
+            loaf: "crates-io/syn".into(),
+            version: "3.0.6".into(),
+            domain: "host".into(),
+        }]);
+        assert_eq!(active_edges(&units[0], &units)?, vec![("syn".into(), 2)]);
+        root = units.remove(0);
+        units.pop();
+        assert!(active_edges(&root, &units).is_err());
+        root.binding.edges = Some(Vec::new());
+        assert!(active_edges(&root, &units)?.is_empty());
+        Ok(())
     }
 
     /// Optional aliases are activated by feature expansion, while proc macros select only host units.

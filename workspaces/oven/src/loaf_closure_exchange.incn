@@ -121,7 +121,7 @@ pub def resolve_shard(records: list[LoafVersion], source: str, context: Activati
     if let Some(selected_units) = resolution.get("units"):
         units = selected_units
     return Ok(JsonValue.object({
-        "schema": JsonValue.string("incan.oven.loaf-resolution/1"),
+        "schema": JsonValue.string("incan.oven.loaf-resolution/2"),
         "units": units,
         "refused": JsonValue.array(refused),
     }))

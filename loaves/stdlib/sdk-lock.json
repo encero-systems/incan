@@ -1,9 +1,10 @@
 {
-  "schema": "incan.oven.loaf-resolution/1",
+  "schema": "incan.oven.loaf-resolution/2",
   "units": [
     {
       "archive_digest": "sha256:0321ee87b6c735fc8cca497b56fa0958d7332bea08c483d1096a160473fd5bfb",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/adler2",
       "target_predicates": [],
@@ -12,6 +13,14 @@
     {
       "archive_digest": "sha256:0bb5687a63a524060ba74d9a4cd65397c9f2b15f85ebd258de0c9b2138f74443",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "memchr",
+          "domain": "target",
+          "loaf": "crates-io/memchr",
+          "version": "2.8.3"
+        }
+      ],
       "features": [
         "perf-literal",
         "std"
@@ -23,6 +32,7 @@
     {
       "archive_digest": "sha256:7f4cca82c75a40d884cdaf48d35adb96cb6dd812900c45b6682804f3b484b6c7",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/arrayvec",
       "target_predicates": [],
@@ -31,6 +41,7 @@
     {
       "archive_digest": "sha256:8df413e9efdf52d5612cc6b527b4508571e6f7311176dd4c51027ba5235cf850",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/atomic-waker",
       "target_predicates": [],
@@ -39,6 +50,74 @@
     {
       "archive_digest": "sha256:5040e47a33c5964ea5a2965db9b11fed9ba380595850609eb2374b2ddb067574",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bytes",
+          "domain": "target",
+          "loaf": "crates-io/bytes",
+          "version": "1.12.1"
+        },
+        {
+          "dependency_key": "futures-core",
+          "domain": "target",
+          "loaf": "crates-io/futures-core",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "http",
+          "domain": "target",
+          "loaf": "crates-io/http",
+          "version": "1.5.0"
+        },
+        {
+          "dependency_key": "http-body",
+          "domain": "target",
+          "loaf": "crates-io/http-body",
+          "version": "1.1.0"
+        },
+        {
+          "dependency_key": "http-body-util",
+          "domain": "target",
+          "loaf": "crates-io/http-body-util",
+          "version": "0.1.5"
+        },
+        {
+          "dependency_key": "mime",
+          "domain": "target",
+          "loaf": "crates-io/mime",
+          "version": "0.3.17"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "sync_wrapper",
+          "domain": "target",
+          "loaf": "crates-io/sync_wrapper",
+          "version": "1.0.2"
+        },
+        {
+          "dependency_key": "tower-layer",
+          "domain": "target",
+          "loaf": "crates-io/tower-layer",
+          "version": "0.3.3"
+        },
+        {
+          "dependency_key": "tower-service",
+          "domain": "target",
+          "loaf": "crates-io/tower-service",
+          "version": "0.3.3"
+        },
+        {
+          "dependency_key": "tracing",
+          "domain": "target",
+          "loaf": "crates-io/tracing",
+          "version": "0.1.44"
+        }
+      ],
       "features": [
         "tracing"
       ],
@@ -49,6 +128,158 @@
     {
       "archive_digest": "sha256:26c13325f7ddeceda01605cd26c1d8195c1b710741ec3c9044cfa197cb66cf54",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "axum-core",
+          "domain": "target",
+          "loaf": "crates-io/axum-core",
+          "version": "0.5.6"
+        },
+        {
+          "dependency_key": "bytes",
+          "domain": "target",
+          "loaf": "crates-io/bytes",
+          "version": "1.12.1"
+        },
+        {
+          "dependency_key": "form_urlencoded",
+          "domain": "target",
+          "loaf": "crates-io/form_urlencoded",
+          "version": "1.2.2"
+        },
+        {
+          "dependency_key": "futures-util",
+          "domain": "target",
+          "loaf": "crates-io/futures-util",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "http",
+          "domain": "target",
+          "loaf": "crates-io/http",
+          "version": "1.5.0"
+        },
+        {
+          "dependency_key": "http-body",
+          "domain": "target",
+          "loaf": "crates-io/http-body",
+          "version": "1.1.0"
+        },
+        {
+          "dependency_key": "http-body-util",
+          "domain": "target",
+          "loaf": "crates-io/http-body-util",
+          "version": "0.1.5"
+        },
+        {
+          "dependency_key": "hyper",
+          "domain": "target",
+          "loaf": "crates-io/hyper",
+          "version": "1.11.1"
+        },
+        {
+          "dependency_key": "hyper-util",
+          "domain": "target",
+          "loaf": "crates-io/hyper-util",
+          "version": "0.1.21"
+        },
+        {
+          "dependency_key": "itoa",
+          "domain": "target",
+          "loaf": "crates-io/itoa",
+          "version": "1.0.18"
+        },
+        {
+          "dependency_key": "matchit",
+          "domain": "target",
+          "loaf": "crates-io/matchit",
+          "version": "0.8.4"
+        },
+        {
+          "dependency_key": "memchr",
+          "domain": "target",
+          "loaf": "crates-io/memchr",
+          "version": "2.8.3"
+        },
+        {
+          "dependency_key": "mime",
+          "domain": "target",
+          "loaf": "crates-io/mime",
+          "version": "0.3.17"
+        },
+        {
+          "dependency_key": "percent-encoding",
+          "domain": "target",
+          "loaf": "crates-io/percent-encoding",
+          "version": "2.3.2"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        },
+        {
+          "dependency_key": "serde_json",
+          "domain": "target",
+          "loaf": "crates-io/serde_json",
+          "version": "1.0.151"
+        },
+        {
+          "dependency_key": "serde_path_to_error",
+          "domain": "target",
+          "loaf": "crates-io/serde_path_to_error",
+          "version": "0.1.20"
+        },
+        {
+          "dependency_key": "serde_urlencoded",
+          "domain": "target",
+          "loaf": "crates-io/serde_urlencoded",
+          "version": "0.7.1"
+        },
+        {
+          "dependency_key": "sync_wrapper",
+          "domain": "target",
+          "loaf": "crates-io/sync_wrapper",
+          "version": "1.0.2"
+        },
+        {
+          "dependency_key": "tokio",
+          "domain": "target",
+          "loaf": "crates-io/tokio",
+          "version": "1.53.2"
+        },
+        {
+          "dependency_key": "tower",
+          "domain": "target",
+          "loaf": "crates-io/tower",
+          "version": "0.5.3"
+        },
+        {
+          "dependency_key": "tower-layer",
+          "domain": "target",
+          "loaf": "crates-io/tower-layer",
+          "version": "0.3.3"
+        },
+        {
+          "dependency_key": "tower-service",
+          "domain": "target",
+          "loaf": "crates-io/tower-service",
+          "version": "0.3.3"
+        },
+        {
+          "dependency_key": "tracing",
+          "domain": "target",
+          "loaf": "crates-io/tracing",
+          "version": "0.1.44"
+        }
+      ],
       "features": [
         "default",
         "form",
@@ -68,6 +299,7 @@
     {
       "archive_digest": "sha256:307792fdd235b064ebd29c3f2d027d4ef321bc8c1d143cb73207e778374cd5cc",
       "domain": "target",
+      "edges": [],
       "features": [
         "std"
       ],
@@ -78,6 +310,14 @@
     {
       "archive_digest": "sha256:2d29b425016433595de3bd822b11281e4bc6a9528add66204ea98ffa72e3fb5a",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "digest",
+          "domain": "target",
+          "loaf": "crates-io/digest",
+          "version": "0.10.7"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -89,6 +329,26 @@
     {
       "archive_digest": "sha256:5682f4277d953850594fd6d6dcc9bde612d38a1c23c7b4c7f027dd57f47a3562",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "arrayvec",
+          "domain": "target",
+          "loaf": "crates-io/arrayvec",
+          "version": "0.7.8"
+        },
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        },
+        {
+          "dependency_key": "constant_time_eq",
+          "domain": "target",
+          "loaf": "crates-io/constant_time_eq",
+          "version": "0.4.2"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -106,6 +366,14 @@
     {
       "archive_digest": "sha256:eb17330ea0f7dca1f278bffeb5cc51971ed3c3a7dbaedada91dc4eec53ae4d92",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "generic-array",
+          "domain": "target",
+          "loaf": "crates-io/generic-array",
+          "version": "0.14.7"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/block-buffer",
       "target_predicates": [],
@@ -114,6 +382,7 @@
     {
       "archive_digest": "sha256:76cda3222995adc9cfee3f943fcee84d7539ce4802c25313a3a941cdfe94062a",
       "domain": "target",
+      "edges": [],
       "features": [
         "default",
         "std"
@@ -125,6 +394,7 @@
     {
       "archive_digest": "sha256:f2e47bead6797af45f0b7f96f06601ccde2331f7877d62ba8cfd46fc17373b55",
       "domain": "target",
+      "edges": [],
       "features": [
         "default",
         "std"
@@ -136,6 +406,14 @@
     {
       "archive_digest": "sha256:473de2dc09cc841b00be5df209ec51d14867bcd8458a1c00d83d5c53e9451d78",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libbz2-rs-sys",
+          "domain": "target",
+          "loaf": "crates-io/libbz2-rs-sys",
+          "version": "0.2.5"
+        }
+      ],
       "features": [
         "default"
       ],
@@ -146,6 +424,7 @@
     {
       "archive_digest": "sha256:b1ede1a711fb05aecfb915d6a449f825b7b352ce87719c564f2612ec291989e9",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/cfg-if",
       "target_predicates": [],
@@ -154,6 +433,7 @@
     {
       "archive_digest": "sha256:a1bde8737e521e00427d5298942c24bc784334612286f1cc470dae1352d01a8e",
       "domain": "target",
+      "edges": [],
       "features": [
         "std"
       ],
@@ -164,6 +444,14 @@
     {
       "archive_digest": "sha256:87be4b6793fb7037b65cf61a7730f9b02763e56dc750a80d57db6b5437c572fe",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/cpufeatures",
       "target_predicates": [
@@ -193,6 +481,14 @@
     {
       "archive_digest": "sha256:a20fdbb5d7137fe531c5d236b4937552dd8af6214a4fb7a555df8d40bc70d001",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -204,6 +500,20 @@
     {
       "archive_digest": "sha256:7aacfc5cbc2302a2d84ce93f7e68daf23725d5c12c26e10b98b81778706ea016",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "generic-array",
+          "domain": "target",
+          "loaf": "crates-io/generic-array",
+          "version": "0.14.7"
+        },
+        {
+          "dependency_key": "typenum",
+          "domain": "target",
+          "loaf": "crates-io/typenum",
+          "version": "1.20.1"
+        }
+      ],
       "features": [
         "std"
       ],
@@ -214,6 +524,26 @@
     {
       "archive_digest": "sha256:34bc8c2cca4d29ab3c0d2d151a9768efb15ef572360e28dadcb4612ae1a10f39",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "block-buffer",
+          "domain": "target",
+          "loaf": "crates-io/block-buffer",
+          "version": "0.10.4"
+        },
+        {
+          "dependency_key": "crypto-common",
+          "domain": "target",
+          "loaf": "crates-io/crypto-common",
+          "version": "0.1.7"
+        },
+        {
+          "dependency_key": "subtle",
+          "domain": "target",
+          "loaf": "crates-io/subtle",
+          "version": "2.6.1"
+        }
+      ],
       "features": [
         "alloc",
         "block-buffer",
@@ -230,6 +560,14 @@
     {
       "archive_digest": "sha256:763a82fbdda688ff4c8225a360b0e49d6b3477344bf86c4768d7798a888a37ab",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        }
+      ],
       "features": [
         "alloc",
         "default"
@@ -241,6 +579,7 @@
     {
       "archive_digest": "sha256:e49cf7617ac0808a6ce0fec27b40ce03f730dc318b38f15094e48773dd097657",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/equivalent",
       "target_predicates": [],
@@ -249,6 +588,14 @@
     {
       "archive_digest": "sha256:19027981c563b98ccfb3ecd85c71c9f3d356c9933f23232b48a4345e8bbe62f9",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
       "features": [
         "std"
       ],
@@ -280,6 +627,7 @@
     {
       "archive_digest": "sha256:b496482807e5e4448d6c691b040e4d6c87284a4443c10af120b74c17e25a2ad5",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "default",
@@ -298,6 +646,20 @@
     {
       "archive_digest": "sha256:2b79dc9d0b2ed468b6fadd886a2e13972fc743236840b53f72ec81ac47a5e1a4",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "crc32fast",
+          "domain": "target",
+          "loaf": "crates-io/crc32fast",
+          "version": "1.5.2"
+        },
+        {
+          "dependency_key": "miniz_oxide",
+          "domain": "target",
+          "loaf": "crates-io/miniz_oxide",
+          "version": "0.9.1"
+        }
+      ],
       "features": [
         "any_impl",
         "default",
@@ -312,6 +674,14 @@
     {
       "archive_digest": "sha256:1ba45e51eae486f720c635c179255f56d9ae37130ea84ea6be36a3e2241637d1",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "percent-encoding",
+          "domain": "target",
+          "loaf": "crates-io/percent-encoding",
+          "version": "2.3.2"
+        }
+      ],
       "features": [
         "alloc",
         "default",
@@ -324,6 +694,14 @@
     {
       "archive_digest": "sha256:d9788f65e37aa7785852653a59a6ec97fddcb814ec4956bc9c1026c45e2908d3",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "futures-core",
+          "domain": "target",
+          "loaf": "crates-io/futures-core",
+          "version": "0.3.34"
+        }
+      ],
       "features": [
         "alloc",
         "default",
@@ -336,6 +714,7 @@
     {
       "archive_digest": "sha256:09a9de1e468662fe6d4e1bb5635ce4421433c4704ea1b60f5f0c681a5b4577db",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "default",
@@ -348,6 +727,7 @@
     {
       "archive_digest": "sha256:a3674e3c163fcb152ae8ac608ef6b7b1b1d6311e2d62e0642c778d4764226c09",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc"
       ],
@@ -358,6 +738,32 @@
     {
       "archive_digest": "sha256:e09bbdd4768d031b0bdf9ed103bddaa650490b53f72da1aca929051b345c799a",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "futures-core",
+          "domain": "target",
+          "loaf": "crates-io/futures-core",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "futures-task",
+          "domain": "target",
+          "loaf": "crates-io/futures-task",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "slab",
+          "domain": "target",
+          "loaf": "crates-io/slab",
+          "version": "0.4.12"
+        }
+      ],
       "features": [
         "alloc",
         "slab"
@@ -369,6 +775,14 @@
     {
       "archive_digest": "sha256:76f123d3d824b1c3c37710162d07540a11b93dfb879369ccdd71b1a25053089a",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "typenum",
+          "domain": "target",
+          "loaf": "crates-io/typenum",
+          "version": "1.20.1"
+        }
+      ],
       "features": [
         "more_lengths"
       ],
@@ -379,6 +793,20 @@
     {
       "archive_digest": "sha256:abe04f8567efd5b2a45cae7a36a4aa84ace4893c864f32c7d2853764c7ec2981",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        },
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
       "features": [
         "std"
       ],
@@ -410,6 +838,20 @@
     {
       "archive_digest": "sha256:8617610be75a052665d09f967cd645c33ef7741ed52b8e5222b6f5ccc2399536",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        },
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/getrandom",
       "target_predicates": [
@@ -474,6 +916,7 @@
     {
       "archive_digest": "sha256:9d89bc787c92a1506b4b124c1f24eead6cd9fde80e1b64c49c47cd8b53e72708",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/hashbrown",
       "target_predicates": [
@@ -488,6 +931,14 @@
     {
       "archive_digest": "sha256:e228a896c225a63367dbe72932652f278e60ff8714c7c2788f044e923ea91224",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "digest",
+          "domain": "target",
+          "loaf": "crates-io/digest",
+          "version": "0.10.7"
+        }
+      ],
       "features": [
         "reset"
       ],
@@ -498,6 +949,38 @@
     {
       "archive_digest": "sha256:f18cbeccc70bfe477151e89985878be1c9f26843c90e7637de387a47dc8eed8a",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bytes",
+          "domain": "target",
+          "loaf": "crates-io/bytes",
+          "version": "1.12.1"
+        },
+        {
+          "dependency_key": "futures-core",
+          "domain": "target",
+          "loaf": "crates-io/futures-core",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "http",
+          "domain": "target",
+          "loaf": "crates-io/http",
+          "version": "1.5.0"
+        },
+        {
+          "dependency_key": "http-body",
+          "domain": "target",
+          "loaf": "crates-io/http-body",
+          "version": "1.1.0"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        }
+      ],
       "features": [
         "default"
       ],
@@ -508,6 +991,20 @@
     {
       "archive_digest": "sha256:7cb2cddca7e0fb26f8d50173e842d67ca0710a5ba217ee536c34b1dea2168ba7",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bytes",
+          "domain": "target",
+          "loaf": "crates-io/bytes",
+          "version": "1.12.1"
+        },
+        {
+          "dependency_key": "http",
+          "domain": "target",
+          "loaf": "crates-io/http",
+          "version": "1.5.0"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/http-body",
       "target_predicates": [],
@@ -516,6 +1013,20 @@
     {
       "archive_digest": "sha256:f54d2b75852fcd6a2f6dcb562527c84cdb785965e69b27dfdddfd917e5d606b9",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bytes",
+          "domain": "target",
+          "loaf": "crates-io/bytes",
+          "version": "1.12.1"
+        },
+        {
+          "dependency_key": "itoa",
+          "domain": "target",
+          "loaf": "crates-io/itoa",
+          "version": "1.0.18"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -527,6 +1038,7 @@
     {
       "archive_digest": "sha256:70af726b5d9d403e4867411bf2ec2016fb3e0da83a44a4a586397bd7f6863bfa",
       "domain": "target",
+      "edges": [],
       "features": [
         "default",
         "std"
@@ -538,6 +1050,7 @@
     {
       "archive_digest": "sha256:30ad35051709b5418fda1983f16b4637a0ccf08da4fa88d21055b34f4e2d1a2a",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/httpdate",
       "target_predicates": [],
@@ -546,6 +1059,50 @@
     {
       "archive_digest": "sha256:733467cbf9ffc67fd52d206e57c92995ccc5cae62eba3ac9312ddeb3d303dc86",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bytes",
+          "domain": "target",
+          "loaf": "crates-io/bytes",
+          "version": "1.12.1"
+        },
+        {
+          "dependency_key": "http",
+          "domain": "target",
+          "loaf": "crates-io/http",
+          "version": "1.5.0"
+        },
+        {
+          "dependency_key": "http-body",
+          "domain": "target",
+          "loaf": "crates-io/http-body",
+          "version": "1.1.0"
+        },
+        {
+          "dependency_key": "hyper",
+          "domain": "target",
+          "loaf": "crates-io/hyper",
+          "version": "1.11.1"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "tokio",
+          "domain": "target",
+          "loaf": "crates-io/tokio",
+          "version": "1.53.2"
+        },
+        {
+          "dependency_key": "tower-service",
+          "domain": "target",
+          "loaf": "crates-io/tower-service",
+          "version": "0.3.3"
+        }
+      ],
       "features": [
         "default",
         "http1",
@@ -571,6 +1128,80 @@
     {
       "archive_digest": "sha256:deca942732cc5b066339fc728333137a45ab6820a0dd8925640eed1415d45029",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "atomic-waker",
+          "domain": "target",
+          "loaf": "crates-io/atomic-waker",
+          "version": "1.1.2"
+        },
+        {
+          "dependency_key": "bytes",
+          "domain": "target",
+          "loaf": "crates-io/bytes",
+          "version": "1.12.1"
+        },
+        {
+          "dependency_key": "futures-channel",
+          "domain": "target",
+          "loaf": "crates-io/futures-channel",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "futures-core",
+          "domain": "target",
+          "loaf": "crates-io/futures-core",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "http",
+          "domain": "target",
+          "loaf": "crates-io/http",
+          "version": "1.5.0"
+        },
+        {
+          "dependency_key": "http-body",
+          "domain": "target",
+          "loaf": "crates-io/http-body",
+          "version": "1.1.0"
+        },
+        {
+          "dependency_key": "httparse",
+          "domain": "target",
+          "loaf": "crates-io/httparse",
+          "version": "1.10.1"
+        },
+        {
+          "dependency_key": "httpdate",
+          "domain": "target",
+          "loaf": "crates-io/httpdate",
+          "version": "1.0.3"
+        },
+        {
+          "dependency_key": "itoa",
+          "domain": "target",
+          "loaf": "crates-io/itoa",
+          "version": "1.0.18"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "smallvec",
+          "domain": "target",
+          "loaf": "crates-io/smallvec",
+          "version": "1.16.2"
+        },
+        {
+          "dependency_key": "tokio",
+          "domain": "target",
+          "loaf": "crates-io/tokio",
+          "version": "1.53.2"
+        }
+      ],
       "features": [
         "default",
         "http1",
@@ -583,6 +1214,20 @@
     {
       "archive_digest": "sha256:5368561cc8270f7c3ed9916e4aaad51b3e7bdd245a037b0788e04bc03eb8094e",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "equivalent",
+          "domain": "target",
+          "loaf": "crates-io/equivalent",
+          "version": "1.0.2"
+        },
+        {
+          "dependency_key": "hashbrown",
+          "domain": "target",
+          "loaf": "crates-io/hashbrown",
+          "version": "0.17.1"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -600,6 +1245,7 @@
     {
       "archive_digest": "sha256:405994e5f86abb92b3b656cbb9274970d78a4ccbe0b9f9a668837e7597499d42",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/inventory",
       "target_predicates": [
@@ -614,6 +1260,7 @@
     {
       "archive_digest": "sha256:8266c23d74c993d464c322ffe017b4498ad0a16c1b5a95a8167c90c2bb5406c1",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/itoa",
       "target_predicates": [],
@@ -622,6 +1269,14 @@
     {
       "archive_digest": "sha256:fda933d76733a01aebafd5b9ecc7c1c10e2bf942bc28dcca997c77a60e9f9a08",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cpufeatures",
+          "domain": "target",
+          "loaf": "crates-io/cpufeatures",
+          "version": "0.2.17"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/keccak",
       "target_predicates": [
@@ -636,6 +1291,7 @@
     {
       "archive_digest": "sha256:72467c3895f006b5261aff26638c74c01862274e4588b8906bc93e05fec50f7a",
       "domain": "target",
+      "edges": [],
       "features": [
         "rust-allocator"
       ],
@@ -646,6 +1302,7 @@
     {
       "archive_digest": "sha256:3fec3f472ffb15d260e8fc2fe33ed7601db935fcfc7cf5a9b277af6967cc3e71",
       "domain": "target",
+      "edges": [],
       "features": [
         "default",
         "std"
@@ -657,6 +1314,7 @@
     {
       "archive_digest": "sha256:4b41410051a0ba2f0f21a6481da5772be6e8012e9b6cf01d0d8a8df920b8d66b",
       "domain": "target",
+      "edges": [],
       "features": [
         "arch",
         "default"
@@ -668,6 +1326,7 @@
     {
       "archive_digest": "sha256:9c5811056c9c726d7412467c91d8e1bd4ff8631e3ac94822b709412e60a3d800",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/log",
       "target_predicates": [],
@@ -676,6 +1335,14 @@
     {
       "archive_digest": "sha256:c143574a9dfea7e539e6a6b42d6efdcd9166293d3157a1b443d357eb995880eb",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
       "features": [
         "static"
       ],
@@ -686,6 +1353,7 @@
     {
       "archive_digest": "sha256:31fc73ff28e19b62037176f1865b3840aab65a6a18db9e009a95776367a3f599",
       "domain": "target",
+      "edges": [],
       "features": [
         "default"
       ],
@@ -696,6 +1364,20 @@
     {
       "archive_digest": "sha256:6efac14219235ed70ec8397eb9572821ac19a9fbf8869acaf482bf36097dda8a",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        },
+        {
+          "dependency_key": "digest",
+          "domain": "target",
+          "loaf": "crates-io/digest",
+          "version": "0.10.7"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -713,6 +1395,7 @@
     {
       "archive_digest": "sha256:bed7b0556ffe1d85a868c073a8830f029bb2d1fafa9a67658b72b5a80e411e66",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "default",
@@ -725,6 +1408,7 @@
     {
       "archive_digest": "sha256:5d5c037d31296ff3c8602e53dce788fcb4ac37fbce62c58bc20cdcb7da0485a7",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/mime",
       "target_predicates": [],
@@ -733,6 +1417,20 @@
     {
       "archive_digest": "sha256:69cb6bc56591d2eef2804147c719e5555cbf050322fb1f6e9f55d9ce6ca69a55",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "adler2",
+          "domain": "target",
+          "loaf": "crates-io/adler2",
+          "version": "2.0.1"
+        },
+        {
+          "dependency_key": "simd-adler32",
+          "domain": "target",
+          "loaf": "crates-io/simd-adler32",
+          "version": "0.3.10"
+        }
+      ],
       "features": [
         "default",
         "simd",
@@ -746,6 +1444,14 @@
     {
       "archive_digest": "sha256:4b47c2e94732fd7813889bfdf7eae2dae200db2f13ef481181707b235b5aa59e",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
       "features": [
         "net",
         "os-ext",
@@ -774,6 +1480,7 @@
     {
       "archive_digest": "sha256:2a41c4dd88385d3f88307dfeeb89fbb35281c446dda29aef6961f1f220758414",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "default",
@@ -787,6 +1494,7 @@
     {
       "archive_digest": "sha256:4ca60ad86ff2a7936fe1e460cb4bae72fcc923cba3b1c52f9198b4caf25e6eaf",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "default",
@@ -799,6 +1507,7 @@
     {
       "archive_digest": "sha256:4b2159702aabc97c245a995aa027806cf76f5b387d7d97777b7bc87fa4231c0e",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/pin-project-lite",
       "target_predicates": [],
@@ -807,6 +1516,14 @@
     {
       "archive_digest": "sha256:4f9cf7186bea1a1864c51f0a3504bbff81c6e7998a4cbcff47f1d96e0a358e97",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "zerocopy",
+          "domain": "target",
+          "loaf": "crates-io/zerocopy",
+          "version": "0.8.60"
+        }
+      ],
       "features": [
         "simd",
         "std"
@@ -818,6 +1535,14 @@
     {
       "archive_digest": "sha256:0f3b8c415712c5717caf9a4928f0a86ed2b0bb40246c3e14c13a170a23aa027f",
       "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "host",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
       "features": [
         "default",
         "proc-macro"
@@ -829,6 +1554,14 @@
     {
       "archive_digest": "sha256:0f3b8c415712c5717caf9a4928f0a86ed2b0bb40246c3e14c13a170a23aa027f",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "target",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
       "features": [
         "default",
         "proc-macro"
@@ -840,6 +1573,14 @@
     {
       "archive_digest": "sha256:13dde5b3676f73d06ce192241223020aeb4935cb990a1101a2681107b87583d2",
       "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        }
+      ],
       "features": [
         "default",
         "proc-macro"
@@ -851,6 +1592,14 @@
     {
       "archive_digest": "sha256:13dde5b3676f73d06ce192241223020aeb4935cb990a1101a2681107b87583d2",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "target",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        }
+      ],
       "features": [
         "default",
         "proc-macro"
@@ -862,6 +1611,26 @@
     {
       "archive_digest": "sha256:871ee6c8589bd9edda8e7d309214b4d5abdabab90e4853c104b819d8b1e6d8de",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        },
+        {
+          "dependency_key": "rand_chacha",
+          "domain": "target",
+          "loaf": "crates-io/rand_chacha",
+          "version": "0.3.1"
+        },
+        {
+          "dependency_key": "rand_core",
+          "domain": "target",
+          "loaf": "crates-io/rand_core",
+          "version": "0.6.4"
+        }
+      ],
       "features": [
         "alloc",
         "default",
@@ -884,6 +1653,20 @@
     {
       "archive_digest": "sha256:65a835a096edfb7e6d3dc2c231727d4c57fc831ef8217e2ad7d31a6bfc23af90",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "ppv-lite86",
+          "domain": "target",
+          "loaf": "crates-io/ppv-lite86",
+          "version": "0.2.21"
+        },
+        {
+          "dependency_key": "rand_core",
+          "domain": "target",
+          "loaf": "crates-io/rand_core",
+          "version": "0.6.4"
+        }
+      ],
       "features": [
         "std"
       ],
@@ -894,6 +1677,14 @@
     {
       "archive_digest": "sha256:0d5d806808704064c3250e4330e651ff40fd2f32517cc04bfbd953226227310d",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "getrandom",
+          "domain": "target",
+          "loaf": "crates-io/getrandom",
+          "version": "0.2.17"
+        }
+      ],
       "features": [
         "alloc",
         "getrandom",
@@ -906,6 +1697,26 @@
     {
       "archive_digest": "sha256:9f4ebd5bbb2c5a6bba3ae97e33e6b0e0a31a7feed049b1d0646028b414dfb8ea",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "aho-corasick",
+          "domain": "target",
+          "loaf": "crates-io/aho-corasick",
+          "version": "1.1.5"
+        },
+        {
+          "dependency_key": "memchr",
+          "domain": "target",
+          "loaf": "crates-io/memchr",
+          "version": "2.8.3"
+        },
+        {
+          "dependency_key": "regex-syntax",
+          "domain": "target",
+          "loaf": "crates-io/regex-syntax",
+          "version": "0.8.11"
+        }
+      ],
       "features": [
         "alloc",
         "dfa-onepass",
@@ -937,6 +1748,7 @@
     {
       "archive_digest": "sha256:521e0037a0bdf07573bff18797f2df0f9bb22b448f9979662b8618370c21f67a",
       "domain": "target",
+      "edges": [],
       "features": [
         "default",
         "std",
@@ -956,6 +1768,32 @@
     {
       "archive_digest": "sha256:5d374c4b4f87b0a20cf3610591405e303abf20e48cbc6aee4886ef6392f82199",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "aho-corasick",
+          "domain": "target",
+          "loaf": "crates-io/aho-corasick",
+          "version": "1.1.5"
+        },
+        {
+          "dependency_key": "memchr",
+          "domain": "target",
+          "loaf": "crates-io/memchr",
+          "version": "2.8.3"
+        },
+        {
+          "dependency_key": "regex-automata",
+          "domain": "target",
+          "loaf": "crates-io/regex-automata",
+          "version": "0.4.18"
+        },
+        {
+          "dependency_key": "regex-syntax",
+          "domain": "target",
+          "loaf": "crates-io/regex-syntax",
+          "version": "0.8.11"
+        }
+      ],
       "features": [
         "default",
         "perf",
@@ -982,6 +1820,26 @@
     {
       "archive_digest": "sha256:4d7ffe123c33e55b6759221f54747124ec6e40b88834f3ec282de175aa4a8cb1",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bitflags",
+          "domain": "target",
+          "loaf": "crates-io/bitflags",
+          "version": "2.13.2"
+        },
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        },
+        {
+          "dependency_key": "libc_errno",
+          "domain": "target",
+          "loaf": "crates-io/errno",
+          "version": "0.3.14"
+        }
+      ],
       "features": [
         "alloc",
         "default",
@@ -1036,6 +1894,7 @@
     {
       "archive_digest": "sha256:95455475ab4fa142c0a2ff4bf2acbb7e435058430b2d9d258a2ee65f662423a6",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/ryu",
       "target_predicates": [],
@@ -1044,6 +1903,20 @@
     {
       "archive_digest": "sha256:0740c17a91f9322696dd72fdf54d6362b8da024f51503fdf812fc2646a4c8bc8",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        },
+        {
+          "dependency_key": "serde_derive",
+          "domain": "host",
+          "loaf": "crates-io/serde_derive",
+          "version": "1.0.229"
+        }
+      ],
       "features": [
         "default",
         "derive",
@@ -1057,6 +1930,7 @@
     {
       "archive_digest": "sha256:016c38337099f52a9a156b8f388f3d0b9cb0e50a46423577520e88476be1e764",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "default",
@@ -1076,6 +1950,26 @@
     {
       "archive_digest": "sha256:d9eca4ee6ca48b26c8879174ab4ce53186386ac9729d05ba3b2c4c92e9491cab",
       "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "host",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "syn",
+          "domain": "host",
+          "loaf": "crates-io/syn",
+          "version": "3.0.6"
+        }
+      ],
       "features": [
         "default"
       ],
@@ -1086,6 +1980,32 @@
     {
       "archive_digest": "sha256:fbaa5d6302282e35f970e3e8f9e3df5af26ec2174cbb603d4ed429ad8798a379",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "itoa",
+          "domain": "target",
+          "loaf": "crates-io/itoa",
+          "version": "1.0.18"
+        },
+        {
+          "dependency_key": "memchr",
+          "domain": "target",
+          "loaf": "crates-io/memchr",
+          "version": "2.8.3"
+        },
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        },
+        {
+          "dependency_key": "zmij",
+          "domain": "target",
+          "loaf": "crates-io/zmij",
+          "version": "1.0.23"
+        }
+      ],
       "features": [
         "default",
         "raw_value",
@@ -1104,6 +2024,20 @@
     {
       "archive_digest": "sha256:f5c44d173d584afd2c11cb4f385ed87142f99fa299068d992a3a67261a3d79bf",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "itoa",
+          "domain": "target",
+          "loaf": "crates-io/itoa",
+          "version": "1.0.18"
+        },
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/serde_path_to_error",
       "target_predicates": [
@@ -1118,6 +2052,14 @@
     {
       "archive_digest": "sha256:f74769e74c0f5fb05745e6fa279826ea8a3f6ed564f90bb756608b33ed255019",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        }
+      ],
       "features": [
         "alloc",
         "default",
@@ -1131,6 +2073,32 @@
     {
       "archive_digest": "sha256:02c4e65af6fa0353746cd956b1fb1ea76aa620a56a3b9c0f776c9c65e48cca04",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "form_urlencoded",
+          "domain": "target",
+          "loaf": "crates-io/form_urlencoded",
+          "version": "1.2.2"
+        },
+        {
+          "dependency_key": "itoa",
+          "domain": "target",
+          "loaf": "crates-io/itoa",
+          "version": "1.0.18"
+        },
+        {
+          "dependency_key": "ryu",
+          "domain": "target",
+          "loaf": "crates-io/ryu",
+          "version": "1.0.23"
+        },
+        {
+          "dependency_key": "serde",
+          "domain": "target",
+          "loaf": "crates-io/serde",
+          "version": "1.0.229"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/serde_urlencoded",
       "target_predicates": [],
@@ -1139,6 +2107,26 @@
     {
       "archive_digest": "sha256:97d66404ea74bbfbfbb01bc31452bf82a1f43a64dd67f3393ff00ac166311fa6",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        },
+        {
+          "dependency_key": "cpufeatures",
+          "domain": "target",
+          "loaf": "crates-io/cpufeatures",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "digest",
+          "domain": "target",
+          "loaf": "crates-io/digest",
+          "version": "0.10.7"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -1161,6 +2149,26 @@
     {
       "archive_digest": "sha256:22185d5fe9ee6a2f08850df6cb08e544452a267f9bf2b132b4007c6e6221468d",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        },
+        {
+          "dependency_key": "cpufeatures",
+          "domain": "target",
+          "loaf": "crates-io/cpufeatures",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "digest",
+          "domain": "target",
+          "loaf": "crates-io/digest",
+          "version": "0.10.7"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -1183,6 +2191,20 @@
     {
       "archive_digest": "sha256:3f10fbc0f96b19101968780c3a639803abc19de83b25a0d6fdffc9b2caf8acdb",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "digest",
+          "domain": "target",
+          "loaf": "crates-io/digest",
+          "version": "0.10.7"
+        },
+        {
+          "dependency_key": "keccak",
+          "domain": "target",
+          "loaf": "crates-io/keccak",
+          "version": "0.1.6"
+        }
+      ],
       "features": [
         "default",
         "std"
@@ -1194,6 +2216,7 @@
     {
       "archive_digest": "sha256:b1516f6efde85fa0d2500b74bf7256ca82089946c58342dd36c887853aa4aa99",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/simd-adler32",
       "target_predicates": [],
@@ -1202,6 +2225,7 @@
     {
       "archive_digest": "sha256:67e78476a0ae46e950e0efc18f4feb8b38f12919a108881b109b67d7c3f0a7e5",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/slab",
       "target_predicates": [],
@@ -1210,6 +2234,7 @@
     {
       "archive_digest": "sha256:c14e7092dd94d1d0c8890ce67fd89d2cdc8cfbc19e850a548b15e9cb1afee074",
       "domain": "target",
+      "edges": [],
       "features": [
         "const_generics",
         "const_new"
@@ -1221,6 +2246,7 @@
     {
       "archive_digest": "sha256:5dc98d48c3690cb8b4caf4809e1a9296e981b2c29fbeb9de0c82305aa4176783",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/snap",
       "target_predicates": [],
@@ -1229,6 +2255,14 @@
     {
       "archive_digest": "sha256:2e147020cb70eb27f8a76ac7a5435ccd15dac57944dcf00026b6d41eca036da4",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
       "features": [
         "all"
       ],
@@ -1250,6 +2284,7 @@
     {
       "archive_digest": "sha256:fa1f9904c7cdd29237d448514b3c20e457ea0b668a965e5421803cb4cd4255e5",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/subtle",
       "target_predicates": [],
@@ -1258,6 +2293,26 @@
     {
       "archive_digest": "sha256:a8a606533b95b09dae0cef1dc2652b46c0cf9b8b87b2aab87daae57ed482affb",
       "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "host",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "host",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
       "features": [
         "clone-impls",
         "default",
@@ -1274,6 +2329,26 @@
     {
       "archive_digest": "sha256:54b8f708b674e17c51fd66ee68787d696dfc36ad88b3eb15f7a77847108c07b8",
       "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "host",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "host",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
       "features": [
         "clone-impls",
         "default",
@@ -1290,6 +2365,26 @@
     {
       "archive_digest": "sha256:a8a606533b95b09dae0cef1dc2652b46c0cf9b8b87b2aab87daae57ed482affb",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "target",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "target",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "unicode-ident",
+          "domain": "target",
+          "loaf": "crates-io/unicode-ident",
+          "version": "1.0.26"
+        }
+      ],
       "features": [
         "clone-impls",
         "default",
@@ -1306,6 +2401,7 @@
     {
       "archive_digest": "sha256:bdf2bfb63525a3381d6aab861d004f7c200c1ba650ea5b6b0ce1db5473589459",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/sync_wrapper",
       "target_predicates": [],
@@ -1314,6 +2410,32 @@
     {
       "archive_digest": "sha256:ae789eaa0e36412c14e7e3281290f89943435182d264841a5bb1cf41dc6cbb6c",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "fastrand",
+          "domain": "target",
+          "loaf": "crates-io/fastrand",
+          "version": "2.5.0"
+        },
+        {
+          "dependency_key": "getrandom",
+          "domain": "target",
+          "loaf": "crates-io/getrandom",
+          "version": "0.4.3"
+        },
+        {
+          "dependency_key": "once_cell",
+          "domain": "target",
+          "loaf": "crates-io/once_cell",
+          "version": "1.21.4"
+        },
+        {
+          "dependency_key": "rustix",
+          "domain": "target",
+          "loaf": "crates-io/rustix",
+          "version": "1.1.5"
+        }
+      ],
       "features": [
         "default",
         "getrandom"
@@ -1341,6 +2463,26 @@
     {
       "archive_digest": "sha256:56c1868db7e6ed2d5d90cc7d1d1be739fd1e021c7147fe688f3e939fdc2f98aa",
       "domain": "host",
+      "edges": [
+        {
+          "dependency_key": "proc-macro2",
+          "domain": "host",
+          "loaf": "crates-io/proc-macro2",
+          "version": "1.0.107"
+        },
+        {
+          "dependency_key": "quote",
+          "domain": "host",
+          "loaf": "crates-io/quote",
+          "version": "1.0.47"
+        },
+        {
+          "dependency_key": "syn",
+          "domain": "host",
+          "loaf": "crates-io/syn",
+          "version": "3.0.6"
+        }
+      ],
       "features": [],
       "loaf": "crates-io/tokio-macros",
       "target_predicates": [],
@@ -1349,6 +2491,38 @@
     {
       "archive_digest": "sha256:087707dbaf31d7d481b10009041c8f20b78c250a26aab4b66c95c0b612f5d53e",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        },
+        {
+          "dependency_key": "mio",
+          "domain": "target",
+          "loaf": "crates-io/mio",
+          "version": "1.2.4"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "socket2",
+          "domain": "target",
+          "loaf": "crates-io/socket2",
+          "version": "0.6.5"
+        },
+        {
+          "dependency_key": "tokio-macros",
+          "domain": "host",
+          "loaf": "crates-io/tokio-macros",
+          "version": "2.7.2"
+        }
+      ],
       "features": [
         "default",
         "libc",
@@ -1425,6 +2599,44 @@
     {
       "archive_digest": "sha256:4e24d27b3b93aa3a8249c43747f8300b229336ee471780ef9d97fb78c5762b49",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        },
+        {
+          "dependency_key": "serde_spanned",
+          "domain": "target",
+          "loaf": "crates-io/serde_spanned",
+          "version": "1.1.1"
+        },
+        {
+          "dependency_key": "toml_datetime",
+          "domain": "target",
+          "loaf": "crates-io/toml_datetime",
+          "version": "0.7.5+spec-1.1.0"
+        },
+        {
+          "dependency_key": "toml_parser",
+          "domain": "target",
+          "loaf": "crates-io/toml_parser",
+          "version": "1.1.3+spec-1.1.0"
+        },
+        {
+          "dependency_key": "toml_writer",
+          "domain": "target",
+          "loaf": "crates-io/toml_writer",
+          "version": "1.1.2+spec-1.1.0"
+        },
+        {
+          "dependency_key": "winnow",
+          "domain": "target",
+          "loaf": "crates-io/winnow",
+          "version": "0.7.15"
+        }
+      ],
       "features": [
         "default",
         "display",
@@ -1439,6 +2651,14 @@
     {
       "archive_digest": "sha256:5698fd61e46d0cd67d76b8da7613617623ccce55a13c9d241175d868234b094e",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        }
+      ],
       "features": [
         "alloc",
         "serde",
@@ -1451,6 +2671,14 @@
     {
       "archive_digest": "sha256:77cf841b26cd8b1fc81279ad40fb0fbfb3e1f8a409b551b0dca0493de4d95a48",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        }
+      ],
       "features": [
         "alloc",
         "default",
@@ -1464,6 +2692,50 @@
     {
       "archive_digest": "sha256:25eea9201ca61cb6dbaa00f0c553ba9e513c8f11f7fddd7411f935908fdf9041",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "indexmap",
+          "domain": "target",
+          "loaf": "crates-io/indexmap",
+          "version": "2.14.2"
+        },
+        {
+          "dependency_key": "serde_core",
+          "domain": "target",
+          "loaf": "crates-io/serde_core",
+          "version": "1.0.229"
+        },
+        {
+          "dependency_key": "serde_spanned",
+          "domain": "target",
+          "loaf": "crates-io/serde_spanned",
+          "version": "1.1.1"
+        },
+        {
+          "dependency_key": "toml_datetime",
+          "domain": "target",
+          "loaf": "crates-io/toml_datetime",
+          "version": "1.1.1+spec-1.1.0"
+        },
+        {
+          "dependency_key": "toml_parser",
+          "domain": "target",
+          "loaf": "crates-io/toml_parser",
+          "version": "1.1.3+spec-1.1.0"
+        },
+        {
+          "dependency_key": "toml_writer",
+          "domain": "target",
+          "loaf": "crates-io/toml_writer",
+          "version": "1.1.2+spec-1.1.0"
+        },
+        {
+          "dependency_key": "winnow",
+          "domain": "target",
+          "loaf": "crates-io/winnow",
+          "version": "1.0.4"
+        }
+      ],
       "features": [
         "default",
         "display",
@@ -1477,6 +2749,14 @@
     {
       "archive_digest": "sha256:8062d1c10047ff412f6a7d8129b25e1a0a30ed5bcd62550e47e817fd283f52eb",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "winnow",
+          "domain": "target",
+          "loaf": "crates-io/winnow",
+          "version": "1.0.4"
+        }
+      ],
       "features": [
         "alloc",
         "default",
@@ -1489,6 +2769,7 @@
     {
       "archive_digest": "sha256:29362f88843c4fb6ccffeca35dfe35384b04a0e69e29feee5f770260b8beb44e",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "default",
@@ -1501,6 +2782,7 @@
     {
       "archive_digest": "sha256:15e3a7f8eea6cf0b79a89f655379fb0d5f5b929335caca6bae14e505cf2681a1",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/tower-layer",
       "target_predicates": [],
@@ -1509,6 +2791,7 @@
     {
       "archive_digest": "sha256:9291b06b9dae11ffc8428422a474de9d050c806a5d0e992a9507aa9cad356ab7",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/tower-service",
       "target_predicates": [],
@@ -1517,6 +2800,56 @@
     {
       "archive_digest": "sha256:220fa57c20f81fa0018e0f4a6f45f5ff4170d53e24e70281e9ec4b91ca0e5b5d",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "futures-core",
+          "domain": "target",
+          "loaf": "crates-io/futures-core",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "futures-util",
+          "domain": "target",
+          "loaf": "crates-io/futures-util",
+          "version": "0.3.34"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "sync_wrapper",
+          "domain": "target",
+          "loaf": "crates-io/sync_wrapper",
+          "version": "1.0.2"
+        },
+        {
+          "dependency_key": "tokio",
+          "domain": "target",
+          "loaf": "crates-io/tokio",
+          "version": "1.53.2"
+        },
+        {
+          "dependency_key": "tower-layer",
+          "domain": "target",
+          "loaf": "crates-io/tower-layer",
+          "version": "0.3.3"
+        },
+        {
+          "dependency_key": "tower-service",
+          "domain": "target",
+          "loaf": "crates-io/tower-service",
+          "version": "0.3.3"
+        },
+        {
+          "dependency_key": "tracing",
+          "domain": "target",
+          "loaf": "crates-io/tracing",
+          "version": "0.1.44"
+        }
+      ],
       "features": [
         "futures-core",
         "futures-util",
@@ -1535,6 +2868,14 @@
     {
       "archive_digest": "sha256:7d005e243d73beae3c0dfc04810317346ed49cd58bd1cb0b2f5344880c7fda0b",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "once_cell",
+          "domain": "target",
+          "loaf": "crates-io/once_cell",
+          "version": "1.21.4"
+        }
+      ],
       "features": [
         "once_cell",
         "std"
@@ -1552,6 +2893,26 @@
     {
       "archive_digest": "sha256:b74c31642bd8a568063d94c7c909a0ff87eab1eaadb920774e61c9ce546976ae",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "log",
+          "domain": "target",
+          "loaf": "crates-io/log",
+          "version": "0.4.34"
+        },
+        {
+          "dependency_key": "pin-project-lite",
+          "domain": "target",
+          "loaf": "crates-io/pin-project-lite",
+          "version": "0.2.17"
+        },
+        {
+          "dependency_key": "tracing-core",
+          "domain": "target",
+          "loaf": "crates-io/tracing-core",
+          "version": "0.1.36"
+        }
+      ],
       "features": [
         "log",
         "std"
@@ -1563,6 +2924,7 @@
     {
       "archive_digest": "sha256:344963c591644e278af1db59d207e39d545461512215ecc61e134ca2e5faa392",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/typenum",
       "target_predicates": [],
@@ -1571,6 +2933,7 @@
     {
       "archive_digest": "sha256:d8fb134fce081f3df28654a548970d4d596498160d12ce434f55607983b06504",
       "domain": "host",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/unicode-ident",
       "target_predicates": [],
@@ -1579,6 +2942,7 @@
     {
       "archive_digest": "sha256:d8fb134fce081f3df28654a548970d4d596498160d12ce434f55607983b06504",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/unicode-ident",
       "target_predicates": [],
@@ -1587,6 +2951,7 @@
     {
       "archive_digest": "sha256:827a49268c87ac61fb9dde161bcc0e47888004377e4603543c7038b5be2fccfc",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/winnow",
       "target_predicates": [],
@@ -1595,6 +2960,7 @@
     {
       "archive_digest": "sha256:cd911c24bd559653b945a24b0ea1b701a78b43d29f2ee066c99c4247e16cb546",
       "domain": "target",
+      "edges": [],
       "features": [
         "alloc",
         "ascii",
@@ -1610,6 +2976,7 @@
     {
       "archive_digest": "sha256:0ec45c714e76bae79e52d56caad56620d2a29fcfad763a8907b4ee8459dd8d37",
       "domain": "target",
+      "edges": [],
       "features": [
         "xxh3",
         "xxh32",
@@ -1622,6 +2989,14 @@
     {
       "archive_digest": "sha256:f1477736ea87216343582d642a50e8be4394f4a8b18b4a21dcad9763aa472a9e",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "lzma-sys",
+          "domain": "target",
+          "loaf": "crates-io/lzma-sys",
+          "version": "0.1.20"
+        }
+      ],
       "features": [
         "static"
       ],
@@ -1632,6 +3007,7 @@
     {
       "archive_digest": "sha256:4b7160e9c25432a989883f3740134c36e81fc4af6e62dd6ccd3390200732386b",
       "domain": "target",
+      "edges": [],
       "features": [
         "simd"
       ],
@@ -1648,6 +3024,7 @@
     {
       "archive_digest": "sha256:95543d1823c32220ade82651984d26619e3779a89cc46ebc1fd24f5c6f4cd828",
       "domain": "target",
+      "edges": [],
       "features": [],
       "loaf": "crates-io/zmij",
       "target_predicates": [],
@@ -1656,6 +3033,14 @@
     {
       "archive_digest": "sha256:a2767eb67894dfc95c62a822a39c4db643916a6e9abda5895f9c6f87928b0025",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "zstd-sys",
+          "domain": "target",
+          "loaf": "crates-io/zstd-sys",
+          "version": "2.1.0+zstd.1.5.7"
+        }
+      ],
       "features": [
         "arrays",
         "legacy",
@@ -1669,6 +3054,7 @@
     {
       "archive_digest": "sha256:4b834beda3c455bd533ad3c5dcce16fd9237b2a321e482ebcb23788562701426",
       "domain": "target",
+      "edges": [],
       "features": [
         "legacy",
         "std",
@@ -1681,6 +3067,14 @@
     {
       "archive_digest": "sha256:5b00030a832f38439ac932b52d652296dfb070343136c8b4334c2ae202e358e3",
       "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "zstd-safe",
+          "domain": "target",
+          "loaf": "crates-io/zstd-safe",
+          "version": "7.3.0"
+        }
+      ],
       "features": [
         "arrays",
         "default",

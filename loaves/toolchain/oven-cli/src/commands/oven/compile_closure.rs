@@ -110,7 +110,10 @@ fn execute(arguments: CompileClosureArgs) -> Result<ExitCode, Box<dyn std::error
     };
     let lock_value: serde_json::Value = serde_json::from_slice(&std::fs::read(lock_path)?)?;
     let lock: Lock = serde_json::from_value(lock_value.clone())?;
-    if lock.schema != "incan.oven.loaf-resolution/1" {
+    if !matches!(
+        lock.schema.as_str(),
+        "incan.oven.loaf-resolution/1" | "incan.oven.loaf-resolution/2"
+    ) {
         return Err("unsupported resolution schema".into());
     }
     let rustc = match arguments.rustc {

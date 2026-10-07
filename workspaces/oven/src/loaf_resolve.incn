@@ -35,6 +35,17 @@ pub model ResolvedLoaf:
     pub domain: DependencyDomain
     pub features: list[str]
     pub predicates: list[EvaluatedLoafPredicate]
+    pub edges: list[ResolvedLoafEdge] = []
+
+
+@derive(Eq)
+pub model ResolvedLoafEdge:
+    """An active dependency alias bound to one exact source version and compilation domain."""
+
+    pub dependency_key: str
+    pub loaf: str
+    pub version: str
+    pub domain: str
 
 
 pub model EvaluatedLoafPredicate:
@@ -295,10 +306,78 @@ pub def resolve(
             shared_version(records, round.demands[identity], round.demands)?
         state = fingerprint(round.demands, round.units)
         if state == previous:
-            return Ok(round.units)
+            return bind_edges(round.units, base)
         previous = state
         demands = round.demands
     return Err(refusal("index", [], "selection and feature activation did not converge"))
+
+
+def bind_edges(units: list[ResolvedLoaf], base: ActivationContext) -> Result[list[ResolvedLoaf], IntakeError]:
+    """Freeze each active alias to the highest compatible selected unit, retaining host macro boundaries."""
+    mut bound: list[ResolvedLoaf] = []
+    for unit in units:
+        context = ActivationContext(
+            host=base.host,
+            target=base.target,
+            purpose=base.purpose,
+            domain=unit.domain,
+            requested_features=unit.features,
+            default_features=false,
+            build_unit_present=false,
+        )
+        activation = activate_unit(unit.record.catalog, context, unit.record.loaf)?
+        mut edges: list[ResolvedLoafEdge] = []
+        for slot in activation.slots:
+            match slot.activation:
+                SlotActivation.Active(_, _, domain) =>
+                    declaration = unit.record.catalog.dependencies[slot.index]
+                    mut candidates: list[LoafVersion] = []
+                    for child in units:
+                        mut expected = domain
+                        if child.record.kind == LoafRustKind.ProcMacro:
+                            expected = DependencyDomain.Host
+                        if child.record.loaf == declaration.package and child.domain == expected:
+                            candidates.append(child.record)
+                    mut requirements: list[str] = []
+                    for active in activation.slots:
+                        match active.activation:
+                            SlotActivation.Active(_, _, _) =>
+                                constraint = unit.record.catalog.dependencies[active.index]
+                                if constraint.alias == declaration.alias:
+                                    if constraint.package != declaration.package:
+                                        return Err(
+                                            refusal(
+                                                unit.record.loaf,
+                                                [],
+                                                f"dependency {declaration.alias} names different Loaves",
+                                            ),
+                                        )
+                                    if let Some(requirement) = constraint.version_requirement:
+                                        requirements.append(requirement)
+                            SlotActivation.Inactive(_) => pass
+                    chosen = select_version(candidates, declaration.package, requirements)?
+                    mut selected_domain = domain
+                    if chosen.kind == LoafRustKind.ProcMacro:
+                        selected_domain = DependencyDomain.Host
+                    edge = ResolvedLoafEdge(
+                        dependency_key=declaration.alias,
+                        loaf=chosen.loaf,
+                        version=chosen.version,
+                        domain=selected_domain.value(),
+                    )
+                    if edge not in edges:
+                        edges.append(edge)
+                SlotActivation.Inactive(_) => pass
+        bound.append(
+            ResolvedLoaf(
+                record=unit.record,
+                domain=unit.domain,
+                features=unit.features,
+                predicates=unit.predicates,
+                edges=edges,
+            ),
+        )
+    return Ok(bound)
 
 
 pub def resolution_json(units: list[ResolvedLoaf]) -> JsonValue:
@@ -317,11 +396,17 @@ pub def resolution_json(units: list[ResolvedLoaf]) -> JsonValue:
                             predicate.target,
                         ), "matches": JsonValue.bool(predicate.matches)},
                     ) for predicate in unit.predicates],
+                ), "edges": JsonValue.array(
+                    [JsonValue.object(
+                        {"dependency_key": JsonValue.string(edge.dependency_key), "loaf": JsonValue.string(edge.loaf), "version": JsonValue.string(
+                            edge.version,
+                        ), "domain": JsonValue.string(edge.domain)},
+                    ) for edge in unit.edges],
                 )},
             ),
         )
     return JsonValue.object(
-        {"schema": JsonValue.string("incan.oven.loaf-resolution/1"), "units": JsonValue.array(records)},
+        {"schema": JsonValue.string("incan.oven.loaf-resolution/2"), "units": JsonValue.array(records)},
     )
 
 

@@ -146,6 +146,7 @@ fn prepare_local_unit(
             domain: domain.to_string(),
             features,
             target_predicates: Vec::new(),
+            edges: None,
         },
         manifest,
         root: snapshot.to_path_buf(),

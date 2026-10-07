@@ -126,6 +126,48 @@ def versioned_root(requirement: str, domain: DependencyDomain, features: list[st
     )
 
 
+pub def test_broad_dependency_records_highest_selected_version() -> None:
+    """Two selected breaking versions cannot leave a broad transitive alias ambiguous."""
+    mut records: list[LoafVersion] = []
+    for loaf in ["test/broad", "test/versioned"]:
+        for record in require_ok(read_index("tests/fixtures/loaf-index", loaf)):
+            records.append(record)
+    broad = LoafDemand(
+        loaf="test/broad",
+        domain=DependencyDomain.Target,
+        requirements=["^1"],
+        intent=NodeDemand(features=[], default_features=false),
+    )
+    units = require_ok(resolve(records, [broad, versioned_root("^1", DependencyDomain.Target, [])], synthetic_context()))
+    assert len(units) == 3
+    for unit in units:
+        if unit.record.loaf == "test/broad":
+            assert len(unit.edges) == 1
+            assert unit.edges[0].dependency_key == "chosen"
+            assert unit.edges[0].loaf == "test/versioned"
+            assert unit.edges[0].version == "2.0.0"
+            assert unit.edges[0].domain == "target"
+
+
+pub def test_broad_alias_respects_all_active_constraints() -> None:
+    """A second active declaration prevents the broad alias from binding a newer incompatible selected line."""
+    mut records: list[LoafVersion] = []
+    for loaf in ["test/narrowed", "test/versioned"]:
+        for record in require_ok(read_index("tests/fixtures/loaf-index", loaf)):
+            records.append(record)
+    root = LoafDemand(
+        loaf="test/narrowed",
+        domain=DependencyDomain.Target,
+        requirements=["^1"],
+        intent=NodeDemand(features=[], default_features=false),
+    )
+    units = require_ok(resolve(records, [root], synthetic_context()))
+    for unit in units:
+        if unit.record.loaf == "test/narrowed":
+            assert len(unit.edges) == 1
+            assert unit.edges[0].version == "1.2.0"
+
+
 pub def test_versions_unify_across_domains_but_features_do_not() -> None:
     """The target's exact version constrains the host's broad range without sharing cfg features."""
     records = require_ok(read_index("tests/fixtures/loaf-index", "test/versioned"))
@@ -231,8 +273,18 @@ pub def test_root_requests_use_shared_optional_activation() -> None:
 pub def test_host_project_roots_keep_independent_features() -> None:
     """Local macro dependencies enter the host domain even when the same library is a target root."""
     records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
-    requests = require_ok(read_root_requests('[{"name":"leaf","loaf":"test/leaf","req":"^1","features":["extra"],"default-features":false,"optional":false}]', "roots"))
-    host_requests = require_ok(read_root_requests('[{"name":"leaf","loaf":"test/leaf","req":"^1","features":[],"default-features":true,"optional":false}]', "host-roots"))
+    requests = require_ok(
+        read_root_requests(
+            "[{\"name\":\"leaf\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[\"extra\"],\"default-features\":false,\"optional\":false}]",
+            "roots",
+        ),
+    )
+    host_requests = require_ok(
+        read_root_requests(
+            "[{\"name\":\"leaf\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[],\"default-features\":true,\"optional\":false}]",
+            "host-roots",
+        ),
+    )
     units = require_ok(resolve_requests(records, requests, {}, synthetic_context(), host_requests))
     assert len(units) == 2
     for unit in units:
@@ -247,7 +299,7 @@ pub def test_host_project_roots_keep_independent_features() -> None:
 pub def test_local_proc_macro_manifest_supplies_host_requests() -> None:
     """Read dependency intent from the original local Loaf facet instead of a flattened target request."""
     mut source = ""
-    match parse('{"host-projects":["loaf.toml"]}'):
+    match parse("{\"host-projects\":[\"loaf.toml\"]}"):
         Err(error) =>
             fail(error.message())
             return
@@ -256,7 +308,8 @@ pub def test_local_proc_macro_manifest_supplies_host_requests() -> None:
                 Err(error) =>
                     fail(error)
                     return
-                Ok(value) => source = value
+                Ok(value) =>
+                    source = value
     requests = require_ok(read_root_requests(source, "fixture-macro"))
     assert len(requests) == 1
     assert requests[0].package == "test/leaf"
@@ -268,22 +321,19 @@ pub def test_local_proc_macro_manifest_supplies_host_requests() -> None:
 
 pub def test_local_host_project_requires_proc_macro_facet() -> None:
     """Ordinary library facets cannot silently introduce host requests."""
-    match parse('{"host-projects":["loaf.toml"]}'):
+    match parse("{\"host-projects\":[\"loaf.toml\"]}"):
         Err(error) => fail(error.message())
         Ok(document) =>
             match host_roots(document, "tests/fixtures/local-library/roots.json"):
                 Ok(_) => fail("ordinary library accepted as a host procedural-macro project")
-                Err(error) => assert "not a procedural macro" in error
+                Err(error) =>
+                    assert "not a procedural macro" in error
 
 
 pub def test_shard_retains_named_refusal_and_shared_features() -> None:
     """An unavailable root cannot erase admitted roots or split their unified feature selection."""
     records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
-    source = """[
-        {"name":"first","loaf":"test/leaf","req":"^1","features":["extra"],"default-features":true,"optional":false},
-        {"name":"second","loaf":"test/leaf","req":"^1","features":[],"default-features":false,"optional":false},
-        {"name":"missing","loaf":"test/absent","req":"^1","features":[],"default-features":true,"optional":false}
-    ]"""
+    source = "[\n        {\"name\":\"first\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[\"extra\"],\"default-features\":true,\"optional\":false},\n        {\"name\":\"second\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[],\"default-features\":false,\"optional\":false},\n        {\"name\":\"missing\",\"loaf\":\"test/absent\",\"req\":\"^1\",\"features\":[],\"default-features\":true,\"optional\":false}\n    ]"
     match resolve_shard(records, source, synthetic_context()):
         Err(reason) => fail(reason)
         Ok(document) =>

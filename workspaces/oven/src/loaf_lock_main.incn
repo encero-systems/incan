@@ -2,7 +2,7 @@
 Resolve a root request file against an incan.pub index pin and print the resolution.
 
 This is the driver that produces a lock: it reads every named Loaf's index lines from the pin, decodes the root
-requests in the index line's dependency spelling, and prints one `incan.oven.loaf-resolution/1` document. It reads
+requests in the index line's dependency spelling, and prints one `incan.oven.loaf-resolution/2` document. It reads
 no upstream metadata and runs no build.
 """
 
