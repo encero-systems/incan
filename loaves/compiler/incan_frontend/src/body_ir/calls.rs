@@ -191,6 +191,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ));
             }
             return Ok(DirectCallDeclaration {
+                is_async: declarations
+                    .function_bindings
+                    .get(name)
+                    .is_some_and(|binding| binding.is_async),
                 slots: declarations
                     .function_bindings
                     .get(name)
@@ -229,6 +233,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ));
             };
             return Ok(DirectCallDeclaration {
+                is_async: binding.is_async,
                 slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
                 direct_call_id: Some(CompilerNodeId::declaration_span(
                     self.module_identity,
@@ -264,6 +269,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ));
         }
         Ok(DirectCallDeclaration {
+            is_async: binding.is_async,
             slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
             direct_call_id: Some(CompilerNodeId::declaration_span(
                 self.module_identity,
@@ -981,6 +987,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.lower_provider_operation(&name, &operation, record, declaration, args, span, scope, out);
         }
 
+        let is_async = declaration.is_async;
         let (operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
                 Ok(bound) => bound,
@@ -989,7 +996,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             };
 
-        let ty = self.resolve_ty(span);
+        // The checked expression type is the eventual output for immediately awaited source calls. Body IR
+        // represents construction and awaiting separately, so their intervening local must own the future.
+        let ty = if is_async {
+            IncanType::Generic {
+                base: "Awaitable".to_string(),
+                args: vec![self.resolve_ty(span)],
+            }
+        } else {
+            self.resolve_ty(span)
+        };
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: None,

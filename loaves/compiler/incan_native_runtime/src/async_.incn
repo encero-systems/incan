@@ -1,0 +1,24 @@
+"""Run direct native entry callbacks inside the canonical async executor."""
+
+import std.async
+from rust::incan_std_async::runtime import block_on
+from rust::std::io import stderr, Write
+from rust::std::process import exit
+from rust::std::string import String as RustString
+from panic_hook import initialize_panic_hook
+
+
+async def invoke(entry: () -> None) -> None:
+    """Defer the native callback until the canonical executor polls its entry future."""
+    entry()
+
+
+pub def run_async_entry(entry: () -> None) -> None:
+    """Initialize canonical panic reporting and preserve legacy's runtime initialization error boundary."""
+    initialize_panic_hook()
+    match block_on(invoke(entry)):
+        Ok(_value) => pass
+        Err(error) =>
+            mut stream = stderr()
+            _ = stream.write_all(RustString.from(f"{error.message()}\n").into_bytes())
+            exit(1)

@@ -49,6 +49,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    UnitFunction,
     Int,
     Float,
     I8,
@@ -119,6 +120,7 @@ impl Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::EnumTag => Scalar::EnumTag,
         PlanType::Enum(index, _) => Scalar::Enum(*index),
         PlanType::EnumRef(index, _) => Scalar::EnumRef(*index),
@@ -506,6 +508,20 @@ fn require(
 /// Validate scalar and aggregate rvalues against their exact destination layout.
 fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
+        RvalueKind::UnitFunction(name) => {
+            let callback = plan
+                .functions
+                .iter()
+                .find(|value| &value.name == name)
+                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            if !callback.parameters.is_empty() || scalar(&callback.return_type) != Scalar::Unit {
+                return Err(invalid(
+                    function,
+                    "executor callback must take no arguments and return unit",
+                ));
+            }
+            Ok(Scalar::UnitFunction)
+        }
         RvalueKind::Use(value) => operand(plan, function, value),
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
@@ -707,6 +723,7 @@ fn source_signature_type(ty: Scalar) -> bool {
         || matches!(
             ty,
             Scalar::Int
+                | Scalar::UnitFunction
                 | Scalar::Float
                 | Scalar::Bool
                 | Scalar::Unit

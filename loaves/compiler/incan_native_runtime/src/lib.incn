@@ -1,6 +1,7 @@
 """Language formatting and collection helpers used by the direct native route."""
 
 pub from carriers import format_carrier, clone_carrier_payload
+pub from async_ import run_async_entry
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
 pub from collections import extend_list_set, extend_set, extend_dict
 pub from collections import (
