@@ -555,3 +555,15 @@ fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
         &fixture.formatting,
     )
 }
+
+/// Prove canonical scalar casts and default values byte-identical to legacy.
+#[test]
+fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_numerics(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("numerics")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}

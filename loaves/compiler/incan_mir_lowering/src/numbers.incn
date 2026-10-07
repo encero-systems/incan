@@ -3,6 +3,7 @@
 from rust::incan_semantics_core::body_ir import Operand as RustOperand, Constant as RustConstant, NominalDeclaration
 from pub::incan_mir_plan import Local, PlanType, SourceSpan
 from models import model_place, place_type
+from numerics import is_float_constant
 
 
 pub def float_operand(
@@ -15,7 +16,8 @@ pub def float_operand(
     match value:
         RustOperand.Place(read) =>
             place = model_place(declarations, locals, read.place, span)?
-            return Ok(place_type(locals, place) == PlanType.Float)
+            ty = place_type(locals, place)
+            return Ok(ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64)
         RustOperand.Constant(constant) => return Ok(float_constant(constant))
 
 
@@ -23,4 +25,5 @@ def float_constant(value: &RustConstant) -> bool:
     """Preserve the Rust enum import through a typed boundary until legacy pattern-only imports work in dev.8."""
     match value:
         RustConstant.Float(_text) => return true
+        RustConstant.TypedNumeric(value) => return is_float_constant(value)
         _ => return false
