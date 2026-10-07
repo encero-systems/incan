@@ -1,4 +1,4 @@
-"""Checked set and dictionary layouts sharing the list plan's primitive leaf vocabulary."""
+"""Checked set and dictionary layouts sharing the list plan's admitted leaf vocabulary."""
 
 from pub::incan_mir_plan import (
     ListLeaf,
@@ -28,6 +28,7 @@ from tuples import tuple_type, generic_tuple_type
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
     """Admit primitive leaves and flat scalar tuple keys; floating point keys lack Eq and Hash."""
     match ty:
+        RustType.Decimal(precision=_precision, scale=_scale) => return Ok(ListLeaf.Decimal)
         RustType.Primitive(primitive) =>
             match primitive:
                 Primitive.Int => return Ok(ListLeaf.Int)
