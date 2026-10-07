@@ -108,7 +108,8 @@ from numerics import (
     sized_signed_integer,
     numeric_carrier,
 )
-from strings import text_helper
+from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
+from strings import text_helper, emit_text_helper, text_helper_arity
 from frame import (
     Builder,
     temporary,
@@ -119,6 +120,7 @@ from frame import (
     forget_moved_arguments,
     cleanup_exit,
     terminate_call,
+    external_call,
     read_place,
     value_type,
 )
@@ -151,10 +153,8 @@ from lists import (
     list_parameter_type,
     is_mutable_list_reference,
 )
-
 # =====================================================================================================================
 # Boundary types and validation
-
 # =====================================================================================================================
 
 
@@ -215,10 +215,8 @@ pub def is_continue(statement: &BodyStatementKind) -> bool:
     match statement:
         BodyStatementKind.Continue => return true
         _ => return false
-
 # =====================================================================================================================
 # Translating checked values
-
 # =====================================================================================================================
 
 
@@ -375,10 +373,8 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
         RustRvalue.Generator(source=_source, captured_operands=_captures, body=_body) =>
             return Err("unsupported Body IR Generator")
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
-
 # =====================================================================================================================
 # The frame builder and ownership
-
 # =====================================================================================================================
 
 
@@ -408,12 +404,7 @@ def verify_branch_owners(reachable: bool, owned: list[int], incoming: list[int])
 
 
 def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str]:
-    """
-    Release the owners created inside the innermost loop before leaving or repeating it.
-
-    Owners live when the loop began must still be live: the loop body may not consume them, since a second iteration
-    would read a moved value.
-    """
+    """Release owners created inside the innermost loop. Incoming owners must stay live because another iteration would read them again."""
     incoming = builder.loop_owners[-1]
     for owner in incoming:
         if owner not in builder.owned:
@@ -425,27 +416,8 @@ def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str
         if owner not in incoming:
             drop_owned(builder, owner, span)
     return Ok(None)
-
-
-def external_call(
-    mut builder: Builder,
-    name: str,
-    parameters: list[PlanType],
-    result: PlanType,
-    arguments: list[Operand],
-    destination: Place,
-    span: SourceSpan,
-) -> None:
-    """Declare a monomorphic runtime signature and emit its unwinding call."""
-    builder.externals.append(ExternalFunction(path=name, parameters=parameters, return_type=result, span=span))
-    terminate_call(builder, CalleeKind.External(name), arguments, destination, span)
-    # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
-    if result == PlanType.String:
-        builder.owned.append(destination.local)
-
 # =====================================================================================================================
 # Statements and control flow
-
 # =====================================================================================================================
 
 
@@ -579,6 +551,9 @@ def lower_local_assignment(
         RustRvalue.Format(parts) => return lower_format(builder, target, parts, span)
         RustRvalue.BinaryOp(operator, left, right) =>
             match operator:
+                BinOp.Pow => return lower_power_operator(builder, target, left, right, span)
+                BinOp.And => return lower_boolean_operator(builder, target, left, right, "boolean_and", span)
+                BinOp.Or => return lower_boolean_operator(builder, target, left, right, "boolean_or", span)
                 BinOp.FloorDiv => return lower_numeric_helper(builder, target, left, right, "py_floor_div", span)
                 BinOp.Mod => return lower_numeric_helper(builder, target, left, right, "py_mod", span)
                 _ => pass
@@ -737,10 +712,8 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     builder.owned = incoming
     builder.current = after
     return Ok(None)
-
 # =====================================================================================================================
 # Calls
-
 # =====================================================================================================================
 
 
@@ -1013,6 +986,19 @@ def fixed_arguments(
     return Ok(result)
 
 
+def lower_boolean_operator(
+    mut builder: Builder,
+    destination: Place,
+    left: &RustOperand,
+    right: &RustOperand,
+    name: str,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Combine pure Body IR operands; source short-circuiting is retained by frontend branches."""
+    operands = [scalar_operator_operand(builder, left, span)?, scalar_operator_operand(builder, right, span)?]
+    return emit_boolean_operator(builder, destination, operands, name, span)
+
+
 def lower_numeric_helper(
     mut builder: Builder,
     destination: Place,
@@ -1064,6 +1050,9 @@ def lower_runtime_helper(
         RustHelper.SetNotContains => return collection_contains(builder, true, arguments, destination, span)
         RustHelper.DictContainsKey => return collection_contains(builder, false, arguments, destination, span)
         RustHelper.DictNotContainsKey => return collection_contains(builder, true, arguments, destination, span)
+        RustHelper.StrSplit => return lower_split_helper(builder, arguments, destination, span)
+        RustHelper.StrJoin => return lower_join_helper(builder, arguments, destination, span)
+        RustHelper.ListConcat => return lower_list_concat(builder, arguments, destination, span)
         RustHelper.ListContains => return lower_list_helper(builder, false, arguments, destination, span)
         RustHelper.ListNotContains => return lower_list_helper(builder, true, arguments, destination, span)
         _ => pass
@@ -1092,8 +1081,21 @@ def lower_builtin(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch checked builtin identities rather than matching source spellings."""
+    if builtin == RustBuiltin.Bool:
+        return lower_truth_builtin(builder, arguments, destination, span)
+    if len(arguments) == 1 and builtin == RustBuiltin.Abs:
+        operand = argument_value(builder, arguments, 0, span)?
+        ty = operand_type(builder, operand)?
+        match scalar_builtin(builtin, ty):
+            Some((name, result)) =>
+                output = call_destination(builder, destination, result, span)?
+                external_call(builder, f"incan_native_runtime::{name}", [ty], result, [operand], output, span)
+                return Ok(None)
+            None => pass
     match builtin:
         RustBuiltin.Print => return lower_print(builder, arguments, span)
+        RustBuiltin.Sum => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.Sorted => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Len => return lower_list_builtin(builder, arguments, destination, span)
         RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
@@ -1247,10 +1249,8 @@ def coerce_numeric_operand(
     builder.emit(plan_assign(converted, RvalueKind.NumericCast(operand, source, target), span))
     validate_exact_float(builder, converted, span)
     return Ok(read_place(converted, false, span))
-
 # =====================================================================================================================
 # Plain model construction and field replacement
-
 # =====================================================================================================================
 
 
@@ -1362,10 +1362,8 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
-
 # =====================================================================================================================
 # Formatting and strings
-
 # =====================================================================================================================
 
 
@@ -1635,23 +1633,17 @@ def lower_text_helper(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind the retained string-helper identity to shared operands and its monomorphic runtime entry."""
-    if len(arguments) != 2:
+    arity = text_helper_arity(name)
+    if len(arguments) != arity:
         return Err("invalid Body IR string helper arity")
+    mut parameters: list[PlanType] = []
     mut operands: list[Operand] = []
     for argument in arguments:
+        parameters.append(PlanType.StringRef)
         match argument.as_one():
             Some(value) => operands.append(borrow_text_operand(builder, value, span)?)
             None => return Err("unsupported Body IR spread string helper argument")
-    text = temporary(builder, result, span)
-    external_call(
-        builder,
-        f"incan_native_runtime::{name}",
-        [PlanType.StringRef, PlanType.StringRef],
-        result,
-        operands,
-        text,
-        span,
-    )
+    text = emit_text_helper(builder, name, result, parameters, operands, span)
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
@@ -1690,10 +1682,8 @@ def lower_str_builtin(
             builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
-
 # =====================================================================================================================
 # Module and function entry points
-
 # =====================================================================================================================
 
 
@@ -1850,31 +1840,9 @@ def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: 
             ),
         )
     return Ok(parameters)
-
 # =====================================================================================================================
 # Lists: borrowing and runtime calls
-
 # =====================================================================================================================
-
-
-def list_call(
-    mut builder: Builder,
-    name: str,
-    element: PlanType,
-    parameters: list[PlanType],
-    result: PlanType,
-    arguments: list[Operand],
-    destination: Place,
-    span: SourceSpan,
-) -> None:
-    """Retain one generic instantiation and its exact safe runtime signature."""
-    path = f"incan_native_runtime::{name}"
-    builder.externals.append(
-        ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
-    )
-    terminate_call(builder, CalleeKind.Instantiated(path, element), arguments, destination, span)
-    if result == PlanType.String or is_owned_collection(result):
-        builder.owned.append(destination.local)
 
 
 def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
@@ -1917,10 +1885,8 @@ def checked_list_argument(
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             return list_borrow(builder, list_root_place(read.place, span)?, mutable, span)
         _ => return Err("unsupported Body IR constant list argument")
-
 # =====================================================================================================================
 # Lists: owned values and indexed reads
-
 # =====================================================================================================================
 
 
@@ -2068,10 +2034,8 @@ def list_assignment(
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
     builder.owned.append(destination.local)
     return Ok(None)
-
 # =====================================================================================================================
 # Lists: checked arguments and methods
-
 # =====================================================================================================================
 
 
@@ -2215,9 +2179,12 @@ def lower_list_builtin(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Read a checked list's length through a shared native runtime signature."""
+    """Read string, list, and hashed-collection lengths through the legacy runtime contracts."""
     if len(arguments) != 1:
         return Err("unsupported Body IR len arity")
+    ty = argument_type(builder, arguments, 0, span)?
+    if ty in [PlanType.String, PlanType.StringRef]:
+        return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
     receiver = argument_place(arguments, 0, span)?
     if is_collection(builder.locals[receiver.local].ty):
         return collection_length(builder, receiver, destination, span)
@@ -2265,10 +2232,8 @@ def lower_list_helper(
     if negated:
         builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
     return Ok(None)
-
 # =====================================================================================================================
 # Lists: indexed mutation
-
 # =====================================================================================================================
 
 
@@ -2334,10 +2299,8 @@ def assignment_value(mut builder: Builder, value: &RustRvalue, span: SourceSpan)
     match value:
         RustRvalue.Use(operand) => return value_operand(builder, operand, span)
         _ => return Err("unsupported Body IR indexed assignment rvalue")
-
 # =====================================================================================================================
 # Lists: iteration
-
 # =====================================================================================================================
 
 
@@ -2440,10 +2403,8 @@ def list_root_place(value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     if len(value.projection) != 0:
         return Err("unsupported Body IR list root projection")
     return list_base_place(value, span)
-
 # =====================================================================================================================
 # Hashed collections: shared frame operations
-
 # =====================================================================================================================
 
 
@@ -2816,10 +2777,8 @@ def enum_operand(builder: Builder, value: &RustOperand, span: SourceSpan) -> Res
                 _ => pass
         _ => pass
     return Ok(false)
-
 # =====================================================================================================================
 # Persistent scalar storage
-
 # =====================================================================================================================
 
 
@@ -2874,3 +2833,288 @@ def write_static(
         span,
     )
     return Ok(None)
+
+
+def lower_sequence_builtin(
+    mut builder: Builder,
+    builtin: &RustBuiltin,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Admit homogeneous list sorting and the legacy integer sum domain."""
+    if len(arguments) != 1:
+        return Err("unsupported Body IR sequence builtin arity")
+    receiver = argument_place(arguments, 0, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR sequence builtin type")?
+    if depth != 1:
+        return Err("unsupported Body IR nested sequence builtin")
+    reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+    if builtin == RustBuiltin.Sum:
+        mut name = "sum_int"
+        if leaf == ListLeaf.Bool:
+            name = "sum_bool"
+        elif leaf != ListLeaf.Int:
+            return Err("unsupported Body IR builtin Sum element")
+        output = call_destination(builder, destination, PlanType.Int, span)?
+        external_call(
+            builder,
+            f"incan_native_runtime::{name}",
+            [PlanType.ListRef(leaf, depth)],
+            PlanType.Int,
+            [reference],
+            output,
+            span,
+        )
+        return Ok(None)
+    result = PlanType.List(leaf, depth)
+    output = call_destination(builder, destination, result, span)?
+    if leaf == ListLeaf.Float:
+        external_call(
+            builder,
+            "incan_native_runtime::sorted_float",
+            [PlanType.ListRef(leaf, depth)],
+            result,
+            [reference],
+            output,
+            span,
+        )
+        builder.owned.append(output.local)
+    else:
+        list_call(
+            builder,
+            "sorted_list",
+            list_element(leaf, depth),
+            [PlanType.ListRef(leaf, depth)],
+            result,
+            [reference],
+            output,
+            span,
+        )
+    return Ok(None)
+
+
+def lower_list_concat(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow both concatenation inputs and retain one new list owner."""
+    if len(arguments) != 2:
+        return Err("unsupported Body IR list_concat arity")
+    receiver = argument_place(arguments, 0, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR list_concat type")?
+    other = argument_place(arguments, 1, span)?
+    other_leaf, other_depth = require_list_shape(
+        place_type(builder.locals, other),
+        "unsupported Body IR list_concat type",
+    )?
+    if leaf != other_leaf or depth != other_depth:
+        return Err("unsupported Body IR mixed list_concat type")
+    operands = [borrowed_list_argument(builder, arguments, 0, false, span)?, borrowed_list_argument(
+        builder,
+        arguments,
+        1,
+        false,
+        span,
+    )?]
+    result = PlanType.List(leaf, depth)
+    output = call_destination(builder, destination, result, span)?
+    list_call(
+        builder,
+        "concat_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth), PlanType.ListRef(leaf, depth)],
+        result,
+        operands,
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+def lower_truth_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve builtin truthiness for admitted scalars, lists, and hashed collections."""
+    output = call_destination(builder, destination, PlanType.Bool, span)?
+    if len(arguments) == 0:
+        builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(false), span)), span))
+        return Ok(None)
+    if len(arguments) != 1:
+        return Err("unsupported Body IR Bool arity")
+    ty = argument_type(builder, arguments, 0, span)?
+    match scalar_builtin(RustBuiltin.Bool, ty):
+        Some((name, result)) =>
+            operand = argument_value(builder, arguments, 0, span)?
+            external_call(builder, f"incan_native_runtime::{name}", [ty], result, [operand], output, span)
+            return Ok(None)
+        None => pass
+    if ty in [PlanType.String, PlanType.StringRef]:
+        match arguments[0].as_one():
+            Some(value) =>
+                reference = borrow_text_operand(builder, value, span)?
+                external_call(
+                    builder,
+                    "incan_native_runtime::truth_text",
+                    [PlanType.StringRef],
+                    PlanType.Bool,
+                    [reference],
+                    output,
+                    span,
+                )
+                return Ok(None)
+            None => return Err("unsupported Body IR Bool spread")
+    if is_collection(ty):
+        receiver = argument_place(arguments, 0, span)?
+        reference = borrow_collection(builder, receiver, false, span)?
+        length = temporary(builder, PlanType.Int, span)
+        collection_call(
+            builder,
+            ty,
+            "length",
+            [collection_reference(ty, false)],
+            PlanType.Int,
+            [reference],
+            length,
+            span,
+        )?
+        builder.emit(
+            plan_assign(
+                output,
+                RvalueKind.Binary(BinaryOp.NotEqual, read_place(length, false, span), literal(Constant.Int(0), span)),
+                span,
+            ),
+        )
+        return Ok(None)
+    if is_list(ty):
+        leaf, depth = require_list_shape(ty, "unsupported Body IR Bool list")?
+        reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+        list_call(
+            builder,
+            "truth_list",
+            list_element(leaf, depth),
+            [PlanType.ListRef(leaf, depth)],
+            PlanType.Bool,
+            [reference],
+            output,
+            span,
+        )
+        return Ok(None)
+    return Err("unsupported Body IR builtin Bool type")
+
+
+def lower_power_operator(
+    mut builder: Builder,
+    destination: Place,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind exponentiation only when both operands retain the legacy scalar carrier."""
+    mut operands = [scalar_operator_operand(builder, left, span)?, scalar_operator_operand(builder, right, span)?]
+    target = place_type(builder.locals, destination)
+    # Expected float context is a retained checker fact: legacy coerces both power operands to that carrier.
+    if target in [PlanType.Float, PlanType.F32, PlanType.F64]:
+        for index in range(2):
+            source = operand_type(builder, operands[index])?
+            if source != target and source != PlanType.Int:
+                return Err("unsupported Body IR mixed Pow operands")
+            operands[index] = coerce_numeric_operand(builder, operands[index], target, span)?
+    emit_power_operator(builder, destination, operands, span)?
+    validate_exact_float(builder, destination, span)
+    return Ok(None)
+
+
+def text_argument(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    index: int,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow one text argument without consuming a caller-owned string."""
+    if index >= len(arguments):
+        return Err("invalid Body IR text argument arity")
+    match arguments[index].as_one():
+        Some(value) => return borrow_text_operand(builder, value, span)
+        None => return Err("unsupported Body IR text argument spread")
+
+
+def lower_split_helper(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Select explicit and omitted separators without admitting general Option lowering."""
+    if len(arguments) < 1 or len(arguments) > 2:
+        return Err("invalid Body IR str_split arity")
+    mut omitted = len(arguments) == 1
+    if len(arguments) == 2:
+        match arguments[1].as_one():
+            Some(RustOperand.Constant(RustConstant.None)) =>
+                omitted = true
+            _ => pass
+    mut name = "split_default_text"
+    mut parameters = [PlanType.StringRef]
+    mut operands = [text_argument(builder, arguments, 0, span)?]
+    if not omitted:
+        name = "split_text"
+        parameters.append(PlanType.StringRef)
+        operands.append(text_argument(builder, arguments, 1, span)?)
+    result = PlanType.List(ListLeaf.Str, 1)
+    output = call_destination(builder, destination, result, span)?
+    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+def lower_join_helper(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Join only an admitted flat string list through the canonical runtime helper."""
+    if len(arguments) != 2:
+        return Err("invalid Body IR str_join arity")
+    values = argument_place(arguments, 1, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, values), "unsupported Body IR str_join input")?
+    if leaf != ListLeaf.Str or depth != 1:
+        return Err("unsupported Body IR str_join element")
+    operands = [text_argument(builder, arguments, 0, span)?, borrowed_list_argument(builder, arguments, 1, false, span)?]
+    output = call_destination(builder, destination, PlanType.String, span)?
+    external_call(
+        builder,
+        "incan_native_runtime::join_text",
+        [PlanType.StringRef, PlanType.ListRef(ListLeaf.Str, 1)],
+        PlanType.String,
+        operands,
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+def argument_type(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    index: int,
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Read an argument's retained carrier before selecting a borrow, avoiding an accidental owned read."""
+    if index >= len(arguments):
+        return Err("invalid Body IR argument type arity")
+    match arguments[index].as_one():
+        Some(RustOperand.Place(read)) =>
+            place = scalar_place(builder, read.place, span)?
+            return Ok(place_type(builder.locals, place))
+        Some(RustOperand.Constant(RustConstant.Str(_text))) => return Ok(PlanType.String)
+        Some(value) =>
+            operand = value_operand(builder, value, span)?
+            return operand_type(builder, operand)
+        None => return Err("unsupported Body IR argument type spread")

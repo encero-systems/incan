@@ -1,0 +1,68 @@
+"""Scalar builtin contracts shared with legacy emission."""
+
+from rust::incan_std_core::strings import str_len
+
+
+pub def absolute_int(value: int) -> int:
+    """Preserve checked absolute value and the legacy overflow message."""
+    return abs(value)
+
+
+pub def truth_int(value: int) -> bool:
+    """Integers are false exactly at zero."""
+    return value != 0
+
+
+pub def truth_float(value: float) -> bool:
+    """Floats are false at either signed zero and true for NaN."""
+    return value != 0.0
+
+
+pub def truth_bool(value: bool) -> bool:
+    """Boolean conversion preserves its operand."""
+    return value
+
+
+pub def boolean_and(left: bool, right: bool) -> bool:
+    """Combine already evaluated compiler-owned boolean operands."""
+    return left and right
+
+
+pub def boolean_or(left: bool, right: bool) -> bool:
+    """Combine already evaluated compiler-owned boolean operands."""
+    return left or right
+
+
+pub def sum_int(values: &list[int]) -> int:
+    """Use legacy checked accumulation and its overflow message."""
+    return sum(values)
+
+
+pub def sum_bool(values: &list[bool]) -> int:
+    """Sum booleans as zero or one through the canonical builtin."""
+    return sum(values)
+
+
+pub def truth_text(value: &str) -> bool:
+    """Empty text is false; every nonempty string is true."""
+    return str_len(value) != 0
+
+
+pub def truth_list[T](value: &list[T]) -> bool:
+    """Test list emptiness without consuming its owner."""
+    return len(value) != 0
+
+
+pub def power_i64(left: int, right: int) -> int:
+    """Use legacy integer exponentiation, which legacy emission lowers with its own exponent conversion."""
+    return left ** right
+
+
+pub def power_f64(left: float, right: float) -> float:
+    """Use legacy floating exponentiation without changing NaN or infinity behavior."""
+    return left ** right
+
+
+pub def power_f32(left: f32, right: f32) -> f32:
+    """Retain single-precision exponentiation through legacy exact-width emission."""
+    return left ** right

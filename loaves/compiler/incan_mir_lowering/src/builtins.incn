@@ -1,0 +1,85 @@
+"""Admission of monomorphic scalar builtins by checked identity and representation."""
+
+from rust::incan_semantics_core::body_ir import BuiltinFnId
+from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFunction, CalleeKind
+from frame import Builder, terminate_call, external_call, value_type
+from collections import is_owned_collection
+
+
+pub def scalar_builtin(builtin: &BuiltinFnId, ty: PlanType) -> Option[tuple[str, PlanType]]:
+    """Select runtime entry points only for representations whose legacy contract is retained."""
+    match builtin:
+        BuiltinFnId.Abs =>
+            if ty == PlanType.Int:
+                return Some(("absolute_int", PlanType.Int))
+        BuiltinFnId.Bool =>
+            match ty:
+                PlanType.Int => return Some(("truth_int", PlanType.Bool))
+                PlanType.Float => return Some(("truth_float", PlanType.Bool))
+                PlanType.Bool => return Some(("truth_bool", PlanType.Bool))
+                _ => pass
+        _ => pass
+    return None
+
+
+pub def list_call(
+    mut builder: Builder,
+    name: str,
+    element: PlanType,
+    parameters: list[PlanType],
+    result: PlanType,
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> None:
+    """Retain one generic instantiation and its exact safe runtime signature."""
+    path = f"incan_native_runtime::{name}"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, element), arguments, destination, span)
+    if result == PlanType.String or is_owned_collection(result):
+        builder.owned.append(destination.local)
+
+
+pub def emit_boolean_operator(
+    mut builder: Builder,
+    destination: Place,
+    operands: list[Operand],
+    name: str,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Combine pure Body IR operands; source short-circuiting is retained by frontend branches."""
+    if value_type(builder, operands[0])? != PlanType.Bool or value_type(builder, operands[1])? != PlanType.Bool:
+        return Err("unsupported Body IR non-boolean logical operands")
+    external_call(
+        builder,
+        f"incan_native_runtime::{name}",
+        [PlanType.Bool, PlanType.Bool],
+        PlanType.Bool,
+        operands,
+        destination,
+        span,
+    )
+    return Ok(None)
+
+
+pub def emit_power_operator(
+    mut builder: Builder,
+    destination: Place,
+    operands: list[Operand],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind exponentiation only when both operands retain the legacy scalar carrier."""
+    ty = value_type(builder, operands[0])?
+    if value_type(builder, operands[1])? != ty:
+        return Err("unsupported Body IR mixed Pow operands")
+    mut name = "power_i64"
+    if ty == PlanType.Float or ty == PlanType.F64:
+        name = "power_f64"
+    elif ty == PlanType.F32:
+        name = "power_f32"
+    elif ty != PlanType.Int:
+        return Err("unsupported Body IR Pow carrier")
+    external_call(builder, f"incan_native_runtime::{name}", [ty, ty], ty, operands, destination, span)
+    return Ok(None)
