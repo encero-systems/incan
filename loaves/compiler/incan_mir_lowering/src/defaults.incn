@@ -1,0 +1,112 @@
+"""Evaluate declaration-owned default computations only at omitted call sites."""
+
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding,
+    ArgumentElement,
+    Body,
+    CallableParamDefault,
+    Operand as RustOperand,
+)
+from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
+from models import model_type
+from lowering import BodyIrModule, literal, display_operand, scalar_operand, lower_statement
+from frame import Builder, read_place, temporary, drop_owned
+
+
+pub def default_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    binding: &ArgumentBinding,
+    elements: &list[ArgumentElement],
+    body: &Body,
+    types: list[PlanType],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Fill canonical slots, using a fresh declaration-local frame for each deferred default."""
+    match binding:
+        ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            if len(bindings) != len(elements) or len(bindings) + len(defaults) != len(types):
+                return Err("unsupported Body IR incomplete ArgumentBinding")
+            mut operands: list[Operand] = []
+            for _index in range(len(types)):
+                operands.append(literal(Constant.Unit, span))
+            mut occupied: list[int] = []
+            for index in range(len(elements)):
+                slot = int(bindings[index].slot)
+                if slot < 0 or slot >= len(types) or slot in occupied:
+                    return Err("invalid Body IR argument slot map")
+                occupied.append(slot)
+                match elements[index].as_one():
+                    Some(value) =>
+                        operands[slot] = argument_operand(builder, value, types[slot], span)?
+                    None => return Err("unsupported Body IR spread ArgumentElement")
+            for slot in defaults:
+                index = int(slot.clone())
+                if index < 0 or index >= len(types) or index in occupied:
+                    return Err("invalid Body IR default slot map")
+                occupied.append(index)
+                operands[index] = evaluate_default(module, builder, body, index, types[index], span)?
+            return Ok(operands)
+        _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+
+
+pub def argument_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize an owned string or a checked scalar without changing its ownership fact."""
+    if ty == PlanType.String:
+        return Ok(read_place(display_operand(builder, value, span)?, true, span))
+    return scalar_operand(builder, value, span)
+
+
+pub def evaluate_default(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    body: &Body,
+    index: int,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Isolate default-local identities from caller locals and drop temporary owners after extracting the result."""
+    _ = default_type(ty)?
+    match body.params[index].default:
+        CallableParamDefault.Source(computation) =>
+            incoming = builder.owned
+            saved = builder.local_offset
+            # Body IR owns these local types; reserve a distinct copy of that frame in the caller.
+            offset = len(builder.locals)
+            builder.locals.append(Local(ty=PlanType.Unit, span=span))
+            for local in body.locals:
+                builder.locals.append(Local(ty=model_type(builder.nominals, local.ty)?, span=span))
+            builder.local_offset = offset
+            for statement in computation.stmts:
+                lower_statement(module, builder, statement)?
+            result = argument_operand(builder, computation.result, ty, span)?
+            builder.local_offset = saved
+            mut result_owner = -1
+            match result.kind:
+                OperandKind.Move(place) =>
+                    result_owner = place.local
+                _ => pass
+            retained = builder.owned
+            for owner in retained[::-1]:
+                if owner not in incoming and owner != result_owner:
+                    drop_owned(builder, owner, span)
+            return Ok(result)
+
+        CallableParamDefault.Unsupported(span=_span, description=description) =>
+            return Err(f"unsupported Body IR default: {description}")
+        _ => return Err("unsupported Body IR unavailable defaulted parameter")
+
+
+pub def default_type(ty: PlanType) -> Result[None, str]:
+    """Admit only the scalar and string default representations covered by this lane."""
+    match ty:
+        PlanType.Int => return Ok(None)
+        PlanType.Float => return Ok(None)
+        PlanType.Bool => return Ok(None)
+        PlanType.String => return Ok(None)
+        _ => return Err("unsupported Body IR defaulted parameter type")

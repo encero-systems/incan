@@ -24,6 +24,7 @@ pub from statics import (
     read_static_bool,
     write_static_bool,
 )
+from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (
     concat_text,
     equal_text,
@@ -141,3 +142,13 @@ pub def clone_text(value: &str) -> str:
 pub def validate_range(start: int, end: int, step: int) -> None:
     """Use the existing range constructor's error behavior before a normalized counting loop."""
     _ = runtime_range(start, end, step)
+
+
+pub def assert_failure(message: str) -> None:
+    """Raise the same assertion panic and empty-message fallback as the legacy language primitive."""
+    assert false, message
+
+
+pub def initialize_panic_hook() -> None:
+    """Initialize canonical language panic reporting before executing a direct native main body."""
+    initialize_entrypoint()
