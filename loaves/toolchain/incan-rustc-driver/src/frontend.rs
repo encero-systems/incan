@@ -60,11 +60,6 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     let resolved =
         incan_frontend::executable_resolution::resolve_executable_requirements(&session.provider_plan, &required)
             .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
-    // Published executable fragments lack original source text for the adapter diagnostic source map.
-    // Refuse before planning rather than treating their canonical module identities as filesystem paths.
-    if resolved.modules.iter().any(|module| !module.bodies.is_empty()) {
-        return Err("unsupported Body IR published executable source provenance".to_owned());
-    }
     let mut bodies = resolved.modules;
     // Published fragments retain canonical spans but do not carry source text. Do not attribute those spans to the
     // entry.

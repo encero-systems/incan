@@ -44,6 +44,9 @@ pub(super) fn project_body(
 ) -> Result<PublicBody, CoverageReason> {
     let mut body = source.clone();
     let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
+    audit.trait_self = source.locals.first().is_some_and(|local| {
+        local.ty == IncanType::SelfType && matches!(local.origin, crate::body_ir::LocalOrigin::Receiver { .. })
+    });
     let canonical = body.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
     audit.identity(canonical, false)?;
     body.decl_id = declaration_id(canonical)?;
@@ -93,8 +96,47 @@ pub(super) fn project_nominal(
     Ok((nominal, audit.requirements))
 }
 
+/// Project a public normal enum, retaining canonical variant addresses and auditing every payload type.
+pub(super) fn project_enum(
+    source: &crate::body_ir::EnumDeclaration,
+    module: &BodyIrModule,
+    library: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(crate::body_ir::EnumDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    let mut value = source.clone();
+    let checked_types = BTreeMap::new();
+    let mut audit = PublicationAudit::new(module, library, public, &checked_types);
+    audit.identity(&mut value.canonical, false)?;
+    value.direct_declaration_id = declaration_id(&value.canonical)?;
+    for variant in &mut value.variants {
+        audit.identity(&mut variant.canonical, false)?;
+        variant.direct_declaration_id = declaration_id(&variant.canonical)?;
+        for ty in &variant.fields {
+            audit.ty(ty)?;
+        }
+    }
+    Ok((value, audit.requirements))
+}
+
+/// Audit a checked erased alias and retain only the canonical nominal context its expanded target requires.
+pub(super) fn project_type_alias(
+    source: &crate::body_ir::TypeAliasDeclaration,
+    module: &BodyIrModule,
+    library: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(crate::body_ir::TypeAliasDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    let mut value = source.clone();
+    let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
+    audit.identity(&mut value.canonical, false)?;
+    audit.ty(&value.ty)?;
+    value.named_type_identities = audit.used_nominal_types;
+    Ok((value, audit.requirements))
+}
+
 /// One exhaustive pass owns publication's type/reference checks and artifact-local address projection.
 struct PublicationAudit<'a> {
+    /// Trait-default receiver placeholders remain abstract until concrete checked dispatch specialization.
+    trait_self: bool,
     library: &'a str,
     public: &'a BTreeSet<CanonicalSymbolId>,
     nominal_types: BTreeMap<String, CanonicalSymbolId>,
@@ -121,7 +163,11 @@ impl<'a> PublicationAudit<'a> {
         for declaration in &module.value_enum_declarations {
             nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
         }
+        for declaration in &module.enum_declarations {
+            nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
+        }
         Self {
+            trait_self: false,
             library,
             public,
             nominal_types,
@@ -160,6 +206,7 @@ impl<'a> PublicationAudit<'a> {
     /// Admit concrete semantic types and retain the canonical declaration behind a local nominal type.
     fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
         match ty {
+            IncanType::SelfType if self.trait_self => Ok(()),
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } => Ok(()),
             IncanType::Named(name) => {
                 let local = self.nominal_types.get(name);
@@ -175,7 +222,9 @@ impl<'a> PublicationAudit<'a> {
             IncanType::Generic { base, args } => {
                 // These are the semantic model's compiler-owned generic constructors. User generic declarations
                 // lack canonical type arguments in this version and stay explicitly uncovered.
-                if incan_lang::lang::types::collections::from_str(base).is_none() {
+                if incan_lang::lang::types::collections::from_str(base).is_none()
+                    && base != incan_lang::lang::types::UNION_TYPE_NAME
+                {
                     return Err(CoverageReason::UnresolvedReference);
                 }
                 for arg in args {
@@ -301,7 +350,14 @@ impl<'a> PublicationAudit<'a> {
                 }
             }
             Pattern::FieldlessEnumVariant(target) => self.fieldless_variant(target)?,
-            Pattern::Struct { .. } | Pattern::Enum { .. } => return Err(CoverageReason::UnsupportedConstruct),
+            Pattern::Enum { canonical, fields, .. } => {
+                let identity = canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
+                self.identity(identity, true)?;
+                for field in fields {
+                    self.pattern(field)?;
+                }
+            }
+            Pattern::Struct { .. } => return Err(CoverageReason::UnsupportedConstruct),
         }
         Ok(())
     }
@@ -331,6 +387,14 @@ impl<'a> PublicationAudit<'a> {
                     let identity = target.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
                     self.identity(identity, true)?;
                     target.direct_declaration_id = Some(declaration_id(identity)?);
+                }
+                if let AggregateKind::EnumVariant(target) = kind {
+                    let owner = target
+                        .enum_canonical
+                        .as_mut()
+                        .ok_or(CoverageReason::UnresolvedReference)?;
+                    self.identity(owner, true)?;
+                    self.identity(&mut target.variant_canonical, false)?;
                 }
                 self.arguments(arguments)?;
             }

@@ -981,6 +981,9 @@ fn text_constants_retain_checked_values_without_shadowing_local_places() -> Resu
     )?;
     let constant = body_named(&module, "constant")?.render_snapshot();
     assert!(constant.contains("hello world"), "{constant}");
+    let declaration = module.constant_declarations.first().ok_or("checked constant missing")?;
+    assert_eq!(declaration.canonical.declaration_name, "TEXT");
+    assert_eq!(declaration.value, bir::Constant::Str("hello world".into()));
     let local = body_named(&module, "local")?.render_snapshot();
     assert!(!local.contains("hello world"), "{local}");
     assert!(local.contains("_0"), "{local}");
