@@ -15,6 +15,7 @@ pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
 pub mod native_sdk;
+pub(crate) mod native_sdk_plan;
 pub mod output_materialization;
 pub mod output_paths;
 pub mod output_selection;

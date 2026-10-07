@@ -134,15 +134,25 @@ pub fn collect_native_sdk_vocab_metadata(
             .and_then(|name| name.to_str())
             .and_then(|name| name.strip_prefix("lib"))
             .ok_or_else(|| ProviderError::failure("native vocabulary input has no crate name"))?;
-        if unit.binding().domain == "target" || output.extension().is_some_and(|extension| extension == "dylib") {
-            if externs.insert(crate_name.to_string(), output.to_path_buf()).is_some() {
-                return Err(ProviderError::failure(format!(
-                    "native vocabulary has ambiguous input {crate_name}"
-                )));
-            }
+        // The helper imports only these two crates. Other retained versions stay available as transitive search inputs,
+        // but cannot create unused direct-extern ambiguity.
+        if matches!(crate_name, "incan_vocab" | "serde_json")
+            && unit.binding().domain == "target"
+            && externs.insert(crate_name.to_string(), output.to_path_buf()).is_some()
+        {
+            return Err(ProviderError::failure(format!(
+                "native vocabulary has ambiguous input {crate_name}"
+            )));
         }
         if let Some(parent) = output.parent() {
             dependency_search_paths.push(parent.to_path_buf());
+        }
+    }
+    for required in ["incan_vocab", "serde_json"] {
+        if !externs.contains_key(required) {
+            return Err(ProviderError::failure(format!(
+                "native SDK vocabulary requires retained target input `{required}`"
+            )));
         }
     }
     dependency_search_paths.sort();
@@ -164,7 +174,7 @@ pub fn collect_native_sdk_vocab_metadata(
     ensure_supported_vocab_metadata_version(&metadata, &companion)?;
     if let Some(desugarer) = metadata.desugarer.as_ref() {
         return Err(ProviderError::failure(format!(
-            "native SDK vocabulary {name} requires an admitted {} desugarer closure; the SDK seed supplies host units only",
+            "native SDK vocabulary {name} requires an admitted {} desugarer closure; the SDK seed selects the build-host target and supplies no receipt-bound Wasm inputs",
             desugarer.target
         )));
     }

@@ -123,6 +123,7 @@ fn publish_component(
     else {
         return Err(CliError::failure("native publisher received an ordinary project plan"));
     };
+    let manifest = *manifest;
     let manifest_path = output.join(format!("{}.incnlib", manifest.name));
     let executable_path =
         incan_frontend::library_manifest::published_layout::executable_surface_path(&manifest_path, &manifest)
@@ -284,10 +285,9 @@ fn compile_native_sdk_facade(
             .ok_or_else(|| CliError::failure("native facade input has no crate name"))?;
         if generated_sources.contains(&format!("{name}::"))
             && (unit.binding().domain == "target" || path.extension().is_some_and(|extension| extension == "dylib"))
+            && externs.insert(name.to_string(), path.to_path_buf()).is_some()
         {
-            if externs.insert(name.to_string(), path.to_path_buf()).is_some() {
-                return Err(CliError::failure(format!("native facade has ambiguous input `{name}`")));
-            }
+            return Err(CliError::failure(format!("native facade has ambiguous input `{name}`")));
         }
         if let Some(parent) = path.parent() {
             paths.insert(parent.to_path_buf());

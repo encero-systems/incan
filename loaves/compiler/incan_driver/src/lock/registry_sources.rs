@@ -376,7 +376,18 @@ fn prepare_project_test_dependency_plan(
 }
 
 impl PreparedOvenProjectRegistrySourceAuthorities {
+    /// Return the exact dependency constituent whose native SDK catalog authorizes separately owned SDK inputs.
+    fn native_sdk_dependency_receipt(&self) -> Option<&oven_store::OvenReceipt> {
+        let envelope = self.authority.payload.test_dependency_envelope.as_ref()?;
+        match self.authority.payload.constituents.get(envelope.constituent_index)? {
+            OvenProjectInspectionConstituent::ReleaseLoaf { receipt, .. }
+            | OvenProjectInspectionConstituent::Stored { receipt, .. } => Some(receipt),
+        }
+    }
+
     /// Return the exact role-bearing dependency envelope after validating this generated batch's complete surface.
+    /// SDK registry inputs require the constituent's exact native catalog before their separately owned roots are
+    /// excluded.
     pub fn test_dependency_plan(
         &self,
         dependencies: &[DependencySpec],
@@ -388,6 +399,10 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
             dependencies: dependencies.to_vec(),
             dev_dependencies: Vec::new(),
         })?;
+        let promoted = crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+            &promoted,
+            self.native_sdk_dependency_receipt(),
+        )?;
         if !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted) {
             return Err(project_inspection_selection_mismatch("this test dependency subset"));
         }
@@ -432,6 +447,11 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
         manifest_dir: &Path,
         dependencies: &[DependencySpec],
     ) -> CliResult<bool> {
+        let project_dependencies = crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+            dependencies,
+            self.native_sdk_dependency_receipt(),
+        )?;
+        let dependencies = project_dependencies.as_slice();
         let registry_dependency_count = dependencies
             .iter()
             .filter(|dependency| matches!(dependency.source, oven_model::manifest::DependencySource::Registry))

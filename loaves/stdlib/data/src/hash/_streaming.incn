@@ -7,6 +7,7 @@ matches on that enum so string validation, unsupported-width errors, and streami
 
 from std.fs import File, Path
 from std.io import BinaryReader, IoError
+from std.traits.callable import Callable1
 from std.hash._core import (
     DEFAULT_CHUNK_SIZE,
     HashError,
@@ -39,6 +40,21 @@ from std.hash._core import (
     xxh3_64,
     xxh3_128,
 )
+
+
+@derive(Clone)
+model _HashIoErrorMapper with Callable1[IoError, HashError]:
+    """
+    Carry the selected algorithm when adapting a reader failure to a hash failure.
+    """
+
+    algorithm: str
+
+    def __call__(self, error: IoError) -> HashError:
+        """
+        Preserve the reader failure kind and detail in the hash error.
+        """
+        return _io_error(self.algorithm, error.kind, error.detail)
 
 
 pub def file_digest(
@@ -253,7 +269,7 @@ def _feed_digest_reader[H with ByteDigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a fixed-length digest hasher.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return Ok(hasher.finalize_bytes())
 
@@ -268,7 +284,7 @@ def _feed_shake_reader[H with ShakeDigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a SHAKE hasher and finalize the requested output length.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return hasher.finalize_bytes(length)
 
@@ -282,7 +298,7 @@ def _feed_hash32_reader[H with Hash32DigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a native-`u32` hasher and return little-endian digest bytes.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return Ok(hasher.finalize_bytes())
 
@@ -296,7 +312,7 @@ def _feed_hash64_reader[H with Hash64DigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a native-`u64` hasher and return little-endian digest bytes.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return Ok(hasher.finalize_bytes())
 
@@ -310,7 +326,7 @@ def _feed_hash128_reader[H with Hash128DigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a native-`u128` hasher and return little-endian digest bytes.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return Ok(hasher.finalize_bytes())
 
@@ -324,7 +340,7 @@ def _feed_hash32_reader_value[H with Hash32DigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a native-`u32` hasher and return the integer hash.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return Ok(hasher.finalize_u32())
 
@@ -338,7 +354,7 @@ def _feed_hash64_reader_value[H with Hash64DigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a native-`u64` hasher and return the integer hash.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return Ok(hasher.finalize_u64())
 
@@ -352,7 +368,7 @@ def _feed_hash128_reader_value[H with Hash128DigestHasher, R with BinaryReader](
     """
     Feed a bounded reader into a native-`u128` hasher and return the integer hash.
     """
-    for chunk in input.chunks(chunk_size).map_err((error) => _io_error(algorithm.name(), error.kind, error.detail))?:
+    for chunk in input.chunks(chunk_size).map_err(_HashIoErrorMapper(algorithm=algorithm.name()))?:
         hasher.update(chunk)
     return Ok(hasher.finalize_u128())
 

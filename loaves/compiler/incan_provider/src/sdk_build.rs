@@ -724,7 +724,7 @@ mod tests {
         fs::write(
             stdlib.join(SDK_SOURCE_CATALOG_FILE),
             format!(
-                "[sdk]\nid='incan'\nversion='{}'\ncompiler-requirement='={}'\n[profiles]\ndefault=['fixture']\nfull=['fixture']\n[components.fixture]\nproject='fixture'\nnamespace-roots=['fixture']\n",
+                "[sdk]\nid='incan'\nversion='{}'\ncompiler-requirement='={}'\n[profiles]\ndefault=['fixture']\nfull=['fixture']\n[components.fixture]\nproject='fixture'\nnamespace-roots=['fixture']\nmandatory=true\n",
                 incan_lang::version::INCAN_VERSION,
                 incan_lang::version::INCAN_VERSION,
             ),

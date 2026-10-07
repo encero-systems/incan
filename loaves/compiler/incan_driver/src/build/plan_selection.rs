@@ -63,9 +63,12 @@ fn test_dependency_publisher_dependencies(
         .collect()
 }
 
-/// Preserve normal/dev ownership labels while applying Cargo's canonical feature union to duplicate root aliases.
+/// Preserve project normal/dev labels and canonical feature union while retaining SDK source ownership separately.
+///
+/// Receipt-covered SDK registry inputs use the SDK's frozen graph rather than a project Cargo lock projection.
 pub fn canonical_project_inspection_dependencies(
     resolved: &ResolvedDependencies,
+    native_sdk_receipt: Option<&oven_store::OvenReceipt>,
 ) -> CliResult<(Vec<DependencySpec>, Vec<DependencySpec>)> {
     let promoted = promoted_oven_test_dependencies(resolved)?;
     let select = |dependencies: &[DependencySpec]| {
@@ -85,7 +88,16 @@ pub fn canonical_project_inspection_dependencies(
             })
             .collect::<CliResult<Vec<_>>>()
     };
-    Ok((select(&resolved.dependencies)?, select(&resolved.dev_dependencies)?))
+    Ok((
+        super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+            &select(&resolved.dependencies)?,
+            native_sdk_receipt,
+        )?,
+        super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+            &select(&resolved.dev_dependencies)?,
+            native_sdk_receipt,
+        )?,
+    ))
 }
 
 /// Digest each promoted dependency independently so generated test batches can prove an exact subset later.
@@ -177,6 +189,7 @@ fn bake_generated_project_test_dependency_plan(
 /// the singular authority but are supplied by their separately validated Loafs. A compiler-shipped release Loaf is
 /// returned directly when it covers the remaining selected surface; only a genuine third-party/path delta crosses
 /// the explicit Cargo baker, and it does so with `build --locked --offline` through the executable publisher.
+/// Native SDK capabilities are checked against the receipt catalog before selecting the project-owned roots.
 pub fn prepare_oven_test_dependency_envelope(
     store: &OvenStore,
     project_root: &Path,
@@ -184,13 +197,16 @@ pub fn prepare_oven_test_dependency_envelope(
     debug_target_receipts: &[oven_store::OvenReceipt],
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<PreparedOvenTestDependencyEnvelope> {
-    let dependencies = promoted_oven_test_dependencies(resolved)?;
-    let dependency_surface_digest = digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let dependency_root_digests = oven_test_dependency_root_digests(&dependencies)?;
     let base_receipt = debug_target_receipts.first().ok_or_else(|| {
         CliError::failure("explicit Oven project bake prepared no debug target receipt for its test dependency surface")
     })?;
+    let dependencies = super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+        &promoted_oven_test_dependencies(resolved)?,
+        Some(base_receipt),
+    )?;
+    let dependency_surface_digest = digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let dependency_root_digests = oven_test_dependency_root_digests(&dependencies)?;
     let checked_package_profiles =
         checked_test_dependency_package_profiles(&dependencies, base_receipt, authority_context)?;
     for checked in &checked_package_profiles {
@@ -283,7 +299,11 @@ pub fn prepare_oven_test_dependency_envelope(
         receipt_request.with_build_unit_input("project-owner-identity", baked_project_owner_identity(project_root)?);
     receipt_request = receipt_request.with_build_unit_input("rust-dependencies", publisher_dependency_surface_digest);
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
-    let plan_selection = if publisher_dependencies
+    let plan_selection = if let Some(prepared) =
+        super::native_sdk_plan::select_native_sdk_plan(store, &receipt, &publisher_dependencies)?
+    {
+        prepared.plan_selection
+    } else if publisher_dependencies
         .iter()
         .all(|dependency| matches!(dependency.source, DependencySource::Registry))
         && let Some(loaf) = resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &publisher_dependencies)
@@ -329,6 +349,12 @@ pub fn select_or_bake_generated_project_plan(
     generated_root: &Path,
     rustc: &Path,
 ) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    if !receipt_requires_final_interop_plan(receipt)
+        && let Some(plan) =
+            super::native_sdk_plan::select_native_sdk_plan(store, receipt, dependency_surface.selection)?
+    {
+        return Ok(Some(plan));
+    }
     if receipt_requires_final_interop_plan(receipt) {
         return select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)?.map_or_else(
             || Err(interop_final_plan_required_error()),

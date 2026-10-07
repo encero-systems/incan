@@ -203,7 +203,7 @@ pub(crate) enum LibraryPreparation {
     Project(Box<PreparedLibraryProject>),
     /// Checked native SDK facade and portable executable surfaces.
     Native {
-        manifest: LibraryManifest,
+        manifest: Box<LibraryManifest>,
         executable: Vec<u8>,
     },
 }
@@ -888,6 +888,7 @@ fn prepare_library_project_with_context(
             context.closure,
             &resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?,
         )? {
+            package_desugarer_artifact(&out_dir, vocab.pending_desugarer_artifact.as_ref())?;
             library_manifest.vocab = Some(vocab.payload);
             library_manifest.soft_keywords.activations = vocab.compatibility_activations;
         }
@@ -910,7 +911,7 @@ fn prepare_library_project_with_context(
             inspection,
         )?;
         return Ok(LibraryPreparation::Native {
-            manifest: library_manifest,
+            manifest: Box::new(library_manifest),
             executable: executable_surface,
         });
     }

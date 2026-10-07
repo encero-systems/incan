@@ -1711,22 +1711,42 @@ pub fn bake_oven_project_targets(
             Some(&mut authority_context),
         )?;
         let (registry_dependencies, dev_registry_dependencies) =
-            canonical_project_inspection_dependencies(dependency_surface)?;
+            canonical_project_inspection_dependencies(dependency_surface, debug_target_receipts.first())?;
+        if debug_target_receipts
+            .first()
+            .is_some_and(|receipt| receipt.sources.build_unit_inputs.contains_key("sdk-native-closure"))
+        {
+            let uncovered = registry_dependencies
+                .iter()
+                .chain(&dev_registry_dependencies)
+                .filter(|dependency| matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            if !uncovered.is_empty() {
+                return Err(CliError::failure(format!(
+                    "native SDK inspection has no admitted source authority for registry dependencies: {}",
+                    uncovered.join(", ")
+                )));
+            }
+        }
         let source_authority_digest = authority_context.final_project_source_authority(&project_root)?;
         #[cfg(feature = "rust_inspect")]
-        let project_locked_registry_packages =
-            if registry_dependencies.is_empty() && dev_registry_dependencies.is_empty() {
-                Vec::new()
-            } else {
-                project_locked_registry_packages(
-                    rust_inspect_manifest_dirs
-                        .iter()
-                        .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
-                        .collect::<Vec<_>>()
-                        .iter()
-                        .map(PathBuf::as_path),
-                )?
-            };
+        let project_locked_registry_packages = if registry_dependencies
+            .iter()
+            .chain(&dev_registry_dependencies)
+            .all(|dependency| !matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
+        {
+            Vec::new()
+        } else {
+            project_locked_registry_packages(
+                rust_inspect_manifest_dirs
+                    .iter()
+                    .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(PathBuf::as_path),
+            )?
+        };
         #[cfg(not(feature = "rust_inspect"))]
         let project_locked_registry_packages = Vec::new();
         let inspection_authority = publish_project_inspection_authority(
