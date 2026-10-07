@@ -161,6 +161,16 @@ pub fn rvalue<'tcx>(
             ),
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
         ),
+        RvalueKind::Tuple(elements) => mir::Rvalue::Aggregate(
+            Box::new(mir::AggregateKind::Tuple),
+            IndexVec::from_raw(
+                elements
+                    .iter()
+                    .map(|element| operand(tcx, sources, element))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        ),
+
         RvalueKind::Model(_, elements) | RvalueKind::Enum(_, _, elements) => {
             let ty = native_type(tcx, destination_type)?;
             let rustc_middle::ty::Adt(definition, args) = ty.kind() else {

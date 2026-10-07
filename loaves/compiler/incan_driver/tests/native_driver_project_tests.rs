@@ -167,7 +167,13 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     let frontend = frontend.to_str().ok_or("frontend path is not UTF-8")?;
     let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
         .replace("../incan_mir_plan", "../library")
-        .replace("../../kernel/incan_semantics_core", core);
+        .replace("../../kernel/incan_semantics_core", core)
+        .replace(
+            "../../kernel/incan_lang",
+            oven_model::toolchain_layout::resolve_toolchain_crate_path("incan_lang")
+                .to_str()
+                .ok_or("language registry path is not UTF-8")?,
+        );
     fs::write(lowering.join("loaf.toml"), manifest)?;
     copy_tree(
         &repo.join("loaves/compiler/incan_mir_lowering/src"),
@@ -1010,5 +1016,106 @@ fn direct_route_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>>
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stderr, expected.stderr);
     assert_eq!(actual.status.code(), expected.status.code());
+    Ok(())
+}
+
+/// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
+#[test]
+fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("tuples")?;
+    let source = root.join("tuples.incn");
+    fs::write(
+        &source,
+        r#"model Boxed:
+    value: int
+
+def swap(value: tuple[int, int]) -> tuple[int, int]:
+    return (value[1], value[0])
+
+def identity(value: tuple[int, str]) -> tuple[int, str]:
+    return value
+
+def main() -> None:
+    mut a = 3
+    mut b = 7
+    a, b = b, a
+    pair: tuple[int, int] = swap((a, b))
+    x, y = pair
+    println(x)
+    println(y)
+    println(pair)
+    text_pair = identity((9, "hello\n\"tuple\""))
+    number, text = text_pair
+    println(text_pair)
+    println(number)
+    println(text)
+    println(text_pair[-1])
+    println((true, 1.5))
+    mut boxed = Boxed(value=0)
+    boxed.value, a = pair
+    println(boxed.value)
+    println(a)
+"#,
+    )?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native tuple compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy tuple compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/tuples")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy tuple execution");
+    success(&actual, "native tuple execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert!(actual.stdout.starts_with(b"3\n7\n(3, 7)\n"));
+    for (name, source_text, kind) in [
+        (
+            "function_value",
+            "def apply(value: (int) -> int) -> int:\n    return value(1)\n\ndef main() -> None:\n    println(1)\n",
+            "Function",
+        ),
+        (
+            "singleton",
+            "def main() -> None:\n    println((42,))\n",
+            "singleton Tuple",
+        ),
+    ] {
+        let refused_source = root.join(format!("{name}.incn"));
+        fs::write(&refused_source, source_text)?;
+        let refused_output = root.join(format!("{name}-native"));
+        let refused = corpus::source_command(
+            &fixture.driver_binary("release"),
+            &refused_source,
+            &refused_output,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(kind),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert!(!refused_output.exists());
+    }
     Ok(())
 }

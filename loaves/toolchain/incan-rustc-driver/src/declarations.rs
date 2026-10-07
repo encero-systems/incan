@@ -1,6 +1,6 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
-use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric};
+use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, tuple_element_type};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -13,6 +13,12 @@ fn ident(name: &str, span: Span) -> Ident {
 /// Construct an admitted scalar, model, or list AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
+        PlanType::Tuple(elements) => ast::TyKind::Tup(
+            elements
+                .iter()
+                .map(|element| ty(&tuple_element_type(element.clone()), span))
+                .collect(),
+        ),
         PlanType::List(leaf, depth) => {
             let mut element = ty(
                 &match leaf {
@@ -240,10 +246,14 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
         ast::ItemKind::Struct(
             ident(&model.name, span),
             ast::Generics::default(),
-            if tuple { ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID) } else { ast::VariantData::Struct {
-                fields,
-                recovered: ast::Recovered::No,
-            } },
+            if tuple {
+                ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
+            } else {
+                ast::VariantData::Struct {
+                    fields,
+                    recovered: ast::Recovered::No,
+                }
+            },
         ),
         span,
     );
@@ -265,8 +275,8 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
         if !tuple {
             fields.push(name_token(&field.name, span));
             fields.push(AttrTokenTree::Token(
-            ast::token::Token::new(TokenKind::Colon, span),
-            Spacing::Alone,
+                ast::token::Token::new(TokenKind::Colon, span),
+                Spacing::Alone,
             ));
         }
         fields.extend(type_tokens(&ty(&field.ty, span)));
@@ -284,11 +294,18 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
     tokens.push(AttrTokenTree::Delimited(
         DelimSpan::from_single(span),
         DelimSpacing::new(Spacing::Alone, Spacing::Alone),
-        if tuple { Delimiter::Parenthesis } else { Delimiter::Brace },
+        if tuple {
+            Delimiter::Parenthesis
+        } else {
+            Delimiter::Brace
+        },
         AttrTokenStream::new(fields),
     ));
     if tuple {
-        tokens.push(AttrTokenTree::Token(ast::token::Token::new(TokenKind::Semi, span), Spacing::Alone));
+        tokens.push(AttrTokenTree::Token(
+            ast::token::Token::new(TokenKind::Semi, span),
+            Spacing::Alone,
+        ));
     }
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
 }

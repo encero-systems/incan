@@ -8,6 +8,17 @@ location, including operands and places, so native diagnostics retain provenance
 
 
 @derive(Clone, PartialEq)
+pub enum TupleElement:
+    """The flat scalar and owned-text tuple layout, without recursive caller ABI types."""
+
+    Int
+    Float
+    Bool
+    Unit
+    String
+
+
+@derive(Clone, PartialEq)
 pub model SourceSpan:
     """One-based line and column in an Incan source file."""
 
@@ -52,8 +63,7 @@ pub enum PlanType:
 
     EnumTag is rustc's native discriminant type and stays body-internal; TagToInt explicitly converts it to source int.
 
-    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Array lengths are exact nonnegative counts. CheckedInt and arrays are body
-    temporaries; shared slice variants already include their reference. StringRef
+    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference. StringRef
     borrows an owned String, while StrRef is a string literal's shared str view.
     List stores its primitive leaf element and a positive nesting
     depth; ListRef and ListMutRef borrow that same Vec representation.
@@ -82,6 +92,7 @@ pub enum PlanType:
     CheckedNumeric(SizedNumeric)
     EnumTag
     CheckedInt
+    Tuple(list[TupleElement])
     String
     StringRef
     StrRef
@@ -106,6 +117,16 @@ pub enum PlanType:
     Dict(ListLeaf, ListLeaf)
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
+
+
+pub def tuple_element_type(element: TupleElement) -> PlanType:
+    """Recover a tuple field's exact local type from the admitted flat layout."""
+    match element:
+        TupleElement.Int => return PlanType.Int
+        TupleElement.Float => return PlanType.Float
+        TupleElement.Bool => return PlanType.Bool
+        TupleElement.Unit => return PlanType.Unit
+        TupleElement.String => return PlanType.String
 
 
 @derive(Clone, PartialEq)
@@ -215,6 +236,8 @@ pub enum RvalueKind:
     projections are valid only on the selected variant branch.
 
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
+
+    Tuple preserves the ordered operand layout of its destination type.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
@@ -232,6 +255,7 @@ pub enum RvalueKind:
     Discriminant(Place)
     TagToInt(Operand)
     Model(int, list[Operand])
+    Tuple(list[Operand])
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)

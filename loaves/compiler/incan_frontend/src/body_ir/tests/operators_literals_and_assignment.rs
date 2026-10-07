@@ -5,6 +5,35 @@
 
 use super::*;
 
+/// Operand and recursive place lowering retain checked tuple indices rather than temporary unary results.
+#[test]
+fn checked_negative_tuple_indices_remain_constant_projections() -> Result<(), Box<dyn std::error::Error>> {
+    for index in ["-1", "(-1)"] {
+        let source = format!("def answer() -> int:\n    pair = ((1, 2), (3, 4))\n    return pair[{index}][-2]\n");
+        let module = build(&source, &["tuple_indices"])?;
+        let body = body_named(&module, "answer")?;
+        let projection = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Return {
+                    value: Some(bir::Operand::Place(value)),
+                } => Some(&value.place.projection),
+                _ => None,
+            })
+            .ok_or("tuple return projection missing")?;
+        assert_eq!(
+            projection,
+            &[
+                bir::PlaceElem::Index(Box::new(bir::Operand::Constant(bir::Constant::Int(-1)))),
+                bir::PlaceElem::Index(Box::new(bir::Operand::Constant(bir::Constant::Int(-2)))),
+            ]
+        );
+    }
+    Ok(())
+}
+
 /// Both operand and recursively lowered place fields retain checked tuple structure without nominal identities.
 #[test]
 fn nested_source_tuple_fields_retain_checked_structural_projection() -> Result<(), Box<dyn std::error::Error>> {

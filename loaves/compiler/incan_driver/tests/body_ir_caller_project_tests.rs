@@ -89,6 +89,12 @@ fn oven_caller_borrows_real_body_ir() -> Result<(), Box<dyn std::error::Error>> 
         .replace(
             "../../kernel/incan_semantics_core",
             semantics.to_str().ok_or("semantics path is not UTF-8")?,
+        )
+        .replace(
+            "../../kernel/incan_lang",
+            oven_model::toolchain_layout::resolve_toolchain_crate_path("incan_lang")
+                .to_str()
+                .ok_or("language registry path is not UTF-8")?,
         );
     fs::write(lowering.join("loaf.toml"), manifest)?;
     copy_sources(
