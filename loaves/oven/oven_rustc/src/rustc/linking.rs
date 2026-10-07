@@ -17,6 +17,20 @@ pub(crate) struct PinnedLink {
     pub identity: String,
 }
 
+/// File name rustc gives a proc-macro library for `host`, from the crate stem (crate name plus any extra filename).
+///
+/// A proc macro is a host dynamic library, so its suffix follows the host, never the build target: `.dll` without a
+/// `lib` prefix on Windows, `.dylib` on Apple, `.so` everywhere else. Every Oven path that names one uses this.
+pub(crate) fn proc_macro_file_name(stem: &str, host: &str) -> String {
+    if host.contains("windows") {
+        format!("{stem}.dll")
+    } else if host.contains("apple") {
+        format!("lib{stem}.dylib")
+    } else {
+        format!("lib{stem}.so")
+    }
+}
+
 /// Resolve the selected compiler's LLD and materialize the admitted native link closure.
 ///
 /// GNU Linux admits the Ubuntu/Debian multiarch runtime under `INCAN_OVEN_LINK_SYSROOT` (default `/`).

@@ -564,7 +564,7 @@ fn compile_unit(
     std::fs::create_dir_all(&directory)?;
     let proc_macro = facet.get("type").and_then(toml::Value::as_str) == Some("proc-macro");
     let path = directory.join(if proc_macro {
-        format!("lib{name}.dylib")
+        crate::rustc::linking::proc_macro_file_name(name, &rustc_host_target(context.rustc)?)
     } else {
         format!("lib{name}.rlib")
     });

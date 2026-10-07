@@ -417,13 +417,9 @@ fn runtime_rebuild_artifact_name(unit: &OvenSelectedRustFacetUnit, host: &str) -
         .ok_or_else(|| runtime_executor_invalid("runtime executor output", "unit has no captured extra filename"))?;
     let name = match unit.crate_kind {
         OvenSelectedRustFacetCrateKind::Rlib => format!("lib{}{extra_filename}.rlib", unit.crate_name),
-        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("windows") => {
-            format!("{}{extra_filename}.dll", unit.crate_name)
+        OvenSelectedRustFacetCrateKind::ProcMacro => {
+            super::linking::proc_macro_file_name(&format!("{}{extra_filename}", unit.crate_name), host)
         }
-        OvenSelectedRustFacetCrateKind::ProcMacro if host.contains("apple") => {
-            format!("lib{}{extra_filename}.dylib", unit.crate_name)
-        }
-        OvenSelectedRustFacetCrateKind::ProcMacro => format!("lib{}{extra_filename}.so", unit.crate_name),
         _ => {
             return Err(runtime_executor_invalid(
                 "runtime executor output",
