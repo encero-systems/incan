@@ -49,8 +49,6 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
-    /// Decimal carrier retained by the plan; native materialization remains refused.
-    Decimal,
     UnitFunction,
     Int,
     Float,
@@ -109,8 +107,6 @@ enum Scalar {
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
-    /// Decimal collection element retained without substituting a primitive carrier.
-    Decimal,
     Int,
     Float,
     Bool,
@@ -126,7 +122,6 @@ impl Leaf {
     /// Mirror one plan leaf.
     fn of(leaf: &ListLeaf) -> Self {
         match leaf {
-            ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::Int => Leaf::Int,
             ListLeaf::Float => Leaf::Float,
             ListLeaf::Bool => Leaf::Bool,
@@ -148,7 +143,6 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
-        PlanType::Decimal => Scalar::Decimal,
         PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorRef(left, right) => Scalar::ZipIteratorRef(tuple_leaf(left), tuple_leaf(right)),
