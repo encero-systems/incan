@@ -2,7 +2,7 @@
 
 from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, GlobalPlace
 from pub::incan_mir_plan import ModelDeclaration, Parameter, SourceSpan, PlanType
-from enums import native_source_type
+from unions import native_source_type, collect_unions
 
 
 pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
@@ -27,6 +27,7 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
 
 pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
     """Retain checked field layout and derives for admitted plain model, class, and newtype declarations."""
+    unions = collect_unions(module)
     mut models: list[ModelDeclaration] = []
     for declaration in module.nominal_declarations:
         if declaration.has_field_defaults:
@@ -39,6 +40,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
                     ty=native_source_type(
                         module.nominal_declarations,
                         module.enum_declarations,
+                        unions,
                         declaration.field_types[slot],
                     )?,
                     span=SourceSpan(file=file, line=1, column=1),
