@@ -912,6 +912,9 @@ impl Place {
                 PlaceElem::Field { name, .. } => {
                     let _ = write!(&mut out, ".{name}");
                 }
+                PlaceElem::UnionMember { ty } => {
+                    let _ = write!(&mut out, ".union[{ty}]");
+                }
                 PlaceElem::Index(operand) => {
                     let _ = write!(&mut out, "[{}]", operand.render_snapshot());
                 }
@@ -958,6 +961,12 @@ pub enum PlaceElem {
         start: Option<Box<Operand>>,
         end: Option<Box<Operand>>,
         step: Option<Box<Operand>>,
+    },
+    /// A union payload selected by the checker's flow-narrowed expression type. The backend resolves its normalized
+    /// variant slot; it must not infer narrowing from enclosing control flow.
+    UnionMember {
+        /// Exact alias-expanded member type proved at this source read.
+        ty: IncanType,
     },
 }
 
@@ -1862,16 +1871,11 @@ impl MatchArm {
 /// reading that part of the scrutinee -- consistent with #653's requirement that ownership decisions be
 /// represented as explicit facts on the model itself, not deferred to a target backend's own name resolution.
 ///
-/// v0 does not model the existing backend's union-type pattern narrowing (matching one member of a source `Union`
-/// type against a target's own narrower union subset, rewriting the pattern and synthesizing extra arms --
-/// `lower_narrowed_union_capture_arms`/`union_pattern_target` in `loaves/compiler/incan_ir/src/lower/expr/patterns.rs`)
-/// or RFC 021 field-alias resolution for named struct-pattern fields (`resolve_field_alias`, private to that backend's
-/// own lowering pass, with no Body IR v0 equivalent). Both are backend-owned refinements layered on top of the same
-/// closed vocabulary below, not part of the vocabulary itself, and out of scope for this bucket; a pattern that
-/// would need either still lowers structurally through the plain (non-narrowed) mapping. The *types* its bindings
-/// carry are not part of that gap: every [`PatternBinding`]'s local is typed from the typechecker's recorded
-/// per-pattern-node type (#1245), so a destructured payload's local carries its declared type and an ownership fact
-/// that follows from it, whichever pattern shape delivered it.
+/// [`Self::UnionMember`] retains the checker-selected target of an ordinary union constructor pattern. Native backends
+/// can select its payload variant without resolving the written constructor name. Subset targets remain explicit types;
+/// each backend must admit or refuse their reconstruction rather than silently treating them as concrete payloads. RFC
+/// 021 field-alias refinement is still separate from this vocabulary. Every [`PatternBinding`]'s local carries the
+/// checker's per-pattern-node type and its corresponding ownership fact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Pattern {
     /// `_`: matches anything, binds nothing.
@@ -1924,6 +1928,14 @@ pub enum Pattern {
     /// local per bound name across all alternatives rather than one per alternative -- see
     /// `BodyBuilder::lower_match_pattern` in `loaves/compiler/incan_frontend/src/body_ir.rs`.
     Or(Vec<Pattern>),
+    /// A checker-selected ordinary union member constructor pattern. The retained target type, rather than the written
+    /// constructor spelling, selects the native payload variant.
+    UnionMember {
+        /// Alias-expanded member or subset type selected by pattern checking.
+        ty: IncanType,
+        /// Positional payload patterns; the native scalar-member profile admits zero or one.
+        fields: Vec<Pattern>,
+    },
 }
 
 impl Pattern {
@@ -1950,6 +1962,10 @@ impl Pattern {
                     .as_ref()
                     .map_or_else(|| "<unresolved>".to_string(), CanonicalSymbolId::render_compact);
                 format!("{name} {{ {} }} canonical={canonical}", fields.join(", "))
+            }
+            Self::UnionMember { ty, fields } => {
+                let fields: Vec<String> = fields.iter().map(Pattern::render_snapshot).collect();
+                format!("union {ty}({})", fields.join(", "))
             }
             Self::Nominal { target, fields } => {
                 let fields: Vec<String> = fields

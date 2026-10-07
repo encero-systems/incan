@@ -154,7 +154,7 @@ pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[
 
 
 pub def enum_owner(ty: PlanType) -> Result[int, str]:
-    """Require a normal enum scrutinee; scalar, Option and Result matches stay named refusals."""
+    """Require an enum-plan scrutinee; scalar, Option and Result matches stay named refusals."""
     match ty:
         PlanType.Enum(index, _name) => return Ok(index)
         _ => return Err("unsupported Body IR Match outside source enums")
