@@ -1217,7 +1217,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
-                canonical: self.type_info.resolved_identity(span).cloned(),
+                canonical: self
+                    .type_info
+                    .resolved_identity(span)
+                    .or_else(|| {
+                        self.type_info
+                            .traits
+                            .self_method_identities
+                            .get(&(span.start, span.end))
+                    })
+                    .cloned(),
                 type_args: resolved_type_args,
                 binding,
             }),

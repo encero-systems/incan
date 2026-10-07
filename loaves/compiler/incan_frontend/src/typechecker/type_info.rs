@@ -666,6 +666,11 @@ pub struct TraitArtifacts {
     /// so lowering cannot look them up in the current module's span-keyed declaration table. This checked map carries
     /// the already-resolved identity across that boundary without reconstructing it from either spelling.
     pub method_identities: HashMap<(String, String), CanonicalSymbolId>,
+    /// Checked trait slots selected by calls on an open `Self` receiver, keyed by the whole call span.
+    ///
+    /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
+    /// resolved call identities because legacy default expansion selects each adopter's implementation later.
+    pub self_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
 }
 
 /// Derive expansion metadata imported from dependency modules and manifests.
