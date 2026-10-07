@@ -1,0 +1,12 @@
+"""Expose the language entrypoint's canonical panic reporting to the direct native entrypoint."""
+
+
+def main() -> None:
+    """Run the language's generated entrypoint initialization without program output."""
+    # Legacy emission installs the canonical payload-only panic hook before every Incan main body.
+    pass
+
+
+pub def initialize_panic_hook() -> None:
+    """Install the same panic hook as an ordinary Incan executable, preserving unwinding and exit status."""
+    main()

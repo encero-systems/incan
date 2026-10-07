@@ -687,3 +687,99 @@ fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
         &fixture.formatting,
     )
 }
+/// Scalar and string defaults execute at omitted calls, while supplied arguments bypass them.
+#[test]
+fn direct_route_defaults_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "defaults",
+        "def compute() -> int:\n    println(100)\n    return 7\n\ndef choose(value: int = compute()) -> int:\n    return value\n\ndef flag(value: bool = true) -> bool:\n    return value\n\ndef fraction(value: float = 2.5) -> float:\n    return value\n\ndef number(value: int = 2 + 3) -> int:\n    return value\n\ndef greeting() -> str:\n    prefix = \"hello\"\n    return prefix + \"!\"\n\ndef text(value: str = greeting()) -> str:\n    return value\n\ndef literal_text(value: str = \"literal\") -> str:\n    return value\n\ndef main() -> None:\n    println(choose(9))\n    println(choose())\n    println(flag())\n    println(fraction())\n    println(number())\n    println(number(9))\n    println(text())\n    println(text(\"supplied\"))\n    println(literal_text())\n",
+        None,
+    )
+}
+
+/// Condition assertions preserve successful output, failure payloads, and exit codes.
+#[test]
+fn direct_route_assertions_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, source, message) in [
+        (
+            "assert_pass",
+            "def message() -> str:\n    println(99)\n    return \"message\"\n\ndef main() -> None:\n    assert true, message()\n    assert 3 > 2, \"unused\"\n    println(42)\n",
+            None,
+        ),
+        (
+            "assert_fail",
+            "def main() -> None:\n    assert false\n",
+            Some("AssertionError"),
+        ),
+        (
+            "assert_message",
+            "def main() -> None:\n    assert false, \"failed check\"\n",
+            Some("AssertionError: failed check"),
+        ),
+        (
+            "assert_empty",
+            "def main() -> None:\n    assert false, \"\"\n",
+            Some("AssertionError"),
+        ),
+    ] {
+        check_declaration_case(name, source, message)?;
+    }
+    Ok(())
+}
+
+/// Compare complete output streams and exit codes, including the canonical panic payload without Rust's wrapper.
+fn check_declaration_case(
+    name: &str,
+    text: &str,
+    panic_message: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let source = root.join(format!("{name}.incn"));
+    fs::write(&source, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native declaration compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy declaration compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release").join(name)).output()?;
+    let actual = Command::new(native).output()?;
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), expected.status.code());
+    if let Some(message) = panic_message {
+        let expected_error = String::from_utf8_lossy(&expected.stderr);
+        let actual_error = String::from_utf8_lossy(&actual.stderr);
+        assert_eq!(
+            expected_error.lines().find(|line| line.starts_with("AssertionError")),
+            Some(message),
+            "{expected_error}"
+        );
+        assert_eq!(
+            actual_error.lines().find(|line| line.starts_with("AssertionError")),
+            Some(message),
+            "{actual_error}"
+        );
+    } else {
+        success(&actual, "declaration execution");
+    }
+    Ok(())
+}

@@ -51,6 +51,8 @@ pub model Builder:
     pub borrowed_items: list[int]
     pub nominals: list[RustNominalDeclaration]
     pub enums: list[RustEnumDeclaration]
+    # Deferred defaults reserve a declaration-local frame within the caller.
+    pub local_offset: int
     pub statics: list[RustStaticDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:
