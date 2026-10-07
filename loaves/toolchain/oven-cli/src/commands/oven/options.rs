@@ -321,8 +321,7 @@ pub struct OvenCompilerLibtestsRunCommandOptions {
     pub fixture_cargo: Option<PathBuf>,
     /// Checkout-owned directory, kept across suite runs, for roots that bake Loaf fixtures explicitly.
     ///
-    /// Each explicit-bake root receives its own subdirectory below one per stored SDK inventory (a receipt does not
-    /// name the standard-library family it was baked against), so a root that bakes the same fixture graph on every
+    /// Each explicit-bake root receives its own subdirectory, so a root that bakes the same fixture graph on every
     /// run (the native driver root bakes the whole compiler in release) reuses the previous run's Oven state the way
     /// Cargo reuses a target directory. Without it those roots bake into fresh temporary directories.
     pub explicit_bake_workspace: Option<PathBuf>,

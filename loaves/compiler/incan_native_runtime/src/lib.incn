@@ -1,4 +1,4 @@
-"""Monomorphic language runtime calls used by the direct scalar native route."""
+"""Language formatting and collection helpers used by the direct native route."""
 
 from rust::incan_std_core::iter import range as runtime_range
 pub from strings import (
@@ -10,6 +10,10 @@ pub from strings import (
     greater_text,
     greater_equal_text,
 )
+pub from lists import empty_list, append_list, length_list, get_list, set_list, clone_list
+pub from lists import contains_list
+pub from lists import borrow_list_mut
+pub from lists import count_list, index_list, extend_list, pop_list, remove_list, swap_list
 
 
 pub def format_int(value: int) -> str:

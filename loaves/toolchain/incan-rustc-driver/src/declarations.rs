@@ -1,6 +1,6 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
-use crate::plan::{Function, PlanType};
+use crate::plan::{Function, ListLeaf, PlanType};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -10,9 +10,45 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct an admitted scalar or model AST type without generating or parsing Rust source.
+/// Construct an admitted scalar, model, or list AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
+        PlanType::List(leaf, depth) => {
+            let mut element = ty(
+                &match leaf {
+                    ListLeaf::Int => PlanType::Int,
+                    ListLeaf::Float => PlanType::Float,
+                    ListLeaf::Bool => PlanType::Bool,
+                    ListLeaf::Str => PlanType::String,
+                },
+                span,
+            );
+            for _ in 0..*depth {
+                let mut path = ast::Path::from_ident(ident("Vec", span));
+                path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+                    span,
+                    args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(element))],
+                })));
+                element = Box::new(ast::Ty {
+                    id: ast::DUMMY_NODE_ID,
+                    kind: ast::TyKind::Path(None, path),
+                    span,
+                    tokens: None,
+                });
+            }
+            return element;
+        }
+        PlanType::ListRef(leaf, depth) | PlanType::ListMutRef(leaf, depth) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::List(leaf.clone(), *depth), span),
+                mutbl: if matches!(kind, PlanType::ListMutRef(_, _)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => {
