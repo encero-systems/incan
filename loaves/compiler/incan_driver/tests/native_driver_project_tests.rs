@@ -507,6 +507,11 @@ def optional_text() -> Option[str]:
 def optional_list() -> Option[List[int]]:
     return Some([2, 3])
 
+def show_result(value: Result[str, str]) -> None:
+    match value:
+        Ok(text) => println(text)
+        Err(error) => println(error)
+
 def unit_result() -> Result[None, str]:
     return Ok(None)
 
@@ -528,6 +533,7 @@ def selected(option: Option[int]) -> int:
         None => return -1
 
 def main() -> None:
+    show_result(Ok("parameter"))
     println(selected(Some(5)))
     println(selected(None))
     match optional_text():
@@ -586,7 +592,7 @@ def main() -> None:
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(
         actual.stdout,
-        b"5\n-1\ntext\n3\nunit\nbad\n9\n4\nSome(9)\n14\n3\nfailure\n"
+        b"parameter\n5\n-1\ntext\n3\nunit\nbad\n9\n4\nSome(9)\n14\n3\nfailure\n"
     );
     Ok(())
 }

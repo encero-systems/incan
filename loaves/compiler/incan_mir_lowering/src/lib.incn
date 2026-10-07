@@ -483,7 +483,9 @@ def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &Rus
         RustStatementKind.Drop(local=local) =>
             index = int(local.index()) + 1
             drop_owned(builder, index, span)
-            builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
+            # Parameters stay in caller-provided storage for the whole invocation, even after their value drops.
+            if index > builder.parameter_count:
+                builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
         RustStatementKind.Expr(value=value) =>
             # An expression statement only needs its operand to be valid; its value is discarded.
             return lower_discarded_operand(builder, value, span)
@@ -1109,7 +1111,7 @@ def lower_builtin(
 ) -> Result[None, str]:
     """Dispatch checked builtin identities rather than matching source spellings."""
     match builtin:
-        RustBuiltin.Print => return lower_print(builder, arguments, span)
+        RustBuiltin.Print => return lower_print(builder, arguments, destination, span)
         RustBuiltin.Len => return lower_list_builtin(builder, arguments, destination, span)
         RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
@@ -1117,8 +1119,13 @@ def lower_builtin(
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
 
 
-def lower_print(mut builder: Builder, arguments: &list[RustArgumentElement], span: SourceSpan) -> Result[None, str]:
-    """Format the arguments separated by single spaces, as `println` does, and print the line."""
+def lower_print(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Print space-separated arguments and initialize the checked Unit result when the call is an expression."""
     # `parts` holds the literal text around each value: "" before the first, " " between values, "" after the last.
     mut parts = [""]
     mut values: list[Place] = []
@@ -1130,7 +1137,12 @@ def lower_print(mut builder: Builder, arguments: &list[RustArgumentElement], spa
     parts[-1] = ""
     text = temporary(builder, PlanType.String, span)
     format_parts(builder, text, parts, values, span)
-    output = temporary(builder, PlanType.Unit, span)
+    mut output = temporary(builder, PlanType.Unit, span)
+    # Expression arms read this call's retained result; an unrelated Unit temporary leaves that read uninitialized.
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None => pass
     path = "incan_native_runtime::println_text"
     external_call(builder, path, [PlanType.String], PlanType.Unit, [read_place(text, true, span)], output, span)
     return Ok(None)
@@ -1470,6 +1482,12 @@ def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan)
     # Indexed collection reads come first: their places are not model places, so the carrier check below cannot map them.
     match value:
         RustOperand.Place(read) =>
+            # Retained globals are scalar-only and have no frame-local slot for carrier inspection.
+            match read.place.global():
+                Some(_global) =>
+                    operand = value_operand(builder, value, span)?
+                    return display_plan_operand(builder, operand, span)
+                None => pass
             if len(read.place.projection) != 0 and is_collection(
                 builder.locals[list_base_place(read.place, span)?.local].ty,
             ):
@@ -1784,8 +1802,12 @@ def lower_function(
         None => pass
     span = location(body.span, source, file)
     return_type = native_source_type(module.nominal_declarations, module.enum_declarations, body.return_type, intrinsics)?
+    if function_name(body) == "main" and return_type != PlanType.Unit:
+        return Err("unsupported Body IR non-unit native main")
+    parameters = frame_parameters(module, body, source, file, intrinsics)?
     mut builder = Builder(
         locals=frame_locals(module, body, return_type, span, source, file, intrinsics)?,
+        parameter_count=len(parameters),
         blocks=[],
         current=0,
         source=source,
@@ -1802,7 +1824,6 @@ def lower_function(
         intrinsics=intrinsics,
         statics=module.static_declarations,
     )
-    parameters = frame_parameters(module, body, source, file, intrinsics)?
     _ = builder.new_block(span)
     for index in range(len(parameters)):
         if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty):
