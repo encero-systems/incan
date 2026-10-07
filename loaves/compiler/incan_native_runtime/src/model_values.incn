@@ -12,6 +12,11 @@ pub def debug_model[T with Debug](value: &T) -> str:
     return f"{value:?}"
 
 
+pub def debug_value[T with Debug](value: T) -> str:
+    """Format an admitted owned carrier with legacy Debug spelling and escaping."""
+    return f"{value:?}"
+
+
 pub def equal_model[T with PartialEq](left: &T, right: &T) -> bool:
     """Compare through the derived PartialEq implementation without consuming either model."""
     return PartialEq.eq(left, right)
