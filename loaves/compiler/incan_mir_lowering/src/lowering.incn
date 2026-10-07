@@ -163,6 +163,7 @@ from numerics import (
     numeric_name,
     sized_signed_integer,
     numeric_carrier,
+    integer_carrier,
 )
 from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
 from strings import text_helper, emit_text_helper, text_helper_arity
@@ -400,15 +401,42 @@ def binary_operator(operator: &BinOp) -> Result[BinaryOp, str]:
         BinOp.FloorDiv => return Err("Body IR FloorDiv requires its runtime helper")
         BinOp.Mod => return Err("Body IR Mod requires its runtime helper")
         BinOp.Pow => return Err("unsupported Body IR Pow")
-        BinOp.BitAnd => return Err("unsupported Body IR BitAnd")
-        BinOp.BitOr => return Err("unsupported Body IR BitOr")
-        BinOp.BitXor => return Err("unsupported Body IR BitXor")
-        BinOp.Shl => return Err("unsupported Body IR Shl")
-        BinOp.Shr => return Err("unsupported Body IR Shr")
+        BinOp.BitAnd => return Ok(BinaryOp.BitAnd)
+        BinOp.BitOr => return Ok(BinaryOp.BitOr)
+        BinOp.BitXor => return Ok(BinaryOp.BitXor)
+        BinOp.Shl => return Ok(BinaryOp.ShiftLeft)
+        BinOp.Shr => return Ok(BinaryOp.ShiftRight)
         BinOp.Is => return Err("unsupported Body IR Is")
         BinOp.IsNot => return Err("unsupported Body IR IsNot")
         BinOp.And => return Err("unsupported Body IR And")
         BinOp.Or => return Err("unsupported Body IR Or")
+
+
+def is_bit_operator(operator: &BinOp) -> bool:
+    """Select the integer bit operations legacy emits as Rust infix operators."""
+    match operator:
+        BinOp.BitAnd => return true
+        BinOp.BitOr => return true
+        BinOp.BitXor => return true
+        BinOp.Shl => return true
+        BinOp.Shr => return true
+        _ => return false
+
+
+def bit_operation(
+    operator: &BinOp,
+    left: Operand,
+    left_type: PlanType,
+    right: Operand,
+    right_type: PlanType,
+) -> Result[RvalueKind, str]:
+    """Admit integer bit operations over one integer type; a shift keeps its left type and counts with any integer."""
+    if not integer_carrier(left_type) or not integer_carrier(right_type):
+        return Err("unsupported Body IR non-integer bit operands")
+    shift = operator == BinOp.Shl or operator == BinOp.Shr
+    if not shift and left_type != right_type:
+        return Err("unsupported Body IR mixed integer bit operands")
+    return Ok(RvalueKind.Binary(binary_operator(operator)?, left, right))
 
 
 def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -478,7 +506,11 @@ def scalar_rvalue(
                 UnOp.Not => return Ok(RvalueKind.Unary(UnaryOp.Not, scalar_operator_operand(builder, operand, span)?))
                 UnOp.Neg =>
                     return Ok(RvalueKind.Unary(UnaryOp.Negate, scalar_operator_operand(builder, operand, span)?))
-                _ => return Err("unsupported Body IR unary operator Invert")
+                UnOp.Invert =>
+                    inverted = scalar_operator_operand(builder, operand, span)?
+                    if not integer_carrier(operand_type(builder, inverted)?):
+                        return Err("unsupported Body IR non-integer unary operator Invert")
+                    return Ok(RvalueKind.Unary(UnaryOp.Invert, inverted))
         RustRvalue.BinaryOp(operator, left, right) =>
             if enum_operand(builder, left, span)? or enum_operand(builder, right, span)?:
                 return unit_enum_comparison(builder, operator, left, right, span)
@@ -494,6 +526,8 @@ def scalar_rvalue(
             right_operand = scalar_operator_operand(builder, right, span)?
             left_type = operand_type(builder, left_operand)?
             right_type = operand_type(builder, right_operand)?
+            if is_bit_operator(operator):
+                return bit_operation(operator, left_operand, left_type, right_operand, right_type)
             if left_type != right_type:
                 return Err("unsupported Body IR mixed numeric arithmetic without retained coercion")
             return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
