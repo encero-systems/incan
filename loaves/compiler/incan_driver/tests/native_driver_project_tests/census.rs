@@ -269,7 +269,16 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let driver = graph.driver_binary("debug");
     let sysroot = &graph.sysroot;
     let all = all_fixtures()?;
-    let workers = std::thread::available_parallelism()?.get();
+    let available_workers = std::thread::available_parallelism()?.get();
+    let workers = std::env::var("INCAN_CENSUS_WORKERS")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(available_workers)
+        .min(available_workers);
+    if workers == 0 {
+        return Err("INCAN_CENSUS_WORKERS must be positive".into());
+    }
     let timeout = Duration::from_secs(
         std::env::var("INCAN_CENSUS_TIMEOUT_SECONDS")
             .ok()

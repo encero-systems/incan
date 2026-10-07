@@ -184,6 +184,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/native_sdk.rs": {
+      "disposition": "unaffected",
+      "notes": "Native SDK facade dependency selection follows the component's declared version and features; no Cargo resolution.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/native_sdk_plan.rs": {
       "disposition": "unaffected",
       "notes": "Receipt-bound SDK native artifact retention, source-role member bindings and compiler mismatch refusal; no generated Cargo graph or dependency resolution.",

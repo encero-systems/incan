@@ -19,6 +19,8 @@ pub(crate) struct NativeSdkPublicationContext<'a> {
     pub closure: &'a SdkCompiledClosure,
     /// Exact crate names already supplied by native units, excluded from public Incan package edges.
     pub native_facets: BTreeSet<String>,
+    /// Component-owned dependency requirements disambiguate versions in the full compiler closure.
+    pub dependencies: std::collections::HashMap<String, oven_model::manifest::DependencySpec>,
 }
 
 impl NativeSdkPublicationContext<'_> {
@@ -109,6 +111,11 @@ fn publish_component(
         .find(|component| component.project_root == project)
         .ok_or_else(|| CliError::failure("native publisher received an unknown SDK component"))?;
     let context = NativeSdkPublicationContext {
+        dependencies: oven_model::manifest::ProjectManifest::discover(project)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .ok_or_else(|| CliError::failure("SDK component has no manifest"))?
+            .rust_dependencies()
+            .clone(),
         inventory,
         namespace_roots: component.namespace_roots.clone(),
         closure,
@@ -284,7 +291,14 @@ fn compile_native_sdk_facade(
             .and_then(|name| name.to_str())
             .and_then(|name| name.strip_prefix("lib"))
             .ok_or_else(|| CliError::failure("native facade input has no crate name"))?;
-        if generated_sources.contains(&format!("{name}::"))
+        let matches_component = context
+            .dependencies
+            .get(name)
+            .map(|dependency| native_facade_binding_matches(dependency, unit.binding()))
+            .transpose()?
+            .unwrap_or(true);
+        if matches_component
+            && generated_sources.contains(&format!("{name}::"))
             && (unit.binding().domain == "target" || path.extension().is_some_and(|extension| extension == "dylib"))
             && externs.insert(name.to_string(), path.to_path_buf()).is_some()
         {
@@ -342,6 +356,32 @@ fn compile_native_sdk_facade(
     })
 }
 
+/// Match a facade's direct registry requirement without selecting another version from the compiler closure.
+fn native_facade_binding_matches(
+    dependency: &oven_model::manifest::DependencySpec,
+    binding: &oven_rustc::sdk_closure::SdkLockedUnit,
+) -> CliResult<bool> {
+    if !matches!(dependency.source, oven_model::manifest::DependencySource::Registry) {
+        return Ok(true);
+    }
+    let package = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
+    if binding.loaf != format!("crates-io/{package}") {
+        return Ok(false);
+    }
+    let version = semver::Version::parse(&binding.version).map_err(|error| CliError::failure(error.to_string()))?;
+    let requirement = dependency
+        .version
+        .as_deref()
+        .map(semver::VersionReq::parse)
+        .transpose()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(requirement.is_none_or(|requirement| requirement.matches(&version))
+        && dependency
+            .features
+            .iter()
+            .all(|feature| binding.features.contains(feature)))
+}
+
 /// Read only generated Rust sources to select the facade's explicit external crate names.
 fn native_facade_source_text(root: &Path) -> CliResult<String> {
     let mut text = String::new();
@@ -355,4 +395,41 @@ fn native_facade_source_text(root: &Path) -> CliResult<String> {
         }
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    /// A compiler companion's older rustix must not compete with the SDK component's declared major version.
+    #[test]
+    fn native_facade_selects_component_dependency_version() -> Result<(), Box<dyn std::error::Error>> {
+        let mut dependency = oven_model::manifest::DependencySpec {
+            crate_name: "rustix".into(),
+            version: Some("1.1".into()),
+            features: vec!["fs".into()],
+            default_features: true,
+            source: oven_model::manifest::DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let mut binding = oven_rustc::sdk_closure::SdkLockedUnit {
+            loaf: "crates-io/rustix".into(),
+            version: "0.38.44".into(),
+            archive_digest: "test".into(),
+            domain: "target".into(),
+            features: vec!["fs".into()],
+            target_predicates: Vec::new(),
+            edges: None,
+        };
+        assert!(!super::native_facade_binding_matches(&dependency, &binding)?);
+        binding.version = "1.1.5".into();
+        assert!(super::native_facade_binding_matches(&dependency, &binding)?);
+        binding.features.clear();
+        assert!(!super::native_facade_binding_matches(&dependency, &binding)?);
+        dependency.source = oven_model::manifest::DependencySource::Path {
+            path: "/sdk/core".into(),
+        };
+        binding.loaf = "incan_std_core".into();
+        assert!(super::native_facade_binding_matches(&dependency, &binding)?);
+        Ok(())
+    }
 }
