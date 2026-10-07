@@ -1,0 +1,105 @@
+"""Identity-checked value-enum construction and generated scalar getter admission."""
+
+from rust::incan_semantics_core import SymbolNamespace, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    EnumDeclaration,
+    ValueEnumDeclaration,
+    ValueEnumVariantTarget,
+    MethodTarget,
+    ArgumentElement,
+    Operand as RustOperand,
+)
+from pub::incan_mir_plan import Local, PlanType, SourceSpan
+from models import model_place, place_type
+
+
+pub def value_variant(
+    layouts: list[EnumDeclaration],
+    declarations: list[ValueEnumDeclaration],
+    target: &ValueEnumVariantTarget,
+) -> Result[tuple[int, int], str]:
+    """Require both the canonical raw-value member and its identical native unit layout."""
+    for declaration in declarations:
+        if declaration.canonical != target.enum_canonical or declaration.direct_declaration_id != target.enum_declaration_id:
+            continue
+        if declaration.name != target.enum_name:
+            return Err("invalid Body IR value enum owner spelling")
+        for slot in range(len(declaration.variants)):
+            variant = declaration.variants[slot]
+            if variant.canonical != target.variant_canonical or variant.direct_declaration_id != target.variant_declaration_id:
+                continue
+            if variant.name != target.variant_name:
+                return Err("invalid Body IR value enum member spelling")
+            for owner in range(len(layouts)):
+                layout = layouts[owner]
+                if layout.canonical == declaration.canonical:
+                    validate_layout(layout, declaration)?
+                    return Ok((owner, slot))
+    return Err("unsupported Body IR unretained value enum variant")
+
+
+pub def validate_layout(layout: &EnumDeclaration, declaration: &ValueEnumDeclaration) -> Result[None, str]:
+    """Cross-check source order and unit carriers before using native tags to select raw values."""
+    if layout.direct_declaration_id != declaration.direct_declaration_id or layout.name != declaration.name or len(
+        layout.variants,
+    ) != len(declaration.variants):
+        return Err("invalid Body IR value enum native layout")
+    for slot in range(len(layout.variants)):
+        native = layout.variants[slot]
+        raw = declaration.variants[slot]
+        if native.canonical != raw.canonical or native.direct_declaration_id != raw.direct_declaration_id or native.name != raw.name or len(
+            native.fields,
+        ) != 0:
+            return Err("invalid Body IR value enum native member layout")
+    return Ok(None)
+
+
+pub def value_method_owner(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+) -> Result[Option[int], str]:
+    """Admit the checker-generated value getter only for its exact retained receiver owner."""
+    index = receiver_layout(module, locals, argument, span)?
+    if index < 0 or index >= len(module.enum_declarations):
+        return Ok(None)
+    for owner in range(len(module.value_enum_declarations)):
+        declaration = module.value_enum_declarations[owner]
+        if module.enum_declarations[index].canonical != declaration.canonical:
+            continue
+        validate_layout(module.enum_declarations[index], declaration)?
+        validate_getter(declaration, target)?
+        return Ok(Some(owner))
+    return Ok(None)
+
+
+def receiver_layout(
+    module: &BodyIrModule,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+) -> Result[int, str]:
+    """Read the enum carrier from the receiver place; other carriers keep their ordinary method path."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            source = model_place(module.nominal_declarations, locals, read.place, span)?
+            match place_type(locals, source):
+                PlanType.Enum(index, _name) => return Ok(index)
+                _ => pass
+        _ => pass
+    return Ok(-1)
+
+
+def validate_getter(declaration: &ValueEnumDeclaration, target: &MethodTarget) -> Result[None, str]:
+    """Check the synthetic member's complete owner identity rather than trusting the call-site spelling."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.namespace != SymbolNamespace.Member or identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "value" or identity.origin != declaration.canonical.origin or identity.scope_discriminant != declaration.canonical.scope_discriminant or identity.declaration_span != declaration.canonical.declaration_span:
+                return Err("unsupported Body IR value enum method target")
+        None => return Err("unsupported Body IR unproven value enum method")
+    if len(target.type_args) != 0:
+        return Err("unsupported Body IR generic value enum method")
+    return Ok(None)
