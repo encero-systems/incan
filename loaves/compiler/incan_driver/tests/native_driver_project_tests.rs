@@ -1131,6 +1131,62 @@ def main() -> None:
     Ok(())
 }
 
+/// Fieldless enum equality and inequality borrow their values and compare exactly like the legacy route.
+#[test]
+fn fieldless_enum_comparisons_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "fieldless_enum_comparisons",
+        r#"enum Signal:
+    Ready
+    Waiting
+
+enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+def same(left: Signal, right: Signal) -> bool:
+    return left == right
+
+def main() -> None:
+    signal = Signal.Ready
+    println(same(signal, Signal.Ready))
+    println(signal == Signal.Waiting)
+    println(signal != Signal.Waiting)
+    println(signal != Signal.Ready)
+    println(same(signal, signal))
+    println(HttpStatus.Ok == HttpStatus.NotFound)
+    println(HttpStatus.Ok != HttpStatus.NotFound)
+    println(HttpStatus.Ok == HttpStatus.Ok)
+"#,
+        None,
+    )?;
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("payload-enum-comparison-refusal")?;
+    let source = root.join("payload.incn");
+    fs::write(
+        &source,
+        "enum Shape:\n    Square(int)\n    Empty\n\ndef main() -> None:\n    println(Shape.Square(2) == Shape.Square(3))\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR payload enum comparison"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
 /// Integer and string value enums retain canonical construction, parameter passing, and repeated scalar extraction.
 #[test]
 fn value_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

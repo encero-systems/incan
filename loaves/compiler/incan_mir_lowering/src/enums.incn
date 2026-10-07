@@ -167,3 +167,27 @@ pub def enum_owner(ty: PlanType) -> Result[int, str]:
     match ty:
         PlanType.Enum(index, _name) => return Ok(index)
         _ => return Err("unsupported Body IR Match outside source enums")
+
+
+pub def validate_unit_comparison(
+    declarations: list[RustEnumDeclaration],
+    left: PlanType,
+    right: PlanType,
+) -> Result[None, str]:
+    """Authorize tag equality only for one retained fieldless owner with checked structural equality."""
+    if left != right:
+        return Err("unsupported Body IR mixed enum comparison")
+    mut owner = -1
+    match left:
+        PlanType.Enum(index, _name) =>
+            owner = index
+        _ => return Err("unsupported Body IR nonenum comparison")
+    if owner < 0 or owner >= len(declarations):
+        return Err("unsupported Body IR non-source enum comparison")
+    declaration = declarations[owner]
+    if "PartialEq" not in declaration.derives:
+        return Err("unsupported Body IR enum comparison without retained equality")
+    for variant in declaration.variants:
+        if len(variant.fields) != 0:
+            return Err("unsupported Body IR payload enum comparison")
+    return Ok(None)

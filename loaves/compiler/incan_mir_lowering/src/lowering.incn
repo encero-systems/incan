@@ -123,6 +123,7 @@ from model_values import (
     compare_models,
 )
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant, pattern_variant
+from enums import validate_unit_comparison
 from value_enums import value_variant, value_method_owner
 from unions import (
     native_source_type,
@@ -408,6 +409,50 @@ def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: Sou
     return Ok(operand)
 
 
+def unit_enum_comparison(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Compare fieldless tags without consuming either receiver; payload and ordering operations stay refused."""
+    if operator != BinOp.Eq and operator != BinOp.Ne:
+        return Err("unsupported Body IR enum BinaryOp")
+    left_place = enum_comparison_place(builder, left, span)?
+    right_place = enum_comparison_place(builder, right, span)?
+    validate_unit_comparison(
+        builder.enums,
+        place_type(builder.locals, left_place),
+        place_type(builder.locals, right_place),
+    )?
+    left_tag = enum_comparison_tag(builder, left_place, span)
+    right_tag = enum_comparison_tag(builder, right_place, span)
+    return Ok(
+        RvalueKind.Binary(
+            binary_operator(operator)?,
+            read_place(left_tag, false, span),
+            read_place(right_tag, false, span),
+        ),
+    )
+
+
+def enum_comparison_place(builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Read the already-evaluated checked operand place before borrowing its native discriminant."""
+    match operand:
+        RustOperand.Place(read) => return scalar_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR nonplace enum comparison")
+
+
+def enum_comparison_tag(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
+    """Materialize one native discriminant as the integer tag type used by checked match dispatch."""
+    raw = temporary(builder, PlanType.EnumTag, span)
+    tag = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(raw, RvalueKind.Discriminant(source), span))
+    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
+    return tag
+
+
 def scalar_rvalue(
     module: &BodyIrModule,
     mut builder: Builder,
@@ -425,7 +470,7 @@ def scalar_rvalue(
                 _ => return Err("unsupported Body IR unary operator Invert")
         RustRvalue.BinaryOp(operator, left, right) =>
             if enum_operand(builder, left, span)? or enum_operand(builder, right, span)?:
-                return Err("unsupported Body IR enum BinaryOp")
+                return unit_enum_comparison(builder, operator, left, right, span)
             if operator == BinOp.Div:
                 if not float_operand(builder.nominals, builder.locals[builder.local_offset:], left, span)? or not float_operand(
                     builder.nominals,
