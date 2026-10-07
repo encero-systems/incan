@@ -27,11 +27,30 @@ pub enum ListLeaf:
 
 
 @derive(Clone, PartialEq)
+pub enum SizedNumeric:
+    """Exact sized carrier retained by an overflow pair."""
+
+    I8
+    I16
+    I32
+    I128
+    U8
+    U16
+    U32
+    U64
+    U128
+    F32
+    F64
+    ISize
+    USize
+
+
+@derive(Clone, PartialEq)
 pub enum PlanType:
     """
     Scalar types plus the owned text, fixed arrays, and shared slices used by formatting.
 
-    Array lengths are exact nonnegative counts. CheckedInt and arrays are body
+    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Array lengths are exact nonnegative counts. CheckedInt and arrays are body
     temporaries; shared slice variants already include their reference. StringRef
     borrows an owned String, while StrRef is a string literal's shared str view.
     List stores its primitive leaf element and a positive nesting
@@ -41,8 +60,22 @@ pub enum PlanType:
 
     Int
     Float
+    I8
+    I16
+    I32
+    I128
+    ISize
+    USize
+    U8
+    U16
+    U32
+    U64
+    U128
+    F32
+    F64
     Bool
     Unit
+    CheckedNumeric(SizedNumeric)
     CheckedInt
     String
     StringRef
@@ -84,6 +117,7 @@ pub enum Projection:
     """Whole local, checked component, nominal field, or typed list/receiver dereference."""
 
     Whole
+    NumericValue(PlanType)
     Value
     Overflow
     Field(int, PlanType)
@@ -102,8 +136,9 @@ pub model Place:
 
 @derive(Clone, PartialEq)
 pub enum Constant:
-    """A scalar literal or borrowed static text, never an implicitly allocated String."""
+    """A scalar literal or borrowed static text. Numeric retains exact integer digits or IEEE bit digits with its carrier, never a host-width approximation."""
 
+    Numeric(str, PlanType)
     Int(int)
     Float(float)
     Bool(bool)
@@ -162,6 +197,7 @@ pub enum RvalueKind:
     """
     An explicit native expression assigned to a checked place.
 
+    NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
@@ -170,7 +206,10 @@ pub enum RvalueKind:
     Use(Operand)
     Binary(BinaryOp, Operand, Operand)
     Unary(UnaryOp, Operand)
+    NumericCast(Operand, PlanType, PlanType)
     IntToFloat(Operand)
+    FloatToInt(Operand)
+    BoolToInt(Operand)
     Array(list[Operand])
     Model(int, list[Operand])
     Borrow(Place)
