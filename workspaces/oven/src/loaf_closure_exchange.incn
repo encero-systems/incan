@@ -5,7 +5,7 @@ from std.fs import Path
 from plan_json import exact_object, text_field
 from loaf_index import LoafVersion, read_index, read_root_requests
 from loaf_pin_check import read_cfg
-from loaf_resolve import resolve_requests, resolution_json
+from loaf_resolve import resolve_requests, resolution_json, select_version
 from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, TargetConfiguration
 
 const SCHEMA: str = "incan.oven.loaf-closure-request/1"
@@ -41,6 +41,7 @@ pub def resolve_snapshot(
     target: str,
     host: str,
     host_roots_source: str = "[]",
+    retain_refusals: bool = false,
 ) -> Result[JsonValue, str]:
     """Share the standalone lock driver's resolution with the engine request, binding staged reads to one commit."""
     revision = Path(f"{directory}/revision").read_text("utf-8", "strict").map_err((e) => e.message())?
@@ -66,6 +67,8 @@ pub def resolve_snapshot(
         default_features=false,
         build_unit_present=false,
     )
+    if retain_refusals:
+        return resolve_shard(records, roots_source, context)
     units = resolve_requests(records, requests, {}, context, host_requests).map_err((e) => e.message())?
     return Ok(resolution_json(units))
 
@@ -85,3 +88,45 @@ def refusal(reason: str) -> JsonValue:
     return JsonValue.object(
         {"schema": JsonValue.string(SCHEMA), "status": JsonValue.string("refused"), "reason": JsonValue.string(reason)},
     )
+
+
+pub def resolve_shard(records: list[LoafVersion], source: str, context: ActivationContext) -> Result[JsonValue, str]:
+    """Exclude unavailable root coordinates, then unify every admitted root in one shared resolution; name failures."""
+    requests = read_root_requests(source, "roots").map_err((e) => e.message())?
+    entries = parse(source).map_err((e) => e.message())?.expect_array().map_err((e) => e.message())?
+    mut admitted: list[JsonValue] = []
+    mut refused: list[JsonValue] = []
+    for index in range(len(requests)):
+        request = requests[index]
+        mut requirement = ""
+        match request.version_requirement:
+            Some(value) => requirement = value
+            None =>
+                refused.append(named_refusal(request.alias, request.package, "root has no version requirement"))
+                continue
+        match select_version(records, request.package, [requirement]):
+            Ok(_) => admitted.append(entries[index])
+            Err(error) => refused.append(named_refusal(request.alias, request.package, error.message()))
+    selected_source = JsonValue.array(admitted).to_json().map_err((e) => e.message())?
+    selected = read_root_requests(selected_source, "roots").map_err((e) => e.message())?
+    mut resolution = resolution_json([])
+    match resolve_requests(records, selected, {}, context):
+        Ok(units) => resolution = resolution_json(units)
+        Err(error) =>
+            for request in selected:
+                refused.append(named_refusal(request.alias, request.package, error.message()))
+    if len(refused) == 0:
+        return Ok(resolution)
+    mut units = JsonValue.array([])
+    if let Some(selected_units) = resolution.get("units"):
+        units = selected_units
+    return Ok(JsonValue.object({
+        "schema": JsonValue.string("incan.oven.loaf-resolution/1"),
+        "units": units,
+        "refused": JsonValue.array(refused),
+    }))
+
+
+def named_refusal(name: str, loaf: str, reason: str) -> JsonValue:
+    """Retain the caller's root alias when a shared shard cannot select its source closure."""
+    return JsonValue.object({"name": JsonValue.string(name), "loaf": JsonValue.string(loaf), "reason": JsonValue.string(reason)})

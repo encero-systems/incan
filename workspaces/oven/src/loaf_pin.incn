@@ -2,5 +2,5 @@
 
 
 pub def pinned_revision() -> str:
-    """Return the incan.pub index-next revision; fixture indexes remain caller-owned test inputs."""
-    return "452504b51712b6a3ac12a2e1b79ba69fff55e6b6"
+    """Return the default incan.pub audit revision; explicit resolution pins remain caller-owned inputs."""
+    return "17e062806c769faee1f2fb549d7e257d5607eb93"

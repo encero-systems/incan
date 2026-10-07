@@ -87,7 +87,7 @@
       "version": "0.10.6"
     },
     {
-      "archive_digest": "sha256:4f4ad26baba93fe0b134b50ea01fb32a235990af65c8f324706a82cf096a2154",
+      "archive_digest": "sha256:5682f4277d953850594fd6d6dcc9bde612d38a1c23c7b4c7f027dd57f47a3562",
       "domain": "target",
       "features": [
         "default",
@@ -191,7 +191,7 @@
       "version": "0.2.17"
     },
     {
-      "archive_digest": "sha256:c83b5df7df534deb728bcef2d4ea0f12b15257781ccb0fde36225e7ceff2f2ca",
+      "archive_digest": "sha256:a20fdbb5d7137fe531c5d236b4937552dd8af6214a4fb7a555df8d40bc70d001",
       "domain": "target",
       "features": [
         "default",
@@ -367,7 +367,7 @@
       "version": "0.3.34"
     },
     {
-      "archive_digest": "sha256:8874ea2e18fbb87d57a6dbd039f5a0f8fca961b5a39f0b14a8b04af33ccdd22f",
+      "archive_digest": "sha256:76f123d3d824b1c3c37710162d07540a11b93dfb879369ccdd71b1a25053089a",
       "domain": "target",
       "features": [
         "more_lengths"
@@ -408,7 +408,7 @@
       "version": "0.2.17"
     },
     {
-      "archive_digest": "sha256:ae6c810c598d303d841911fe58f9ec154d8e12f1c7a7397fabd8b34cffbb85da",
+      "archive_digest": "sha256:8617610be75a052665d09f967cd645c33ef7741ed52b8e5222b6f5ccc2399536",
       "domain": "target",
       "features": [],
       "loaf": "crates-io/getrandom",
@@ -525,7 +525,7 @@
       "version": "1.5.0"
     },
     {
-      "archive_digest": "sha256:583e102cb606f1abde499fffbaba4231a70cc5fcd46bf73a7eacb98b8efc6edc",
+      "archive_digest": "sha256:70af726b5d9d403e4867411bf2ec2016fb3e0da83a44a4a586397bd7f6863bfa",
       "domain": "target",
       "features": [
         "default",
@@ -644,7 +644,7 @@
       "version": "0.2.5"
     },
     {
-      "archive_digest": "sha256:280ae41b03d9542d83476549bd372c866d21fb0c6269312ba7d36393346f0924",
+      "archive_digest": "sha256:3fec3f472ffb15d260e8fc2fe33ed7601db935fcfc7cf5a9b277af6967cc3e71",
       "domain": "target",
       "features": [
         "default",
@@ -655,7 +655,7 @@
       "version": "0.2.190"
     },
     {
-      "archive_digest": "sha256:af70fb4287b07b92f4f90d1ebebbbb3554000f66f466399243e6e0b2ba19ca23",
+      "archive_digest": "sha256:4b41410051a0ba2f0f21a6481da5772be6e8012e9b6cf01d0d8a8df920b8d66b",
       "domain": "target",
       "features": [
         "arch",
@@ -674,7 +674,7 @@
       "version": "0.4.34"
     },
     {
-      "archive_digest": "sha256:8cd1bde3344881a12d34017f5188e43bb6c7574dae129eda37ac80fe6dba3076",
+      "archive_digest": "sha256:dee60821038211192492a4cfabfb18018cf59a344395fc89ebde27aa86da0995",
       "domain": "target",
       "features": [
         "static"
@@ -744,7 +744,7 @@
       "version": "0.9.1"
     },
     {
-      "archive_digest": "sha256:44f9b05ce879bdabea372a62d4275f885d7faea0887e4cab7e97423b63195525",
+      "archive_digest": "sha256:4b47c2e94732fd7813889bfdf7eae2dae200db2f13ef481181707b235b5aa59e",
       "domain": "target",
       "features": [
         "net",
@@ -769,7 +769,7 @@
           "target": "cfg(windows)"
         }
       ],
-      "version": "1.2.1"
+      "version": "1.2.4"
     },
     {
       "archive_digest": "sha256:2a41c4dd88385d3f88307dfeeb89fbb35281c446dda29aef6961f1f220758414",
@@ -816,7 +816,7 @@
       "version": "0.2.21"
     },
     {
-      "archive_digest": "sha256:56cd168e7f33721e4de47923f48cc82456e70261d3adc92a66781df01daa9778",
+      "archive_digest": "sha256:0f3b8c415712c5717caf9a4928f0a86ed2b0bb40246c3e14c13a170a23aa027f",
       "domain": "host",
       "features": [
         "default",
@@ -827,7 +827,7 @@
       "version": "1.0.107"
     },
     {
-      "archive_digest": "sha256:56cd168e7f33721e4de47923f48cc82456e70261d3adc92a66781df01daa9778",
+      "archive_digest": "sha256:0f3b8c415712c5717caf9a4928f0a86ed2b0bb40246c3e14c13a170a23aa027f",
       "domain": "target",
       "features": [
         "default",
@@ -838,7 +838,7 @@
       "version": "1.0.107"
     },
     {
-      "archive_digest": "sha256:b9b9f4e6ee65800610cd275db3e7312dce69b4299257a2300861615fb4d94135",
+      "archive_digest": "sha256:13dde5b3676f73d06ce192241223020aeb4935cb990a1101a2681107b87583d2",
       "domain": "host",
       "features": [
         "default",
@@ -849,7 +849,7 @@
       "version": "1.0.47"
     },
     {
-      "archive_digest": "sha256:b9b9f4e6ee65800610cd275db3e7312dce69b4299257a2300861615fb4d94135",
+      "archive_digest": "sha256:13dde5b3676f73d06ce192241223020aeb4935cb990a1101a2681107b87583d2",
       "domain": "target",
       "features": [
         "default",
@@ -980,7 +980,7 @@
       "version": "1.13.1"
     },
     {
-      "archive_digest": "sha256:1e27c2de75750d6a6b55e22dec3e8b098cfd31a94fbce6247d27b9d6e089514a",
+      "archive_digest": "sha256:4d7ffe123c33e55b6759221f54747124ec6e40b88834f3ec282de175aa4a8cb1",
       "domain": "target",
       "features": [
         "alloc",
@@ -1042,7 +1042,7 @@
       "version": "1.0.23"
     },
     {
-      "archive_digest": "sha256:792193e0be5ee2a71db5061e87574c10737eb778ef334711ab7be1c044519dde",
+      "archive_digest": "sha256:0740c17a91f9322696dd72fdf54d6362b8da024f51503fdf812fc2646a4c8bc8",
       "domain": "target",
       "features": [
         "default",
@@ -1055,7 +1055,7 @@
       "version": "1.0.229"
     },
     {
-      "archive_digest": "sha256:3b35d4c5b78171a19fc5c2cfd9ac5dd1c73cf5d23aa0dd945fe6368177963806",
+      "archive_digest": "sha256:016c38337099f52a9a156b8f388f3d0b9cb0e50a46423577520e88476be1e764",
       "domain": "target",
       "features": [
         "alloc",
@@ -1084,7 +1084,7 @@
       "version": "1.0.229"
     },
     {
-      "archive_digest": "sha256:b9641e754a9ce85513b5dfb52e3213ee0fe5e018d28c3f82141c0de32d7009e3",
+      "archive_digest": "sha256:fbaa5d6302282e35f970e3e8f9e3df5af26ec2174cbb603d4ed429ad8798a379",
       "domain": "target",
       "features": [
         "default",
@@ -1116,7 +1116,7 @@
       "version": "0.1.20"
     },
     {
-      "archive_digest": "sha256:88daba4f39823b055fde605d42d44d49892cb11ab0bb509147a65d2bf1cbaf77",
+      "archive_digest": "sha256:f74769e74c0f5fb05745e6fa279826ea8a3f6ed564f90bb756608b33ed255019",
       "domain": "target",
       "features": [
         "alloc",
@@ -1126,7 +1126,7 @@
       ],
       "loaf": "crates-io/serde_spanned",
       "target_predicates": [],
-      "version": "1.0.4"
+      "version": "1.1.1"
     },
     {
       "archive_digest": "sha256:02c4e65af6fa0353746cd956b1fb1ea76aa620a56a3b9c0f776c9c65e48cca04",
@@ -1219,7 +1219,7 @@
       "version": "1.16.2"
     },
     {
-      "archive_digest": "sha256:9ed61d0aafbe6dab06ee2fb4d49e039c3b5a75be38c3f93888d6df396fd91867",
+      "archive_digest": "sha256:5dc98d48c3690cb8b4caf4809e1a9296e981b2c29fbeb9de0c82305aa4176783",
       "domain": "target",
       "features": [],
       "loaf": "crates-io/snap",
@@ -1227,7 +1227,7 @@
       "version": "1.1.2"
     },
     {
-      "archive_digest": "sha256:f5d23394b1fd0dd57673e5288a120aac45addacbff49bae034957a4d28b7480c",
+      "archive_digest": "sha256:2e147020cb70eb27f8a76ac7a5435ccd15dac57944dcf00026b6d41eca036da4",
       "domain": "target",
       "features": [
         "all"
@@ -1245,7 +1245,7 @@
           "target": "cfg(windows)"
         }
       ],
-      "version": "0.6.3"
+      "version": "0.6.5"
     },
     {
       "archive_digest": "sha256:fa1f9904c7cdd29237d448514b3c20e457ea0b668a965e5421803cb4cd4255e5",
@@ -1254,6 +1254,22 @@
       "loaf": "crates-io/subtle",
       "target_predicates": [],
       "version": "2.6.1"
+    },
+    {
+      "archive_digest": "sha256:a8a606533b95b09dae0cef1dc2652b46c0cf9b8b87b2aab87daae57ed482affb",
+      "domain": "host",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ],
+      "loaf": "crates-io/syn",
+      "target_predicates": [],
+      "version": "2.0.119"
     },
     {
       "archive_digest": "sha256:54b8f708b674e17c51fd66ee68787d696dfc36ad88b3eb15f7a77847108c07b8",
@@ -1446,7 +1462,7 @@
       "version": "1.1.1+spec-1.1.0"
     },
     {
-      "archive_digest": "sha256:a81fb3d145c2ee51358e8849914a975464ba69925d5c440ca88765e91987989f",
+      "archive_digest": "sha256:25eea9201ca61cb6dbaa00f0c553ba9e513c8f11f7fddd7411f935908fdf9041",
       "domain": "target",
       "features": [
         "default",
@@ -1456,7 +1472,7 @@
       ],
       "loaf": "crates-io/toml_edit",
       "target_predicates": [],
-      "version": "0.25.5+spec-1.1.0"
+      "version": "0.25.15+spec-1.1.0"
     },
     {
       "archive_digest": "sha256:8062d1c10047ff412f6a7d8129b25e1a0a30ed5bcd62550e47e817fd283f52eb",
@@ -1614,7 +1630,7 @@
       "version": "0.1.7"
     },
     {
-      "archive_digest": "sha256:1b8b0fd5f89b69dabf14adf9063f6354759906ee924d5ac8be4840847c66a1e4",
+      "archive_digest": "sha256:4b7160e9c25432a989883f3740134c36e81fc4af6e62dd6ccd3390200732386b",
       "domain": "target",
       "features": [
         "simd"
@@ -1630,7 +1646,7 @@
       "version": "0.8.60"
     },
     {
-      "archive_digest": "sha256:b54bc97139f0bdb216821e19cddb02a6f683b4a6a7cc9d0fe1d15b21157949d5",
+      "archive_digest": "sha256:95543d1823c32220ade82651984d26619e3779a89cc46ebc1fd24f5c6f4cd828",
       "domain": "target",
       "features": [],
       "loaf": "crates-io/zmij",
@@ -1638,7 +1654,7 @@
       "version": "1.0.23"
     },
     {
-      "archive_digest": "sha256:59dd8700a7af377a01eb5cbb9ed7552bb46ec50e324a104efed0d4957d85e2ce",
+      "archive_digest": "sha256:a2767eb67894dfc95c62a822a39c4db643916a6e9abda5895f9c6f87928b0025",
       "domain": "target",
       "features": [
         "arrays",
@@ -1651,7 +1667,7 @@
       "version": "7.3.0"
     },
     {
-      "archive_digest": "sha256:27a6940104dd447a9b38fcd127d758c452503e78da663f6d1b4a2755ba955366",
+      "archive_digest": "sha256:4b834beda3c455bd533ad3c5dcce16fd9237b2a321e482ebcb23788562701426",
       "domain": "target",
       "features": [
         "legacy",
@@ -1674,22 +1690,6 @@
       "loaf": "crates-io/zstd",
       "target_predicates": [],
       "version": "0.13.3"
-    },
-    {
-      "archive_digest": "sha256:a8a606533b95b09dae0cef1dc2652b46c0cf9b8b87b2aab87daae57ed482affb",
-      "domain": "host",
-      "features": [
-        "clone-impls",
-        "default",
-        "derive",
-        "full",
-        "parsing",
-        "printing",
-        "proc-macro"
-      ],
-      "loaf": "crates-io/syn",
-      "target_predicates": [],
-      "version": "2.0.119"
     }
   ]
 }

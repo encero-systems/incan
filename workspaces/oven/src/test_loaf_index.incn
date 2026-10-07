@@ -75,3 +75,12 @@ pub def test_multi_entry_keys_remain_distinct_declarations() -> None:
     assert record.catalog.dependencies[0].alias == record.catalog.dependencies[1].alias
     assert record.catalog.dependencies[0].features == []
     assert record.catalog.dependencies[1].features == ["std"]
+
+
+pub def test_build_script_declaration_is_boolean_and_inert() -> None:
+    """Current index lines retain the build-script fact requirement without admitting execution."""
+    source = root_source().replace('"rust":{', '"rust":{"build-script":true,')
+    record = require_ok(decode_line(source, "test/root", 1))
+    assert record.build_script
+    assert not require_ok(decode_line(root_source(), "test/root", 1)).build_script
+    require_refusal(source.replace('"build-script":true', '"build-script":"true"'), "build-script")

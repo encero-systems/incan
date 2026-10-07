@@ -5,8 +5,9 @@ from manifest_errors import IntakeError
 from loaf_index import read_root_requests, read_index, LoafVersion
 from loaf_resolve import resolve_requests, select_version, resolve, LoafDemand, ResolvedLoaf
 from rust_graph import NodeDemand
-from std.json import parse
+from std.json import JsonValue, parse
 from sdk_local_roots import host_roots
+from loaf_closure_exchange import resolve_shard
 from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, TargetConfiguration, CfgSnapshot
 
 
@@ -273,3 +274,35 @@ pub def test_local_host_project_requires_proc_macro_facet() -> None:
             match host_roots(document, "tests/fixtures/local-library/roots.json"):
                 Ok(_) => fail("ordinary library accepted as a host procedural-macro project")
                 Err(error) => assert "not a procedural macro" in error
+
+
+pub def test_shard_retains_named_refusal_and_shared_features() -> None:
+    """An unavailable root cannot erase admitted roots or split their unified feature selection."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    source = """[
+        {"name":"first","loaf":"test/leaf","req":"^1","features":["extra"],"default-features":true,"optional":false},
+        {"name":"second","loaf":"test/leaf","req":"^1","features":[],"default-features":false,"optional":false},
+        {"name":"missing","loaf":"test/absent","req":"^1","features":[],"default-features":true,"optional":false}
+    ]"""
+    match resolve_shard(records, source, synthetic_context()):
+        Err(reason) => fail(reason)
+        Ok(document) =>
+            assert len(shard_array(document, "units")) == 1
+            assert len(shard_array(document, "refused")) == 1
+            encoded = document.to_json().map_err((e) => e.message())
+            match encoded:
+                Err(reason) => fail(reason)
+                Ok(text) =>
+                    assert "missing" in text
+                    assert "test/absent" in text
+                    assert "extra" in text
+                    assert "test/leaf" in text
+
+
+def shard_array(document: JsonValue, field: str) -> list[JsonValue]:
+    """Require a retained shard result array so successful units and refusals cannot be conflated."""
+    if let Some(value) = document.get(field):
+        match value.expect_array():
+            Ok(entries) => return entries
+            Err(error) => return fail_t[list[JsonValue]](error.message())
+    return fail_t[list[JsonValue]](f"missing shard field {field}")

@@ -44,6 +44,8 @@ pub model LoafVersion:
     pub edition: str
     pub catalog: RustDependencyCatalog
     pub facts: list[list[str]]
+    # Declares a fact requirement at compilation; it never authorizes execution of a build script.
+    pub build_script: bool = false
 
 
 def invalid(loaf: str, line: int, path: list[str], detail: str) -> IntakeError:
@@ -223,7 +225,10 @@ pub def decode_line(source: str, loaf: str, line: int) -> Result[LoafVersion, In
         (e) => wire_error(loaf, line, e),
     )?
     rust_table = field(value, "rust", []).map_err((e) => wire_error(loaf, line, e))?
-    allowed(rust_table, ["name", "type", "edition"], loaf, line, ["rust"])?
+    allowed(rust_table, ["name", "type", "edition", "build-script"], loaf, line, ["rust"])?
+    mut build_script = false
+    if let Some(stated) = rust_table.get("build-script"):
+        build_script = boolean(stated, ["rust", "build-script"]).map_err((e) => wire_error(loaf, line, e))?
     library = text_field(rust_table, "name", ["rust"]).map_err((e) => wire_error(loaf, line, e))?
     edition = text_field(rust_table, "edition", ["rust"]).map_err((e) => wire_error(loaf, line, e))?
     if edition not in ["2015", "2018", "2021", "2024"] or library == "":
@@ -284,6 +289,7 @@ pub def decode_line(source: str, loaf: str, line: int) -> Result[LoafVersion, In
             edition=edition,
             catalog=catalog,
             facts=facts,
+            build_script=build_script,
         ),
     )
 

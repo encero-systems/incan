@@ -2,7 +2,7 @@
 Resolve a root request file against an incan.pub index pin and print the resolution.
 
 This is the driver that produces a lock: it reads every named Loaf's index lines from the pin, decodes the root
-requests in the index line's `deps[]` spelling, and prints one `incan.oven.loaf-resolution/1` document. It reads
+requests in the index line's dependency spelling, and prints one `incan.oven.loaf-resolution/1` document. It reads
 no upstream metadata and runs no build.
 """
 
@@ -11,46 +11,53 @@ from rust::std::process import exit
 from std.fs import Path
 from std.json import parse
 from loaf_closure_exchange import resolve_snapshot
-from loaf_pin import pinned_revision
 from sdk_local_roots import host_roots
 
 # The triple both the selected target and the build host must name; the roots file states it explicitly.
 const SUPPORTED_TRIPLE: str = "aarch64-apple-darwin"
 
 
-def lock(directory: str, names_file: str, cfg_file: str, roots_file: str) -> Result[None, str]:
+def lock(directory: str, names_file: str, cfg_file: str, roots_file: str, commit: str) -> Result[None, str]:
     """Resolve the roots for the supported triple as both target and host, and print the resolution."""
     source = Path(roots_file).read_text("utf-8", "strict").map_err((e) => e.message())?
     # The roots document wraps the request array as `deps`, the same spelling an index line uses.
     document = parse(source).map_err((e) => e.message())?
     mut roots_array = ""
-    match document.get("deps"):
+    mut requests = document.get("deps")
+    match requests:
+        None => requests = document.get("roots")
+        Some(_) => pass
+    match requests:
         Some(deps) =>
             roots_array = deps.to_json().map_err((e) => e.message())?
-        None => return Err("roots document has no deps array")
+        None => return Err("roots document has neither deps nor roots array")
+    mut retain_refusals = false
+    if let Some(_) = document.get("roots"):
+        retain_refusals = true
     resolution = resolve_snapshot(
         directory,
         names_file,
         cfg_file,
         roots_array,
-        pinned_revision(),
+        commit,
         SUPPORTED_TRIPLE,
         SUPPORTED_TRIPLE,
         host_roots(document, roots_file)?,
+        retain_refusals,
     )?
     println(resolution.to_json().map_err((e) => e.message())?)
     return Ok(None)
 
 
 pub def main() -> None:
-    """Accept a pin directory, a Loaf name inventory, a retained rustc cfg file and a root request file."""
+    """Accept a staged index, name inventory, retained cfg, root request file and explicit full index revision."""
     mut arguments: list[str] = []
     for argument in args():
         arguments.append(argument)
-    if len(arguments) != 5:
-        println("usage: loaf_lock PIN_DIRECTORY NAMES_FILE CFG_FILE ROOTS_FILE")
+    if len(arguments) != 6:
+        println("usage: loaf_lock PIN_DIRECTORY NAMES_FILE CFG_FILE ROOTS_FILE INDEX_COMMIT")
         exit(2)
-    match lock(arguments[1], arguments[2], arguments[3], arguments[4]):
+    match lock(arguments[1], arguments[2], arguments[3], arguments[4], arguments[5]):
         Ok(_) => return
         Err(error) =>
             println(error)

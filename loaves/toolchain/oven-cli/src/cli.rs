@@ -489,7 +489,7 @@ pub struct CompileClosureArgs {
     /// Closure result JSON destination
     #[arg(long)]
     pub out: PathBuf,
-    /// Resolver-produced resolution when the baked engine is unavailable
+    /// Optional existing resolution; omission runs the Incan resolver at the supplied index commit
     #[arg(long)]
     pub lock: Option<PathBuf>,
     /// Digest-addressed source archive directory

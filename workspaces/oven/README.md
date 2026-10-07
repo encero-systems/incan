@@ -66,7 +66,9 @@ The two focused test commands exercise the Rust graph policy and its strict exch
 
 ## Resolver index pin and policy boundaries
 
-`loaf_pin.pinned_revision()` selects incan.pub revision `452504b51712b6a3ac12a2e1b79ba69fff55e6b6` from `index`. The pin audit drivers require a caller-owned immutable extraction whose `revision` file names that revision; the marker is a selection check, not an integrity attestation. `read_index` continues to accept explicit fixture directories for tests. Neither driver changes the registry checkout or reads upstream package metadata.
+`loaf_lock_main` accepts `PIN_DIRECTORY NAMES_FILE CFG_FILE ROOTS_FILE INDEX_COMMIT`. Its index pin is always caller-supplied, and the staged `revision` must match. SDK root documents use `deps` and optional local `host-projects`; closure root documents use `roots` and retain named refusals while resolving admitted roots together.
+
+`loaf_pin.pinned_revision()` selects incan.pub revision `17e062806c769faee1f2fb549d7e257d5607eb93` from `index`. The pin audit drivers require a caller-owned immutable extraction whose `revision` file names that revision; the marker is a selection check, not an integrity attestation. `read_index` continues to accept explicit fixture directories for tests. Neither driver changes the registry checkout or reads upstream package metadata.
 
 The pure feature audit takes the retained cfg output and its target triple explicitly. It refuses recorded facts for another target rather than guessing their cfg values. A non-weak `x/f` adds local feature `x` only when that feature exists and an optional declaration of `x` applies to the supplied target. `dep:x` and `x?/f` do not add `x`; defaults enter the audit only through recorded membership. The resolver applies the same target eligibility independently in host and target domains.
 
