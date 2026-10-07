@@ -384,8 +384,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         bir::ResultVariantKind::Ok => ok_type,
                         bir::ResultVariantKind::Err => error_type,
                     };
-                    let lowered_payload =
-                        self.lower_match_pattern(payload, payload_type, place, arm_scope, reads, seen, saved_bindings);
+                    // The payload is read from inside the scrutinee, as for every other positional constructor, so its
+                    // binding's fact follows from that projected place rather than from the whole scrutinee: an
+                    // untracked temporary scrutinee (a call result) would otherwise yield `Unknown`.
+                    let mut payload_place = place.clone();
+                    payload_place
+                        .projection
+                        .push(bir::PlaceElem::structural_field("0".to_string()));
+                    let lowered_payload = self.lower_match_pattern(
+                        payload,
+                        payload_type,
+                        &payload_place,
+                        arm_scope,
+                        reads,
+                        seen,
+                        saved_bindings,
+                    );
                     return bir::Pattern::Result {
                         variant,
                         fields: vec![lowered_payload],
