@@ -1293,23 +1293,93 @@ fn direct_route_async_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
 import std.async
 
 def argument() -> int:
+    """Observe argument construction before polling."""
     println("argument")
     return 40
 
 async def answer(value: int) -> int:
+    """Observe deferred execution and return a ready value."""
     println(f"body={value}")
     return value + 1
 
 async def nested(value: int) -> int:
+    """Await one source future inside another."""
     return await answer(value)
 
 async def main() -> None:
+    """Discard a future and then evaluate nested ready awaits."""
     answer(999)
     println("constructed")
     println(await nested(argument()))
     println(await answer(7))
 "#,
         None,
+    )
+}
+
+/// Ready races construct every arm, poll in source order, run only the winner, and preserve first-poll failures.
+#[test]
+fn direct_route_ready_races_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "ready_race",
+        r#"
+import std.async
+
+def argument(value: int) -> int:
+    """Observe construction of each race arm."""
+    println(f"construct={value}")
+    return value
+
+async def answer(value: int) -> int:
+    """Observe polling of the selected source future."""
+    println(f"body={value}")
+    return value + 1
+
+async def select() -> int:
+    """Run one block callback and leave the losing body and callback unexecuted."""
+    winner = race for value:
+        await answer(argument(2)) =>
+            println(f"winner={value}")
+            value * 10
+        await answer(argument(1)) =>
+            println("losing callback")
+            value * 100
+    return winner
+
+async def main() -> None:
+    """Await a ready source race."""
+    println(await select())
+"#,
+        None,
+    )?;
+    check_declaration_case(
+        "ready_race_failure",
+        r#"
+import std.async
+
+def argument() -> int:
+    """Show that the losing future is constructed before the first arm fails."""
+    println("loser constructed")
+    return 2
+
+async def fail() -> int:
+    """Fail on the first poll of the winning source future."""
+    assert false, "first"
+    return 1
+
+async def loser(value: int) -> int:
+    """Observe an incorrect poll of the losing future."""
+    println("loser polled")
+    return value
+
+async def main() -> None:
+    """Keep the first failure ahead of both callbacks and all later effects."""
+    winner = race for value:
+        await fail() => value
+        await loser(argument()) => value
+    println(winner)
+"#,
+        Some("AssertionError: first"),
     )
 }
 
