@@ -49,6 +49,7 @@ pub fn terminator<'tcx>(
                         span: sources.span(&value.span)?,
                     })
                 })
+                .chain(generator_producer(tcx, sources, callee)?.into_iter().map(Ok))
                 .collect::<Result<_, PlanError>>()?,
             destination: place(tcx, destination)?,
             target: Some(block(*target)?),
@@ -85,13 +86,31 @@ pub fn terminator<'tcx>(
     })
 }
 
-/// Instantiate only the admitted model Clone call; ordinary callees remain monomorphic.
+/// Instantiate admitted runtime operations and clone calls; ordinary planned callees remain monomorphic.
 fn call_operand<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
     callee: &crate::plan::Callee,
 ) -> Result<mir::Operand<'tcx>, PlanError> {
     let mut arguments = Vec::new();
+    match &callee.kind {
+        crate::plan::CalleeKind::SpawnGenerator(name, leaf, depth) => {
+            let producer = callees::resolve(
+                tcx,
+                &crate::plan::Callee {
+                    kind: crate::plan::CalleeKind::Planned(name.clone()),
+                    span: callee.span.clone(),
+                },
+            )?;
+            arguments.push(generator_element(tcx, leaf, *depth)?.into());
+            arguments.push(rustc_middle::ty::Ty::new_fn_def(tcx, producer, tcx.mk_args(&[])).into());
+        }
+        crate::plan::CalleeKind::YieldGenerator(leaf, depth)
+        | crate::plan::CalleeKind::CollectGenerator(leaf, depth) => {
+            arguments.push(generator_element(tcx, leaf, *depth)?.into());
+        }
+        _ => {}
+    }
     if let crate::plan::CalleeKind::CloneEnum(_, name) = &callee.kind {
         arguments.push(crate::types::enum_type(tcx, name)?.into());
     }
@@ -111,4 +130,42 @@ fn call_operand<'tcx>(
         arguments,
         sources.span(&callee.span)?,
     ))
+}
+
+/// Instantiate the runtime method's yielded element without changing its representation.
+fn generator_element<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    leaf: &crate::plan::ListLeaf,
+    depth: i64,
+) -> Result<rustc_middle::ty::Ty<'tcx>, PlanError> {
+    let kind = if depth == 0 {
+        match leaf {
+            crate::plan::ListLeaf::Int => crate::plan::PlanType::Int,
+            crate::plan::ListLeaf::Float => crate::plan::PlanType::Float,
+            crate::plan::ListLeaf::Bool => crate::plan::PlanType::Bool,
+            crate::plan::ListLeaf::Str => crate::plan::PlanType::String,
+        }
+    } else {
+        crate::plan::PlanType::List(leaf.clone(), depth)
+    };
+    crate::types::native_type(tcx, &kind)
+}
+
+/// Supply the explicitly named producer function item to the runtime's generic spawn method.
+fn generator_producer<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    callee: &crate::plan::Callee,
+) -> Result<Option<Spanned<mir::Operand<'tcx>>>, PlanError> {
+    let crate::plan::CalleeKind::SpawnGenerator(name, _, _) = &callee.kind else {
+        return Ok(None);
+    };
+    let producer = crate::plan::Callee {
+        kind: crate::plan::CalleeKind::Planned(name.clone()),
+        span: callee.span.clone(),
+    };
+    Ok(Some(Spanned {
+        node: mir::Operand::function_handle(tcx, callees::resolve(tcx, &producer)?, [], sources.span(&callee.span)?),
+        span: sources.span(&callee.span)?,
+    }))
 }

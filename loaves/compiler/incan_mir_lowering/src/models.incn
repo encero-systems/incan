@@ -14,10 +14,14 @@ from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, So
 from numerics import numeric_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
+from generators import generator_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
     """Translate checked scalar and collection types, resolving source-local nominals only against retained declarations."""
+    match generator_type(ty):
+        Some(result) => return result
+        None => pass
     match ty:
         RustType.Named(name) =>
             for index in range(len(declarations)):

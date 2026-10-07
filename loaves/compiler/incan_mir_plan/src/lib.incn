@@ -70,6 +70,9 @@ pub enum PlanType:
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their
     reference variants preserve caller-owned storage. Float keys are not admitted.
+    Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
+    GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
+    handles; they never represent source values or eagerly collected elements.
     """
 
     Int
@@ -119,6 +122,11 @@ pub enum PlanType:
     Dict(ListLeaf, ListLeaf)
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
+    # Lazy runtime generators retain the admitted immediate element representation.
+    Generator(ListLeaf, int)
+    GeneratorMutRef(ListLeaf, int)
+    GeneratorYield(ListLeaf, int)
+    GeneratorYieldRef(ListLeaf, int)
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:
@@ -292,7 +300,7 @@ pub model Statement:
 
 @derive(Clone, PartialEq)
 pub enum CalleeKind:
-    """A planned function, canonical external path, checked model clone, or explicit generic external instantiation."""
+    """A planned function, canonical external path, checked model clone, explicit generic instantiation, or an exact legacy generator runtime operation."""
 
     Planned(str)
     External(str)
@@ -300,6 +308,11 @@ pub enum CalleeKind:
     CloneModel(int, str)
     Instantiated(str, PlanType)
     InstantiatedPair(str, PlanType, PlanType)
+    # The explicit producer takes its yield handle before the source-ordered owned captures. A zero-capture spawn
+    # uses a function item; a captured spawn is a constructor whose call arguments initialize one native FnOnce environment.
+    SpawnGenerator(str, ListLeaf, int)
+    YieldGenerator(ListLeaf, int)
+    CollectGenerator(ListLeaf, int)
 
 
 @derive(Clone, PartialEq)

@@ -39,6 +39,7 @@ pub model Builder:
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
     `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
+    `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
     """
 
     pub locals: list[Local]
@@ -62,6 +63,7 @@ pub model Builder:
     pub local_offset: int
     pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
+    pub generator_handle: int
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

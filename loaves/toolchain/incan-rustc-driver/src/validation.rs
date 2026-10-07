@@ -94,6 +94,10 @@ enum Scalar {
     Dict(Leaf, Leaf),
     DictRef(Leaf, Leaf),
     DictMutRef(Leaf, Leaf),
+    Generator(Leaf, i64),
+    GeneratorMutRef(Leaf, i64),
+    GeneratorYield(Leaf, i64),
+    GeneratorYieldRef(Leaf, i64),
 }
 
 /// The comparison vocabulary's copy of the plan's list leaf, which carries no Rust `Copy` or `Ord` derive.
@@ -122,6 +126,10 @@ fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::EnumTag => Scalar::EnumTag,
+        PlanType::Generator(leaf, depth) => Scalar::Generator(Leaf::of(leaf), *depth),
+        PlanType::GeneratorMutRef(leaf, depth) => Scalar::GeneratorMutRef(Leaf::of(leaf), *depth),
+        PlanType::GeneratorYield(leaf, depth) => Scalar::GeneratorYield(Leaf::of(leaf), *depth),
+        PlanType::GeneratorYieldRef(leaf, depth) => Scalar::GeneratorYieldRef(Leaf::of(leaf), *depth),
         PlanType::Enum(index, _) => Scalar::Enum(*index),
         PlanType::EnumRef(index, _) => Scalar::EnumRef(*index),
         PlanType::Model(index, _) => Scalar::Model(*index),
@@ -360,6 +368,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         Projection::Deref(field_type) => {
             let pointee = match ty {
                 Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Scalar::Model(owner),
+                Scalar::GeneratorMutRef(leaf, depth) => Scalar::Generator(leaf, depth),
                 Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Scalar::List(leaf, depth),
                 Scalar::SetRef(leaf) | Scalar::SetMutRef(leaf) => Scalar::Set(leaf),
                 Scalar::DictRef(key, value) | Scalar::DictMutRef(key, value) => Scalar::Dict(key, value),
@@ -453,6 +462,9 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                 || matches!(
                     ty,
                     Scalar::String
+                        | Scalar::Generator(_, _)
+                        | Scalar::GeneratorMutRef(_, _)
+                        | Scalar::GeneratorYield(_, _)
                         | Scalar::StringArray(_)
                         | Scalar::Model(_)
                         | Scalar::List(_, _)
@@ -657,7 +669,25 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             }
             Ok(expected)
         }
-        RvalueKind::MutBorrow(value) => match place(plan, function, value)? {
+        RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
+        RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
+        RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
+            Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
+            Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
+            _ => Err(invalid(
+                function,
+                "slice coercion requires a shared formatting-array reference",
+            )),
+        },
+    }
+}
+
+/// Form the exact borrowed carrier, rejecting mutable reborrows through a shared owner before native MIR construction.
+fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool) -> Result<Scalar, PlanError> {
+    let ty = place(plan, function, value)?;
+    if mutable {
+        return match ty {
+            Scalar::Generator(leaf, depth) => Ok(Scalar::GeneratorMutRef(leaf, depth)),
             Scalar::Model(index) => {
                 if matches!(local(function, value.local)?, Scalar::ModelRef(_)) {
                     return Err(invalid(function, "cannot mutably reborrow a shared receiver"));
@@ -686,26 +716,19 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
                 function,
                 "mutable borrow requires a collection or nominal value",
             )),
-        },
-        RvalueKind::Borrow(value) => match place(plan, function, value)? {
-            Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
-            Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
-            Scalar::List(leaf, depth) => Ok(Scalar::ListRef(leaf, depth)),
-            Scalar::Set(leaf) => Ok(Scalar::SetRef(leaf)),
-            Scalar::Dict(key, value) => Ok(Scalar::DictRef(key, value)),
-            Scalar::String => Ok(Scalar::StringRef),
-            Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
-            Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
-            _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
-        },
-        RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
-            Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
-            Scalar::StrArrayRef(_) => Ok(Scalar::StrSlice),
-            _ => Err(invalid(
-                function,
-                "slice coercion requires a shared formatting-array reference",
-            )),
-        },
+        };
+    }
+    match ty {
+        Scalar::GeneratorYield(leaf, depth) => Ok(Scalar::GeneratorYieldRef(leaf, depth)),
+        Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
+        Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
+        Scalar::List(leaf, depth) => Ok(Scalar::ListRef(leaf, depth)),
+        Scalar::Set(leaf) => Ok(Scalar::SetRef(leaf)),
+        Scalar::Dict(key, value) => Ok(Scalar::DictRef(key, value)),
+        Scalar::String => Ok(Scalar::StringRef),
+        Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
+        Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
+        _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
     }
 }
 
@@ -724,6 +747,9 @@ fn source_signature_type(ty: Scalar) -> bool {
             ty,
             Scalar::Int
                 | Scalar::UnitFunction
+                | Scalar::Generator(_, _)
+                | Scalar::GeneratorMutRef(_, _)
+                | Scalar::GeneratorYield(_, _)
                 | Scalar::Float
                 | Scalar::Bool
                 | Scalar::Unit
@@ -747,13 +773,21 @@ fn external_signature_type(ty: Scalar) -> bool {
     source_signature_type(ty.clone())
         || matches!(
             ty,
-            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_)
+            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_) | Scalar::GeneratorYieldRef(_, _)
         )
 }
 
 /// Refuse an invalid dimension before constructing native array constants, including unused locals.
 fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
+        Scalar::Generator(_, depth)
+        | Scalar::GeneratorMutRef(_, depth)
+        | Scalar::GeneratorYield(_, depth)
+        | Scalar::GeneratorYieldRef(_, depth)
+            if depth < 0 =>
+        {
+            Err(invalid(function, "generator element depth must be nonnegative"))
+        }
         Scalar::Set(Leaf::Float)
         | Scalar::SetRef(Leaf::Float)
         | Scalar::SetMutRef(Leaf::Float)
@@ -845,6 +879,40 @@ fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scala
 fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), PlanError> {
     span(&callee.span)?;
     match &callee.kind {
+        CalleeKind::SpawnGenerator(name, leaf, depth) => {
+            let producer = plan
+                .functions
+                .iter()
+                .find(|function| &function.name == name)
+                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            if producer.parameters.is_empty()
+                || scalar(&producer.parameters[0].ty) != Scalar::GeneratorYield(Leaf::of(leaf), *depth)
+                || scalar(&producer.return_type) != Scalar::Unit
+            {
+                return Err(invalid(
+                    producer,
+                    "generator producer signature differs from yield handle contract",
+                ));
+            }
+            Ok((
+                producer.parameters[1..]
+                    .iter()
+                    .map(|parameter| scalar(&parameter.ty))
+                    .collect(),
+                Scalar::Generator(Leaf::of(leaf), *depth),
+            ))
+        }
+        CalleeKind::YieldGenerator(leaf, depth) => Ok((
+            vec![
+                Scalar::GeneratorYieldRef(Leaf::of(leaf), *depth),
+                generator_element(leaf, *depth),
+            ],
+            Scalar::Unit,
+        )),
+        CalleeKind::CollectGenerator(leaf, depth) => Ok((
+            vec![Scalar::Generator(Leaf::of(leaf), *depth)],
+            Scalar::List(Leaf::of(leaf), depth + 1),
+        )),
         CalleeKind::Planned(name) => {
             let function = plan
                 .functions
@@ -901,6 +969,47 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
     }
 }
 
+/// Compare the yielded element with the same primitive/list vocabulary used for ordinary values.
+fn generator_element(leaf: &ListLeaf, depth: i64) -> Scalar {
+    if depth != 0 {
+        return Scalar::List(Leaf::of(leaf), depth);
+    }
+    match leaf {
+        ListLeaf::Int => Scalar::Int,
+        ListLeaf::Float => Scalar::Float,
+        ListLeaf::Bool => Scalar::Bool,
+        ListLeaf::Str => Scalar::String,
+    }
+}
+
+/// Captured spawn is a constructor boundary, not an arbitrary closure operation in an ordinary planned body.
+/// Its source-ordered owned parameters supply the entire environment exactly once.
+fn validate_generator_constructor(function: &Function, arguments: &[Operand]) -> Result<(), PlanError> {
+    if function.parameters.len() != arguments.len()
+        || function.locals.len() != arguments.len() + 1
+        || function.blocks.iter().any(|block| !block.statements.is_empty())
+    {
+        return Err(invalid(
+            function,
+            "captured generator spawn requires an exact constructor frame",
+        ));
+    }
+    for (index, argument) in arguments.iter().enumerate() {
+        let OperandKind::Move(place) = &argument.kind else {
+            return Err(invalid(function, "generator capture must move its owned parameter"));
+        };
+        if usize::try_from(place.local).map_err(|_| invalid(function, "negative generator capture slot"))? != index + 1
+            || !matches!(place.projection, Projection::Whole)
+        {
+            return Err(invalid(
+                function,
+                "generator capture order differs from constructor parameters",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validate terminator values and every normal and unwinding successor.
 fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup: bool) -> Result<(), PlanError> {
     match value {
@@ -916,6 +1025,9 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
             edge(function, *true_target, cleanup)
         }
         TerminatorKind::Call(callee, arguments, destination, target, action) => {
+            if matches!(callee.kind, CalleeKind::SpawnGenerator(..)) && !arguments.is_empty() {
+                validate_generator_constructor(function, arguments)?;
+            }
             let (parameters, result) = signature(plan, callee)?;
             if parameters.len() != arguments.len() {
                 return Err(invalid(

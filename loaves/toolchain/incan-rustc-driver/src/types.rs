@@ -10,6 +10,18 @@ use rustc_middle::ty::{Ty, TyCtxt};
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
         PlanType::EnumTag => tcx.types.isize,
+        PlanType::Generator(leaf, depth) => generator_type(tcx, "Generator", leaf, *depth)?,
+        PlanType::GeneratorMutRef(leaf, depth) => Ty::new_mut_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            generator_type(tcx, "Generator", leaf, *depth)?,
+        ),
+        PlanType::GeneratorYield(leaf, depth) => generator_type(tcx, "GeneratorYield", leaf, *depth)?,
+        PlanType::GeneratorYieldRef(leaf, depth) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            generator_type(tcx, "GeneratorYield", leaf, *depth)?,
+        ),
         PlanType::Enum(_, name) => enum_type(tcx, name)?,
         PlanType::EnumRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::Model(_, name) => model_type(tcx, name)?,
@@ -94,6 +106,34 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?),
         ),
     })
+}
+
+/// Resolve the legacy runtime's actual generator ADT from dependency metadata and retain its element type.
+pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
+    for segment in ["iter", name] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::iter::{name}")))?;
+    }
+    let element = if depth == 0 {
+        primitive_type(tcx, leaf)?
+    } else {
+        list_type(tcx, leaf, depth)?
+    };
+    Ok(Ty::new_adt(
+        tcx,
+        tcx.adt_def(definition),
+        tcx.mk_args(&[element.into()]),
+    ))
 }
 
 /// Resolve the real standard String definition rather than manufacturing an ADT layout.

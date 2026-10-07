@@ -17,6 +17,7 @@ extern crate thin_vec;
 mod adapter;
 mod bodies;
 mod callees;
+mod captured_generators;
 mod declarations;
 mod error;
 mod frontend;
