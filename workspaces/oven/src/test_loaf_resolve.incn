@@ -5,6 +5,8 @@ from manifest_errors import IntakeError
 from loaf_index import read_root_requests, read_index, LoafVersion
 from loaf_resolve import resolve_requests, select_version, resolve, LoafDemand, ResolvedLoaf
 from rust_graph import NodeDemand
+from std.json import parse
+from sdk_local_roots import host_roots
 from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, TargetConfiguration, CfgSnapshot
 
 
@@ -223,3 +225,51 @@ pub def test_root_requests_use_shared_optional_activation() -> None:
     assert len(units) == 1
     assert units[0].record.version == "1.2.0"
     assert units[0].features == ["one"]
+
+
+pub def test_host_project_roots_keep_independent_features() -> None:
+    """Local macro dependencies enter the host domain even when the same library is a target root."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    requests = require_ok(read_root_requests('[{"name":"leaf","loaf":"test/leaf","req":"^1","features":["extra"],"default-features":false,"optional":false}]', "roots"))
+    host_requests = require_ok(read_root_requests('[{"name":"leaf","loaf":"test/leaf","req":"^1","features":[],"default-features":true,"optional":false}]', "host-roots"))
+    units = require_ok(resolve_requests(records, requests, {}, synthetic_context(), host_requests))
+    assert len(units) == 2
+    for unit in units:
+        if unit.domain == DependencyDomain.Host:
+            assert "extra" not in unit.features
+            assert "default" in unit.features
+        else:
+            assert "extra" in unit.features
+            assert "default" not in unit.features
+
+
+pub def test_local_proc_macro_manifest_supplies_host_requests() -> None:
+    """Read dependency intent from the original local Loaf facet instead of a flattened target request."""
+    mut source = ""
+    match parse('{"host-projects":["loaf.toml"]}'):
+        Err(error) =>
+            fail(error.message())
+            return
+        Ok(document) =>
+            match host_roots(document, "tests/fixtures/local-macro/roots.json"):
+                Err(error) =>
+                    fail(error)
+                    return
+                Ok(value) => source = value
+    requests = require_ok(read_root_requests(source, "fixture-macro"))
+    assert len(requests) == 1
+    assert requests[0].package == "test/leaf"
+    assert requests[0].version_requirement == Some("^1")
+    assert requests[0].features == ["extra"]
+    assert requests[0].default_features == Some(true)
+    assert requests[0].optional == Some(false)
+
+
+pub def test_local_host_project_requires_proc_macro_facet() -> None:
+    """Ordinary library facets cannot silently introduce host requests."""
+    match parse('{"host-projects":["loaf.toml"]}'):
+        Err(error) => fail(error.message())
+        Ok(document) =>
+            match host_roots(document, "tests/fixtures/local-library/roots.json"):
+                Ok(_) => fail("ordinary library accepted as a host procedural-macro project")
+                Err(error) => assert "not a procedural macro" in error

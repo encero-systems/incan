@@ -522,6 +522,10 @@ pub struct OvenProjectOutputPayload {
     /// without putting an absolute worktree path into a portable Loaf.
     pub project_identity: String,
     pub source_authority_digest: String,
+    /// Authority of dependencies and non-Incan inputs, allowing development source edits without replaying stale
+    /// outputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_authority_digest: Option<String>,
     /// Derived semantic dependency fingerprint recorded by the canonical lock at bake time.
     ///
     /// The canonical lock projection remains part of `source_authority_digest`, but excludes this one derived field.
@@ -816,6 +820,8 @@ pub struct CompiledProviderMetadataInputs<'a> {
 /// later command. Callers that need a final publication check deliberately create a fresh digester instead.
 #[derive(Default)]
 pub struct ProjectSourceAuthorityDigester {
+    /// Only this root may omit its own Incan sources when hashing development dependency authority.
+    pub development_root: Option<PathBuf>,
     pub project_digests: HashMap<PathBuf, String>,
     pub rust_crate_digests: HashMap<PathBuf, String>,
     pub rust_source_closure_digests: BTreeMap<PathBuf, String>,

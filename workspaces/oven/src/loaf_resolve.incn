@@ -330,12 +330,14 @@ pub def resolve_requests(
     requests: list[RustDependencyDeclaration],
     root_features: Dict[str, list[str]],
     base: ActivationContext,
+    host_requests: list[RustDependencyDeclaration] = [],
 ) -> Result[list[ResolvedLoaf], IntakeError]:
     """
     Activate the project's root requests using the same feature/target policy as transitive declarations.
 
     `root_features` and `base` retain the project's own feature table and selection intent. Child feature requests
-    remain on each dependency declaration; only active root slots participate in source selection.
+    remain on each dependency declaration; only active root slots participate in source selection. Explicit
+    procedural-macro dependency roots activate independently in the host domain before the shared resolution.
     """
     document = toml.parse("").map_err((e) => refusal("roots", [], e.message()))?
     catalog = RustDependencyCatalog(document=document, dependencies=requests, features=root_features, library_name=None)
@@ -345,5 +347,21 @@ pub def resolve_requests(
         match slot.activation:
             SlotActivation.Active(features, defaults, domain) =>
                 roots.append(incoming(requests[slot.index], features, defaults, domain))
+            SlotActivation.Inactive(_) => pass
+    host_context = ActivationContext(
+        host=base.host,
+        target=base.target,
+        purpose=base.purpose,
+        domain=DependencyDomain.Host,
+        requested_features=[],
+        default_features=false,
+        build_unit_present=false,
+    )
+    host_catalog = RustDependencyCatalog(document=document, dependencies=host_requests, features={}, library_name=None)
+    host_activation = activate_unit(host_catalog, host_context, "host-roots")?
+    for slot in host_activation.slots:
+        match slot.activation:
+            SlotActivation.Active(features, defaults, domain) =>
+                roots.append(incoming(host_requests[slot.index], features, defaults, domain))
             SlotActivation.Inactive(_) => pass
     return resolve(records, roots, base)

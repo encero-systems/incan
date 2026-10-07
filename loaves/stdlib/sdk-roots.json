@@ -340,5 +340,9 @@
     }
   ],
   "target": "aarch64-apple-darwin",
-  "host": "aarch64-apple-darwin"
+  "host": "aarch64-apple-darwin",
+  "host-projects": [
+    "derive/incan_derive/loaf.toml",
+    "derive/incan_web_macros/loaf.toml"
+  ]
 }

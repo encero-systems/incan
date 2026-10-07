@@ -12,6 +12,7 @@ from std.fs import Path
 from std.json import parse
 from loaf_closure_exchange import resolve_snapshot
 from loaf_pin import pinned_revision
+from sdk_local_roots import host_roots
 
 # The triple both the selected target and the build host must name; the roots file states it explicitly.
 const SUPPORTED_TRIPLE: str = "aarch64-apple-darwin"
@@ -35,6 +36,7 @@ def lock(directory: str, names_file: str, cfg_file: str, roots_file: str) -> Res
         pinned_revision(),
         SUPPORTED_TRIPLE,
         SUPPORTED_TRIPLE,
+        host_roots(document, roots_file)?,
     )?
     println(resolution.to_json().map_err((e) => e.message())?)
     return Ok(None)

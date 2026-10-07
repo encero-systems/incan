@@ -176,6 +176,7 @@ pub(crate) fn generate_native_sdk_sources(
         .ok_or_else(|| CliError::failure("native provider has no root module"))?;
     let dependencies = &modules[..modules.len() - 1];
     let mut codegen = IrCodegen::new();
+    codegen.set_standard_library_source(true);
     codegen.set_preserve_dependency_public_items(true);
     codegen.set_registry_package_identity(Some(name.to_string()));
     codegen.set_canonical_emission_package_identity(Some(name.to_string()));

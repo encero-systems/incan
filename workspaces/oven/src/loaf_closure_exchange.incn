@@ -40,6 +40,7 @@ pub def resolve_snapshot(
     commit: str,
     target: str,
     host: str,
+    host_roots_source: str = "[]",
 ) -> Result[JsonValue, str]:
     """Share the standalone lock driver's resolution with the engine request, binding staged reads to one commit."""
     revision = Path(f"{directory}/revision").read_text("utf-8", "strict").map_err((e) => e.message())?
@@ -48,6 +49,7 @@ pub def resolve_snapshot(
     if target != "aarch64-apple-darwin" or host != target:
         return Err("closure resolution currently requires aarch64-apple-darwin for host and target")
     requests = read_root_requests(roots_source, "roots").map_err((e) => e.message())?
+    host_requests = read_root_requests(host_roots_source, "host-roots").map_err((e) => e.message())?
     names = Path(names_file).read_text("utf-8", "strict").map_err((e) => e.message())?
     mut records: list[LoafVersion] = []
     for loaf in names.split("\n"):
@@ -64,7 +66,7 @@ pub def resolve_snapshot(
         default_features=false,
         build_unit_present=false,
     )
-    units = resolve_requests(records, requests, {}, context).map_err((e) => e.message())?
+    units = resolve_requests(records, requests, {}, context, host_requests).map_err((e) => e.message())?
     return Ok(resolution_json(units))
 
 
