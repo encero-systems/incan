@@ -958,3 +958,57 @@ fn direct_route_builtins_match_legacy() -> Result<(), Box<dyn std::error::Error>
 "#,
     )
 }
+
+/// A helper re-export and a qualified call retain their canonical bodies and byte-identical legacy output.
+#[test]
+fn direct_route_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("modules")?;
+    let source = root.join("src/main.incn");
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        &source,
+        "from facade import exported as compute\nimport helper\n\ndef calculate(a: int, b: int) -> int:\n  return a - b\n\ndef main() -> None:\n  println(compute(b=2, a=40))\n  println(helper.calculate(3, 4))\n  println(calculate(9, 2))\n",
+    )?;
+    fs::write(
+        root.join("src/helper.incn"),
+        "def hidden(a: int) -> int:\n  return a\n\npub def calculate(a: int, b: int) -> int:\n  return hidden(a) + b\n",
+    )?;
+    fs::create_dir_all(root.join("src/facade"))?;
+    fs::write(
+        root.join("src/facade/__init__.incn"),
+        "pub from helper import calculate as exported\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native three-module compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy three-module compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/main")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy three-module execution");
+    success(&actual, "native three-module execution");
+    assert_eq!(actual.stdout, b"42\n7\n7\n");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), expected.status.code());
+    Ok(())
+}
